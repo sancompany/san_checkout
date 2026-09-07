@@ -1,0 +1,20 @@
+{
+  "name": "san-checkout-backend",
+  "version": "2.0.0",
+  "description": "San Checkout — backend, modelo pull (pedido)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "googleapis": "^144.0.0",
+    "helmet": "^8.0.0",
+    "nodemailer": "^10.0.1"
+  }
+}

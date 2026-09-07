@@ -1,0 +1,137 @@
+.checkout-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 36px 32px;
+}
+.brand-header { display: flex; flex-direction: column; align-items: center; margin-bottom: 28px; }
+
+.brand-logos-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 20px; width: 100%; }
+.brand-logo { max-height: 32px; max-width: 140px; object-fit: contain; }
+.brand-logo--contratante { }
+.brand-logos-arrows { display: none; color: var(--text-muted); flex-shrink: 0; }
+.brand-logos-row.brand-logos-row--dual .brand-logos-arrows { display: block; }
+
+/* Anúncio/banner do contratante — retangular, só ocupa espaço quando
+   o pedido manda uma bannerUrl; sem imagem, o wrapper .hidden some
+   por completo, sem buraco no layout. */
+.ad-banner { width: 100%; margin-bottom: 16px; }
+.ad-banner-image { width: 100%; max-height: 140px; object-fit: cover; border-radius: var(--radius-btn); display: block; }
+
+.order-summary {
+  width: 100%; background-color: var(--bg-summary); border: 1px solid var(--border-color);
+  border-radius: calc(var(--radius-card) - 8px); padding: 22px 24px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.order-subtitle { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.order-title { font-size: 1.0625rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.order-description { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
+
+/* Lista de itens do pedido — rolável, pra não estourar o card quando
+   houver muitos produtos (o resumo antigo só cabia um item só). */
+.order-items-list {
+  display: flex; flex-direction: column; gap: 7px;
+  max-height: 168px; overflow-y: auto;
+  margin: 12px 0; padding: 12px 0;
+  border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);
+}
+.order-item-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-size: 0.8125rem; color: var(--text-secondary);
+}
+.order-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-item-label strong { color: var(--text-main); font-weight: 700; margin-right: 4px; }
+.order-item-value { flex-shrink: 0; white-space: nowrap; font-weight: 600; color: var(--text-main); }
+
+.order-breakdown { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.breakdown-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.8125rem; color: var(--text-secondary); }
+.breakdown-row.breakdown-total {
+  font-size: 1.125rem; font-weight: 800; color: var(--text-main);
+  margin-top: 8px; padding-top: 14px; border-top: 1.5px solid var(--border-color);
+}
+.breakdown-desconto span:last-child { color: var(--text-secondary); }
+.breakdown-desconto.tem-valor span:last-child { color: var(--status-success); }
+.breakdown-taxa span:last-child { color: var(--text-secondary); }
+
+.currency-symbol { font-size: 0.9375rem; font-weight: 700; color: var(--text-secondary); }
+.order-amount { font-size: 1.625rem; font-weight: 800; letter-spacing: -0.02em; color: var(--brand-primary-hover); }
+
+/* ------------------------------------------------------------------
+   Layout responsivo — celular (padrão, sem media query: os dois
+   painéis são só <div> em bloco, empilhados exatamente como o card
+   único de antes) vs. desktop (≥900px: formulário à esquerda, resumo
+   do pedido fixo à direita, com fundo diferenciado — padrão de
+   checkout profissional). Nenhum id usado pelo app.js muda, só a
+   estrutura de wrapper (a ordem visual vem de `order`, o HTML
+   continua com o resumo antes do formulário na leitura/DOM).
+------------------------------------------------------------------ */
+.checkout-panel--summary .brand-header { margin-bottom: 0; }
+
+@media (min-width: 900px) {
+  .checkout-container { max-width: 920px; }
+
+  .checkout-card {
+    padding: 0;
+    box-shadow: var(--shadow-card);
+    border-radius: calc(var(--radius-card) + 4px);
+    /* Nota: sem overflow:hidden de propósito — quebraria o
+       position:sticky do painel de resumo abaixo (overflow != visible
+       num ancestral vira o contêiner de referência do sticky). Os
+       cantos arredondados vêm de cada painel copiar o raio do card. */
+  }
+
+  .checkout-layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    align-items: stretch; /* as duas colunas ficam com a mesma altura —
+                              sem isso, o fundo do resumo parava antes
+                              do fim do formulário, deixando um vazio */
+  }
+
+  /* Resumo do pedido à DIREITA — fundo diferenciado (tom da página,
+     não branco igual o formulário), pra não parecer um segundo
+     formulário. O card branco do resumo (.order-summary) fica por
+     cima desse fundo, com sombra própria, se destacando dele. */
+  .checkout-panel--summary {
+    order: 2;
+    padding: 44px 40px;
+    background-color: var(--bg-surface);
+    border-left: 1px solid var(--border-color);
+    border-top-right-radius: inherit;
+    border-bottom-right-radius: inherit;
+    position: sticky;
+    top: 24px;
+    align-self: stretch;
+  }
+
+  .checkout-panel--summary .order-summary {
+    background-color: var(--bg-card);
+    box-shadow: var(--shadow-elevated);
+    border-color: transparent;
+  }
+
+  .checkout-panel--form {
+    order: 1;
+    padding: 44px 40px 44px 44px;
+    border-top-left-radius: inherit;
+    border-bottom-left-radius: inherit;
+    background-color: var(--bg-card);
+    min-width: 0;
+  }
+
+  /* Um pouco mais de respiro/hierarquia — a tela grande sobra espaço
+     que o layout de celular nunca teve. */
+  .order-title { font-size: 1.1875rem; }
+  .order-amount { font-size: 1.875rem; }
+}
+
+.checkout-footer {
+  margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border-color);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+}
+.security-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+.security-badge svg { color: var(--brand-accent); flex-shrink: 0; }
+.powered-by { font-size: 0.75rem; color: var(--text-muted); }
+.powered-by strong { color: var(--text-secondary); font-weight: 600; }
+.legal-footer { font-size: 0.6875rem; color: var(--text-muted); }

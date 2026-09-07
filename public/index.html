@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkout Seguro — SAN & CO.</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/theme-engine.css" />
+  <link rel="stylesheet" href="css/components/card.css" />
+  <link rel="stylesheet" href="css/components/tabs.css" />
+  <link rel="stylesheet" href="css/components/forms.css" />
+</head>
+<body>
+
+  <main class="checkout-container">
+    <div class="checkout-card" id="checkout-root">
+      <div class="checkout-layout">
+
+      <div class="checkout-panel checkout-panel--summary">
+      <header class="brand-header">
+        <div class="brand-logos-row" id="brand-logos-row">
+          <img class="brand-logo brand-logo--operator" src="assets/logo-sanco.png" alt="SAN & CO." />
+          <svg class="brand-logos-arrows" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 7h10M17 7l-3-3M17 7l-3 3"/>
+            <path d="M17 17H7M7 17l3 3M7 17l3-3"/>
+          </svg>
+          <img class="brand-logo brand-logo--contratante hidden" id="contratante-logo" src="" alt="" />
+        </div>
+
+        <div class="ad-banner hidden" id="ad-banner-wrapper">
+          <img class="ad-banner-image" id="ad-banner-image" src="" alt="" />
+        </div>
+
+        <!-- No modo assinatura (app.js), estes mesmos elementos são
+             reaproveitados com o conteúdo do plano em vez do pedido. -->
+        <section class="order-summary" aria-label="Resumo do Pedido">
+          <span class="order-subtitle" id="order-category">Produto / Serviço</span>
+          <h1 class="order-title" id="order-title">Carregando detalhes...</h1>
+          <div class="order-items-list hidden" id="order-items-list"></div>
+          <p class="order-description hidden" id="order-description"></p>
+
+          <div class="order-breakdown">
+            <div class="breakdown-row breakdown-desconto" id="breakdown-desconto-row">
+              <span>Desconto</span>
+              <span id="order-desconto">R$ 0,00</span>
+            </div>
+            <div class="breakdown-row">
+              <span>Subtotal</span>
+              <span id="order-subtotal">R$ 0,00</span>
+            </div>
+            <div class="breakdown-row breakdown-taxa" id="breakdown-taxa-row">
+              <span>Taxa</span>
+              <span id="order-taxa">R$ 0,00</span>
+            </div>
+            <div class="breakdown-row breakdown-total">
+              <span>Total</span>
+              <span><span class="currency-symbol">R$</span> <span class="order-amount" id="order-amount">0,00</span></span>
+            </div>
+          </div>
+        </section>
+      </header>
+      </div>
+
+      <div class="checkout-panel checkout-panel--form">
+      <form id="checkout-form" novalidate>
+        <fieldset class="form-section">
+          <legend class="section-label">Dados do Pagador</legend>
+
+          <div class="form-group">
+            <label for="customer-name">Nome Completo</label>
+            <input type="text" id="customer-name" name="name" placeholder="Ex: João da Silva" autocomplete="name" required />
+            <span class="field-error" id="error-customer-name"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="customer-email">E-mail</label>
+              <input type="email" id="customer-email" name="email" placeholder="seu@email.com" autocomplete="email" required />
+              <span class="field-error" id="error-customer-email"></span>
+            </div>
+            <div class="form-group">
+              <label for="customer-cpf">CPF</label>
+              <input type="text" id="customer-cpf" name="cpf" placeholder="000.000.000-00" maxlength="14" inputmode="numeric" required />
+              <span class="field-error" id="error-customer-cpf"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="customer-phone">Telefone</label>
+            <input type="text" id="customer-phone" name="phone" placeholder="(00) 00000-0000" maxlength="15" inputmode="numeric" autocomplete="tel" required />
+            <span class="field-error" id="error-customer-phone"></span>
+          </div>
+        </fieldset>
+
+        <!-- Endereço — só aparece pra Cartão/Assinatura (app.js decide).
+             A Asaas exige isso como antifraude no Asaas Checkout
+             (confirmado em sandbox: "O campo address deve ser
+             informado"). O CEP busca o resto sozinho via ViaCEP,
+             inclusive o código IBGE da cidade que a Asaas pede no
+             lugar do nome (ver public/js/utils/cep.js). -->
+        <fieldset class="form-section hidden" id="endereco-fieldset">
+          <legend class="section-label">Endereço de Cobrança</legend>
+
+          <div class="form-group">
+            <label for="address-cep">CEP</label>
+            <input type="text" id="address-cep" placeholder="00000-000" maxlength="9" inputmode="numeric" autocomplete="postal-code" />
+            <span class="field-error" id="error-address-cep"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="address-street">Endereço</label>
+            <input type="text" id="address-street" placeholder="Rua, Av..." autocomplete="address-line1" />
+            <span class="field-error" id="error-address-street"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="address-number">Número</label>
+              <input type="text" id="address-number" inputmode="numeric" autocomplete="address-line2" />
+              <span class="field-error" id="error-address-number"></span>
+            </div>
+            <div class="form-group">
+              <label for="address-complement">Complemento</label>
+              <input type="text" id="address-complement" placeholder="Opcional" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="address-province">Bairro</label>
+            <input type="text" id="address-province" autocomplete="address-level3" />
+            <span class="field-error" id="error-address-province"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="address-city">Cidade</label>
+              <input type="text" id="address-city" readonly autocomplete="address-level2" />
+              <span class="field-error" id="error-address-city"></span>
+            </div>
+            <div class="form-group">
+              <label for="address-uf">UF</label>
+              <input type="text" id="address-uf" readonly maxlength="2" autocomplete="address-level1" />
+            </div>
+          </div>
+          <input type="hidden" id="address-ibge" />
+        </fieldset>
+
+        <!-- Lista de métodos — só Pix nesta leva. Estrutura pronta pra
+             Cartão/Boleto/Assinatura entrarem depois, sem redesenhar. -->
+        <section class="payment-methods" id="payment-methods" aria-label="Forma de Pagamento">
+          <div class="payment-method active" data-method="pix">
+            <button type="button" class="method-row" id="method-pix" aria-expanded="true">
+              <span class="method-radio" aria-hidden="true"></span>
+              <img class="method-icon" src="assets/icons/pix.svg" width="22" height="22" alt="" />
+              <span class="method-label">Pix Instantâneo</span>
+            </button>
+
+            <div class="method-content" id="content-pix">
+              <div id="pix-action-state">
+                <button type="button" class="btn-primary" id="btn-generate-pix">
+                  <span>Gerar QR Code Pix</span>
+                </button>
+              </div>
+
+              <div id="pix-result-state" class="pix-result hidden">
+                <div class="qr-wrapper">
+                  <img id="pix-qr-image" class="qr-image" src="" alt="QR Code Pix para Pagamento" />
+                  <div class="qr-loader" id="pix-loader"></div>
+                </div>
+
+                <div class="pix-copy-group">
+                  <label for="pix-copy-code">Código Pix Copia e Cola</label>
+                  <div class="copy-input-wrapper">
+                    <input type="text" id="pix-copy-code" readonly aria-label="Código Pix Copia e Cola" />
+                    <button type="button" class="btn-secondary" id="btn-copy-pix">Copiar</button>
+                  </div>
+                </div>
+
+                <div class="pix-status-tracker">
+                  <span class="status-pulse"></span>
+                  <span class="status-text" id="pix-status-message">Aguardando pagamento em tempo real...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cartão de Crédito — o pagamento em si acontece na pop-up
+               hospedada pela Asaas (Asaas Checkout); aqui só escolhemos
+               quantas parcelas ANTES de abrir, porque a Asaas cobra o
+               valor fechado que mandamos, não deixa escolher parcela lá
+               dentro. BACKEND AINDA NÃO EXISTE pra este método. -->
+          <div class="payment-method" data-method="cartao">
+            <button type="button" class="method-row" id="method-cartao" aria-expanded="false">
+              <span class="method-radio" aria-hidden="true"></span>
+              <img class="method-icon" src="assets/icons/card-generic.svg" width="22" height="22" alt="" />
+              <span class="method-label">Cartão de Crédito</span>
+            </button>
+            <div class="method-content hidden" id="content-cartao">
+              <div class="form-group">
+                <label for="cartao-parcelas">Em quantas vezes?</label>
+                <select id="cartao-parcelas">
+                  <option value="1">1x à vista (sem juros)</option>
+                  <option value="2">2x (sem juros)</option>
+                  <option value="3">3x (sem juros)</option>
+                  <option value="4">4x</option>
+                  <option value="5">5x</option>
+                  <option value="6">6x</option>
+                  <option value="7">7x</option>
+                  <option value="8">8x</option>
+                  <option value="9">9x</option>
+                  <option value="10">10x</option>
+                  <option value="11">11x</option>
+                  <option value="12">12x</option>
+                </select>
+              </div>
+              <button type="button" class="btn-primary" id="btn-continuar-cartao">
+                <span>Continuar</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Boleto — só aparece quando o pedido NÃO tem expiraEm (JS
+               decide isso, ver app.js). Cobrança direta na Asaas (sem
+               pop-up) — Asaas Checkout não aceita billingType BOLETO. -->
+          <div class="payment-method hidden" data-method="boleto" id="metodo-boleto-wrapper">
+            <button type="button" class="method-row" id="method-boleto" aria-expanded="false">
+              <span class="method-radio" aria-hidden="true"></span>
+              <img class="method-icon" src="assets/icons/boleto.svg" width="22" height="22" alt="" />
+              <span class="method-label">Boleto Bancário</span>
+            </button>
+            <div class="method-content hidden" id="content-boleto">
+              <div id="boleto-action-state">
+                <p class="method-note">
+                  O boleto vence em 3 dias. A confirmação do pagamento pode
+                  levar até 3 dias úteis após você pagar.
+                </p>
+                <button type="button" class="btn-primary" id="btn-gerar-boleto">
+                  <span>Gerar Boleto</span>
+                </button>
+              </div>
+
+              <div id="boleto-result-state" class="pix-result hidden">
+                <a id="boleto-link" class="btn-primary" href="#" target="_blank" rel="noopener" style="text-decoration:none;">Visualizar / Imprimir Boleto</a>
+
+                <div class="pix-copy-group" id="boleto-linha-digitavel-group">
+                  <label for="boleto-copy-code">Linha Digitável</label>
+                  <div class="copy-input-wrapper">
+                    <input type="text" id="boleto-copy-code" readonly aria-label="Linha digitável do boleto" />
+                    <button type="button" class="btn-secondary" id="btn-copy-boleto">Copiar</button>
+                  </div>
+                </div>
+
+                <div class="pix-status-tracker">
+                  <span class="status-pulse"></span>
+                  <span class="status-text" id="boleto-status-message">Aguardando confirmação do pagamento (pode levar até 3 dias úteis)...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Modo Assinatura — só aparece quando a URL tem ?assinatura=
+             em vez de ?pedido=. app.js decide qual bloco mostrar; o
+             resumo (título/valor) reaproveita os mesmos elementos do
+             order-summary lá em cima, só troca o conteúdo. BACKEND
+             AINDA NÃO EXISTE pro endpoint que esse botão chama. -->
+        <div class="payment-methods hidden" id="subscription-action" aria-label="Assinatura">
+          <button type="button" class="btn-primary" id="btn-assinar">
+            <span>Assinar Agora</span>
+          </button>
+        </div>
+      </form>
+
+      <label class="checkbox-row checkbox-row--termos" for="accept-terms-checkbox">
+        <input type="checkbox" id="accept-terms-checkbox" />
+        <span>Li e concordo com os <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>.</span>
+      </label>
+
+      <footer class="checkout-footer">
+        <div class="security-badge">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+          </svg>
+          <span>Ambiente Criptografado 256-bit • Processamento Seguro</span>
+        </div>
+        <div class="powered-by">
+          Processado via <strong>SAN & CO. Pay Engine</strong>
+        </div>
+        <div class="legal-footer">
+          SAN & CO. — CNPJ 68.949.029/0001-58
+        </div>
+      </footer>
+
+      </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

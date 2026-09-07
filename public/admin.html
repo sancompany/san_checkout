@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>San Checkout — Admin</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px; min-height: 100vh;
+    background: #0f172a; color: #e5e7eb;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 24px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+  label { display: block; font-size: 0.8125rem; color: #94a3b8; margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input {
+    width: 100%; height: 40px; padding: 0 12px; border-radius: 6px;
+    border: 1px solid #475569; background: #0f172a; color: #e5e7eb; font-size: 0.875rem;
+  }
+  input:focus { outline: 2px solid #2563eb; outline-offset: 1px; }
+  button {
+    margin-top: 16px; height: 40px; padding: 0 20px; border: none; border-radius: 6px;
+    background: #2563eb; color: #fff; font-size: 0.875rem; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: #1d4ed8; }
+  .msg { margin-top: 10px; font-size: 0.8125rem; }
+  .msg.erro { color: #f87171; }
+  .msg.ok { color: #4ade80; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #334155; vertical-align: top; }
+  th { color: #94a3b8; font-weight: 600; }
+  code { font-family: ui-monospace, monospace; user-select: all; word-break: break-all; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>San Checkout — Admin</h1>
+
+  <div class="card" id="painel-login">
+    <label for="admin-user">Usuário</label>
+    <input type="text" id="admin-user" autocomplete="off" />
+    <label for="admin-pass">Senha</label>
+    <input type="password" id="admin-pass" autocomplete="off" />
+    <button id="btn-entrar" type="button">Entrar</button>
+    <div class="msg erro" id="msg-login" hidden></div>
+  </div>
+
+  <div id="painel-app" hidden>
+    <div class="card">
+      <h2 style="margin:0 0 4px;font-size:1rem">Cadastrar contratante</h2>
+      <label for="f-id">id (slug, ex.: trimundi9)</label>
+      <input type="text" id="f-id" />
+      <label for="f-nome">nome</label>
+      <input type="text" id="f-nome" />
+      <label for="f-api-base-url">apiBaseUrl (onde o checkout busca GET /pedido/{id})</label>
+      <input type="text" id="f-api-base-url" placeholder="https://api-do-projeto.com" />
+      <label for="f-webhook-url">webhookUrl (opcional)</label>
+      <input type="text" id="f-webhook-url" placeholder="https://api-do-projeto.com/webhook" />
+      <label for="f-wallet-id">walletId (opcional, só se for usar split Asaas)</label>
+      <input type="text" id="f-wallet-id" />
+      <button id="btn-cadastrar" type="button">Cadastrar</button>
+      <div class="msg" id="msg-cadastro" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 12px;font-size:1rem">Contratantes cadastrados</h2>
+      <table>
+        <thead>
+          <tr><th>id</th><th>nome</th><th>api_base_url</th><th>webhook_url</th><th>wallet_id</th><th>api_key</th></tr>
+        </thead>
+        <tbody id="tabela-contratantes"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { chamarApi } from './js/utils/api.js';
+
+  const CHAVE_SESSAO = 'san-checkout-admin-login';
+
+  function loginSalvo() {
+    try { return JSON.parse(sessionStorage.getItem(CHAVE_SESSAO)); } catch { return null; }
+  }
+
+  function salvarLogin(usuario, senha) {
+    try { sessionStorage.setItem(CHAVE_SESSAO, JSON.stringify({ usuario, senha })); } catch { /* navegador bloqueou — segue sem persistir */ }
+  }
+
+  function headersAuth() {
+    const login = loginSalvo();
+    return { 'X-Admin-User': login?.usuario ?? '', 'X-Admin-Pass': login?.senha ?? '' };
+  }
+
+  const admin = {
+    get: (caminho) => chamarApi(`/api/admin${caminho}`, { method: 'GET', headers: headersAuth() }),
+    post: (caminho, dados) => chamarApi(`/api/admin${caminho}`, { method: 'POST', body: JSON.stringify(dados), headers: headersAuth() })
+  };
+
+  function escapar(texto) {
+    const div = document.createElement('div');
+    div.textContent = texto ?? '';
+    return div.innerHTML;
+  }
+
+  async function carregarLista() {
+    const contratantes = await admin.get('/contratantes');
+    document.getElementById('tabela-contratantes').innerHTML = contratantes.map((c) => `
+      <tr>
+        <td>${escapar(c.id)}</td>
+        <td>${escapar(c.nome)}</td>
+        <td>${escapar(c.api_base_url)}</td>
+        <td>${escapar(c.webhook_url ?? '—')}</td>
+        <td>${escapar(c.wallet_id ?? '—')}</td>
+        <td><code>${escapar(c.api_key)}</code></td>
+      </tr>
+    `).join('');
+  }
+
+  async function tentarEntrar(usuarioForcado, senhaForcada) {
+    const usuario = usuarioForcado ?? document.getElementById('admin-user').value.trim();
+    const senha = senhaForcada ?? document.getElementById('admin-pass').value;
+    if (!usuario || !senha) return;
+    salvarLogin(usuario, senha);
+    const msgLogin = document.getElementById('msg-login');
+    try {
+      await carregarLista();
+      msgLogin.hidden = true;
+      document.getElementById('painel-login').hidden = true;
+      document.getElementById('painel-app').hidden = false;
+    } catch (erro) {
+      msgLogin.textContent = erro.message;
+      msgLogin.hidden = false;
+    }
+  }
+
+  async function cadastrar() {
+    const corpo = {
+      id: document.getElementById('f-id').value.trim(),
+      nome: document.getElementById('f-nome').value.trim(),
+      apiBaseUrl: document.getElementById('f-api-base-url').value.trim(),
+      webhookUrl: document.getElementById('f-webhook-url').value.trim(),
+      walletId: document.getElementById('f-wallet-id').value.trim()
+    };
+    const msg = document.getElementById('msg-cadastro');
+    try {
+      await admin.post('/contratantes', corpo);
+      msg.className = 'msg ok';
+      msg.textContent = 'Contratante cadastrado.';
+      msg.hidden = false;
+      ['f-id', 'f-nome', 'f-api-base-url', 'f-webhook-url', 'f-wallet-id'].forEach((id) => { document.getElementById(id).value = ''; });
+      await carregarLista();
+    } catch (erro) {
+      msg.className = 'msg erro';
+      msg.textContent = erro.message;
+      msg.hidden = false;
+    }
+  }
+
+  document.getElementById('btn-entrar').addEventListener('click', () => tentarEntrar());
+  document.getElementById('admin-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') tentarEntrar(); });
+  document.getElementById('btn-cadastrar').addEventListener('click', cadastrar);
+
+  // já tem login guardado nesta aba (sessionStorage) — pula direto pro painel
+  const login = loginSalvo();
+  if (login) tentarEntrar(login.usuario, login.senha);
+</script>
+</body>
+</html>

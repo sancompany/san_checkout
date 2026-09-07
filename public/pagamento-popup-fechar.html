@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAN & CO. — Pagamento</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+      background: #f7f7f5;
+      color: #1a1a1a;
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    p { max-width: 360px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <p>
+    Pagamento processado. Você já pode fechar esta janela — o resultado
+    aparece automaticamente na tela do checkout.
+  </p>
+  <script>
+    // A Asaas pode (ou não) redirecionar a pop-up pra cá conforme o
+    // resultado (callback.successUrl/cancelUrl/expiredUrl é campo
+    // obrigatório no Asaas Checkout, mas quem manda de verdade é
+    // sempre o webhook + polling no backend, nunca este redirect).
+    // Só tentamos fechar sozinho quando a janela foi de fato aberta
+    // via window.open pelo nosso próprio checkout.
+    if (window.opener) {
+      setTimeout(() => window.close(), 1500);
+    }
+  </script>
+</body>
+</html>

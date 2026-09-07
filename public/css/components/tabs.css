@@ -1,0 +1,24 @@
+.payment-methods { display: flex; flex-direction: column; gap: 12px; margin-top: 24px; margin-bottom: 8px; }
+.payment-method {
+  border: 1.5px solid var(--border-color); border-radius: var(--radius-btn); overflow: hidden;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+.payment-method.active {
+  border-color: var(--brand-primary); box-shadow: 0 0 0 1px rgba(184,145,42,0.22);
+  background-color: rgba(184,145,42,0.045);
+}
+
+.method-row {
+  width: 100%; min-height: 60px; display: flex; align-items: center; gap: 14px; padding: 0 18px;
+  background-color: transparent; color: var(--text-main); font-size: 0.9375rem; font-weight: 600; text-align: left;
+}
+.method-radio { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border-input); position: relative; transition: border-color var(--transition-fast); }
+.payment-method.active .method-radio { border-color: var(--brand-primary); }
+.payment-method.active .method-radio::after { content: ''; position: absolute; inset: 4px; border-radius: 50%; background-color: var(--brand-primary); }
+.method-icon { flex-shrink: 0; width: 24px; height: 24px; object-fit: contain; opacity: 0.65; transition: opacity var(--transition-fast); }
+.payment-method.active .method-icon { opacity: 1; }
+.method-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.method-content { padding: 6px 18px 22px; border-top: 1px solid var(--border-color); background-color: var(--bg-card); }
+.method-content.hidden { display: none !important; }
+
+.payment-methods.carregando { opacity: 0.5; pointer-events: none; }

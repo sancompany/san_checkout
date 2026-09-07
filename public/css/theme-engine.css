@@ -1,0 +1,46 @@
+:root {
+  --bg-surface: #EEF1F6;
+  --bg-card: #FFFFFF;
+  --bg-input: #F9FAFB;
+  --bg-input-hover: #F3F4F6;
+  --bg-summary: #F9FAFB;
+
+  --text-main: #111827;
+  --text-secondary: #4B5563;
+  --text-muted: #9CA3AF;
+  --text-on-primary: #FFFFFF;
+
+  --brand-primary: #B8912A;
+  --brand-primary-hover: #9C7A22;
+  --brand-accent: #B8912A;
+
+  --action-primary: #2563EB;
+  --action-primary-hover: #1D4ED8;
+
+  --status-success: #059669;
+  --status-error: #DC2626;
+  --status-warning: #D97706;
+
+  --border-color: #E5E7EB;
+  --border-input: #D1D5DB;
+  --border-focus: #B8912A;
+  --border-error: #DC2626;
+
+  --shadow-card: 0 30px 60px -20px rgba(15,23,42,0.18), 0 10px 24px -10px rgba(15,23,42,0.08);
+  --shadow-input-focus: 0 0 0 4px rgba(184,145,42,0.16);
+  --shadow-btn: 0 10px 24px -6px rgba(37,99,235,0.35);
+  --shadow-elevated: 0 4px 16px -4px rgba(15,23,42,0.08);
+
+  /* Cantos suaves e sombras com mais profundidade — referência em
+     checkouts grandes (Stripe, Shopify, Apple Pay, Mercado Pago):
+     nenhum deles usa canto quase quadrado, todos usam raio generoso +
+     sombra elevada pra parecer "premium" em vez de "painel admin".
+     Isso substitui a decisão anterior de cantos 2-4px. */
+  --radius-card: 20px;
+  --radius-btn: 12px;
+  --radius-input: 10px;
+  --radius-badge: 6px;
+
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
