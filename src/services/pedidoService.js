@@ -21,17 +21,6 @@ export async function buscarContratante(contratanteId) {
   return data;
 }
 
-/** Grava o id da pasta do Drive na primeira vez que ela é criada —
- *  usado só pelo fluxo de nota fiscal (VISAO_COMPLETA.md seção 8). */
-export async function atualizarDriveFolderId(contratanteId, driveFolderId) {
-  const { error } = await supabase
-    .from('contratantes')
-    .update({ drive_folder_id: driveFolderId })
-    .eq('id', contratanteId);
-
-  if (error) console.error('[pedidoService.atualizarDriveFolderId]', error.message);
-}
-
 /** Busca o contratante pela api_key — usado pra autenticar o /estornar. */
 export async function buscarContratantePorChave(apiKey) {
   const { data, error } = await supabase

@@ -1,7 +1,7 @@
 /**
  * SAN CHECKOUT v2 — src/controllers/webhookController.js
  * Recebe webhooks da Asaas e repassa a confirmação pro webhook_url do
- * contratante. Três vocabulários de evento diferentes chegam no MESMO
+ * contratante. Dois vocabulários de evento diferentes chegam no MESMO
  * endpoint — precisam de tratamento separado:
  *
  *   1. PAYMENT_* — Pix e Boleto cobrados direto, E TAMBÉM cada ciclo
@@ -15,7 +15,11 @@
  *      ver `checkoutController.js`). Identifica pelo `checkout.id`
  *      (nosso `asaas_checkout_id`) — o `charge_id` de verdade só existe
  *      DEPOIS que `CHECKOUT_PAID` chega.
- *   3. INVOICE_* — nota fiscal (emissão e cancelamento).
+ *
+ * Nota fiscal e e-mail de confirmação NÃO são mais responsabilidade
+ * daqui — cada contratante recebe todo evento de mudança de status
+ * (confirmado/estornado/vencido) no próprio `webhook_url` e decide o
+ * que fazer do lado dele (ver `montarPayloadConfirmacaoPedido`).
  *
  * ⚠️ NUNCA TESTADO AO VIVO nesta v2. O formato do payload de PAYMENT_*
  * já foi confirmado numa versão anterior deste projeto. O formato
@@ -29,12 +33,11 @@
  * oficial da Asaas, mas SEM confirmação em sandbox ainda (esta v2
  * nunca recebeu um webhook de verdade): PAYMENT_REFUND_IN_PROGRESS,
  * PAYMENT_REFUND_DENIED, PAYMENT_PARTIALLY_REFUNDED, PAYMENT_OVERDUE,
- * INVOICE_PROCESSING_CANCELLATION, INVOICE_CANCELED,
- * INVOICE_CANCELLATION_DENIED, e o campo `payment.subscription`. Se
- * algum vier com nome diferente, o pior caso é o evento cair no "não
- * mapeado" e ser ignorado silenciosamente — nada quebra, só não
- * atualiza o status. Conferir contra o console.log assim que o
- * primeiro evento de cada tipo chegar de verdade.
+ * e o campo `payment.subscription`. Se algum vier com nome diferente,
+ * o pior caso é o evento cair no "não mapeado" e ser ignorado
+ * silenciosamente — nada quebra, só não atualiza o status. Conferir
+ * contra o console.log assim que o primeiro evento de cada tipo
+ * chegar de verdade.
  */
 
 import {
@@ -45,15 +48,9 @@ import {
   atualizarStatusPorCheckoutId,
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
-  registrarCicloAssinatura,
-  atualizarStatusNotaFiscal,
-  buscarCobrancaParaNotaFiscal,
-  atualizarNotaFiscal
+  registrarCicloAssinatura
 } from '../services/cobrancaService.js';
-import { atualizarDriveFolderId } from '../services/pedidoService.js';
-import { criarPastaContratante, baixarPdf, uploadPdfNotaFiscal } from '../services/driveService.js';
 import { upsertAssinatura } from '../services/assinaturaService.js';
-import { enviarEmailConfirmacao } from '../services/emailService.js';
 import { compararSeguro } from '../utils/validadores.js';
 
 /**
@@ -89,11 +86,6 @@ const EVENTOS_PAYMENT_TRATADOS = [
   ...EVENTOS_PAYMENT_ESTORNO_NEGADO,
   ...EVENTOS_PAYMENT_VENCIDO
 ];
-const EVENTOS_INVOICE_CANCELAMENTO = [
-  'INVOICE_PROCESSING_CANCELLATION',
-  'INVOICE_CANCELED',
-  'INVOICE_CANCELLATION_DENIED'
-];
 
 export async function receberWebhookAsaas(requisicao, resposta) {
   console.log('[webhook/asaas] payload recebido:', JSON.stringify(requisicao.body, null, 2));
@@ -106,13 +98,10 @@ export async function receberWebhookAsaas(requisicao, resposta) {
       await processarEventoCheckout(corpo);
     } else if (EVENTOS_PAYMENT_TRATADOS.includes(evento)) {
       await processarEventoPayment(corpo);
-    } else if (evento === 'INVOICE_AUTHORIZED') {
-      await processarInvoiceAutorizada(corpo);
-    } else if (EVENTOS_INVOICE_CANCELAMENTO.includes(evento)) {
-      await processarInvoiceCancelamento(corpo, evento);
     }
-    // outros eventos (ex.: PAYMENT_CREATED, CHECKOUT_CREATED) chegam
-    // aqui mas não fazem nada — não são relevantes pro nosso fluxo.
+    // outros eventos (ex.: PAYMENT_CREATED, CHECKOUT_CREATED, INVOICE_*)
+    // chegam aqui mas não fazem nada — nota fiscal é responsabilidade
+    // de cada contratante, não do San Checkout.
   } catch (erro) {
     console.error('[webhook/asaas] erro ao processar:', erro.message);
   }
@@ -175,7 +164,6 @@ async function processarEventoPayment(corpo) {
   await atualizarStatusCobranca(chargeId, novoStatus);
 
   if (cobranca.metodo_pagamento === 'assinatura') {
-    if (novoStatus === 'confirmado') await tentarEnviarEmailConfirmacao(cobranca, chargeId);
     return notificarConformeMetodo(cobranca, {
       confirmado: novoStatus === 'confirmado',
       chargeId,
@@ -183,15 +171,13 @@ async function processarEventoPayment(corpo) {
     });
   }
 
-  // Pix/Boleto avulso — só notifica e manda e-mail na confirmação
-  // (estorno/vencimento não têm status documentado no INTEGRACAO.md
-  // seção 4 pro pedido avulso, então não inventamos um aqui).
-  if (novoStatus === 'confirmado') {
-    await tentarEnviarEmailConfirmacao(cobranca, chargeId);
-    const webhookUrlDoContratante = cobranca.contratantes?.webhook_url;
-    if (webhookUrlDoContratante) {
-      await notificarContratante(webhookUrlDoContratante, montarPayloadConfirmacaoPedido(cobranca, chargeId, 'confirmado'));
-    }
+  // Pix/Boleto avulso — repassa TODA mudança de status (confirmado,
+  // estornado, vencido...) pro contratante, que decide do lado dele o
+  // que fazer (nota fiscal, e-mail ao cliente, lembrete de vencimento
+  // etc.) — não é mais responsabilidade do San Checkout.
+  const webhookUrlDoContratante = cobranca.contratantes?.webhook_url;
+  if (webhookUrlDoContratante) {
+    await notificarContratante(webhookUrlDoContratante, montarPayloadConfirmacaoPedido(cobranca, chargeId, novoStatus));
   }
 }
 
@@ -273,8 +259,6 @@ async function processarEventoCheckout(corpo) {
       });
     }
 
-    if (chargeIdFinal) await tentarEnviarEmailConfirmacao(cobranca, chargeIdFinal);
-
     return notificarConformeMetodo(cobranca, {
       confirmado: true,
       chargeId: chargeIdFinal
@@ -343,80 +327,6 @@ function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
     metodoPagamento: cobranca.metodo_pagamento,
     valorCobrado: cobranca.valor_cobrado
   };
-}
-
-/** Dispara o e-mail de confirmação (VISAO_COMPLETA.md seção 9, item
- *  2) — nunca lança erro, `emailService` já protege contra SMTP não
- *  configurado ou falha de envio. */
-async function tentarEnviarEmailConfirmacao(cobranca, chargeId) {
-  if (!cobranca.email) return;
-  await enviarEmailConfirmacao({
-    para: cobranca.email,
-    nomeContratante: cobranca.contratantes?.nome,
-    metodoPagamento: cobranca.metodo_pagamento,
-    valor: cobranca.valor_cobrado,
-    referencia: cobranca.pedido_id ?? cobranca.plano_id ?? chargeId
-  });
-}
-
-/* ------------------------------------------------------------------
-   NOTA FISCAL — emissão (INVOICE_AUTHORIZED, arquivamento no Drive) e
-   cancelamento (INVOICE_PROCESSING_CANCELLATION/CANCELED/
-   CANCELLATION_DENIED, disparado pelo /estornar). VISAO_COMPLETA.md
-   seção 8. Nunca envia nada por e-mail ao contratante — o
-   arquivamento é só interno, uma pasta por projeto.
------------------------------------------------------------------- */
-async function processarInvoiceAutorizada(corpo) {
-  // ⚠️ NUNCA CONFIRMADO: assumindo que o payload tem um objeto
-  // `invoice` com `id`, `pdfUrl` e `payment` (o charge_id da cobrança
-  // que gerou a nota). Se vier em formato diferente, corrigir aqui
-  // depois de ver o payload real no console.log de cima.
-  const invoice = corpo?.invoice ?? corpo;
-  const chargeId = invoice?.payment ?? null;
-  const invoiceId = invoice?.id ?? null;
-  const pdfUrl = invoice?.pdfUrl ?? null;
-
-  if (!chargeId || !pdfUrl) {
-    console.error('[webhook/invoice] payload sem payment/pdfUrl no formato esperado — confira o payload real acima.');
-    return;
-  }
-
-  const cobranca = await buscarCobrancaParaNotaFiscal(chargeId);
-  if (!cobranca) return;
-
-  const contratante = cobranca.contratantes;
-  if (!contratante) return;
-
-  let pastaId = contratante.drive_folder_id;
-  if (!pastaId) {
-    pastaId = await criarPastaContratante(contratante.nome);
-    await atualizarDriveFolderId(contratante.id, pastaId);
-  }
-
-  const bufferPdf = await baixarPdf(pdfUrl);
-  const driveFileId = await uploadPdfNotaFiscal(pastaId, `NFSe-${invoiceId}.pdf`, bufferPdf);
-
-  await atualizarNotaFiscal(chargeId, { notaFiscalId: invoiceId, driveFileId });
-}
-
-/** Confirma (ou desfaz) o cancelamento de nota fiscal iniciado pelo
- *  `/estornar` — a prefeitura pode demorar (fica
- *  'cancelamento_em_processamento') ou recusar de vez
- *  ('cancelamento_negado'). ⚠️ Formato do payload não confirmado —
- *  mesma suposição de `processarInvoiceAutorizada` (objeto `invoice`
- *  com `payment` = charge_id). */
-async function processarInvoiceCancelamento(corpo, evento) {
-  const invoice = corpo?.invoice ?? corpo;
-  const chargeId = invoice?.payment ?? null;
-  if (!chargeId) return;
-
-  const mapa = {
-    INVOICE_PROCESSING_CANCELLATION: 'cancelamento_em_processamento',
-    INVOICE_CANCELED: 'cancelada',
-    INVOICE_CANCELLATION_DENIED: 'cancelamento_negado'
-  };
-
-  await atualizarStatusNotaFiscal(chargeId, mapa[evento] ?? 'desconhecido');
 }
 
 async function notificarContratante(url, dados) {

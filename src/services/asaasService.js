@@ -216,17 +216,3 @@ export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
 export async function cancelarAssinatura(subscriptionId) {
   return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'DELETE' });
 }
-
-/**
- * Tenta cancelar a nota fiscal vinculada a uma cobrança —
- * `POST /v3/invoices/{id}/cancel`. Pode falhar por regra da
- * prefeitura (nem toda cidade permite cancelamento automático) — quem
- * chama isso (`refundController.js`) NUNCA deve deixar essa falha
- * travar o estorno do dinheiro em si.
- */
-export async function cancelarNotaFiscal(notaFiscalId) {
-  return chamarAsaas(`/v3/invoices/${notaFiscalId}/cancel`, {
-    method: 'POST',
-    body: JSON.stringify({})
-  });
-}

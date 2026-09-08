@@ -180,8 +180,22 @@ método. Se você mandou `isentarTaxa: true` no pedido, `taxaIsenta` vem
 que o SEU projeto cobra (`taxaDoProjeto`, se houver) — a isenção é só
 da taxa do checkout, não da taxa própria do seu projeto.
 
-`status` pode vir `"confirmado"` ou `"estornado"` — é o único evento
-que este webhook manda hoje (ver seção 7 sobre estorno).
+`status` reflete toda mudança que a cobrança sofrer, não só a
+confirmação:
+
+| `status` | Quando chega |
+|---|---|
+| `confirmado` | Pagamento caiu — é o gatilho pra você emitir a nota fiscal e avisar o pagador (ver nota abaixo) |
+| `estornado` | Estorno concluído (Pix/Cartão são síncronos, chegam direto aqui) |
+| `estorno_solicitado` | Só pra Boleto — estorno iniciado mas ainda depende do pagador preencher um link bancário (ver seção 7) |
+| `estorno_negado` | A Asaas recusou o estorno |
+| `vencido` | Cobrança passou do vencimento sem pagar (só relevante pra Boleto) |
+
+> **Nota fiscal e e-mail de confirmação são responsabilidade do SEU
+> projeto.** O San Checkout só processa o pagamento e te avisa da
+> mudança de status — ele não emite nota fiscal nem manda e-mail ao
+> pagador. Use o `confirmado` acima como gatilho pra fazer isso do seu
+> lado.
 
 ### 4.3 Política de novas tentativas
 
@@ -275,9 +289,13 @@ pedido:
   "tipo": "assinatura",
   "planoId": "mensal-basico",
   "cpf": "...",
-  "evento": "criada" | "cobranca_confirmada" | "cobranca_falhou" | "cancelada"
+  "evento": "criada" | "cobranca_confirmada" | "cobranca_falhou" | "cobranca_estornada" | "cancelada"
 }
 ```
+
+Nota fiscal e e-mail de confirmação de cada ciclo cobrado também são
+responsabilidade do SEU projeto, disparados por `cobranca_confirmada`
+— mesma regra da seção 4.2.
 
 **Cancelamento:** só o projeto aciona (nunca o pagador direto no
 checkout) — `POST {base_do_checkout}/cancelar-assinatura`, mesma
@@ -360,3 +378,4 @@ do San Checkout — combine o valor vigente com quem administra.
 - [ ] Combinar manualmente: `contratante_id`, URL da sua API, sua chave, `webhook_url`, `wallet_id` (se for usar split)
 - [ ] Se quiser poupar o pagador de redigitar, mande `pagador.telefone` também (novo campo — Cartão de Crédito passou a exigir telefone)
 - [ ] Nunca esperar que preço/desconto/nome de produto cheguem pela URL do link — tudo vem da sua própria API
+- [ ] Emitir sua própria nota fiscal e mandar seu próprio e-mail de confirmação ao pagador quando o `status`/`evento` de confirmação chegar — o San Checkout não faz mais isso

@@ -115,12 +115,7 @@ app.get('/api/saude', async (_req, resposta) => {
     status: 'ok',
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
     supabaseConfigurado: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
-    supabaseRespondendo: supabaseAtivo,
-    googleDriveConfigurado: Boolean(
-      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
-      && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
-      && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
-    )
+    supabaseRespondendo: supabaseAtivo
   });
 });
 

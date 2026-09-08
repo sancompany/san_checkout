@@ -8,26 +8,22 @@
  *
  * Sempre tudo ou nada — sem estorno parcial nesta versão.
  *
- * Duas peças acrescentadas nesta rodada (VISAO_COMPLETA.md seção 7):
- *   1. Boleto é ASSÍNCRONO — o status local vira 'estorno_solicitado'
- *      em vez de 'estornado' até o webhook confirmar de verdade
- *      (PAYMENT_REFUND_IN_PROGRESS → depois PAYMENT_REFUNDED).
- *   2. Se a cobrança tem nota fiscal emitida (nota_fiscal_id
- *      preenchido), tenta cancelar ela também — SEM NUNCA bloquear o
- *      estorno do dinheiro por causa disso (pode falhar por regra da
- *      prefeitura; só loga e segue).
+ * Peça acrescentada nesta rodada (VISAO_COMPLETA.md seção 7): Boleto é
+ * ASSÍNCRONO — o status local vira 'estorno_solicitado' em vez de
+ * 'estornado' até o webhook confirmar de verdade
+ * (PAYMENT_REFUND_IN_PROGRESS → depois PAYMENT_REFUNDED).
  *
- * ⚠️ NUNCA TESTADO AO VIVO nesta v2 — nem o estorno simples nem as
- * duas peças novas.
+ * Cancelamento de nota fiscal NÃO é mais feito aqui — nota fiscal é
+ * responsabilidade de cada contratante, que já recebe o evento de
+ * estorno no próprio webhook_url (ver webhookController.js).
+ *
+ * ⚠️ NUNCA TESTADO AO VIVO nesta v2 — nem o estorno simples nem a
+ * peça nova.
  */
 
 import { buscarContratantePorChave } from '../services/pedidoService.js';
-import {
-  buscarCobrancaPorPedido,
-  atualizarStatusCobranca,
-  atualizarStatusNotaFiscal
-} from '../services/cobrancaService.js';
-import { estornarCobranca, cancelarNotaFiscal } from '../services/asaasService.js';
+import { buscarCobrancaPorPedido, atualizarStatusCobranca } from '../services/cobrancaService.js';
+import { estornarCobranca } from '../services/asaasService.js';
 import { responderErro } from '../utils/erros.js';
 
 export async function estornar(requisicao, resposta) {
@@ -55,25 +51,9 @@ export async function estornar(requisicao, resposta) {
     const statusLocal = assincrono ? 'estorno_solicitado' : 'estornado';
     await atualizarStatusCobranca(cobranca.charge_id, statusLocal);
 
-    // Cancelamento de nota fiscal vinculada — nunca bloqueia o estorno
-    // do dinheiro. Se a prefeitura não permitir cancelamento
-    // automático, quem decide o que fazer com a nota é o time
-    // financeiro, não este endpoint — só logamos e seguimos.
-    let notaFiscalCancelamentoSolicitado = false;
-    if (cobranca.nota_fiscal_id) {
-      try {
-        await cancelarNotaFiscal(cobranca.nota_fiscal_id);
-        await atualizarStatusNotaFiscal(cobranca.charge_id, 'cancelamento_solicitado');
-        notaFiscalCancelamentoSolicitado = true;
-      } catch (erroNota) {
-        console.error('[refundController.estornar] falha ao cancelar nota fiscal vinculada:', erroNota.message);
-      }
-    }
-
     resposta.json({
       chargeId: cobranca.charge_id,
-      status: statusLocal,
-      notaFiscalCancelamentoSolicitado
+      status: statusLocal
     });
   } catch (erro) {
     responderErro(resposta, erro, 'refundController.estornar');

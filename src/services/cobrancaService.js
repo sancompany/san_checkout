@@ -191,18 +191,6 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
   return data;
 }
 
-/** Grava o resultado de um pedido de cancelamento de nota fiscal —
- *  chamado pelo /estornar (tentativa automática) e pelo webhook
- *  (confirmação/negação vinda da prefeitura). */
-export async function atualizarStatusNotaFiscal(chargeId, notaFiscalStatus) {
-  const { error } = await supabase
-    .from('cobrancas')
-    .update({ nota_fiscal_status: notaFiscalStatus, atualizado_em: new Date().toISOString() })
-    .eq('charge_id', chargeId);
-
-  if (error) console.error('[cobrancaService.atualizarStatusNotaFiscal]', error.message);
-}
-
 /** Busca a cobrança + contratante dono dela (join), usado pelo webhook
  *  e pelo estorno. */
 export async function buscarCobranca(chargeId) {
@@ -230,36 +218,6 @@ export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
 
   if (error) throw error;
   return data;
-}
-
-/** Busca a cobrança + dados do contratante necessários pro
- *  arquivamento de nota fiscal (nome, drive_folder_id já existente ou
- *  não). Usado só pelo evento INVOICE_AUTHORIZED. */
-export async function buscarCobrancaParaNotaFiscal(chargeId) {
-  const { data, error } = await supabase
-    .from('cobrancas')
-    .select('*, contratantes(id, nome, drive_folder_id)')
-    .eq('charge_id', chargeId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
-}
-
-/** Grava o resultado do arquivamento — id da nota na Asaas + id do
- *  arquivo salvo no Drive. */
-export async function atualizarNotaFiscal(chargeId, { notaFiscalId, driveFileId }) {
-  const { error } = await supabase
-    .from('cobrancas')
-    .update({
-      nota_fiscal_id: notaFiscalId,
-      nota_fiscal_drive_file_id: driveFileId,
-      nota_fiscal_status: 'autorizada',
-      atualizado_em: new Date().toISOString()
-    })
-    .eq('charge_id', chargeId);
-
-  if (error) console.error('[cobrancaService.atualizarNotaFiscal]', error.message);
 }
 
 export async function atualizarStatusCobranca(chargeId, status) {
