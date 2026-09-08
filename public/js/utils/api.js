@@ -1,6 +1,6 @@
 const URL_BASE = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
   ? 'http://localhost:3001'
-  : '';
+  : 'https://san-checkout.onrender.com';
 
 export async function chamarApi(caminho, opcoes = {}) {
   const { headers, ...resto } = opcoes;
