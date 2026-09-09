@@ -49,6 +49,12 @@ app.use((requisicao, resposta, proximo) => {
 });
 
 app.use(helmet());
+// Helmet não seta Permissions-Policy por padrão — API nunca usa essas
+// APIs de navegador, então nega tudo.
+app.use((_req, resposta, proximo) => {
+  resposta.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  proximo();
+});
 app.use(cors({ origin: process.env.ORIGEM_FRONTEND || 'http://127.0.0.1:5501' }));
 app.use(express.json());
 

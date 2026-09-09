@@ -26,16 +26,6 @@
     Pagamento processado. Você já pode fechar esta janela — o resultado
     aparece automaticamente na tela do checkout.
   </p>
-  <script>
-    // A Asaas pode (ou não) redirecionar a pop-up pra cá conforme o
-    // resultado (callback.successUrl/cancelUrl/expiredUrl é campo
-    // obrigatório no Asaas Checkout, mas quem manda de verdade é
-    // sempre o webhook + polling no backend, nunca este redirect).
-    // Só tentamos fechar sozinho quando a janela foi de fato aberta
-    // via window.open pelo nosso próprio checkout.
-    if (window.opener) {
-      setTimeout(() => window.close(), 1500);
-    }
-  </script>
+  <script src="js/popup-fechar.js"></script>
 </body>
 </html>
