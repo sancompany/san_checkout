@@ -201,7 +201,7 @@ async function registrarNovoCicloAssinatura(payment) {
     asaasSubscriptionId: subscriptionId,
     contratanteId: modelo.contratante_id,
     planoId: modelo.plano_id,
-    cpf: modelo.cpf,
+    documento: modelo.documento,
     email: modelo.email,
     telefone: modelo.telefone,
     endereco: modelo.endereco,
@@ -252,7 +252,7 @@ async function processarEventoCheckout(corpo) {
         id: payment.subscription,
         contratanteId: cobranca.contratante_id,
         planoId: cobranca.plano_id,
-        cpf: cobranca.cpf,
+        documento: cobranca.documento,
         valor: cobranca.valor_cobrado,
         ciclo: payment.cycle ?? null, // ⚠️ não confirmado se a Asaas manda isso aqui
         proximaCobranca: payment.nextDueDate ?? null // ⚠️ idem
@@ -296,7 +296,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
     return notificarContratante(webhookUrlDoContratante, {
       tipo: 'assinatura',
       planoId: cobranca.plano_id,
-      cpf: cobranca.cpf,
+      documento: cobranca.documento,
       evento
     });
   }
@@ -329,14 +329,32 @@ function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
   };
 }
 
-async function notificarContratante(url, dados) {
+// ponytail: retry em memória (setTimeout), sem fila persistente — se o
+// processo reiniciar entre tentativas, a notificação pendente se perde.
+// É o mesmo teto que o INTEGRACAO.md já documenta ("3 tentativas,
+// espaçadas em alguns minutos"); subir pra fila persistente (ex.: tabela
+// no Supabase + worker) só quando isso passar a ser um problema real.
+const ATRASOS_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000];
+
+async function tentarNotificar(url, dados) {
+  const resposta = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dados)
+  });
+  if (!resposta.ok) throw new Error(`contratante respondeu ${resposta.status}`);
+}
+
+async function notificarContratante(url, dados, tentativa = 0) {
   try {
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dados)
-    });
+    await tentarNotificar(url, dados);
   } catch (erro) {
-    console.error(`[webhook/asaas] falha ao notificar o contratante em ${url}:`, erro.message);
+    const atraso = ATRASOS_RETRY_MS[tentativa];
+    if (atraso === undefined) {
+      console.error(`[webhook/asaas] desistindo de notificar ${url} após ${tentativa + 1} tentativas:`, erro.message);
+      return;
+    }
+    console.error(`[webhook/asaas] falha ao notificar ${url} (tentativa ${tentativa + 1}), nova tentativa em ${atraso / 1000}s:`, erro.message);
+    setTimeout(() => notificarContratante(url, dados, tentativa + 1), atraso);
   }
 }

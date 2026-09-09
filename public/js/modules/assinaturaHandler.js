@@ -9,7 +9,10 @@ import { get } from '../utils/api.js';
 let contextoResolvido = null;
 
 const ROTULOS_CICLO = {
-  MONTHLY: 'mensal'
+  MONTHLY: 'mensal',
+  QUARTERLY: 'trimestral',
+  SEMIANNUALLY: 'semestral',
+  YEARLY: 'anual'
 };
 
 export function lerParametrosAssinatura() {

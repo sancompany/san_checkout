@@ -73,7 +73,7 @@
           <legend class="section-label">Dados do Pagador</legend>
 
           <div class="form-group">
-            <label for="customer-name">Nome Completo</label>
+            <label for="customer-name">Nome ou Razão Social</label>
             <input type="text" id="customer-name" name="name" placeholder="Ex: João da Silva" autocomplete="name" required />
             <span class="field-error" id="error-customer-name"></span>
           </div>
@@ -85,8 +85,8 @@
               <span class="field-error" id="error-customer-email"></span>
             </div>
             <div class="form-group">
-              <label for="customer-cpf">CPF</label>
-              <input type="text" id="customer-cpf" name="cpf" placeholder="000.000.000-00" maxlength="14" inputmode="numeric" required />
+              <label for="customer-cpf">CPF/CNPJ</label>
+              <input type="text" id="customer-cpf" name="documento" placeholder="000.000.000-00" maxlength="18" inputmode="numeric" required />
               <span class="field-error" id="error-customer-cpf"></span>
             </div>
           </div>

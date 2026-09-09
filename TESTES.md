@@ -58,7 +58,7 @@ vai ser usado como `<API_KEY>` nos comandos abaixo.
 ## 3. Pix (o que já está de pé)
 
 ```powershell
-curl.exe -X POST http://localhost:3001/api/checkout/pix/teste1/pedido-1 -H "Content-Type: application/json" -d '{"nome":"Fulano","email":"fulano@teste.com","cpf":"12345678900"}'
+curl.exe -X POST http://localhost:3001/api/checkout/pix/teste1/pedido-1 -H "Content-Type: application/json" -d '{"nome":"Fulano","email":"fulano@teste.com","documento":"12345678900"}'
 ```
 
 Esperado: JSON com `chargeId`, `qrCodeBase64`, `copiaECola`. **Copie o
@@ -84,7 +84,7 @@ no passo 3 se quiser ver isso de verdade).
 
 Criar o boleto:
 ```powershell
-curl.exe -X POST http://localhost:3001/api/checkout/boleto/teste1/pedido-2 -H "Content-Type: application/json" -d '{"nome":"Fulano","email":"fulano@teste.com","cpf":"12345678900"}'
+curl.exe -X POST http://localhost:3001/api/checkout/boleto/teste1/pedido-2 -H "Content-Type: application/json" -d '{"nome":"Fulano","email":"fulano@teste.com","documento":"12345678900"}'
 ```
 Copie o `chargeId` retornado.
 
@@ -114,7 +114,7 @@ Esperado: o plano fixo que vem do mock (Janela A mostra
 `[mock] plano solicitado`).
 
 ```powershell
-curl.exe -X POST http://localhost:3001/api/checkout/cancelar-assinatura -H "Content-Type: application/json" -H "X-Checkout-Key: <API_KEY>" -d '{"planoId":"plano-1","cpf":"12345678900"}'
+curl.exe -X POST http://localhost:3001/api/checkout/cancelar-assinatura -H "Content-Type: application/json" -H "X-Checkout-Key: <API_KEY>" -d '{"planoId":"plano-1","documento":"12345678900"}'
 ```
 Esperado: erro 404 "Nenhuma assinatura ativa encontrada" — é o
 esperado (não existe assinatura real ainda), só confirma que a rota e

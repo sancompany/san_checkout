@@ -37,7 +37,7 @@ create table if not exists cobrancas (
   contratante_id text references contratantes(id) on delete set null,
   pedido_id text,                         -- nulo quando for cobrança de assinatura (usa plano_id)
   plano_id text,                          -- nulo quando for pedido avulso
-  cpf text,
+  documento text,                         -- CPF (pessoa física) ou CNPJ (pessoa jurídica) do pagador
   email text,                             -- coletado em todos os métodos (front sempre pede) —
                                            -- usado só pro e-mail de confirmação (seção 9).
   asaas_subscription_id text,             -- id da assinatura na Asaas — só em cobranças
@@ -98,7 +98,7 @@ create table if not exists assinaturas (
   id text primary key,                    -- id da assinatura na Asaas (ex.: 'sub_xxx')
   contratante_id text references contratantes(id) on delete set null,
   plano_id text,                          -- pra notificar o contratante com o planoId certo
-  cpf text not null,
+  documento text not null,                -- CPF ou CNPJ do assinante
   valor numeric(10,2) not null,
   ciclo text not null,
   status text not null default 'ativa',   -- ativa | cancelada
@@ -108,7 +108,7 @@ create table if not exists assinaturas (
 alter table assinaturas
   add column if not exists plano_id text;
 
-create index if not exists idx_assinaturas_contratante_plano_cpf on assinaturas(contratante_id, plano_id, cpf);
+create index if not exists idx_assinaturas_contratante_plano_documento on assinaturas(contratante_id, plano_id, documento);
 
 -- ---------------------------------------------------------------------
 -- MIGRAÇÃO (rodar manualmente no SQL Editor do Supabase se a tabela
@@ -125,6 +125,14 @@ create index if not exists idx_assinaturas_contratante_plano_cpf on assinaturas(
 --   add column if not exists cidade text,
 --   add column if not exists uf text,
 --   add column if not exists cidade_ibge integer;
+--
+-- MIGRAÇÃO v2 (CPF/CNPJ) — rodar manualmente se as tabelas `cobrancas`
+-- e `assinaturas` já existem em produção/sandbox (a coluna era `cpf`,
+-- só aceitava CPF; agora `documento` aceita CPF ou CNPJ):
+--
+-- alter table cobrancas rename column cpf to documento;
+-- alter table assinaturas rename column cpf to documento;
+-- alter index idx_assinaturas_contratante_plano_cpf rename to idx_assinaturas_contratante_plano_documento;
 -- ---------------------------------------------------------------------
 
 -- RLS — o backend só usa a SUPABASE_SERVICE_KEY (service_role), que

@@ -36,7 +36,7 @@ import { calcularTaxa, metodoCartaoPorParcelas } from '../services/taxaService.j
 import { criarSessaoAsaasCheckout } from '../services/asaasService.js';
 import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
-import { cpfValido, emailValido, valorValido, telefoneValido, cepValido } from '../utils/validadores.js';
+import { documentoValido, emailValido, valorValido, telefoneValido, cepValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function parcelasValidas(valor) {
@@ -47,14 +47,14 @@ function parcelasValidas(valor) {
 export async function criarCheckoutCartao(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
   const {
-    nome, email, cpf, telefone, parcelas,
+    nome, email, documento, telefone, parcelas,
     endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge
   } = requisicao.body ?? {};
 
-  if (!nome || !email || !cpf || !telefone) {
-    return resposta.status(400).json({ erro: 'Nome, e-mail, CPF e telefone são obrigatórios.' });
+  if (!nome || !email || !documento || !telefone) {
+    return resposta.status(400).json({ erro: 'Nome, e-mail, CPF/CNPJ e telefone são obrigatórios.' });
   }
-  if (!cpfValido(cpf)) return resposta.status(400).json({ erro: 'CPF inválido.' });
+  if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
   if (!parcelasValidas(parcelas)) return resposta.status(400).json({ erro: 'Número de parcelas inválido (1 a 12).' });
@@ -99,7 +99,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       customerData: {
         name: nome,
         email,
-        cpfCnpj: cpf,
+        cpfCnpj: documento,
         phone: telefone,
         address: endereco,
         addressNumber: enderecoNumero,
@@ -115,7 +115,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       asaasCheckoutId,
       contratanteId,
       pedidoId,
-      cpf,
+      documento,
       email,
       telefone,
       endereco,
@@ -172,14 +172,14 @@ function formatarDataHoraAsaas(data) {
 export async function criarCheckoutAssinatura(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
   const {
-    nome, email, cpf, telefone,
+    nome, email, documento, telefone,
     endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge
   } = requisicao.body ?? {};
 
-  if (!nome || !email || !cpf || !telefone) {
-    return resposta.status(400).json({ erro: 'Nome, e-mail, CPF e telefone são obrigatórios.' });
+  if (!nome || !email || !documento || !telefone) {
+    return resposta.status(400).json({ erro: 'Nome, e-mail, CPF/CNPJ e telefone são obrigatórios.' });
   }
-  if (!cpfValido(cpf)) return resposta.status(400).json({ erro: 'CPF inválido.' });
+  if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
@@ -220,7 +220,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       customerData: {
         name: nome,
         email,
-        cpfCnpj: cpf,
+        cpfCnpj: documento,
         phone: telefone,
         address: endereco,
         addressNumber: enderecoNumero,
@@ -236,7 +236,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       asaasCheckoutId,
       contratanteId,
       planoId,
-      cpf,
+      documento,
       email,
       telefone,
       endereco,

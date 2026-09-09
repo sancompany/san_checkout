@@ -33,6 +33,38 @@ export function cpfValido(valor) {
   return true;
 }
 
+export function cnpjValido(valor) {
+  const cnpj = String(valor ?? '').replace(/\D/g, '');
+  if (cnpj.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(cnpj)) return false;
+
+  const calcularDigito = (base, pesos) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i++) soma += Number(base[i]) * pesos[i];
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+
+  const pesos1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const pesos2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+
+  if (calcularDigito(cnpj.slice(0, 12), pesos1) !== Number(cnpj[12])) return false;
+  if (calcularDigito(cnpj.slice(0, 13), pesos2) !== Number(cnpj[13])) return false;
+  return true;
+}
+
+/** CPF (pessoa física) ou CNPJ (pessoa jurídica) no mesmo campo — a
+ *  Asaas aceita os dois por baixo do mesmo `cpfCnpj`. Detecção
+ *  automática só pelo tamanho (11 = CPF, 14 = CNPJ); qualquer outro
+ *  tamanho é inválido. Usado em todo lugar que antes só aceitava CPF
+ *  (Pix, Boleto, Cartão, Assinatura, cancelamento). */
+export function documentoValido(valor) {
+  const digitos = String(valor ?? '').replace(/\D/g, '');
+  if (digitos.length === 11) return cpfValido(digitos);
+  if (digitos.length === 14) return cnpjValido(digitos);
+  return false;
+}
+
 export function emailValido(valor) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor ?? '').trim());
 }

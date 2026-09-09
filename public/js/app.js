@@ -4,8 +4,8 @@ import { gerarPix, copiarCodigoPix, pararPolling as pararPollingPix } from './mo
 import { continuarComCartao, pararPollingCartao } from './modules/cartaoHandler.js';
 import { gerarBoleto, copiarCodigoBoleto, pararPollingBoleto } from './modules/boletoHandler.js';
 import { assinarAgora } from './modules/assinaturaCheckoutHandler.js';
-import { mascararCpf, mascararTelefone, mascararCep } from './utils/masks.js';
-import { validarCpf, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
+import { mascararDocumento, mascararTelefone, mascararCep } from './utils/masks.js';
+import { validarDocumento, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
 import { buscarEnderecoPorCep } from './utils/cep.js';
 
 function mostrarToast(mensagem, tipo = 'info') {
@@ -42,7 +42,7 @@ function ligarAtalhoAdmin() {
 function preencherCamposPagador(pagador) {
   if (pagador?.nome) document.getElementById('customer-name').value = pagador.nome;
   if (pagador?.email) document.getElementById('customer-email').value = pagador.email;
-  if (pagador?.cpf) document.getElementById('customer-cpf').value = mascararCpf(pagador.cpf);
+  if (pagador?.documento) document.getElementById('customer-cpf').value = mascararDocumento(pagador.documento);
   if (pagador?.telefone) document.getElementById('customer-phone').value = mascararTelefone(pagador.telefone);
 }
 
@@ -50,7 +50,7 @@ function coletarDadosPagador() {
   return {
     nome: document.getElementById('customer-name').value.trim(),
     email: document.getElementById('customer-email').value.trim(),
-    cpf: document.getElementById('customer-cpf').value.replace(/\D/g, ''),
+    documento: document.getElementById('customer-cpf').value.replace(/\D/g, ''),
     telefone: document.getElementById('customer-phone').value.replace(/\D/g, '')
   };
 }
@@ -94,7 +94,7 @@ function validarDadosPagador() {
 
   if (!marcarErro('customer-name', validarObrigatorio(dados.nome) ? null : 'Informe seu nome completo.')) valido = false;
   if (!marcarErro('customer-email', validarEmail(dados.email) ? null : 'Informe um e-mail válido.')) valido = false;
-  if (!marcarErro('customer-cpf', validarCpf(dados.cpf) ? null : 'CPF inválido.')) valido = false;
+  if (!marcarErro('customer-cpf', validarDocumento(dados.documento) ? null : 'CPF/CNPJ inválido.')) valido = false;
   if (!marcarErro('customer-phone', validarTelefone(dados.telefone) ? null : 'Informe um telefone válido, com DDD.')) valido = false;
 
   return valido;
@@ -151,7 +151,7 @@ function termosAceitos() {
 
 function ligarMascaras(form) {
   form.addEventListener('input', (evento) => {
-    const mascara = { 'customer-cpf': mascararCpf, 'customer-phone': mascararTelefone, 'address-cep': mascararCep }[evento.target.id];
+    const mascara = { 'customer-cpf': mascararDocumento, 'customer-phone': mascararTelefone, 'address-cep': mascararCep }[evento.target.id];
     if (!mascara) return;
     const cursorNoFim = evento.target.selectionEnd === evento.target.value.length;
     evento.target.value = mascara(evento.target.value);

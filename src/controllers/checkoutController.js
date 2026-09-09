@@ -16,21 +16,21 @@ import { resolverPedido, buscarContratante } from '../services/pedidoService.js'
 import { calcularTaxa } from '../services/taxaService.js';
 import { buscarOuCriarCliente, criarCobrancaPix, criarCobrancaBoleto, consultarStatus } from '../services/asaasService.js';
 import { registrarCobranca } from '../services/cobrancaService.js';
-import { cpfValido, emailValido, valorValido } from '../utils/validadores.js';
+import { documentoValido, emailValido, valorValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
-function gerarReferenciaExterna(cpf) {
-  return `${cpf}-${Date.now()}`;
+function gerarReferenciaExterna(documento) {
+  return `${documento}-${Date.now()}`;
 }
 
 export async function gerarPix(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
-  const { nome, email, cpf, telefone } = requisicao.body ?? {};
+  const { nome, email, documento, telefone } = requisicao.body ?? {};
 
-  if (!nome || !email || !cpf) {
-    return resposta.status(400).json({ erro: 'Nome, e-mail e CPF são obrigatórios.' });
+  if (!nome || !email || !documento) {
+    return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
-  if (!cpfValido(cpf)) return resposta.status(400).json({ erro: 'CPF inválido.' });
+  if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
@@ -50,7 +50,7 @@ export async function gerarPix(requisicao, resposta) {
       Boolean(pedido.isentarTaxa)
     );
 
-    const clienteId = await buscarOuCriarCliente({ nome, email, cpf });
+    const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
     const contratante = await buscarContratante(contratanteId);
     const split = contratante?.wallet_id
@@ -61,7 +61,7 @@ export async function gerarPix(requisicao, resposta) {
       clienteId,
       valor: valorCobrado,
       descricao: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
-      referenciaExterna: gerarReferenciaExterna(cpf),
+      referenciaExterna: gerarReferenciaExterna(documento),
       split
     });
 
@@ -69,7 +69,7 @@ export async function gerarPix(requisicao, resposta) {
       chargeId,
       contratanteId,
       pedidoId,
-      cpf,
+      documento,
       email,
       telefone,
       itens: pedido.itens ?? null,
@@ -110,12 +110,12 @@ export async function statusPix(requisicao, resposta) {
  */
 export async function gerarBoleto(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
-  const { nome, email, cpf, telefone } = requisicao.body ?? {};
+  const { nome, email, documento, telefone } = requisicao.body ?? {};
 
-  if (!nome || !email || !cpf) {
-    return resposta.status(400).json({ erro: 'Nome, e-mail e CPF são obrigatórios.' });
+  if (!nome || !email || !documento) {
+    return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
-  if (!cpfValido(cpf)) return resposta.status(400).json({ erro: 'CPF inválido.' });
+  if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
@@ -140,7 +140,7 @@ export async function gerarBoleto(requisicao, resposta) {
       Boolean(pedido.isentarTaxa)
     );
 
-    const clienteId = await buscarOuCriarCliente({ nome, email, cpf });
+    const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
     const contratante = await buscarContratante(contratanteId);
     const split = contratante?.wallet_id
@@ -151,7 +151,7 @@ export async function gerarBoleto(requisicao, resposta) {
       clienteId,
       valor: valorCobrado,
       descricao: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
-      referenciaExterna: gerarReferenciaExterna(cpf),
+      referenciaExterna: gerarReferenciaExterna(documento),
       split
     });
 
@@ -159,7 +159,7 @@ export async function gerarBoleto(requisicao, resposta) {
       chargeId,
       contratanteId,
       pedidoId,
-      cpf,
+      documento,
       email,
       telefone,
       itens: pedido.itens ?? null,

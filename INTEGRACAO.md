@@ -86,7 +86,7 @@ plano gratuito, é o tempo que garantimos esperar antes de desistir.
   "descricao": "Trimundi9 — Lote 1",
   "contratanteLogoUrl": "https://trimundi9.com/logo.png",
   "bannerUrl": "https://trimundi9.com/banner-lote1.png",
-  "pagador": { "nome": "...", "email": "...", "cpf": "...", "telefone": "..." },
+  "pagador": { "nome": "...", "email": "...", "documento": "...", "telefone": "..." },
   "expiraEm": "2026-10-01T23:29:59Z"
 }
 ```
@@ -109,7 +109,8 @@ plano gratuito, é o tempo que garantimos esperar antes de desistir.
 | `descricao` | string | sim | Aparece no resumo do pedido pro pagador |
 | `contratanteLogoUrl` | string (URL) | não | Logo do SEU projeto — aparece no cabeçalho ao lado da logo do San Checkout, com um ícone de "duas setas" entre elas. Sem esse campo, aparece só a logo do San Checkout |
 | `bannerUrl` | string (URL) | não | Imagem retangular (banner/anúncio) — aparece entre o cabeçalho e o resumo do pedido. Pode ser algo ligado ao pedido, ou uma promoção qualquer do seu projeto. Sem esse campo, o espaço simplesmente não existe |
-| `pagador` | object | não | Se enviado, pré-preenche nome/e-mail/CPF/telefone na tela — a pessoa ainda pode editar. Ver `pagador.telefone` abaixo — desde que o Cartão de Crédito passou a exigir telefone, vale a pena mandar esse campo pra poupar o pagador de digitar de novo |
+| `pagador` | object | não | Se enviado, pré-preenche nome/e-mail/CPF-CNPJ/telefone na tela — a pessoa ainda pode editar. Ver `pagador.telefone` abaixo — desde que o Cartão de Crédito passou a exigir telefone, vale a pena mandar esse campo pra poupar o pagador de digitar de novo |
+| `pagador.documento` | string | não | CPF (11 dígitos) ou CNPJ (14 dígitos) — o checkout detecta automaticamente pelo tamanho, aceita os dois no mesmo campo |
 | `pagador.telefone` | string | não | Adicionado nesta versão: a Asaas passou a exigir telefone (`customerData.phoneNumber`) pra criar a sessão de pagamento por Cartão/Assinatura. Se o SEU projeto já tem o telefone do cliente, mandar aqui pré-preenche e evita repetição — se não mandar, o próprio checkout pede na tela (campo obrigatório lá, independente do `pedido`) |
 | `expiraEm` | string (ISO 8601) | não | Se passar dessa data/hora, o San Checkout recusa cobrar, mesmo que o status ainda diga "pendente" |
 
@@ -266,7 +267,7 @@ Header: X-Checkout-Key: <sua chave>
   "ciclo": "MONTHLY",
   "contratanteLogoUrl": "https://trimundi9.com/logo.png",
   "bannerUrl": "https://trimundi9.com/banner-plano.png",
-  "pagador": { "nome": "...", "email": "...", "cpf": "...", "telefone": "..." }
+  "pagador": { "nome": "...", "email": "...", "documento": "...", "telefone": "..." }
 }
 ```
 
@@ -276,10 +277,10 @@ Header: X-Checkout-Key: <sua chave>
 | `nome` | string | sim |
 | `descricao` | string | não |
 | `valor` | number | sim |
-| `ciclo` | string | sim — `MONTHLY` (por enquanto o único ciclo suportado) |
+| `ciclo` | string | sim — `MONTHLY`, `QUARTERLY`, `SEMIANNUALLY` ou `YEARLY` |
 | `contratanteLogoUrl` | string (URL) | não — mesmo comportamento do `pedido` |
 | `bannerUrl` | string (URL) | não — mesmo comportamento do `pedido` |
-| `pagador` | objeto | não — pré-preenche nome/e-mail/CPF/telefone, mesmo comportamento do `pedido` (ver seção 3.1 sobre `pagador.telefone`) |
+| `pagador` | objeto | não — pré-preenche nome/e-mail/CPF-CNPJ/telefone, mesmo comportamento do `pedido` (ver seção 3.1 sobre `pagador.telefone` e `pagador.documento`) |
 
 **Confirmação:** eventos de assinatura chegam no mesmo `webhook_url`
 já cadastrado, com um campo `tipo` pra diferenciar do webhook de
@@ -288,7 +289,7 @@ pedido:
 {
   "tipo": "assinatura",
   "planoId": "mensal-basico",
-  "cpf": "...",
+  "documento": "...",
   "evento": "criada" | "cobranca_confirmada" | "cobranca_falhou" | "cobranca_estornada" | "cancelada"
 }
 ```
@@ -299,7 +300,10 @@ responsabilidade do SEU projeto, disparados por `cobranca_confirmada`
 
 **Cancelamento:** só o projeto aciona (nunca o pagador direto no
 checkout) — `POST {base_do_checkout}/cancelar-assinatura`, mesma
-autenticação por `X-Checkout-Key` do `/estornar`.
+autenticação por `X-Checkout-Key` do `/estornar`. Body:
+```json
+{ "planoId": "mensal-basico", "documento": "..." }
+```
 
 ---
 

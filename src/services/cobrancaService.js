@@ -11,7 +11,7 @@ export async function registrarCobranca(dados) {
     charge_id: dados.chargeId,
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId,
-    cpf: dados.cpf,
+    documento: dados.documento,
     email: dados.email ?? null,
     telefone: dados.telefone ?? null,
     endereco: dados.endereco ?? null,
@@ -51,7 +51,7 @@ export async function registrarCobrancaPendentePopup(dados) {
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId ?? null,
     plano_id: dados.planoId ?? null,
-    cpf: dados.cpf,
+    documento: dados.documento,
     email: dados.email ?? null,
     telefone: dados.telefone ?? null,
     endereco: dados.endereco ?? null,
@@ -98,7 +98,7 @@ export async function registrarCicloAssinatura(dados) {
     asaas_subscription_id: dados.asaasSubscriptionId,
     contratante_id: dados.contratanteId,
     plano_id: dados.planoId ?? null,
-    cpf: dados.cpf,
+    documento: dados.documento,
     email: dados.email ?? null,
     telefone: dados.telefone ?? null,
     endereco: dados.endereco ?? null,
@@ -175,9 +175,9 @@ export async function atualizarSubscriptionIdDaCobranca(chargeId, subscriptionId
 }
 
 /** Busca a cobrança mais recente de uma assinatura — serve de "molde"
- *  (contratante/plano/CPF/telefone/endereço) pra registrar um ciclo
- *  novo, que chega no webhook só com o id da assinatura, sem nenhum
- *  outro dado do pagador. */
+ *  (contratante/plano/documento/telefone/endereço) pra registrar um
+ *  ciclo novo, que chega no webhook só com o id da assinatura, sem
+ *  nenhum outro dado do pagador. */
 export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
   const { data, error } = await supabase
     .from('cobrancas')

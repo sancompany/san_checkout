@@ -2,8 +2,16 @@ export function apenasDigitos(valor) {
   return String(valor ?? '').replace(/\D/g, '');
 }
 
-export function mascararCpf(valor) {
-  const d = apenasDigitos(valor).slice(0, 11);
+/** CPF ou CNPJ no mesmo campo — formata como CPF progressivo até 11
+ *  dígitos; do 12º em diante, vira CNPJ progressivo. */
+export function mascararDocumento(valor) {
+  const d = apenasDigitos(valor).slice(0, 14);
+  if (d.length > 11) {
+    let saida = d;
+    if (d.length > 12) saida = `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+    else saida = `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8)}`;
+    return saida;
+  }
   let saida = d;
   if (d.length > 9) saida = `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
   else if (d.length > 6) saida = `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;

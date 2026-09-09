@@ -16,12 +16,12 @@ import { supabase } from '../config/supabase.js';
 /** Cria ou atualiza a linha da assinatura — chamado pelo
  *  webhookController assim que a 1ª cobrança confirma (CHECKOUT_PAID)
  *  e a Asaas revela o id da assinatura (`payment.subscription`). */
-export async function upsertAssinatura({ id, contratanteId, planoId, cpf, valor, ciclo, proximaCobranca }) {
+export async function upsertAssinatura({ id, contratanteId, planoId, documento, valor, ciclo, proximaCobranca }) {
   const { error } = await supabase.from('assinaturas').upsert({
     id,
     contratante_id: contratanteId,
     plano_id: planoId ?? null,
-    cpf,
+    documento,
     valor,
     ciclo: ciclo ?? 'MONTHLY',
     proxima_cobranca: proximaCobranca ?? null,
@@ -40,16 +40,17 @@ export async function atualizarStatusAssinatura(id, status) {
   if (error) console.error('[assinaturaService.atualizarStatusAssinatura]', error.message);
 }
 
-/** Busca a assinatura ATIVA de um contratante+plano+CPF — usado só
- *  pelo endpoint de cancelamento, que recebe planoId/cpf (não o id da
- *  assinatura na Asaas, que o projeto contratante nunca chega a ver). */
-export async function buscarAssinaturaAtiva(contratanteId, planoId, cpf) {
+/** Busca a assinatura ATIVA de um contratante+plano+documento — usado
+ *  só pelo endpoint de cancelamento, que recebe planoId/documento (não
+ *  o id da assinatura na Asaas, que o projeto contratante nunca chega
+ *  a ver). */
+export async function buscarAssinaturaAtiva(contratanteId, planoId, documento) {
   const { data, error } = await supabase
     .from('assinaturas')
     .select('*')
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
-    .eq('cpf', cpf)
+    .eq('documento', documento)
     .eq('status', 'ativa')
     .order('criado_em', { ascending: false })
     .limit(1)

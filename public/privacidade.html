@@ -51,7 +51,7 @@
 
   <h3>4. CATEGORIAS DE DADOS PESSOAIS</h3>
   <p>4.1. Dependendo da transação, poderão ser tratados:</p>
-  <p><strong>Dados de identificação:</strong> nome; CPF; e-mail; telefone.</p>
+  <p><strong>Dados de identificação:</strong> nome ou razão social; CPF/CNPJ; e-mail; telefone.</p>
   <p><strong>Dados de endereço:</strong> CEP; endereço, quando necessário à operação.</p>
   <p><strong>Dados transacionais:</strong> identificação do pedido; valor; status da cobrança; data e hora; identificadores da transação; informações necessárias à conciliação.</p>
   <p><strong>Dados técnicos:</strong> endereço IP; data e hora da requisição; informações de sessão; informações técnicas necessárias à segurança e estabilidade.</p>
@@ -98,19 +98,19 @@
 
   <h3>12. COMPARTILHAMENTO COM O LOJISTA</h3>
   <p>12.1. O Lojista poderá receber dados necessários à identificação e continuidade da venda.</p>
-  <p>12.2. O webhook do San Checkout é limitado às informações transacionais necessárias, podendo conter: confirmação ou status do pagamento; CPF; identificação do pedido; valor, desconto e taxas aplicáveis.</p>
+  <p>12.2. O webhook do San Checkout é limitado às informações transacionais necessárias, podendo conter: confirmação ou status do pagamento; CPF/CNPJ; identificação do pedido; valor, desconto e taxas aplicáveis.</p>
   <p>12.3. <strong>Dados de cartão não são enviados ao Lojista por esse webhook.</strong></p>
   <p>12.4. O Lojista passa a ser responsável pelos tratamentos realizados em seu próprio ambiente após o recebimento das informações.</p>
 
   <h3>13. BANCO DE DADOS SUPABASE</h3>
   <p>13.1. A infraestrutura própria do San Checkout utiliza <strong>Supabase/Postgres com banco/servidor localizado no Brasil</strong>.</p>
-  <p>13.2. Conforme a arquitetura atual, poderão ser armazenados nesse ambiente: CPF; nome; e-mail; telefone; para pagamentos por cartão de crédito ou assinatura, endereço completo (CEP, logradouro, número, complemento, bairro, cidade e UF); histórico de cobranças; valores e status de transações; identificação do Projeto relacionado; informações necessárias à operação da Plataforma.</p>
+  <p>13.2. Conforme a arquitetura atual, poderão ser armazenados nesse ambiente: CPF/CNPJ; nome ou razão social; e-mail; telefone; para pagamentos por cartão de crédito ou assinatura, endereço completo (CEP, logradouro, número, complemento, bairro, cidade e UF); histórico de cobranças; valores e status de transações; identificação do Projeto relacionado; informações necessárias à operação da Plataforma.</p>
   <p>13.3. Também poderão existir dados cadastrais e técnicos relacionados aos Projetos integrados necessários à operação do sistema.</p>
   <p>13.4. O armazenamento é realizado para permitir continuidade operacional, histórico transacional, segurança, conciliação, suporte e cumprimento de obrigações.</p>
 
   <h3>14. EMISSÃO DE NOTA FISCAL</h3>
   <p>14.1. <strong>A nota fiscal de serviço (NFS-e) é emitida diretamente pela SAN & CO., no CNPJ do operador, por meio de integração com a Asaas — sem que isso implique que o produto ou serviço do Lojista seja comercializado pela SAN & CO.</strong></p>
-  <p>14.2. O tratamento de dados necessários à emissão fiscal poderá incluir nome, CPF, e-mail e demais informações exigidas pelo sistema fiscal aplicável.</p>
+  <p>14.2. O tratamento de dados necessários à emissão fiscal poderá incluir nome ou razão social, CPF/CNPJ, e-mail e demais informações exigidas pelo sistema fiscal aplicável.</p>
   <p>14.3. A documentação fiscal será mantida conforme os períodos de guarda decorrentes da legislação aplicável.</p>
   <p>14.4. A emissão de NFS-e pela SAN & CO. refere-se ao serviço cuja prestação seja atribuível à própria SAN & CO., não substituindo eventual documento fiscal que o Lojista esteja obrigado a emitir relativamente ao produto ou serviço vendido.</p>
 

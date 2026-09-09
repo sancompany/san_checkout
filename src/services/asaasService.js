@@ -31,14 +31,14 @@ async function chamarAsaas(caminho, opcoes = {}) {
   return corpo;
 }
 
-/** Busca cliente por CPF; cria se não existir. */
-export async function buscarOuCriarCliente({ nome, email, cpf }) {
-  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${cpf}`, { method: 'GET' });
+/** Busca cliente por CPF/CNPJ; cria se não existir. */
+export async function buscarOuCriarCliente({ nome, email, documento }) {
+  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });
   if (busca.data?.length) return busca.data[0].id;
 
   const novo = await chamarAsaas('/v3/customers', {
     method: 'POST',
-    body: JSON.stringify({ name: nome, email, cpfCnpj: cpf, externalReference: cpf })
+    body: JSON.stringify({ name: nome, email, cpfCnpj: documento, externalReference: documento })
   });
 
   return novo.id;
