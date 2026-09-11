@@ -3,7 +3,7 @@
 ## O que aconteceu
 
 Ao conferir a Estação 3 (Fundação) — "CI verde num push real" — o último
-push (`11498e5`, "atualização hash") está com o job `testes` em
+push ("atualização hash", então `11498e5`) está com o job `testes` em
 **Failure**. 1 de 4 suítes falhou: `src/services/pedidoService.js`.
 
 ## Causa raiz
@@ -50,10 +50,17 @@ Render) andarem pela mesma régua.
 
 ## Fechado — 11/09/2026
 
-`ci.yml` colado com `node-version: '22'` e commitado (`4c01cda`).
+`ci.yml` colado com `node-version: '22'` e commitado (`4c01cda` na
+época).
 Reverificado ao vivo: run #5 (`atualização ci`) — **Status: Success**,
 4 suítes passando, 15s de duração. O aviso restante no log
 ("Node.js 20 is deprecated... forced to run on Node.js 24") é sobre o
 runtime que o próprio GitHub usa para executar as actions
 (`checkout@v4`, `setup-node@v4`), não sobre o Node que roda os testes —
 não é a mesma causa e não bloqueia nada.
+
+> **Nota sobre os SHAs acima:** a reescrita de histórico da Estação 4
+> (ver `2026-09-11-filter-repo-apagou-trabalho-nao-commitado.md`) trocou
+> todos os identificadores de commit do repositório. `11498e5` virou
+> `4b8ec27` e `4c01cda` virou `1fc7038`. Os antigos não existem mais —
+> ficam aqui só como registro do que foi observado na hora.

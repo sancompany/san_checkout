@@ -90,7 +90,39 @@ enquanto o prazo fiscal correr.
 > Vale também para a Asaas: o dado que foi enviado a ela segue a
 > retenção **dela**, não a nossa.
 
-### 6.2 O caminho de exclusão existe na modelagem (verificado na Estação 4)
+## 6.1 Dado pessoal dentro do próprio repositório
+
+> ⚠️ **PENDÊNCIA ABERTA — confirmada no histórico, não só suspeita.** A
+> pasta `Claude outputs/` contém capturas de tela do painel
+> administrativo com **dado pessoal legível**: nome, e-mail, telefone,
+> endereço completo, data de nascimento e faturamento declarado, de
+> pessoa física e de empresa.
+>
+> As credenciais nessas imagens estão mascaradas (conferido em
+> 11/09/2026) — a máscara protege o segredo, não a pessoa.
+>
+> **RESOLVIDO EM 11/09/2026.** Durante a Estação 4 confirmou-se que a
+> pasta havia sido commitada: três commits tocavam o caminho
+> (`b24a47f`, `d4b31c4`, `cadc248` — identificadores de antes da
+> reescrita, que já não existem). Sair do `HEAD` e entrar no
+> `.gitignore` impedia daqui para frente, mas não alcançava o que já
+> tinha subido — e nenhuma rotina de exclusão chega ao histórico do git.
+>
+> O dono reescreveu o histórico com `git filter-repo --path
+> "Claude outputs" --invert-paths` e forçou o push. **Reverificado no
+> GitHub:** o histórico do caminho `Claude outputs` responde *"No commits
+> history"*, e todos os SHAs mudaram (o topo do `main` passou de
+> `4c01cda` para `1fc7038`), o que confirma a reescrita.
+>
+> Ressalva registrada: o GitHub mantém objetos órfãos alcançáveis por SHA
+> direto até a coleta de lixo dele; para garantia total seria preciso
+> pedir o `gc` ao suporte. O repositório é privado, com um único
+> contribuidor, e nunca houve exposição a terceiro.
+>
+> Os arquivos continuam no disco local, fora do versionamento — é onde
+> devem ficar.
+
+## 6.2 O caminho de exclusão existe na modelagem (verificado na Estação 4)
 
 A skill `legal` trata isto como decisão de arquitetura, não de texto: se
 o modelo não permitir apagar sem quebrar histórico ou guarda fiscal, o
@@ -111,37 +143,6 @@ problema é de modelagem. Conferido contra o `supabase/schema.sql`:
 
 Ou seja: o que falta é a **rotina**, não a possibilidade. A modelagem
 não precisa mudar para atender a LGPD art. 18.
-
-## 6.1 Dado pessoal dentro do próprio repositório
-
-> ⚠️ **PENDÊNCIA ABERTA — confirmada no histórico, não só suspeita.** A
-> pasta `Claude outputs/` contém capturas de tela do painel
-> administrativo com **dado pessoal legível**: nome, e-mail, telefone,
-> endereço completo, data de nascimento e faturamento declarado, de
-> pessoa física e de empresa.
->
-> As credenciais nessas imagens estão mascaradas (conferido em
-> 11/09/2026) — a máscara protege o segredo, não a pessoa.
->
-> **RESOLVIDO EM 11/09/2026.** Durante a Estação 4 confirmou-se que a
-> pasta havia sido commitada: três commits tocavam o caminho
-> (`b24a47f`, `d4b31c4`, `cadc248`). Sair do `HEAD` e entrar no
-> `.gitignore` impedia daqui para frente, mas não alcançava o que já
-> tinha subido — e nenhuma rotina de exclusão chega ao histórico do git.
->
-> O dono reescreveu o histórico com `git filter-repo --path
-> "Claude outputs" --invert-paths` e forçou o push. **Reverificado no
-> GitHub:** o histórico do caminho `Claude outputs` responde *"No commits
-> history"*, e todos os SHAs mudaram (o topo do `main` passou de
-> `4c01cda` para `1fc7038`), o que confirma a reescrita.
->
-> Ressalva registrada: o GitHub mantém objetos órfãos alcançáveis por SHA
-> direto até a coleta de lixo dele; para garantia total seria preciso
-> pedir o `gc` ao suporte. O repositório é privado, com um único
-> contribuidor, e nunca houve exposição a terceiro.
->
-> Os arquivos continuam no disco local, fora do versionamento — é onde
-> devem ficar.
 
 ## 7. Log
 

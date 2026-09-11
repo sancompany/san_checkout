@@ -36,17 +36,27 @@ não projeto — banco próprio e isolado, consome domínio/DNS, GitHub,
 Render e Cloudflare Pages da San & Co.; não consome e-mail nem Drive.
 
 **Estação 3 (Fundação) fechada.** Repositório, árvore de pastas, segredo
-fora do código (Leis 1, 3, 9) e CI verde num push real (`4c01cda`, run
-#5, reverificado ao vivo) — ver
+fora do código (Leis 1, 3, 9) e CI verde num push real (run #5,
+reverificado ao vivo; o commit era `4c01cda` e virou `1fc7038` na
+reescrita de histórico da Estação 4) — ver
 `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
 
-**Estação 4 (Contratos) em andamento.** Conferido e conforme: contrato de
-API explícito com entrada, saída e tabela de erros (`API.md`, seções 4-5
-e 9-10); RLS habilitada nas quatro tabelas com negação por padrão;
-schema alterado só pelo SQL Editor, nunca por `DATABASE_URL` direto;
-inventário de dados preenchido e com o caminho de exclusão verificado
-contra a modelagem (`docs/inventario-de-dados.md` §6.2). **Três
-pendências bloqueantes abertas nesta estação** — ver abaixo.
+**Estação 4 (Contratos) fechada.** Verificado: contrato de API
+explícito com entrada, saída e tabela de erros (`API.md`, seções 4-5 e
+9-10); RLS habilitada nas quatro tabelas com negação por padrão; schema
+alterado só pelo SQL Editor, nunca por `DATABASE_URL`; migrations
+numeradas e imutáveis a partir de `supabase/migrations/0001_baseline.sql`
+(`CONSTRAINTS.md` §2.1), com o `schema.sql` antigo fora do
+versionamento; backup registrado como exceção com gatilho no primeiro
+pagamento real; inventário de dados preenchido, com o caminho de exclusão
+conferido contra a modelagem (§6.2) e o dado pessoal do histórico do git
+removido (§6.1). Reverificado ao vivo no commit `d515317`: árvore do
+GitHub e CI verde (run #7).
+
+**Estação 5 (Construção) é a próxima** — skill `construir`, em fatias
+verticais, com `depurar` e `revisar` como ciclos dentro dela;
+verifica as Leis 2, 5 e 6. **Modelo: Fable, esforço alto — troque antes
+de começar.**
 
 (A Lei 0 como um todo continua aberta e não bloqueia — ver pendências:
 falta a skill `revisar` rodar sobre o que está em produção.)
@@ -64,23 +74,7 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 Lei 6 · tirar o `supabase/schema.sql` antigo do versionamento.**
-  A regra nova já vale (`CONSTRAINTS.md` §2.1) e
-  `supabase/migrations/0001_baseline.sql` já existe, congelado, com o
-  corpo byte a byte igual ao schema antigo. Falta só remover o arquivo
-  duplicado — um comando, na raiz do projeto:
-
-  ```
-  git rm supabase/schema.sql
-  ```
-
-  Enquanto os dois existirem, há duas fontes de verdade para o schema, que
-  é exatamente o que a Lei 6 proíbe. **Este comando chegou a ser rodado em
-  11/09/2026, mas foi desfeito** pelo `git filter-repo --force` da
-  reescrita de histórico, que restaurou a árvore commitada por cima do que
-  não tinha sido commitado — ver
-  `docs/erros/2026-09-11-filter-repo-apagou-trabalho-nao-commitado.md`.
-  Precisa ser rodado de novo, agora com tudo commitado antes.
+Nenhuma.
 ### Abertas, não bloqueiam
 
 - **Lei 0 · a skill `revisar` nunca rodou** sobre o que está em produção.
