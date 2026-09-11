@@ -4,6 +4,9 @@
   "description": "San Checkout — backend, modelo pull (pedido)",
   "type": "module",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
     "test": "node tests/executar.js"

@@ -71,3 +71,35 @@ arquitetura — as mudanças que ela forçou foram conjuntos enumerados pela
 metade, não a arquitetura. Essa causa raiz virou regra permanente:
 **onde a Asaas define um conjunto fechado, o checkout conhece o conjunto
 inteiro.**
+
+## Classificação de fronteira — Estação 2 (registrado em 11/09/2026)
+
+**Estrutura**, não projeto — a skill `classificar` já lista San Checkout
+entre as peças de estrutura da San & Co., e os quatro testes concordam:
+
+- **Desligamento**: se saísse do ar, todo projeto que cobra (Trimundi9,
+  Vitrina ADS, e os que vierem) para junto → mais de um, estrutura.
+- **Público**: quem integra é sempre outro sistema (`GET /pedido/{id}`
+  autenticado por `X-Checkout-Key`). O comprador que paga na tela do
+  checkout não é usuário final *do Checkout* — é usuário final do
+  produto do contratante, só passando pela camada de pagamento →
+  estrutura.
+- **Entrega**: não pode ser vendido isolado a um cliente, porque outros
+  projetos do ecossistema dependem dele para cobrar → estrutura.
+- **Pedido de mudança**: quem pede alteração de contrato ou conjunto
+  suportado é qualquer projeto contratante, não um só → estrutura.
+
+**Capacidades que consome da estrutura San & Co.**: domínio/DNS
+(`checkout.sancocore.com.br`, Cloudflare), conta GitHub (repositório),
+conta Render (hospedagem do backend), conta Cloudflare Pages
+(hospedagem do frontend estático).
+
+**Banco**: próprio e isolado (Supabase dedicado a este projeto — ver
+`config/supabase.js`), nunca compartilhado com outro projeto ou peça de
+estrutura, por política de dado da skill `classificar`.
+
+**Não consome**: e-mail (Google Workspace) nem Google Drive — os módulos
+que existiam para isso (`emailService.js`, `driveService.js`,
+`config/googleDrive.js`) já não existem no projeto (ver
+`docs/erros/2026-09-11-auditoria-contra-copia-velha.md`). Cada
+contratante emite o próprio aviso e nota fiscal (`CONSTRAINTS.md` §1.9).

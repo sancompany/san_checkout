@@ -46,3 +46,12 @@ especiais de shell (`$`, `` ` ``, `\`, aspas) é candidato ao mesmo
 problema em qualquer provedor — não só Render. Formato seguro por
 construção: codificar em base64 (ou hex) antes de guardar, decodificar
 só dentro do processo.
+
+## Fechado — 11/09/2026
+
+Reverificado de duas formas: (1) medição ao vivo mostra a rota de admin
+com credencial errada levando ~2,5s contra ~250ms da sonda sem
+verificação — tempo compatível com derivação scrypt N=2^17 real
+rodando num Render free tier, não mais o retorno instantâneo do formato
+quebrado; (2) o dono do projeto testou o login com a senha real depois
+de colar o novo valor (base64) no Render e confirmou que entrou.

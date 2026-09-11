@@ -30,10 +30,18 @@ proporcionalidade.
 
 ## Onde a esteira está
 
-Estação 1 (Escopo) fechada. **Estação 2 (Fronteiras) é a próxima** — a
-skill `classificar` ainda não rodou neste projeto. A Estação 2 verifica a
-Lei 0, e a Lei 0 só fecha quando a skill `revisar` tiver passado pelo que
-está em produção.
+Estações 1 (Escopo) e 2 (Fronteiras) fechadas. Classificação registrada
+em `docs/specs/2026-09-11-san-checkout.md`: San Checkout é **estrutura**,
+não projeto — banco próprio e isolado, consome domínio/DNS, GitHub,
+Render e Cloudflare Pages da San & Co.; não consome e-mail nem Drive.
+
+**Estação 3 (Fundação) em andamento** — repositório, árvore de pastas e
+segredos conferem (Leis 1 e 3). **CI não está verde** no último push
+(`11498e5`) — ver pendência que bloqueia, abaixo. Estação não fecha
+enquanto isso não estiver resolvido.
+
+(A Lei 0 como um todo continua aberta e não bloqueia — ver pendências:
+falta a skill `revisar` rodar sobre o que está em produção.)
 
 ## Conformidade é obrigatória
 
@@ -48,19 +56,23 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 Colar no Render o hash gerado pelo script atualizado.** A troca
-  para N=2^17 foi feita, mas o valor chegava truncado no Render: a
-  plataforma apaga tudo depois do primeiro `$` que não resolve como
-  variável de shell, e o hash é cheio de `$` literais
-  (`scrypt$N$r$p$sal$hash`). Login certo e errado davam o mesmo 401 —
-  indistinguível de fora, só visível medindo tempo de resposta (ver
-  `docs/erros/2026-09-11-cifrao-em-variavel-de-ambiente.md`). Corrigido:
-  `gerarHashSenha` agora envelopa o hash inteiro em base64 (sem `$`
-  nenhum) e `senhaConfere` decodifica antes de conferir — verificado
-  local com 18 checagens e com uma simulação do corte do Render. **Falta
-  rodar `node scripts/gerar-hash-admin.js` de novo** (o hash antigo, já
-  truncado, não serve) **e colar o valor novo em `CHECKOUT_ADMIN_PASS_HASH`
-  no Render.**
+- **🔴 CI falhando no `main` (`11498e5`) — trocar `node-version` em
+  `ci.yml`.** `@supabase/supabase-js` já exige WebSocket nativo (Node
+  22+); o CI fixava Node 20 e caiu com
+  `Error: Node.js detected but native WebSocket not found.` na suíte de
+  `pedidoService.js`. A produção não sofre disso porque nunca teve
+  `engines.node` declarado e o Render escolheu uma versão mais nova por
+  conta própria — por sorte, não por decisão. Corrigido o lado que dava
+  para corrigir: `package.json` ganhou `"engines": { "node": ">=22" }`.
+  `.github/workflows/` é protegido contra escrita remota — colar isto em
+  `ci.yml`, substituindo a linha `node-version: '20'`:
+
+  ```yaml
+        node-version: '22'
+  ```
+
+  Depois de colar e dar push, aviso quando reverifiquei o CI ao vivo.
+  Ver `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
 
 ### Abertas, não bloqueiam
 
