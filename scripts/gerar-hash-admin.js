@@ -29,7 +29,7 @@ rl._writeToOutput = (texto) => {
   else if (texto === '\n' || texto === '\r\n') rl.output.write(texto);
 };
 
-rl.question(PERGUNTA, (senha) => {
+rl.question(PERGUNTA, async (senha) => {
   rl.close();
   console.log();
 
@@ -39,7 +39,7 @@ rl.question(PERGUNTA, (senha) => {
   }
 
   console.log('Cole isto na variável de ambiente CHECKOUT_ADMIN_PASS_HASH:\n');
-  console.log(gerarHashSenha(senha));
+  console.log(await gerarHashSenha(senha));
   console.log('\nDepois REMOVA a variável antiga CHECKOUT_ADMIN_PASS — ela não é mais lida,');
   console.log('e senha em texto puro parada no painel do Render não protege nada.');
 });

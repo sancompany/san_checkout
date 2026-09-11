@@ -22,7 +22,13 @@ import { criarSubconta as criarSubcontaNaAsaas } from '../services/asaasService.
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
 
 /** Aplicado a toda rota de /api/admin — um guard só, não um por handler. */
-export function verificarAdminKey(requisicao, resposta, proximo) {
+/**
+ * `async` de propósito: a conferência da senha é uma derivação lenta
+ * (~800 ms). Na versão síncrona ela bloquearia o event loop por esse
+ * tempo inteiro, e toda rota de pagamento em voo congelaria junto a
+ * cada tentativa de login no admin.
+ */
+export async function verificarAdminKey(requisicao, resposta, proximo) {
   const { CHECKOUT_ADMIN_USER, CHECKOUT_ADMIN_PASS_HASH } = process.env;
   if (!CHECKOUT_ADMIN_USER || !CHECKOUT_ADMIN_PASS_HASH) {
     return resposta.status(503).json({ erro: 'CHECKOUT_ADMIN_USER/CHECKOUT_ADMIN_PASS_HASH não configurados — admin desativado.' });
@@ -32,7 +38,7 @@ export function verificarAdminKey(requisicao, resposta, proximo) {
   // cedo quando o usuário não bate faria a resposta voltar rápido e
   // entregaria, por tempo, se o nome de usuário existe.
   const usuarioOk = compararSeguro(requisicao.get('X-Admin-User'), CHECKOUT_ADMIN_USER);
-  const senhaOk = senhaConfere(requisicao.get('X-Admin-Pass'), CHECKOUT_ADMIN_PASS_HASH);
+  const senhaOk = await senhaConfere(requisicao.get('X-Admin-Pass'), CHECKOUT_ADMIN_PASS_HASH);
   if (!usuarioOk || !senhaOk) {
     return resposta.status(401).json({ erro: 'Usuário ou senha de admin inválidos.' });
   }

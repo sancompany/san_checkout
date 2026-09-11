@@ -31,7 +31,9 @@ proporcionalidade.
 ## Onde a esteira está
 
 Estação 1 (Escopo) fechada. **Estação 2 (Fronteiras) é a próxima** — a
-skill `classificar` ainda não rodou neste projeto.
+skill `classificar` ainda não rodou neste projeto. A Estação 2 verifica a
+Lei 0, e a Lei 0 só fecha quando a skill `revisar` tiver passado pelo que
+está em produção.
 
 ## Conformidade é obrigatória
 
@@ -46,20 +48,19 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 Painel administrativo fora do ar em produção (503).** A variável
-  `CHECKOUT_ADMIN_PASS_HASH` já está no Render e a antiga foi removida,
-  mas **o código que lê a nova ainda não subiu** — o Render roda a versão
-  anterior, que procura `CHECKOUT_ADMIN_PASS`. Fecha com o push de
-  `src/utils/senhaAdmin.js` e `src/controllers/adminController.js`.
-  Ver `docs/erros/2026-09-11-variavel-trocada-antes-do-codigo-subir.md`.
-- **3 movimentações estruturais aprovadas, ainda não executadas.**
-  Mover `mock/` para `tests/`; mover `lacunas-san-checkout-10-09-2026.md`,
-  `plano-execucao.md`, `relatorio-seguranca-09-09-2026.md` e `TESTES.md`
-  para `docs/`; parar de rastrear `Claude outputs/`. O `.gitignore` já
-  cobre o último.
-  *(Eram 4: a remoção dos módulos órfãos já tinha sido feita antes desta
-  sessão — o achado veio de cópia velha, ver
-  `docs/erros/2026-09-11-auditoria-contra-copia-velha.md`.)*
+- **🔴 Colar no Render o hash gerado pelo script atualizado.** A troca
+  para N=2^17 foi feita, mas o valor chegava truncado no Render: a
+  plataforma apaga tudo depois do primeiro `$` que não resolve como
+  variável de shell, e o hash é cheio de `$` literais
+  (`scrypt$N$r$p$sal$hash`). Login certo e errado davam o mesmo 401 —
+  indistinguível de fora, só visível medindo tempo de resposta (ver
+  `docs/erros/2026-09-11-cifrao-em-variavel-de-ambiente.md`). Corrigido:
+  `gerarHashSenha` agora envelopa o hash inteiro em base64 (sem `$`
+  nenhum) e `senhaConfere` decodifica antes de conferir — verificado
+  local com 18 checagens e com uma simulação do corte do Render. **Falta
+  rodar `node scripts/gerar-hash-admin.js` de novo** (o hash antigo, já
+  truncado, não serve) **e colar o valor novo em `CHECKOUT_ADMIN_PASS_HASH`
+  no Render.**
 
 ### Abertas, não bloqueiam
 
@@ -72,6 +73,14 @@ Esta é a lista única. O que não está aqui, está fechado.
   o trânsito. Um XSS no painel entrega a senha. Correção é token de
   sessão de curta duração — arquitetura de acesso, avaliada pela skill
   `seguranca-san`.
+- **Estação 6 · amplificação de memória em `/api/admin`.** Cada tentativa
+  de login deriva scrypt a N=2^17, que custa **128 MB**. O rate limit
+  atual (10/min por IP) limita a taxa, não a simultaneidade: 10 chamadas
+  disparadas juntas pedem 1,28 GB numa instância de 512 MB. Uso normal do
+  painel não chega perto (as chamadas são sequenciais, pico de uma
+  derivação por vez), mas é vetor de negação de serviço de quem sondar.
+  Mitigação provável: limitar derivações concorrentes. Levantado ao subir
+  o parâmetro de 2^14 para 2^17 — é consequência direta dessa mudança.
 - **Lei 6 · `supabase/schema.sql` é arquivo único editado a cada versão**,
   em vez de migrations numeradas e imutáveis. Foi esse modelo que
   produziu o erro de `docs/erros/2026-09-11-coluna-nao-criada-...`.
