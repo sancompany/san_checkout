@@ -20,6 +20,17 @@ create table if not exists contratantes (
   metodos_habilitados text[] not null default array['pix','boleto','cartao','assinatura'], -- quais métodos esse contratante pode cobrar
   criado_em timestamptz not null default now()
 );
+-- `create table if not exists` acima é no-op numa tabela JÁ existente —
+-- então a coluna da v3 precisa entrar por `alter`, igual às de
+-- `cobrancas`/`assinaturas`/`subcontas` mais abaixo. Isto aqui faltava:
+-- a v3 existia só como comentário no bloco de MIGRAÇÃO no fim do
+-- arquivo, então rodar o schema inteiro em produção NÃO criava a
+-- coluna — e `admin.listarContratantes`, que faz `select` explícito
+-- dela, respondia erro interno. `not null default` já preenche as
+-- linhas que existem.
+alter table contratantes
+  add column if not exists metodos_habilitados text[] not null
+  default array['pix','boleto','cartao','assinatura'];
 
 -- Cobranças — registro completo de cada pagamento avulso.
 --
@@ -209,11 +220,10 @@ alter table subcontas
 -- alter table assinaturas rename column cpf to documento;
 -- alter index idx_assinaturas_contratante_plano_cpf rename to idx_assinaturas_contratante_plano_documento;
 --
--- MIGRAÇÃO v3 (tipos de cobrança) — rodar manualmente se a tabela
--- `contratantes` já existe em produção/sandbox:
---
--- alter table contratantes
---   add column if not exists metodos_habilitados text[] not null default array['pix','boleto','cartao','assinatura'];
+-- MIGRAÇÃO v3 (tipos de cobrança) — NÃO é mais manual: o `alter table
+-- contratantes` logo abaixo do `create table` no topo deste arquivo já
+-- cuida disso. Ficou aqui só como registro de que um dia foi manual, e
+-- de que ESSA omissão derrubou o painel de admin em produção.
 --
 -- MIGRAÇÃO v3.1 (trava de cobrança duplicada) — rodar manualmente se a
 -- tabela `cobrancas` já existe. Se a criação falhar por duplicidade já

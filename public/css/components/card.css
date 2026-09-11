@@ -25,7 +25,14 @@
   display: flex; flex-direction: column; gap: 2px;
 }
 .order-subtitle { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
-.order-title { font-size: 1.0625rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+/* O nome do pedido vem do contratante e é exatamente o que o comprador
+   precisa ler pra saber o que está pagando — então ele QUEBRA em mais
+   linhas em vez de ser cortado com "…". Cortar já escondia metade de um
+   título curto ("Acesso ao checkout — S…"); num nome de produto real
+   esconderia o produto. `overflow-wrap: anywhere` cobre o token gigante
+   sem espaço (um id colado, uma URL), que senão estouraria o card na
+   horizontal. */
+.order-title { font-size: 1.0625rem; font-weight: 700; color: var(--text-main); overflow-wrap: anywhere; margin-top: 2px; }
 
 /* Cronômetro de expiração do pedido — o prazo é REAL (campo `expiraEm`
    do contratante), nunca um contador inventado de escassez. Fica
@@ -53,7 +60,11 @@
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
   font-size: 0.8125rem; color: var(--text-secondary);
 }
-.order-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Mesma regra do título. `min-width: 0` porque isto é filho de flex:
+   sem ele a linha não encolhe abaixo do próprio conteúdo e empurraria o
+   valor pra fora do card. A lista já tem `max-height` com rolagem, então
+   quebrar em várias linhas não estica o resumo sem limite. */
+.order-item-label { min-width: 0; overflow-wrap: anywhere; }
 .order-item-label strong { color: var(--text-main); font-weight: 700; margin-right: 4px; }
 .order-item-value { flex-shrink: 0; white-space: nowrap; font-weight: 600; color: var(--text-main); }
 
