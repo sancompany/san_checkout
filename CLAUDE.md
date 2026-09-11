@@ -46,18 +46,20 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 `CHECKOUT_ADMIN_PASS_HASH` não configurada em produção.** A senha
-  do admin passou a ser conferida por hash scrypt
-  (`src/utils/senhaAdmin.js`). Enquanto a variável nova não existir no
-  Render, **o painel responde 503**. Gerar com
-  `node scripts/gerar-hash-admin.js` e remover a `CHECKOUT_ADMIN_PASS`
-  antiga.
-- **4 movimentações estruturais aprovadas, ainda não executadas.**
-  Apagar `src/services/driveService.js`, `src/services/emailService.js`,
-  `src/config/googleDrive.js`; mover `mock/` para `tests/`; mover
-  `lacunas-san-checkout-10-09-2026.md`, `plano-execucao.md`,
-  `relatorio-seguranca-09-09-2026.md` e `TESTES.md` para `docs/`; parar
-  de rastrear `Claude outputs/`. O `.gitignore` já cobre o último.
+- **🔴 Painel administrativo fora do ar em produção (503).** A variável
+  `CHECKOUT_ADMIN_PASS_HASH` já está no Render e a antiga foi removida,
+  mas **o código que lê a nova ainda não subiu** — o Render roda a versão
+  anterior, que procura `CHECKOUT_ADMIN_PASS`. Fecha com o push de
+  `src/utils/senhaAdmin.js` e `src/controllers/adminController.js`.
+  Ver `docs/erros/2026-09-11-variavel-trocada-antes-do-codigo-subir.md`.
+- **3 movimentações estruturais aprovadas, ainda não executadas.**
+  Mover `mock/` para `tests/`; mover `lacunas-san-checkout-10-09-2026.md`,
+  `plano-execucao.md`, `relatorio-seguranca-09-09-2026.md` e `TESTES.md`
+  para `docs/`; parar de rastrear `Claude outputs/`. O `.gitignore` já
+  cobre o último.
+  *(Eram 4: a remoção dos módulos órfãos já tinha sido feita antes desta
+  sessão — o achado veio de cópia velha, ver
+  `docs/erros/2026-09-11-auditoria-contra-copia-velha.md`.)*
 
 ### Abertas, não bloqueiam
 
