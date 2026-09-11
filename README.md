@@ -41,11 +41,13 @@ nunca uma edição num que já rodou — ver `CONSTRAINTS.md`.
 npm test
 ```
 
-Roda as quatro suítes de uma vez (assinatura HMAC do webhook, conversão
-das taxas da Asaas, regra de id imprevisível e hash da senha do admin).
-Não precisa de `.env`: o runner injeta valores falsos só para os módulos
-carregarem. Os mesmos testes rodam sozinhos a cada push, em
-`.github/workflows/ci.yml` — push que quebra teste não entra.
+Roda as cinco suítes de uma vez (assinatura HMAC do webhook, conversão
+das taxas da Asaas, regra de id imprevisível, hash da senha do admin, e o
+caminho crítico do webhook de entrada — guarda de origem, mapa de
+evento→status, idempotência e soma de taxas). Não precisa de `.env`: o
+runner injeta valores falsos só para os módulos carregarem, e nenhum
+teste toca banco, rede ou relógio. Os mesmos testes rodam sozinhos a cada
+push, em `.github/workflows/ci.yml` — push que quebra teste não entra.
 
 Exige **Node 22 ou mais novo** (`engines` no `package.json`):
 `@supabase/supabase-js` usa WebSocket nativo, que não existe no Node 20 —

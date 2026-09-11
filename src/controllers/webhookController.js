@@ -57,6 +57,36 @@ import { compararSeguro } from '../utils/validadores.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
 
 /**
+ * Tudo que este módulo toca fora de si mesmo, reunido num objeto só.
+ *
+ * Produção não passa nada e recebe estas; o autoteste passa versões
+ * falsas e consegue exercitar o caminho crítico — idempotência, ciclo
+ * novo de assinatura, sempre-200 — sem banco, sem rede e sem relógio.
+ * Sem essa costura, a única forma de testar essas regras seria subir
+ * Supabase e Asaas de verdade, que é o mesmo que não testar.
+ *
+ * `notificar` entra aqui junto com as funções de banco de propósito: é
+ * saída de rede, e no teste ela também precisa virar um espião em vez
+ * de um `fetch` real — de quebra, evita que o retry por `setTimeout`
+ * agende timer de verdade durante o teste.
+ */
+const dependenciasPadrao = {
+  buscarCobranca,
+  atualizarStatusCobranca,
+  buscarCobrancaPorCheckoutId,
+  vincularChargeIdAoCheckout,
+  atualizarStatusPorCheckoutId,
+  atualizarSubscriptionIdDaCobranca,
+  buscarCobrancaPorSubscriptionId,
+  registrarCicloAssinatura,
+  atualizarSituacaoSubconta,
+  upsertAssinatura,
+  atualizarStatusAssinatura,
+  cancelarAssinaturaNaAsaas,
+  notificar: (url, dados, segredo) => notificarContratante(url, dados, segredo)
+};
+
+/**
  * Aplicado em webhookRoutes.js antes de receberWebhookAsaas. A Asaas
  * reenvia, em cada webhook, o "Token de acesso" configurado no painel
  * dela (Integrações → Webhooks) no header abaixo — sem isso, qualquer
@@ -138,41 +168,77 @@ const VERSAO_WEBHOOK = 1;
  *  no webhook do contratante, não o de pedido avulso. */
 const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
 
-export async function receberWebhookAsaas(requisicao, resposta) {
-  console.log('[webhook/asaas] payload recebido:', JSON.stringify(requisicao.body, null, 2));
+/**
+ * O roteamento por vocabulário de evento, sem Express em volta. É aqui
+ * que mora a decisão do que fazer com cada evento — separado do handler
+ * justamente para poder ser exercitado com dependências falsas.
+ *
+ * ⚠️ NÃO VALIDA ORIGEM. Quem faz isso é o `verificarWebhookAsaas`, que
+ * `webhookRoutes.js` monta ANTES do handler. Esta função aceita qualquer
+ * corpo e muda estado de pagamento a partir dele — montá-la direto numa
+ * rota, ou chamá-la com corpo vindo da rede sem passar pela guarda,
+ * reabre exatamente o buraco que a guarda fecha: qualquer um que
+ * descubra a URL manda `CHECKOUT_PAID` e libera pedido sem pagar.
+ * É exportada para o autoteste, não para ser reaproveitada em rota.
+ */
+export async function processarWebhook(corpo, deps = dependenciasPadrao) {
+  const evento = corpo?.event;
 
-  try {
-    const corpo = requisicao.body;
-    const evento = corpo?.event;
-
-    if (evento?.startsWith('CHECKOUT_')) {
-      await processarEventoCheckout(corpo);
-    } else if (EVENTOS_PAYMENT_TRATADOS.includes(evento)) {
-      await processarEventoPayment(corpo);
-    } else if (evento?.startsWith('ACCOUNT_STATUS_')) {
-      await processarEventoSubconta(corpo);
-    } else if (evento?.startsWith('ACCESS_TOKEN_')) {
-      registrarAlertaChaveApi(corpo);
-    } else if (evento?.startsWith('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_')) {
-      await processarAutorizacaoPixAutomatico(corpo);
-    }
-    // outros eventos (ex.: PAYMENT_CREATED, CHECKOUT_CREATED, INVOICE_*)
-    // chegam aqui mas não fazem nada — nota fiscal é responsabilidade
-    // de cada contratante, não do San Checkout.
-  } catch (erro) {
-    console.error('[webhook/asaas] erro ao processar:', erro.message);
+  if (evento?.startsWith('CHECKOUT_')) {
+    return processarEventoCheckout(corpo, deps);
   }
-
-  // sempre 200 — a Asaas para de reenviar se receber erro repetido
-  resposta.status(200).json({ recebido: true });
+  if (EVENTOS_PAYMENT_TRATADOS.includes(evento)) {
+    return processarEventoPayment(corpo, deps);
+  }
+  if (evento?.startsWith('ACCOUNT_STATUS_')) {
+    return processarEventoSubconta(corpo, deps);
+  }
+  if (evento?.startsWith('ACCESS_TOKEN_')) {
+    return registrarAlertaChaveApi(corpo);
+  }
+  if (evento?.startsWith('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_')) {
+    return processarAutorizacaoPixAutomatico(corpo, deps);
+  }
+  // outros eventos (ex.: PAYMENT_CREATED, CHECKOUT_CREATED, INVOICE_*)
+  // chegam aqui mas não fazem nada — nota fiscal é responsabilidade
+  // de cada contratante, não do San Checkout.
 }
+
+/**
+ * Fábrica existe só para o autoteste conseguir injetar dependências: o
+ * Express chama o handler com `(req, res, next)`, então não dá para
+ * receber as dependências por parâmetro posicional sem colidir com o
+ * `next`. Produção usa a instância única exportada logo abaixo, e
+ * `webhookRoutes.js` continua importando o mesmo nome de sempre.
+ *
+ * ⚠️ O handler devolvido aqui TAMBÉM não valida origem — a guarda é
+ * middleware separado, aplicado antes dele na rota. Vale a mesma
+ * ressalva do `processarWebhook` acima: montar este handler sem o
+ * `verificarWebhookAsaas` na frente libera pedido sem pagamento.
+ */
+export function criarReceptorWebhook(deps = dependenciasPadrao) {
+  return async function receberWebhookAsaas(requisicao, resposta) {
+    console.log('[webhook/asaas] payload recebido:', JSON.stringify(requisicao.body, null, 2));
+
+    try {
+      await processarWebhook(requisicao.body, deps);
+    } catch (erro) {
+      console.error('[webhook/asaas] erro ao processar:', erro.message);
+    }
+
+    // sempre 200 — a Asaas para de reenviar se receber erro repetido
+    resposta.status(200).json({ recebido: true });
+  };
+}
+
+export const receberWebhookAsaas = criarReceptorWebhook();
 
 /** Traduz o nome do evento Asaas pro nosso status local — devolve
  *  `null` pra evento que chegou até aqui mas não deveria mudar status
  *  (não deve acontecer, já que a rota acima já filtra, mas evita
  *  gravar um status incorreto se um evento novo entrar na lista de
  *  tratados sem entrar aqui também). */
-function mapearStatusPayment(evento) {
+export function mapearStatusPayment(evento) {
   if (EVENTOS_PAYMENT_CONFIRMACAO.includes(evento)) return 'confirmado';
   if (EVENTOS_PAYMENT_ESTORNO.includes(evento)) return 'estornado';
   if (EVENTOS_PAYMENT_ESTORNO_PROGRESSO.includes(evento)) return 'estorno_solicitado';
@@ -200,13 +266,13 @@ function mapearStatusPayment(evento) {
  * entrou, e uma assinatura velha sobrando é problema menor (e visível
  * no painel da Asaas) do que devolver erro pra quem acabou de pagar.
  */
-async function encerrarAssinaturaSubstituida(cobranca, novaAssinaturaId) {
+async function encerrarAssinaturaSubstituida(cobranca, novaAssinaturaId, deps = dependenciasPadrao) {
   const antigaId = cobranca.substitui_assinatura_id;
   if (!antigaId || antigaId === novaAssinaturaId) return;
 
   try {
-    await cancelarAssinaturaNaAsaas(antigaId);
-    await atualizarStatusAssinatura(antigaId, 'cancelada');
+    await deps.cancelarAssinaturaNaAsaas(antigaId);
+    await deps.atualizarStatusAssinatura(antigaId, 'cancelada');
     console.log(`[assinatura/renovacao] ${antigaId} encerrada; substituída por ${novaAssinaturaId}`);
   } catch (erro) {
     console.error(
@@ -267,13 +333,13 @@ function registrarAlertaChaveApi(corpo) {
  * conta. O console.log existe pra você ver o payload real do primeiro
  * evento e corrigir se o campo do id vier com outro nome.
  */
-async function processarAutorizacaoPixAutomatico(corpo) {
+async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadrao) {
   const evento = corpo?.event;
   // Não confirmado byte a byte: tenta os caminhos plausíveis do id.
   const autorizacaoId = corpo?.authorization?.id ?? corpo?.pixRecurringAuthorization?.id ?? corpo?.id;
   if (!autorizacaoId) return;
 
-  const cobranca = await buscarCobrancaPorCheckoutId(autorizacaoId);
+  const cobranca = await deps.buscarCobrancaPorCheckoutId(autorizacaoId);
   if (!cobranca) return;
 
   const ATIVOU = 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED';
@@ -284,8 +350,8 @@ async function processarAutorizacaoPixAutomatico(corpo) {
   ];
 
   if (evento === ATIVOU) {
-    await atualizarStatusPorCheckoutId(autorizacaoId, 'confirmado');
-    await upsertAssinatura({
+    await deps.atualizarStatusPorCheckoutId(autorizacaoId, 'confirmado');
+    await deps.upsertAssinatura({
       id: autorizacaoId,
       contratanteId: cobranca.contratante_id,
       planoId: cobranca.plano_id,
@@ -294,12 +360,12 @@ async function processarAutorizacaoPixAutomatico(corpo) {
       ciclo: corpo?.authorization?.frequency ?? null,
       proximaCobranca: null
     });
-    return notificarConformeMetodo(cobranca, { confirmado: true, eventoAssinatura: 'criada' });
+    return notificarConformeMetodo(cobranca, { confirmado: true, eventoAssinatura: 'criada' }, deps);
   }
 
   if (ENCERROU.includes(evento)) {
-    await atualizarStatusPorCheckoutId(autorizacaoId, 'cancelado');
-    return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' });
+    await deps.atualizarStatusPorCheckoutId(autorizacaoId, 'cancelado');
+    return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' }, deps);
   }
 }
 
@@ -312,12 +378,12 @@ async function processarAutorizacaoPixAutomatico(corpo) {
  * da conta"): { event, account: { id }, accountStatus: { general,
  * commercialInfo, bankAccountInfo, documentation } }.
  */
-async function processarEventoSubconta(corpo) {
+async function processarEventoSubconta(corpo, deps = dependenciasPadrao) {
   const asaasAccountId = corpo?.account?.id;
   if (!asaasAccountId) return;
 
   const situacao = corpo?.accountStatus ?? {};
-  await atualizarSituacaoSubconta(asaasAccountId, {
+  await deps.atualizarSituacaoSubconta(asaasAccountId, {
     geral: situacao.general ?? null,
     comercial: situacao.commercialInfo ?? null,
     bancaria: situacao.bankAccountInfo ?? null,
@@ -325,7 +391,7 @@ async function processarEventoSubconta(corpo) {
   });
 }
 
-function mapearEventoAssinatura(status) {
+export function mapearEventoAssinatura(status) {
   if (status === 'confirmado') return 'cobranca_confirmada';
   // Recusa de cartão num ciclo é, pro assinante, a mesma coisa que a
   // cobrança não ter entrado — mesmo evento do vencimento.
@@ -341,7 +407,7 @@ function mapearEventoAssinatura(status) {
    VOCABULÁRIO 1 — Pix/Boleto direto (payment.id = nosso charge_id) E
    ciclos de Assinatura a partir do 2º mês (payment.subscription).
 ------------------------------------------------------------------ */
-async function processarEventoPayment(corpo) {
+async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
   const evento = corpo?.event;
   const payment = corpo?.payment;
   const chargeId = payment?.id;
@@ -350,7 +416,7 @@ async function processarEventoPayment(corpo) {
   const novoStatus = mapearStatusPayment(evento);
   if (!novoStatus) return;
 
-  let cobranca = await buscarCobranca(chargeId);
+  let cobranca = await deps.buscarCobranca(chargeId);
 
   if (!cobranca) {
     // Charge_id desconhecido: só vale a pena investigar se for um
@@ -358,20 +424,20 @@ async function processarEventoPayment(corpo) {
     // origem no campo `subscription`) — qualquer outra cobrança
     // avulsa desconhecida não é nossa, ignora.
     if (!payment?.subscription) return;
-    cobranca = await registrarNovoCicloAssinatura(payment);
+    cobranca = await registrarNovoCicloAssinatura(payment, deps);
     if (!cobranca) return;
   }
 
   if (cobranca.status === novoStatus) return; // já processado — evita duplicar notificação/e-mail
 
-  await atualizarStatusCobranca(chargeId, novoStatus);
+  await deps.atualizarStatusCobranca(chargeId, novoStatus);
 
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     return notificarConformeMetodo(cobranca, {
       confirmado: novoStatus === 'confirmado',
       chargeId,
       eventoAssinatura: mapearEventoAssinatura(novoStatus)
-    });
+    }, deps);
   }
 
   // Pix/Boleto avulso — repassa TODA mudança de status (confirmado,
@@ -380,7 +446,7 @@ async function processarEventoPayment(corpo) {
   // etc.) — não é mais responsabilidade do San Checkout.
   const webhookUrlDoContratante = cobranca.contratantes?.webhook_url;
   if (webhookUrlDoContratante) {
-    await notificarContratante(
+    await deps.notificar(
       webhookUrlDoContratante,
       montarPayloadConfirmacaoPedido(cobranca, chargeId, novoStatus),
       cobranca.contratantes?.api_key
@@ -395,15 +461,15 @@ async function processarEventoPayment(corpo) {
  * cobrança mais recente daquela assinatura como "molde" (contratante,
  * plano, CPF, telefone, endereço) pra montar o registro do ciclo novo.
  */
-async function registrarNovoCicloAssinatura(payment) {
+async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) {
   const subscriptionId = payment.subscription;
-  const modelo = await buscarCobrancaPorSubscriptionId(subscriptionId);
+  const modelo = await deps.buscarCobrancaPorSubscriptionId(subscriptionId);
   if (!modelo) {
     console.error(`[webhook/assinatura] ciclo novo da subscription ${subscriptionId} sem cobrança-modelo local — ignorando (nunca vimos a 1ª cobrança dela?).`);
     return null;
   }
 
-  await registrarCicloAssinatura({
+  await deps.registrarCicloAssinatura({
     chargeId: payment.id,
     asaasSubscriptionId: subscriptionId,
     contratanteId: modelo.contratante_id,
@@ -424,19 +490,19 @@ async function registrarNovoCicloAssinatura(payment) {
     valorCobrado: payment.value ?? modelo.valor_cobrado
   });
 
-  return buscarCobranca(payment.id);
+  return deps.buscarCobranca(payment.id);
 }
 
 /* ------------------------------------------------------------------
    VOCABULÁRIO 2 — Cartão/Boleto/Assinatura via pop-up
    (checkout.id = nosso asaas_checkout_id)
 ------------------------------------------------------------------ */
-async function processarEventoCheckout(corpo) {
+async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
   const evento = corpo?.event;
   const asaasCheckoutId = corpo?.checkout?.id ?? corpo?.id;
   if (!asaasCheckoutId) return;
 
-  const cobranca = await buscarCobrancaPorCheckoutId(asaasCheckoutId);
+  const cobranca = await deps.buscarCobrancaPorCheckoutId(asaasCheckoutId);
   if (!cobranca) return;
 
   if (evento === 'CHECKOUT_PAID') {
@@ -444,8 +510,8 @@ async function processarEventoCheckout(corpo) {
     // como a Asaas realmente estrutura isso — tenta os dois.
     const payment = corpo?.checkout?.payment ?? corpo?.payment ?? null;
     const chargeId = payment?.id ?? null;
-    if (chargeId) await vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
-    await atualizarStatusPorCheckoutId(asaasCheckoutId, 'confirmado');
+    if (chargeId) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
+    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'confirmado');
 
     const chargeIdFinal = chargeId ?? cobranca.charge_id;
 
@@ -454,8 +520,8 @@ async function processarEventoCheckout(corpo) {
     // "cobrança-modelo" dos ciclos seguintes) e cria a linha em
     // `assinaturas` (usada só pro /cancelar-assinatura achar o id).
     if (cobranca.metodo_pagamento === 'assinatura' && payment?.subscription && chargeIdFinal) {
-      await atualizarSubscriptionIdDaCobranca(chargeIdFinal, payment.subscription);
-      await upsertAssinatura({
+      await deps.atualizarSubscriptionIdDaCobranca(chargeIdFinal, payment.subscription);
+      await deps.upsertAssinatura({
         id: payment.subscription,
         contratanteId: cobranca.contratante_id,
         planoId: cobranca.plano_id,
@@ -468,22 +534,22 @@ async function processarEventoCheckout(corpo) {
       // Renovação: só AGORA a antiga é cancelada — com o pagamento novo
       // já confirmado. Se a renovação tivesse falhado, o assinante
       // continuaria com a assinatura anterior, sem ficar sem nenhuma.
-      await encerrarAssinaturaSubstituida(cobranca, payment.subscription);
+      await encerrarAssinaturaSubstituida(cobranca, payment.subscription, deps);
     }
 
     return notificarConformeMetodo(cobranca, {
       confirmado: true,
       chargeId: chargeIdFinal
-    });
+    }, deps);
   }
 
   if (evento === 'CHECKOUT_CANCELED') {
-    await atualizarStatusPorCheckoutId(asaasCheckoutId, 'cancelado');
-    return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' });
+    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'cancelado');
+    return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' }, deps);
   }
 
   if (evento === 'CHECKOUT_EXPIRED') {
-    await atualizarStatusPorCheckoutId(asaasCheckoutId, 'expirado');
+    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'expirado');
     // Sem notificação: nem o webhook de pedido (INTEGRACAO.md seção 4)
     // nem o de assinatura (seção 6.1) documentam um status/evento pra
     // expiração — só atualizamos nosso próprio banco.
@@ -498,7 +564,7 @@ async function processarEventoCheckout(corpo) {
  * prioridade; sem ele, `confirmado: true` cai no default 'criada'
  * (1ª cobrança, via CHECKOUT_PAID).
  */
-async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoAssinatura }) {
+async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoAssinatura }, deps = dependenciasPadrao) {
   const webhookUrlDoContratante = cobranca.contratantes?.webhook_url;
   if (!webhookUrlDoContratante) return;
   const segredo = cobranca.contratantes?.api_key;
@@ -509,7 +575,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     const evento = eventoAssinatura ?? (confirmado ? 'criada' : null);
     if (!evento) return;
-    return notificarContratante(webhookUrlDoContratante, {
+    return deps.notificar(webhookUrlDoContratante, {
       versao: VERSAO_WEBHOOK,
       tipo: 'assinatura',
       planoId: cobranca.plano_id,
@@ -522,7 +588,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   // de tentativa não tem status documentado no INTEGRACAO.md seção 4,
   // então não inventamos um aqui).
   if (confirmado) {
-    return notificarContratante(
+    return deps.notificar(
       webhookUrlDoContratante,
       montarPayloadConfirmacaoPedido(cobranca, chargeId, 'confirmado'),
       segredo
@@ -530,7 +596,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   }
 }
 
-function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
+export function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
   return {
     versao: VERSAO_WEBHOOK,
     pedidoId: cobranca.pedido_id,
@@ -598,4 +664,241 @@ async function notificarContratante(url, dados, segredo, tentativa = 0) {
     console.error(`[webhook/asaas] falha ao notificar ${url} (tentativa ${tentativa + 1}), nova tentativa em ${atraso / 1000}s:`, erro.message);
     setTimeout(() => notificarContratante(url, dados, segredo, tentativa + 1), atraso);
   }
+}
+
+/* ------------------------------------------------------------------
+   Autoteste — `node src/controllers/webhookController.js`
+   Roda junto com os outros em `npm test`. Cobre o caminho crítico do
+   webhook: a guarda que impede webhook forjado (regra 3 do `checkout`),
+   o mapa de evento→status que decide se um pedido é marcado pago, e a
+   soma de taxas do payload que o contratante recebe. NÃO cobre o fluxo
+   acoplado ao banco (idempotência, ciclo de assinatura) — esse é o
+   próximo passo, precisa de uma costura pra falsear o Supabase.
+------------------------------------------------------------------ */
+if (process.argv[1]?.endsWith('webhookController.js')) {
+  const { strict: assert } = await import('node:assert');
+
+  // --- Guarda de token (segurança, regra 3 do checkout) ---
+  const tokenOriginal = process.env.ASAAS_WEBHOOK_TOKEN;
+
+  function rodarGuarda({ token, header }) {
+    if (token === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
+    else process.env.ASAAS_WEBHOOK_TOKEN = token;
+
+    const req = { get: (nome) => (nome === 'asaas-access-token' ? header : undefined) };
+    const res = {
+      _status: null, _json: null,
+      status(c) { this._status = c; return this; },
+      json(o) { this._json = o; return this; }
+    };
+    let chamouProximo = false;
+    verificarWebhookAsaas(req, res, () => { chamouProximo = true; });
+    return { status: res._status, chamouProximo };
+  }
+
+  let r = rodarGuarda({ token: undefined, header: 'qualquer' });
+  assert.equal(r.status, 503, 'sem ASAAS_WEBHOOK_TOKEN configurado: recusa tudo (fail-closed)');
+  assert.equal(r.chamouProximo, false, 'sem token configurado não passa adiante');
+
+  r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-errado' });
+  assert.equal(r.status, 401, 'token do header não bate: 401');
+  assert.equal(r.chamouProximo, false, 'token errado não passa adiante');
+
+  r = rodarGuarda({ token: 'segredo-certo', header: undefined });
+  assert.equal(r.status, 401, 'header ausente com token configurado: 401 (não 503)');
+
+  r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo' });
+  assert.equal(r.chamouProximo, true, 'token certo passa adiante');
+  assert.equal(r.status, null, 'token certo não seta status de erro');
+
+  if (tokenOriginal === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
+  else process.env.ASAAS_WEBHOOK_TOKEN = tokenOriginal;
+
+  // --- mapearStatusPayment (evento Asaas → status local) ---
+  assert.equal(mapearStatusPayment('PAYMENT_CONFIRMED'), 'confirmado');
+  assert.equal(mapearStatusPayment('PAYMENT_RECEIVED'), 'confirmado');
+  assert.equal(mapearStatusPayment('PAYMENT_REFUNDED'), 'estornado');
+  assert.equal(mapearStatusPayment('PAYMENT_PARTIALLY_REFUNDED'), 'estornado');
+  assert.equal(mapearStatusPayment('PAYMENT_REFUND_IN_PROGRESS'), 'estorno_solicitado');
+  assert.equal(mapearStatusPayment('PAYMENT_REFUND_DENIED'), 'estorno_negado');
+  assert.equal(mapearStatusPayment('PAYMENT_OVERDUE'), 'vencido');
+  assert.equal(mapearStatusPayment('PAYMENT_AWAITING_RISK_ANALYSIS'), 'em_analise');
+  assert.equal(mapearStatusPayment('PAYMENT_REPROVED_BY_RISK_ANALYSIS'), 'recusado');
+  assert.equal(mapearStatusPayment('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED'), 'recusado');
+  assert.equal(mapearStatusPayment('PAYMENT_CHARGEBACK_REQUESTED'), 'chargeback');
+  assert.equal(mapearStatusPayment('PAYMENT_RECEIVED_IN_CASH_UNDONE'), 'pendente');
+  assert.equal(mapearStatusPayment('PAYMENT_CREATED'), null, 'evento não mapeado: null (não marca status errado)');
+  assert.equal(mapearStatusPayment('EVENTO_QUE_NAO_EXISTE'), null, 'evento desconhecido: null');
+
+  // --- mapearEventoAssinatura (status local → vocabulário de assinatura) ---
+  assert.equal(mapearEventoAssinatura('confirmado'), 'cobranca_confirmada');
+  assert.equal(mapearEventoAssinatura('vencido'), 'cobranca_falhou');
+  assert.equal(mapearEventoAssinatura('recusado'), 'cobranca_falhou', 'recusa de cartão num ciclo = cobrança não entrou');
+  assert.equal(mapearEventoAssinatura('estornado'), 'cobranca_estornada');
+  assert.equal(mapearEventoAssinatura('estorno_solicitado'), 'cobranca_estornada');
+  assert.equal(mapearEventoAssinatura('chargeback'), 'cobranca_contestada');
+  assert.equal(mapearEventoAssinatura('em_analise'), null, 'estado de passagem não vira evento (evita ruído)');
+  assert.equal(mapearEventoAssinatura('pendente'), null, 'estado de passagem não vira evento');
+
+  // --- montarPayloadConfirmacaoPedido (caminho de dinheiro: soma das taxas) ---
+  const payload = montarPayloadConfirmacaoPedido(
+    { pedido_id: 'ped_1', valor_cheio: 100, desconto: 10, cupom: 'X', valor_com_desconto: 90,
+      frete: 5, taxa_do_projeto: 2, taxa_asaas: 1.5, taxa_propria: 0.5, taxa_isenta: false,
+      metodo_pagamento: 'pix', valor_cobrado: 99 },
+    'pay_1', 'confirmado'
+  );
+  assert.equal(payload.versao, VERSAO_WEBHOOK, 'carrega a versão do contrato');
+  assert.equal(payload.pedidoId, 'ped_1');
+  assert.equal(payload.chargeId, 'pay_1');
+  assert.equal(payload.status, 'confirmado');
+  assert.equal(payload.taxasTotais, 4, 'taxasTotais = projeto + asaas + própria (2 + 1.5 + 0.5)');
+
+  const payloadTaxasNulas = montarPayloadConfirmacaoPedido(
+    { pedido_id: 'ped_2', taxa_do_projeto: null, taxa_asaas: null, taxa_propria: null },
+    'pay_2', 'confirmado'
+  );
+  assert.equal(payloadTaxasNulas.taxasTotais, 0, 'taxa nula conta como 0, não NaN');
+
+  /* --- Fluxo com dependências falsas ---------------------------------
+     Cada dependência vira um espião que anota como foi chamada. O valor
+     que ela devolve é configurável por teste; passando uma função, dá
+     para simular falha. Nenhum banco, nenhuma rede, nenhum timer. */
+  // As chaves saem do próprio `dependenciasPadrao` — lista repetida à
+  // mão sairia de sincronia no dia em que uma dependência nova entrasse,
+  // e o falso devolveria `undefined` no lugar de uma função.
+  function depsFalsas(retornos = {}) {
+    const chamadas = [];
+    const deps = {};
+    for (const nome of Object.keys(dependenciasPadrao)) {
+      deps[nome] = async (...args) => {
+        chamadas.push({ nome, args });
+        const r = retornos[nome];
+        return typeof r === 'function' ? r(...args) : (r ?? null);
+      };
+    }
+    deps.chamadas = chamadas;
+    deps.chamou = (nome) => chamadas.filter((c) => c.nome === nome);
+    return deps;
+  }
+
+  const contratante = { webhook_url: 'https://parceiro.exemplo/hook', api_key: 'chave-do-parceiro' };
+  const cobrancaPix = {
+    charge_id: 'pay_1', status: 'pendente', metodo_pagamento: 'pix',
+    pedido_id: 'ped_1', contratantes: contratante
+  };
+
+  // Idempotência (regra 5 do `checkout`): o mesmo webhook chega duas
+  // vezes e a segunda não pode reprocessar nada.
+  let deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado' } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps);
+  assert.equal(deps.chamou('atualizarStatusCobranca').length, 0, 'status já era esse: não regrava');
+  assert.equal(deps.chamou('notificar').length, 0, 'status já era esse: não notifica de novo');
+
+  deps = depsFalsas({ buscarCobranca: cobrancaPix });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps);
+  assert.deepEqual(deps.chamou('atualizarStatusCobranca')[0].args, ['pay_1', 'confirmado'], 'primeira vez grava o status');
+  assert.equal(deps.chamou('notificar').length, 1, 'primeira vez notifica o contratante');
+  assert.equal(deps.chamou('notificar')[0].args[0], contratante.webhook_url);
+  assert.equal(deps.chamou('notificar')[0].args[1].status, 'confirmado');
+  assert.equal(deps.chamou('notificar')[0].args[2], contratante.api_key, 'notificação vai assinada com a chave do contratante');
+
+  // Regra 6: evento fora do contrato não faz nada — e não quebra.
+  deps = depsFalsas();
+  await processarWebhook({ event: 'EVENTO_QUE_NAO_EXISTE' }, deps);
+  await processarWebhook({}, deps);
+  await processarWebhook(null, deps);
+  assert.equal(deps.chamadas.length, 0, 'evento desconhecido, corpo vazio ou nulo: nenhum efeito');
+
+  // Cobrança que não é nossa: ignora em vez de inventar registro.
+  deps = depsFalsas({ buscarCobranca: null });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_de_outro' } }, deps);
+  assert.equal(deps.chamou('atualizarStatusCobranca').length, 0, 'charge desconhecido sem subscription: ignora');
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 0);
+
+  // Ciclo novo de assinatura (2º mês em diante): charge desconhecido,
+  // mas com `subscription` — vira registro local a partir do molde.
+  const modeloAssinatura = {
+    contratante_id: 'c1', plano_id: 'plano_1', documento: '12345678909',
+    metodo_pagamento: 'assinatura', contratantes: contratante
+  };
+  let cicloRegistrado = false;
+  deps = depsFalsas({
+    buscarCobranca: () => (cicloRegistrado
+      ? { ...modeloAssinatura, charge_id: 'pay_ciclo2', status: 'pendente' }
+      : null),
+    buscarCobrancaPorSubscriptionId: modeloAssinatura,
+    registrarCicloAssinatura: () => { cicloRegistrado = true; }
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_ciclo2', subscription: 'sub_1', value: 50 } },
+    deps
+  );
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 1, 'ciclo novo vira registro local');
+  assert.equal(deps.chamou('notificar')[0].args[1].tipo, 'assinatura', 'ciclo usa o vocabulário de assinatura, não o de pedido');
+  assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cobranca_confirmada');
+
+  // Ciclo novo sem molde local: ignora, não adivinha o contratante.
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_orfao', subscription: 'sub_nunca_vista' } },
+    deps
+  );
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 0, 'sem cobrança-modelo: não registra ciclo às cegas');
+
+  // CHECKOUT_PAID: liga o charge que só agora existe, confirma, notifica.
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: { ...cobrancaPix, metodo_pagamento: 'cartao_credito', charge_id: null }
+  });
+  await processarWebhook(
+    { event: 'CHECKOUT_PAID', checkout: { id: 'chk_1', payment: { id: 'pay_novo' } } },
+    deps
+  );
+  assert.deepEqual(deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_1', 'pay_novo']);
+  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_1', 'confirmado']);
+  assert.equal(deps.chamou('notificar')[0].args[1].chargeId, 'pay_novo');
+
+  // Renovação de assinatura: a ordem é a garantia. A antiga só cai
+  // depois que a nova confirmou — trocar a ordem deixaria o assinante
+  // sem nenhuma se o pagamento falhasse.
+  const cobrancaRenovacao = {
+    ...cobrancaPix, metodo_pagamento: 'assinatura',
+    charge_id: 'pay_novo', substitui_assinatura_id: 'sub_antiga'
+  };
+  deps = depsFalsas({ buscarCobrancaPorCheckoutId: cobrancaRenovacao });
+  await processarWebhook(
+    { event: 'CHECKOUT_PAID', checkout: { id: 'chk_2', payment: { id: 'pay_novo', subscription: 'sub_nova' } } },
+    deps
+  );
+  const ordem = deps.chamadas.map((c) => c.nome);
+  assert.ok(
+    ordem.indexOf('atualizarStatusPorCheckoutId') < ordem.indexOf('cancelarAssinaturaNaAsaas'),
+    'a nova confirma ANTES de a antiga ser cancelada'
+  );
+  assert.deepEqual(deps.chamou('cancelarAssinaturaNaAsaas')[0].args, ['sub_antiga']);
+
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: cobrancaRenovacao,
+    cancelarAssinaturaNaAsaas: () => { throw new Error('asaas fora do ar'); }
+  });
+  await processarWebhook(
+    { event: 'CHECKOUT_PAID', checkout: { id: 'chk_3', payment: { id: 'pay_novo', subscription: 'sub_nova' } } },
+    deps
+  );
+  assert.equal(deps.chamou('notificar').length, 1, 'falha ao cancelar a antiga não impede de avisar quem pagou');
+
+  // Sempre 200: se a Asaas recebe erro repetido, ela para de reenviar —
+  // então nem exceção no processamento pode virar resposta de erro.
+  const receptor = criarReceptorWebhook(depsFalsas({
+    buscarCobrancaPorCheckoutId: () => { throw new Error('banco fora do ar'); }
+  }));
+  const resposta = {
+    _status: null, _json: null,
+    status(c) { this._status = c; return this; },
+    json(o) { this._json = o; return this; }
+  };
+  await receptor({ body: { event: 'CHECKOUT_PAID', checkout: { id: 'chk_erro' } } }, resposta);
+  assert.equal(resposta._status, 200, 'erro no processamento ainda responde 200');
+  assert.deepEqual(resposta._json, { recebido: true });
+
+  console.log('webhookController: caminho crítico OK');
 }

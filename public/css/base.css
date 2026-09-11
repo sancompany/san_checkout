@@ -18,6 +18,25 @@ body {
 img, svg { display: block; max-width: 100%; }
 button { font-family: inherit; border: none; background: none; cursor: pointer; outline: none; }
 input, select { font-family: inherit; font-size: inherit; border: none; outline: none; }
+
+/* O `outline: none` das duas linhas acima apaga o anel de foco que o
+   navegador desenha sozinho. Input e select ganharam substituto
+   (`input:focus` / `select:focus`, em components/forms.css); BOTÃO não
+   ganhou nenhum — e sem ele quem navega por teclado não enxerga onde
+   está, inclusive ao chegar no botão de pagar. A Lei 5 não trata
+   navegação por teclado como opcional.
+
+   `:focus-visible` acende só para teclado, então clique de mouse
+   continua sem anel. A cor é `--action-primary` e não `--border-focus`
+   de propósito: o dourado dá 2,9:1 sobre o branco do cartão, abaixo do
+   mínimo de 3:1 exigido de indicador de foco; o azul dá 5,2:1. O
+   `outline-offset` joga o anel para fora da borda, para ele aparecer
+   também no botão primário, que já é azul.
+
+   Segundo defeito causado por este reset apagar comportamento nativo —
+   ver docs/erros/2026-09-10-reset-css-quebrou-dialog-nativo.md. */
+:focus-visible { outline: 2px solid var(--action-primary, #2563EB); outline-offset: 2px; }
+
 fieldset { border: none; }
 .hidden { display: none !important; }
 .toast-container {

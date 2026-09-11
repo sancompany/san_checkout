@@ -41,6 +41,25 @@
   --radius-input: 10px;
   --radius-badge: 6px;
 
+  /* Campo de formulário — UMA definição, consumida pelo checkout
+     (components/forms.css) e pelo painel (admin.css).
+
+     Antes, cada arquivo descrevia o campo por conta própria e os dois já
+     tinham divergido: borda 1.5px contra 1px, padding 16px contra 14px,
+     altura 50px contra 44px. Ninguém decidiu essa diferença — é a
+     dessincronização que a Lei 5 existe para impedir, e o teste dela é
+     "se isso mudar, quantos arquivos preciso encostar?". Agora é um:
+     este.
+
+     A fonte única é o TOKEN e não a regra porque os dois não podem
+     compartilhar o arquivo de componente: `forms.css` estiliza `input`
+     SEM classe, e carregá-lo no painel pegaria os checkboxes das
+     `check-pill` (altura 50px, largura 100%) e destruiria aquele
+     bloco. */
+  --campo-altura: 50px;
+  --campo-borda: 1.5px;
+  --campo-padding-x: 16px;
+
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
 }

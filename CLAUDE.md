@@ -53,10 +53,34 @@ conferido contra a modelagem (§6.2) e o dado pessoal do histórico do git
 removido (§6.1). Reverificado ao vivo no commit `d515317`: árvore do
 GitHub e CI verde (run #7).
 
-**Estação 5 (Construção) é a próxima** — skill `construir`, em fatias
-verticais, com `depurar` e `revisar` como ciclos dentro dela;
-verifica as Leis 2, 5 e 6. **Modelo: Fable, esforço alto — troque antes
-de começar.**
+**Estação 5 (Construção) fechada.** As três condições, verificadas:
+
+- *Escopo da v1 implementado* — já estava, em produção.
+- *Teste no caminho crítico* — o webhook de entrada, onde dinheiro é
+  confirmado, ganhou suíte cobrindo guarda de origem, mapa de
+  evento→status, idempotência, ciclo novo de assinatura, a ordem do
+  cancelamento na renovação e o contrato de sempre responder 200. Para
+  isso o `webhookController.js` ganhou injeção de dependências, com o
+  núcleo (`processarWebhook`) separado da casca do Express — nenhum
+  arquivo fora dele mudou. Os testes foram validados por mutação: quebrar
+  a idempotência e inverter a ordem do cancelamento faz a suíte falhar.
+- *Ciclo de revisão limpo* — a skill `revisar` rodou sobre os dois diffs
+  desta estação: 4 ciclos no do webhook, 3 no do frontend, os dois
+  terminando sem achado novo.
+
+Leis verificadas: 2 (as exceções registradas seguem valendo; a separação
+núcleo/casca melhorou), 5 (auditada com a tela renderizada — anel de foco
+restaurado, campo com definição única, total que não mente) e 6 (fechada
+na Estação 4). Documentação oficial consultada onde a estação pede: o
+mínimo de contraste do indicador de foco veio do WCAG 2.2 (1.4.11), não
+de memória — citado em `docs/erros/2026-09-11-reset-apagou-o-anel-de-foco.md`.
+
+**Estação 6 (Prontidão) é a próxima** — segurança em ciclos, teste no
+navegador, limites declarados, log e alerta; verifica as Leis 4, 7 e 8,
+com a skill `seguranca-san`. **A tabela pede Opus com esforço alto, e
+aqui eu manteria:** é ciclo de segurança sobre motor de pagamento com
+dado de terceiro, onde errar é caro e difícil de detectar — exatamente o
+caso em que a tabela não deve ser afrouxada.
 
 (A Lei 0 como um todo continua aberta e não bloqueia — ver pendências:
 falta a skill `revisar` rodar sobre o que está em produção.)
@@ -75,12 +99,17 @@ Esta é a lista única. O que não está aqui, está fechado.
 ### Bloqueiam a esteira — dependem de ação do dono
 
 Nenhuma.
+
 ### Abertas, não bloqueiam
 
 - **Lei 0 · a skill `revisar` nunca rodou** sobre o que está em produção.
-- **Lei 0 · cobertura de teste é rasa.** As 4 suítes cobrem assinatura de
-  webhook, conversão de taxa, id imprevisível e hash de senha. Não há
-  teste de rota, de webhook de entrada, nem de fluxo de pagamento.
+- **Lei 0 · cobertura de teste ainda não alcança as rotas HTTP.** As 5
+  suítes cobrem assinatura de webhook, conversão de taxa, id
+  imprevisível, hash de senha e o caminho crítico do webhook de entrada
+  (guarda de origem, mapa de evento→status, idempotência, ciclo de
+  assinatura, sempre-200). Falta teste que suba o Express e exercite as
+  rotas de criação de cobrança (`/api/checkout/pix`, `/cartao`,
+  `/boleto`) de ponta a ponta.
 - **Estação 6 · a senha do admin trafega em todo request** (`X-Admin-Pass`)
   e fica no `sessionStorage` do navegador. O hash protege o repouso, não
   o trânsito. Um XSS no painel entrega a senha. Correção é token de

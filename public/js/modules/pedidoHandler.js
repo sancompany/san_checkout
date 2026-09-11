@@ -42,9 +42,38 @@ export async function resolverContexto() {
     aplicarNoResumo(resultado);
     return ids;
   } catch (erro) {
-    document.getElementById('order-title').textContent = erro.message || 'Não foi possível carregar o pedido.';
+    marcarPedidoIndisponivel(erro.message);
     return null;
   }
+}
+
+/**
+ * Pedido que não carregou não vira tela de compra.
+ *
+ * Escrever o erro no título não bastava: o total ficava no placeholder
+ * `0,00` do HTML e o painel de pagamento continuava inteiro na tela,
+ * com o botão convidando a pagar. "R$ 0,00" com botão ativo é pior que
+ * um erro visível — parece compra grátis, e o valor real não vem da
+ * tela, vem do modelo pull no servidor. Gateway nenhum renderiza
+ * checkout comprável sem total: a sessão falha.
+ *
+ * O pagamento já estava bloqueado por baixo (o `app.js` sai antes de
+ * ligar os botões, e o clique cai no guarda `if (!ids)`), então isto
+ * alinha o que a tela MOSTRA ao que o sistema FAZ.
+ */
+function marcarPedidoIndisponivel(mensagem) {
+  const titulo = document.getElementById('order-title');
+  if (titulo) titulo.textContent = mensagem || 'Não foi possível carregar o pedido.';
+
+  // Travessão em vez de zero: valor desconhecido não é valor zero.
+  const total = document.getElementById('order-amount');
+  if (total) total.textContent = '—';
+  for (const id of ['order-subtotal', 'order-desconto', 'order-taxa']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '—';
+  }
+
+  document.querySelector('.checkout-panel--form')?.classList.add('hidden');
 }
 
 function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
@@ -83,8 +112,31 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
 
   const subtotal = Number(pedido.valorCheio ?? pedido.valorComDesconto ?? 0);
   const desconto = Number(pedido.desconto ?? 0);
+  /* Nunca renderizar tela comprável sem total confiável.
+
+     Se `valorCobrado` não vier utilizável, isto derruba o carregamento
+     inteiro de propósito: o `catch` de `resolverContexto` escreve o erro
+     na tela e devolve `null`, e com isso o `app.js` sai antes de ligar
+     qualquer botão de pagamento. Quem clicar mesmo assim cai no guarda
+     `if (!ids)` e recebe o aviso de recarregar.
+
+     A alternativa preguiçosa seria `Number(… ?? 0)`, e ela é PIOR que o
+     NaN que estava aqui: "R$ 0,00" parece compra grátis, o comprador
+     confirma, e o servidor cobra outro valor — o valor real vem do
+     modelo pull, nunca do que a tela mostrou. Exibir preço que não se
+     sabe é o erro; NaN pelo menos era visivelmente quebrado. É por isso
+     que gateway nenhum renderiza checkout com total indisponível: a
+     sessão falha, não vira uma compra de valor desconhecido.
+
+     `<= 0` entra junto porque o backend já recusa esse valor
+     (`valorValido`: maior que zero e até 100.000) — total zerado ou
+     negativo aqui significa resposta corrompida, não compra gratuita. */
+  const total = Number(taxa?.valorCobrado);
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error('Não foi possível calcular o valor desta compra. Recarregue a página ou peça um link novo ao vendedor.');
+  }
+
   const taxasTotais = Number(taxa.taxasTotais ?? 0);
-  const total = taxa.valorCobrado;
 
   document.getElementById('order-subtotal').textContent = `R$ ${formatarMoeda(subtotal)}`;
   document.getElementById('order-amount').textContent = formatarMoeda(total);
