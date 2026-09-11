@@ -35,10 +35,18 @@ em `docs/specs/2026-09-11-san-checkout.md`: San Checkout é **estrutura**,
 não projeto — banco próprio e isolado, consome domínio/DNS, GitHub,
 Render e Cloudflare Pages da San & Co.; não consome e-mail nem Drive.
 
-**Estação 3 (Fundação) em andamento** — repositório, árvore de pastas e
-segredos conferem (Leis 1 e 3). **CI não está verde** no último push
-(`11498e5`) — ver pendência que bloqueia, abaixo. Estação não fecha
-enquanto isso não estiver resolvido.
+**Estação 3 (Fundação) fechada.** Repositório, árvore de pastas, segredo
+fora do código (Leis 1, 3, 9) e CI verde num push real (`4c01cda`, run
+#5, reverificado ao vivo) — ver
+`docs/erros/2026-09-11-ci-preso-em-node-20.md`.
+
+**Estação 4 (Contratos) em andamento.** Conferido e conforme: contrato de
+API explícito com entrada, saída e tabela de erros (`API.md`, seções 4-5
+e 9-10); RLS habilitada nas quatro tabelas com negação por padrão;
+schema alterado só pelo SQL Editor, nunca por `DATABASE_URL` direto;
+inventário de dados preenchido e com o caminho de exclusão verificado
+contra a modelagem (`docs/inventario-de-dados.md` §6.2). **Três
+pendências bloqueantes abertas nesta estação** — ver abaixo.
 
 (A Lei 0 como um todo continua aberta e não bloqueia — ver pendências:
 falta a skill `revisar` rodar sobre o que está em produção.)
@@ -56,24 +64,23 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 CI falhando no `main` (`11498e5`) — trocar `node-version` em
-  `ci.yml`.** `@supabase/supabase-js` já exige WebSocket nativo (Node
-  22+); o CI fixava Node 20 e caiu com
-  `Error: Node.js detected but native WebSocket not found.` na suíte de
-  `pedidoService.js`. A produção não sofre disso porque nunca teve
-  `engines.node` declarado e o Render escolheu uma versão mais nova por
-  conta própria — por sorte, não por decisão. Corrigido o lado que dava
-  para corrigir: `package.json` ganhou `"engines": { "node": ">=22" }`.
-  `.github/workflows/` é protegido contra escrita remota — colar isto em
-  `ci.yml`, substituindo a linha `node-version: '20'`:
+- **🔴 Lei 6 · tirar o `supabase/schema.sql` antigo do versionamento.**
+  A regra nova já vale (`CONSTRAINTS.md` §2.1) e
+  `supabase/migrations/0001_baseline.sql` já existe, congelado, com o
+  corpo byte a byte igual ao schema antigo. Falta só remover o arquivo
+  duplicado — um comando, na raiz do projeto:
 
-  ```yaml
-        node-version: '22'
+  ```
+  git rm supabase/schema.sql
   ```
 
-  Depois de colar e dar push, aviso quando reverifiquei o CI ao vivo.
-  Ver `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
-
+  Enquanto os dois existirem, há duas fontes de verdade para o schema, que
+  é exatamente o que a Lei 6 proíbe. **Este comando chegou a ser rodado em
+  11/09/2026, mas foi desfeito** pelo `git filter-repo --force` da
+  reescrita de histórico, que restaurou a árvore commitada por cima do que
+  não tinha sido commitado — ver
+  `docs/erros/2026-09-11-filter-repo-apagou-trabalho-nao-commitado.md`.
+  Precisa ser rodado de novo, agora com tudo commitado antes.
 ### Abertas, não bloqueiam
 
 - **Lei 0 · a skill `revisar` nunca rodou** sobre o que está em produção.
@@ -93,9 +100,15 @@ Esta é a lista única. O que não está aqui, está fechado.
   derivação por vez), mas é vetor de negação de serviço de quem sondar.
   Mitigação provável: limitar derivações concorrentes. Levantado ao subir
   o parâmetro de 2^14 para 2^17 — é consequência direta dessa mudança.
-- **Lei 6 · `supabase/schema.sql` é arquivo único editado a cada versão**,
-  em vez de migrations numeradas e imutáveis. Foi esse modelo que
-  produziu o erro de `docs/erros/2026-09-11-coluna-nao-criada-...`.
 - **Lei 10 · a rotina de expurgo não existe.** O prazo de retenção está
-  decidido (5 anos), mas nada apaga nada hoje. Validação jurídica é da
-  Estação 7, com a skill `legal`.
+  decidido (5 anos), mas nada apaga nada hoje. A modelagem **suporta** o
+  expurgo (verificado na Estação 4 — ver `docs/inventario-de-dados.md`
+  §6.2); falta escrever a rotina. Validação jurídica é da Estação 7, com
+  a skill `legal`.
+- **Lei 10 · log de produção grava dado pessoal em texto puro.** O
+  `webhookController.js` registra o payload cru dos webhooks da Asaas,
+  que contém dado do comprador (não contém dado de cartão), retido pelo
+  Render. Estava só no `docs/inventario-de-dados.md` §7 e não nesta
+  lista — a lista é uma só, então passa a constar aqui. Reduzir aos
+  campos de diagnóstico assim que o formato dos eventos estiver
+  confirmado ao vivo.

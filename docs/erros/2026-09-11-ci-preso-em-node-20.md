@@ -47,3 +47,13 @@ Faixa de versão aberta (`^2.45.0`) em dependência que outros ambientes
 anda, o ambiente fixo fica para trás em silêncio até quebrar. `engines`
 no `package.json` é a trava que faz os três lugares (dev local, CI,
 Render) andarem pela mesma régua.
+
+## Fechado — 11/09/2026
+
+`ci.yml` colado com `node-version: '22'` e commitado (`4c01cda`).
+Reverificado ao vivo: run #5 (`atualização ci`) — **Status: Success**,
+4 suítes passando, 15s de duração. O aviso restante no log
+("Node.js 20 is deprecated... forced to run on Node.js 24") é sobre o
+runtime que o próprio GitHub usa para executar as actions
+(`checkout@v4`, `setup-node@v4`), não sobre o Node que roda os testes —
+não é a mesma causa e não bloqueia nada.

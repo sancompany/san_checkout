@@ -1,3 +1,26 @@
+-- =====================================================================
+-- 0001 — BASELINE. CONGELADO EM 11/09/2026. NÃO EDITE ESTE ARQUIVO.
+--
+-- Este é o retrato do schema no momento em que o projeto passou a usar
+-- migrations numeradas (Lei 6: versionadas e nunca editadas depois de
+-- aplicadas em produção). Tudo que veio antes está registrado aqui
+-- dentro, inclusive como comentário no bloco MIGRAÇÃO no fim — histórico,
+-- não instrução nova.
+--
+-- A PARTIR DAQUI, toda mudança de schema é um arquivo NOVO nesta pasta:
+-- 0002_<o-que-muda>.sql, 0003_… , em ordem, cada um rodado uma vez no
+-- SQL Editor do Supabase e nunca reescrito depois. Errou? Corrige com
+-- a migration seguinte, não editando a que já rodou — foi exatamente o
+-- modelo de arquivo único reescrito que derrubou o painel de admin em
+-- produção (ver docs/erros/2026-09-11-coluna-nao-criada-por-create-
+-- table-if-not-exists.md).
+--
+-- Este baseline é idempotente (tudo `if not exists`), então continua
+-- seguro de reexecutar num banco novo. Isso NÃO o torna um retrato
+-- garantido da produção: para conferir divergência, consulte o
+-- information_schema do banco real.
+-- =====================================================================
+
 -- San Checkout v2 — schema novo, do zero.
 -- MVP desta leva: só Pix está de pé. Cartão/Boleto/Assinatura (pop-up
 -- Asaas Checkout) e nota fiscal no Drive entram na próxima — as

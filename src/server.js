@@ -2,16 +2,22 @@
  * SAN CHECKOUT v2 — src/server.js
  *
  * COMO RODAR (na pasta san-checkout/):
- *   1. npm install
+ *   1. npm install            (exige Node 22+ — ver `engines` no package.json)
  *   2. copie .env.example para .env e preencha
- *   3. rode supabase/schema.sql no SQL Editor do seu projeto Supabase
+ *   3. rode supabase/migrations/ em ordem numérica no SQL Editor do seu
+ *      projeto Supabase (banco novo começa no 0001_baseline.sql)
  *   4. npm start
  *
- * Cobre: Pix, Cartão de Crédito (parcelado), Boleto, Assinatura
- * (RECURRENT) e arquivamento de nota fiscal no Drive. NADA disso foi
- * testado ao vivo em sandbox ainda — ver os avisos ⚠️ espalhados nos
- * arquivos de cada parte pra saber exatamente o que pode precisar de
- * ajuste na primeira chamada real.
+ * Cobre: Pix, Cartão de Crédito (parcelado em até 12x), Boleto,
+ * Assinatura por cartão e Assinatura por Pix Automático.
+ *
+ * Nota fiscal e e-mail ao comprador NÃO saem daqui — cada contratante
+ * emite os seus, disparados pelo evento que chega no `webhook_url` dele
+ * (CONSTRAINTS.md §1.9).
+ *
+ * ⚠️ O webhook de ENTRADA (Asaas → este servidor) ainda não recebeu
+ * evento real em produção — ver a exceção da Lei 2 sobre
+ * `webhookController.js` no CONSTRAINTS.md.
  */
 
 import 'dotenv/config';

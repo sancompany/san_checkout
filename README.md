@@ -28,8 +28,12 @@ npm start                 # backend em http://localhost:3001
 Front-end: servir a pasta `public/` (Live Server na porta 5501, que é o
 valor padrão de `ORIGEM_FRONTEND`).
 
-Banco: rodar `supabase/schema.sql` no SQL Editor do Supabase. O arquivo é
-idempotente — pode ser reexecutado.
+Banco: rodar os arquivos de `supabase/migrations/` **em ordem numérica**
+no SQL Editor do Supabase. Banco novo começa no `0001_baseline.sql`, que
+é idempotente e pode ser reexecutado.
+
+**Mudança de schema é sempre um arquivo novo** (`0002_…`, `0003_…`),
+nunca uma edição num que já rodou — ver `CONSTRAINTS.md`.
 
 ## Como rodar os testes
 
@@ -37,11 +41,15 @@ idempotente — pode ser reexecutado.
 npm test
 ```
 
-Roda as três suítes de uma vez (assinatura HMAC do webhook, conversão das
-taxas da Asaas, regra de id imprevisível). Não precisa de `.env`: o
-runner injeta valores falsos só para os módulos carregarem. Os mesmos
-testes rodam sozinhos a cada push, em `.github/workflows/ci.yml` — push
-que quebra teste não entra.
+Roda as quatro suítes de uma vez (assinatura HMAC do webhook, conversão
+das taxas da Asaas, regra de id imprevisível e hash da senha do admin).
+Não precisa de `.env`: o runner injeta valores falsos só para os módulos
+carregarem. Os mesmos testes rodam sozinhos a cada push, em
+`.github/workflows/ci.yml` — push que quebra teste não entra.
+
+Exige **Node 22 ou mais novo** (`engines` no `package.json`):
+`@supabase/supabase-js` usa WebSocket nativo, que não existe no Node 20 —
+ver `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
 
 ## Variáveis de ambiente
 

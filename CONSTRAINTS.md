@@ -101,10 +101,52 @@ nenhuma cobrança.
 
 ---
 
+## 2.1 Regra de schema: migrations numeradas e imutáveis (Lei 6)
+
+Vale a partir de 11/09/2026.
+
+- O schema vive em `supabase/migrations/`, em arquivos numerados
+  (`0001_baseline.sql`, `0002_…`, `0003_…`), rodados **em ordem** no SQL
+  Editor do Supabase.
+- **Arquivo que já rodou em produção não é editado. Nunca.** Correção é
+  migration nova. Editar o que já foi aplicado é o modelo que derrubou o
+  painel de admin em produção —
+  `docs/erros/2026-09-11-coluna-nao-criada-por-create-table-if-not-exists.md`.
+- `0001_baseline.sql` é o retrato congelado de quando essa regra passou a
+  valer. É idempotente, então roda em banco novo sem susto — mas ser
+  idempotente não o torna um retrato garantido da produção; para conferir
+  divergência, consulte o `information_schema` do banco real.
+- Schema **nunca** é alterado por conexão direta com `DATABASE_URL`. As
+  exceções que a Lei 6 admite (DML em runtime, backup/restauração,
+  ferramenta somente-leitura, ambiente local) continuam valendo.
+
+---
+
 ## 3. Exceções de conformidade registradas
 
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
 esquecida não é conformidade.
+
+### Lei 6 · não há backup do banco — exceção COM GATILHO, 11/09/2026
+
+A Lei 6 exige backup automático do que não pode ser perdido, testado ao
+menos uma vez. **Não existe backup nenhum hoje.** O plano gratuito da
+Supabase não inclui backup automático (conferido em 11/09/2026 na página
+de preços: *"Automatic backups — Not included in free"*; Pro dá 7 dias de
+retenção, Team 14), e não há rotina própria no repositório.
+
+**Decisão do dono: roda sem backup por enquanto**, pela mesma lógica do
+plano gratuito do Render — o volume real ainda não começou, e o dado em
+risco hoje é de teste, não histórico financeiro de cliente.
+
+**O gatilho, que é o que torna isto exceção e não omissão: o primeiro
+pagamento real de terceiro fecha esta exceção.** A partir daí, rodar sem
+backup deixa de ser aceitável — perder o projeto Supabase passaria a
+significar perder o histórico financeiro de todos os contratantes, sem
+cópia em lugar nenhum. A ação nesse dia é Supabase Pro (backup diário,
+7 dias, com Point-in-Time Recovery disponível), junto do plano pago do
+Render que já está decidido. Backup só conta como feito depois de uma
+restauração testada pelo menos uma vez.
 
 ### Lei 1 · `infra/` não existe — 11/09/2026
 Não há infraestrutura como código neste projeto, e por isso a pasta não
