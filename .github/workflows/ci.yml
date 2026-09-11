@@ -1,0 +1,25 @@
+# CI — Lei 0: nesta classificação de projeto, teste roda sozinho a cada
+# push, e push que quebra teste não entra. Autoteste que só executa
+# quando alguém digita o comando na mão não é rede de proteção.
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # Sem segredo nenhum: os autotestes são puros e o runner injeta
+      # valores falsos só para os módulos carregarem (ver tests/executar.js).
+      - run: npm test

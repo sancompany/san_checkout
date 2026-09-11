@@ -1,62 +1,80 @@
-# San Checkout v2
+# San Checkout — SAN & CO. Pay Engine
 
-Motor de pagamento whitelabel — modelo *pull* (ver `INTEGRACAO.md` do
-repositório de documentação). **Esta leva só tem Pix funcionando** —
-Cartão/Boleto/Assinatura (via pop-up Asaas Checkout) e nota fiscal no
-Drive ficam pra próxima entrega, de propósito, dado o prazo.
+Motor de pagamento whitelabel do ecossistema San & Co. Pix, Boleto,
+Cartão de Crédito (1 a 12x), Assinatura por cartão e Assinatura por Pix
+Automático, sobre a Asaas.
+
+**Modelo *pull*:** o checkout não guarda catálogo. Ele recebe só
+referências opacas na URL, pergunta os dados do pedido à API do próprio
+contratante e cobra o valor que veio nessa resposta — nunca um valor
+vindo do navegador.
+
+> **Vai mexer no projeto?** Comece pelo [`CLAUDE.md`](./CLAUDE.md) — ele
+> diz o que ler antes de tocar em qualquer coisa.
+>
+> **Vai integrar um projeto ao checkout?** O contrato completo está em
+> [`API.md`](./API.md).
+
+---
 
 ## Como rodar
 
 ```bash
-cd san-checkout          # raiz, não src/
 npm install
-cp .env.example .env     # preencher com valores reais
-npm start
+cp .env.example .env      # preencher com valores reais
+npm start                 # backend em http://localhost:3001
 ```
 
-Front-end: abrir `public/index.html` com Live Server (porta 5501).
-Backend: `http://localhost:3001`.
+Front-end: servir a pasta `public/` (Live Server na porta 5501, que é o
+valor padrão de `ORIGEM_FRONTEND`).
 
-## Banco de dados
+Banco: rodar `supabase/schema.sql` no SQL Editor do Supabase. O arquivo é
+idempotente — pode ser reexecutado.
 
-Rodar `supabase/schema.sql` no SQL Editor do seu projeto Supabase.
+## Como rodar os testes
 
-## Cadastrar um contratante (manual, sempre — nunca por API pública)
+```bash
+npm test
+```
 
-No Supabase, tabela `contratantes`, inserir uma linha:
+Roda as três suítes de uma vez (assinatura HMAC do webhook, conversão das
+taxas da Asaas, regra de id imprevisível). Não precisa de `.env`: o
+runner injeta valores falsos só para os módulos carregarem. Os mesmos
+testes rodam sozinhos a cada push, em `.github/workflows/ci.yml` — push
+que quebra teste não entra.
 
-| Campo | Exemplo |
+## Variáveis de ambiente
+
+Nomes; os valores ficam no `.env` local e no painel do Render.
+
+| Variável | Para quê |
 |---|---|
-| `id` | `trimundi9` |
-| `nome` | `Trimundi9` |
-| `api_base_url` | `https://trimundi-backend.onrender.com/api` |
-| `api_key` | uma string aleatória combinada com a Trimundi |
-| `webhook_url` | `https://trimundi-backend.onrender.com/webhooks/san-checkout` |
-| `wallet_id` | (deixar vazio até a Trimundi ter conta Asaas própria) |
+| `PORT` | Porta do backend (padrão 3001) |
+| `ORIGEM_FRONTEND` | Única origem liberada no CORS |
+| `SUPABASE_URL` | Projeto do Supabase |
+| `SUPABASE_SERVICE_KEY` | Chave `service_role` — só o backend a usa |
+| `ASAAS_API_KEY` | Chave da conta Asaas |
+| `ASAAS_AMBIENTE` | `producao` usa a API de produção; qualquer outro valor usa o sandbox |
+| `ASAAS_WEBHOOK_TOKEN` | Token que a Asaas reenvia em cada webhook. Sem ele, o endpoint recusa tudo |
+| `CHECKOUT_ADMIN_USER` / `CHECKOUT_ADMIN_PASS` | Acesso ao painel administrativo |
+| `TAXA_PERCENTUAL` / `TAXA_FIXA` | Compõem a taxa própria do checkout |
 
-## Link de checkout
+## Cadastrar um contratante
 
-```
-http://SEU-DOMINIO/index.html?c=trimundi9&pedido=SEU_PEDIDO_ID
-```
+Pelo painel: `/admin.html` → **Contratantes** → **Novo contratante**.
+A `api_key` é gerada pelo backend e mostrada uma vez — copie na hora.
 
-O backend liga pra `api_base_url` do contratante, em
-`GET {api_base_url}/pedido/{pedido_id}`, com header
-`X-Checkout-Key: {api_key}` — ver `INTEGRACAO.md` pro formato exato
-que a Trimundi precisa devolver.
+Nunca por API pública, e nunca inserindo linha à mão no Supabase.
 
-## Pendências desta leva (não esquecidas, só não construídas ainda)
+## Onde roda
 
-- **Backend de Cartão e Boleto** — o front já chama
-  `POST /api/checkout/cartao/:c/:pedido` e
-  `POST /api/checkout/boleto/:c/:pedido`, mas **nenhum dos dois existe
-  no backend ainda**. Clicar em "Continuar"/"Gerar Boleto" hoje dá 404.
-  Também falta `GET /api/checkout/asaas-checkout/status/:id` (polling).
-- **Assinatura** — não construída no front nesta leva. O formato do
-  link (`?c=&assinatura=`) ainda não foi confirmado com você — ver
-  pendência no `VISAO_COMPLETA.md` seção 4.4/13.
-- Nota fiscal arquivada no Google Drive (`INVOICE_AUTHORIZED`)
-- Webhook nunca testado ao vivo — formato do payload da Asaas é
-  suposição informada, não confirmada
-- Cartão de débito: confirmar em sandbox que só surge via
-  `billingType: UNDEFINED`
+| Camada | Onde |
+|---|---|
+| Backend | Render — `https://san-checkout.onrender.com` |
+| Front | Cloudflare Pages — `https://checkout.sancocore.com.br` |
+| Banco | Supabase (RLS habilitado; só o backend acessa) |
+| Pagamento | Asaas |
+
+`/api/saude` é consultada por um agendador externo a cada 10 minutos:
+mantém o Render acordado, mantém o Supabase ativo, e expõe alerta de
+chave da Asaas prestes a expirar.
