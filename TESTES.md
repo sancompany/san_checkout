@@ -27,7 +27,7 @@ Precisa de **duas janelas do PowerShell abertas ao mesmo tempo**.
 Janela A — mock (finge ser o site do cliente, ex.: Trimundi):
 ```powershell
 cd D:\san-checkout-v2
-node mock/servidor-mock-pedido.js
+node tests/servidor-mock-pedido.js
 ```
 
 Janela B — o San Checkout de verdade:

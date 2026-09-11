@@ -2,3 +2,7 @@
 .env
 node_modules/
 npm-debug.log*
+
+# Capturas de tela de sessão — contêm dado pessoal legível.
+# Ver docs/inventario-de-dados.md seção 6.1.
+Claude outputs/

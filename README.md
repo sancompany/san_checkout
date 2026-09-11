@@ -56,7 +56,8 @@ Nomes; os valores ficam no `.env` local e no painel do Render.
 | `ASAAS_API_KEY` | Chave da conta Asaas |
 | `ASAAS_AMBIENTE` | `producao` usa a API de produção; qualquer outro valor usa o sandbox |
 | `ASAAS_WEBHOOK_TOKEN` | Token que a Asaas reenvia em cada webhook. Sem ele, o endpoint recusa tudo |
-| `CHECKOUT_ADMIN_USER` / `CHECKOUT_ADMIN_PASS` | Acesso ao painel administrativo |
+| `CHECKOUT_ADMIN_USER` | Usuário do painel administrativo |
+| `CHECKOUT_ADMIN_PASS_HASH` | Hash scrypt da senha do painel — gere com `node scripts/gerar-hash-admin.js`. A senha em texto puro não é lida em lugar nenhum |
 | `TAXA_PERCENTUAL` / `TAXA_FIXA` | Compõem a taxa própria do checkout |
 
 ## Cadastrar um contratante

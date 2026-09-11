@@ -67,14 +67,41 @@ Render. Não há tabela de usuários e não há senha no banco.
 
 ## 6. Retenção e exclusão
 
-> ⚠️ **PENDÊNCIA ABERTA — não definido.** Não existe política de
-> retenção escrita nem rotina de expurgo. Hoje o dado fica
-> indefinidamente no Supabase e na Asaas. Exclusão a pedido do titular
-> (LGPD art. 18) é manual, sem mecanismo estruturado.
+**Prazo decidido em 11/09/2026: 5 anos contados da transação.** Escolhido
+por alinhar-se ao prazo de reclamação do CDC (art. 27) e à guarda fiscal
+usual. Depois desse prazo o dado é expurgado.
+
+Exclusão antes do prazo, a pedido do titular (LGPD art. 18), é atendida
+caso a caso — respeitada a guarda legal do que não pode ser apagado
+enquanto o prazo fiscal correr.
+
+> ⚠️ **DUAS PENDÊNCIAS ABERTAS, e elas são diferentes uma da outra:**
 >
-> Isto está registrado como pendência em `CLAUDE.md` e precisa ser
-> fechado antes do lançamento — é entrada obrigatória da Política de
-> Privacidade.
+> 1. **A rotina de expurgo não existe.** O prazo está decidido, mas
+>    nada apaga nada hoje. Enquanto não houver a rotina, o prazo é
+>    intenção, não prática.
+> 2. **Validação jurídica pendente.** Os 5 anos são a escolha mais
+>    defensável sem advogado, não um parecer. A skill `legal` fecha isso
+>    na Estação 7, antes do lançamento — e é de lá que sai o texto da
+>    Política de Privacidade.
+>
+> Vale também para a Asaas: o dado que foi enviado a ela segue a
+> retenção **dela**, não a nossa.
+
+## 6.1 Dado pessoal dentro do próprio repositório
+
+> ⚠️ **PENDÊNCIA ABERTA.** A pasta versionada `Claude outputs/` contém
+> capturas de tela do painel administrativo com **dado pessoal legível**:
+> nome, e-mail, telefone, endereço completo, data de nascimento e
+> faturamento declarado, de pessoa física e de empresa.
+>
+> As credenciais nessas imagens estão mascaradas (conferido em
+> 11/09/2026) — a máscara protege o segredo, não a pessoa. Dado pessoal
+> em imagem versionada acompanha o repositório para sempre, inclusive no
+> histórico do git, e não é alcançado por nenhuma rotina de exclusão.
+>
+> Correção proposta: tirar `Claude outputs/` do versionamento. É
+> estrutural, aguardando decisão do dono (ver `CLAUDE.md`).
 
 ## 7. Log
 

@@ -81,6 +81,9 @@ nenhuma cobrança.
 - **Moeda**: BRL, único.
 - **Valor por cobrança**: R$ 0,01 a R$ 100.000,00 (`valorValido`).
 - **Parcelamento**: 1 a 12 vezes.
+- **Retenção de dado pessoal**: 5 anos contados da transação (CDC art.
+  27 + guarda fiscal). A rotina de expurgo ainda não existe e a validação
+  jurídica é da Estação 7 — ver `docs/inventario-de-dados.md` §6.
 - **Gargalos conhecidos, em ordem de probabilidade**:
   1. **Plano gratuito do Render** — hiberna por inatividade. Mitigado com
      ping externo (cron-job.org) em `/api/saude` a cada 10 minutos, que
@@ -100,5 +103,44 @@ nenhuma cobrança.
 
 ## 3. Exceções de conformidade registradas
 
-Nenhuma até agora. Exceção aceita entra aqui com a lei, o motivo e a
-data — exceção esquecida não é conformidade.
+Exceção aceita entra aqui com a lei, o motivo e a data — exceção
+esquecida não é conformidade.
+
+### Lei 1 · `infra/` não existe — 11/09/2026
+Não há infraestrutura como código neste projeto, e por isso a pasta não
+foi criada vazia. As duas configurações de deploy que existem não podem
+morar nela:
+
+- **Cloudflare Pages** exige o `_headers` dentro do diretório publicado —
+  por isso ele é `public/_headers`, e não `infra/_headers`.
+- **Render** é configurado pelo painel, sem arquivo no repositório.
+
+Revisar esta exceção no dia em que houver Terraform, Pulumi ou qualquer
+descrição versionada de infraestrutura.
+
+### Lei 2 · `taxaService` alcança `asaasService` — 11/09/2026
+A Lei 2 diz que módulo de domínio não importa infraestrutura. Aqui
+`taxaService`, que guarda a fórmula da taxa, busca as taxas reais da
+conta no `asaasService`. **Decisão do dono: fica como está.** Razões:
+
+- `services/` é a camada de infraestrutura deste projeto por desenho —
+  todos os outros importam `config/supabase.js`. `taxaService` não é uma
+  exceção isolada, é a regra da pasta.
+- A parte pura (`calcularTaxa`) é síncrona, não importa nada, e roda
+  isolada — verificado: `node src/services/taxaService.js` passa as 13
+  checagens sem `.env`.
+- A orquestração já está no lugar certo (`server.js` chama a
+  sincronização no boot e a cada 24h).
+
+Mexer aqui é alterar rota de dinheiro por arrumação arquitetural, sem
+defeito observado. Revisar se um dia existir uma camada de domínio
+separada de verdade.
+
+### Lei 2 · `webhookController.js` e `adminController.js` são grandes — 11/09/2026
+Os dois fazem mais de uma coisa (`webhookController` trata três
+vocabulários de evento, mais notificação e retry; `adminController` faz
+contratantes, subcontas e métricas). **Decisão do dono: não dividir
+agora.** As leis não estabelecem limite de tamanho, e dividir um
+controller que **nunca recebeu um webhook real em produção** troca um
+risco conhecido por um desconhecido. Revisar depois que assinatura e
+estorno tiverem rodado ao vivo.

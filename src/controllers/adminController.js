@@ -2,7 +2,7 @@
  * SAN CHECKOUT v2 — src/controllers/adminController.js
  * Tela de admin (`public/admin.html`) pra cadastrar contratante novo
  * sem abrir o Supabase na mão. Protegido por UMA chave mestra
- * (`CHECKOUT_ADMIN_KEY`, .env) — ver `verificarAdminKey` abaixo,
+ * (`CHECKOUT_ADMIN_USER` + `CHECKOUT_ADMIN_PASS_HASH`) — ver `verificarAdminKey` abaixo,
  * aplicado a toda rota de `/api/admin` em `adminRoutes.js`.
  *
  * A tela em si é acessada por um "atalho escondido" no formulário
@@ -16,18 +16,23 @@
 import { randomBytes } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import { compararSeguro, documentoValido, emailValido, cepValido } from '../utils/validadores.js';
+import { senhaConfere } from '../utils/senhaAdmin.js';
 import { responderErro } from '../utils/erros.js';
 import { criarSubconta as criarSubcontaNaAsaas } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
 
 /** Aplicado a toda rota de /api/admin — um guard só, não um por handler. */
 export function verificarAdminKey(requisicao, resposta, proximo) {
-  const { CHECKOUT_ADMIN_USER, CHECKOUT_ADMIN_PASS } = process.env;
-  if (!CHECKOUT_ADMIN_USER || !CHECKOUT_ADMIN_PASS) {
-    return resposta.status(503).json({ erro: 'CHECKOUT_ADMIN_USER/CHECKOUT_ADMIN_PASS não configurados no .env — admin desativado.' });
+  const { CHECKOUT_ADMIN_USER, CHECKOUT_ADMIN_PASS_HASH } = process.env;
+  if (!CHECKOUT_ADMIN_USER || !CHECKOUT_ADMIN_PASS_HASH) {
+    return resposta.status(503).json({ erro: 'CHECKOUT_ADMIN_USER/CHECKOUT_ADMIN_PASS_HASH não configurados — admin desativado.' });
   }
+
+  // As duas checagens rodam SEMPRE, mesmo com o usuário errado: sair
+  // cedo quando o usuário não bate faria a resposta voltar rápido e
+  // entregaria, por tempo, se o nome de usuário existe.
   const usuarioOk = compararSeguro(requisicao.get('X-Admin-User'), CHECKOUT_ADMIN_USER);
-  const senhaOk = compararSeguro(requisicao.get('X-Admin-Pass'), CHECKOUT_ADMIN_PASS);
+  const senhaOk = senhaConfere(requisicao.get('X-Admin-Pass'), CHECKOUT_ADMIN_PASS_HASH);
   if (!usuarioOk || !senhaOk) {
     return resposta.status(401).json({ erro: 'Usuário ou senha de admin inválidos.' });
   }
