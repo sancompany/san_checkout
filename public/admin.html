@@ -93,6 +93,7 @@
             </p>
           </div>
           <div class="secao-header-acoes">
+            <button class="btn btn-secundario" id="btn-arquivados-contratantes" type="button">Mostrar arquivados</button>
             <button class="btn btn-primario" id="btn-abrir-novo-contratante" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Novo contratante
@@ -138,6 +139,7 @@
             </p>
           </div>
           <div class="secao-header-acoes">
+            <button class="btn btn-secundario" id="btn-arquivados-subcontas" type="button">Mostrar arquivados</button>
             <button class="btn btn-primario" id="btn-abrir-nova-subconta" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Criar subconta
@@ -317,6 +319,25 @@
     </main>
   </div>
 </div>
+
+<!-- ================= MODAL: confirmar ação ================= -->
+<!-- Um diálogo só para toda confirmação da tela. O texto vem do JS,
+     porque o que precisa ser explicado muda com a ação — e é a
+     explicação, não o "tem certeza?", que evita o clique errado. -->
+<dialog id="modal-confirmar">
+  <form method="dialog" class="modal">
+    <div class="modal-topo">
+      <div>
+        <h3 class="modal-titulo" id="confirmar-titulo">Confirmar</h3>
+      </div>
+    </div>
+    <div class="modal-corpo" id="confirmar-corpo"></div>
+    <div class="modal-rodape">
+      <button class="btn btn-secundario btn-mini" type="submit" value="cancelar">Cancelar</button>
+      <button class="btn btn-primario btn-mini" id="btn-confirmar-acao" type="submit" value="confirmar">Confirmar</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- ================= MODAL: contratante (criar e editar) ================= -->
 <dialog id="modal-contratante">

@@ -100,9 +100,14 @@ aparato inteiro foi removido e o painel passou a ser protegido na borda
 (`CONSTRAINTS.md` §2.6). Registro em
 `docs/erros/2026-09-11-guarda-de-total-zero-derrubou-a-porta-do-admin.md`.
 
+Na mesma data entrou o **arquivamento de contratante e de subconta**
+(migration `0003`), pedido do dono e caminho que o `CONSTRAINTS.md`
+§1.10 já apontava desde o começo: não existe excluir contratante, existe
+arquivar — sai da lista, **para de cobrar**, histórico inteiro guardado,
+reversível num clique.
+
 **O que falta para a Estação 5 fechar** está na lista de pendências
-abaixo, e é ação do dono: subir esta correção e apagar os arquivos que a
-ponte com o computador não consegue apagar.
+abaixo, e é ação do dono.
 
 **Estação 6 (Prontidão) NÃO foi iniciada**, e não pode ser enquanto a 5
 estiver aberta. Quando abrir, ela faz segurança em ciclos, teste no
@@ -133,27 +138,21 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 Apagar quatro arquivos.** A ponte com o computador escreve mas não
-  apaga, então é `del` na mão. Nenhum deles é referenciado por código
-  nenhum depois desta leva:
+- **🔴 Rodar `supabase/migrations/0003_arquivamento.sql`** no SQL Editor
+  do Supabase. Sem ela o backend sobe e toda listagem de contratante e
+  de subconta falha: as consultas filtram por uma coluna que ainda não
+  existe.
 
-  - `src/controllers/masterController.js`
-  - `src/routes/masterRoutes.js`
-  - `docs/erros/2026-09-11-editei-uma-copia-velha-do-arquivo.md`
-    (duplicata de `2026-09-11-auditoria-contra-copia-velha.md`)
+- **🔴 Subir e conferir ao vivo:** commit, push, deploy, e então abrir o
+  painel (passando pelo Cloudflare Access), cadastrar um contratante,
+  arquivar, e confirmar que ele sai da lista e volta com "Restaurar".
 
-- **🔴 Apagar o contratante `admin-master` no Supabase.** A rota que ele
-  chamava não existe mais; a linha sobrando é um contratante ativo sem
-  uso, e contratante é o que autoriza cobrança.
-
-- **🔴 Subir a correção e conferir ao vivo:** commit, push, deploy, e
-  então abrir `/admin.html` e o checkout de um contratante real.
-
-- **🔴 Configurar o Cloudflare Access sobre `/admin.html`.** É a camada 1
-  da §2.6 e a única que impede a página de ser entregue a quem não provou
-  quem é. Enquanto não existir, o painel é uma tela de login pública —
-  aceitável, porque nada nela vale sem a senha, mas não é o estado
-  desejado.
+  Em 11/09/2026 os dois contratantes que existiam (`admin-master` e o de
+  teste) foram apagados pelo dono — os dois eram rascunho e nenhum tinha
+  cobrança, que é a única condição em que apagar é aceitável
+  (`CONSTRAINTS.md` §1.10). **A base está sem contratante nenhum**, então
+  o checkout responde "Contratante não encontrado" para qualquer link até
+  o primeiro cadastro.
 
 ### Abertas, não bloqueiam
 

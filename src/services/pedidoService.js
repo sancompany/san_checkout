@@ -66,24 +66,44 @@ function exigirIdImprevisivel(id, rotulo) {
   throw erro;
 }
 
-/** Busca o cadastro do contratante no Supabase (nunca por API pública). */
+/**
+ * Busca o cadastro do contratante no Supabase (nunca por API pública).
+ *
+ * **Contratante arquivado não é encontrado aqui, e isso é o ponto.**
+ * Arquivar precisa parar a cobrança, senão é só esconder da lista: um
+ * link antigo continuaria abrindo o checkout e gerando Pix para um
+ * parceiro que saiu. Quem chama trata a ausência como 404 "Contratante
+ * não encontrado", que é a resposta certa — e não revela ao portador do
+ * link se o contratante nunca existiu ou se foi desligado.
+ *
+ * O caminho de volta existe e é um clique no painel (`desarquivar`),
+ * porque arquivar não pode ser uma porta de mão única.
+ */
 export async function buscarContratante(contratanteId) {
   const { data, error } = await supabase
     .from('contratantes')
     .select('*')
     .eq('id', contratanteId)
+    .is('arquivado_em', null)
     .maybeSingle();
 
   if (error) throw error;
   return data;
 }
 
-/** Busca o contratante pela api_key — usado pra autenticar o /estornar. */
+/**
+ * Busca o contratante pela api_key — usado pra autenticar o /estornar.
+ *
+ * Também recusa arquivado, pela mesma razão e mais uma: a chave de um
+ * parceiro desligado deixa de valer no mesmo instante em que ele é
+ * arquivado, sem precisar rotacionar nada.
+ */
 export async function buscarContratantePorChave(apiKey) {
   const { data, error } = await supabase
     .from('contratantes')
     .select('*')
     .eq('api_key', apiKey)
+    .is('arquivado_em', null)
     .maybeSingle();
 
   if (error) throw error;
@@ -246,5 +266,29 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
   assert.ok(metodoHabilitado({ metodos_habilitados: ['pix'] }, 'pix'), 'na lista libera');
   assert.ok(!metodoHabilitado({ metodos_habilitados: ['pix'] }, 'boleto'), 'fora da lista bloqueia');
 
-  console.log('pedidoService: 13 checagens OK');
+  // --- Arquivar precisa parar de cobrar, não só sumir da lista ---
+  /* A cláusula `.is('arquivado_em', null)` em `buscarContratante` e
+     `buscarContratantePorChave` é o arquivamento inteiro: sem ela, um
+     link antigo continua abrindo o checkout e gerando cobrança para um
+     parceiro desligado, e a api_key dele continua autenticando estorno.
+     Provar isso de verdade exigiria banco.
+
+     O que dá para provar sem banco é que a cláusula continua lá — e é
+     ela que alguém remove "para simplificar a consulta" numa
+     refatoração, sem perceber que está religando a cobrança. Checagem
+     grosseira, no texto-fonte, de propósito: grosseira e presente vale
+     mais que elegante e inexistente. */
+  const { readFileSync } = await import('node:fs');
+  const fonte = readFileSync(new URL(import.meta.url), 'utf8');
+
+  for (const nomeFuncao of ['buscarContratante', 'buscarContratantePorChave']) {
+    const daDeclaracao = fonte.slice(fonte.indexOf(`export async function ${nomeFuncao}(`));
+    const corpo = daDeclaracao.slice(0, daDeclaracao.indexOf('\n}'));
+    assert.ok(
+      corpo.includes(".is('arquivado_em', null)"),
+      `${nomeFuncao} precisa recusar contratante arquivado — sem isso, arquivar vira só esconder da lista`
+    );
+  }
+
+  console.log('pedidoService: 15 checagens OK');
 }

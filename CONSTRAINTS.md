@@ -63,12 +63,36 @@ disparados pelo evento que já chega no `webhook_url` dele. O checkout
 processa pagamento e avisa; não emite documento fiscal nem fala com o
 comprador em nome de ninguém.
 
-### 1.10 Exclusão física de contratante — VETADO na forma óbvia
+### 1.10 Exclusão física de contratante — VETADO; o caminho é arquivar (CONSTRUÍDO em 11/09/2026)
 `cobrancas.contratante_id` é `on delete set null`: apagar um contratante
-deixaria o histórico financeiro dele órfão. O caminho, quando for
-construído, é **arquivar** (contratante some da lista e para de resolver
-pedido, histórico permanece). Exclusão física só para contratante sem
-nenhuma cobrança.
+deixaria o histórico financeiro dele órfão — as cobranças continuam na
+tabela, sem dono, e nenhuma conciliação futura consegue dizer de quem
+eram. Por isso **o painel não oferece excluir contratante, e não vai
+oferecer.**
+
+O caminho que este veto sempre apontou foi construído (migration
+`0003_arquivamento.sql`): **arquivar** tira o contratante da lista,
+**para a cobrança** e guarda tudo. O que "parar a cobrança" quer dizer,
+concretamente, é que `buscarContratante` e `buscarContratantePorChave`
+recusam arquivado — então link antigo passa a responder "contratante não
+encontrado" e a api_key dele deixa de autenticar estorno, no mesmo
+instante. Sem isso, arquivar seria só esconder da lista, e o parceiro
+desligado continuaria cobrando; é a cláusula mais importante da
+funcionalidade e tem teste próprio no `pedidoService.js`.
+
+Arquivar é reversível num clique ("mostrar arquivados" → "Restaurar") —
+porta de mão única não é arquivamento, é exclusão com outro nome.
+
+**Subconta também só arquiva, e faz menos:** ela é uma conta na Asaas,
+que continua existindo lá e continua recebendo split. Arquivar tira da
+lista do painel e nada mais — não existe apagar subconta pela API da
+Asaas sem entrar na conta dela, e a tela diz isso em vez de fingir que
+exclui. Ao arquivar, o backend informa se o `wallet_id` dela ainda está
+no cadastro de algum contratante ativo: aviso, não bloqueio.
+
+Exclusão física segue possível **só pelo SQL Editor e só para
+contratante sem nenhuma cobrança** — caso de linha criada por engano,
+não de parceiro que saiu.
 
 ---
 
@@ -386,11 +410,25 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
 
 **O que protege o painel agora**, em camadas independentes:
 
-1. **Cloudflare Access sobre `/admin.html`** — política de borda, no
-   mesmo Cloudflare que já serve o site. O arquivo não é entregue a
-   ninguém que não passe por uma identidade verificada. É a camada que
-   substitui a obscuridade, e a diferença é de natureza: obscuridade
-   depende de ninguém adivinhar, Access depende de alguém provar quem é.
+1. **Cloudflare Access sobre `/admin.html`** — configurado e verificado
+   ao vivo em 11/09/2026. Aplicativo auto-hospedado "Painel admin do San
+   Checkout", plano Zero Trust Free, política **"Somente o operador"**
+   (ação Permitir, regra: e-mail do dono) — e políticas de Access negam
+   por padrão, então qualquer outro e-mail é recusado sem precisar de
+   regra própria.
+
+   **Dois destinos, não um**, e o segundo é o que fecha a porta dos
+   fundos: todo projeto no Cloudflare Pages responde também no domínio
+   `*.pages.dev`, então `san-checkout.pages.dev/admin.html` era um
+   caminho alternativo para a mesma página, sem passar por nada.
+   Proteger só o domínio próprio teria deixado a porta aberta ao lado.
+   Os dois destinos são `.../admin.html`, com caminho específico — o
+   checkout público NÃO passa pelo Access, e isso foi conferido abrindo
+   `index.html` depois de configurar.
+
+   A diferença para a obscuridade que havia antes é de natureza:
+   obscuridade depende de ninguém adivinhar, Access depende de alguém
+   provar quem é.
 2. **Usuário e senha validados no backend**, em toda rota de
    `/api/admin` (`verificarAdminKey`), com scrypt a N=2^17. Vale mesmo
    que a camada 1 caia ou não esteja configurada, e é ela que protege a
@@ -404,11 +442,16 @@ esconder — é lido por qualquer um, e vira índice do que interessa. O
 header alcança o mesmo buscador sem anunciar nada. Se alguém propuser
 criar o arquivo "por padrão", esta é a razão de não criar.
 
-**Limite assumido, declarado:** enquanto a camada 1 não estiver
-configurada, `/admin.html` é uma página pública que mostra um formulário
-de login — o que ela protege é o que está atrás dele, não a existência
-dela. Isso é aceitável porque nada na página vale sem a senha, mas não é
-o estado desejado, e está na lista de pendências do `CLAUDE.md`.
+**Limite assumido, declarado:** a API (`/api/admin/*`) fica em outro
+domínio, no Render, e **não passa pelo Access** — quem a protege é só a
+camada 2. Isso é o desenho, não descuido: o Access da Cloudflare cobre o
+que a Cloudflare serve. Consequência prática: a senha do admin continua
+sendo a única barreira da API, e a pendência de ela trafegar em todo
+request (`X-Admin-Pass`) segue aberta e segue valendo.
+
+**Se o operador perder o acesso ao e-mail cadastrado**, o caminho de
+volta é o próprio painel da Cloudflare, com a conta dela — não há
+dependência circular entre as duas camadas.
 
 **Renomear o arquivo para algo imprevisível** foi considerado e recusado:
 troca uma fechadura por um segredo que vive em URL — histórico do

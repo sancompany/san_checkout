@@ -57,13 +57,53 @@ export async function verificarAdminKey(requisicao, resposta, proximo) {
   proximo();
 }
 
-export async function listarContratantes(_requisicao, resposta) {
-  const { data, error } = await supabase
+export async function listarContratantes(requisicao, resposta) {
+  // Por padrão a lista mostra só quem está em uso — é para isso que
+  // arquivar serve. `?incluirArquivados=1` traz tudo, para o operador
+  // poder desarquivar o que arquivou por engano.
+  const incluirArquivados = requisicao.query?.incluirArquivados === '1';
+
+  let consulta = supabase
     .from('contratantes')
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, criado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, criado_em, arquivado_em')
     .order('criado_em', { ascending: false });
 
+  if (!incluirArquivados) consulta = consulta.is('arquivado_em', null);
+
+  const { data, error } = await consulta;
   if (error) return responderErro(resposta, error, 'admin.listarContratantes');
+  resposta.json(data);
+}
+
+/**
+ * Arquiva ou desarquiva. Uma rota só para os dois sentidos de propósito:
+ * são a mesma operação com sinal trocado, e separá-las duplicaria a
+ * checagem de existência e a resposta.
+ *
+ * **Arquivar não apaga nada**, e é por isso que este endpoint existe em
+ * vez de um DELETE: `cobrancas.contratante_id` é `on delete set null`,
+ * então apagar um contratante deixaria o histórico financeiro dele sem
+ * dono. Ver `CONSTRAINTS.md` §1.10.
+ *
+ * O efeito real está em `pedidoService.buscarContratante`: arquivado
+ * deixa de resolver pedido e deixa de autenticar estorno. Aqui é só o
+ * carimbo de data.
+ */
+export async function arquivarContratante(requisicao, resposta) {
+  const arquivar = requisicao.body?.arquivar;
+  if (typeof arquivar !== 'boolean') {
+    return resposta.status(400).json({ erro: 'arquivar deve ser true ou false.' });
+  }
+
+  const { data, error } = await supabase
+    .from('contratantes')
+    .update({ arquivado_em: arquivar ? new Date().toISOString() : null })
+    .eq('id', requisicao.params.id)
+    .select('id, nome, arquivado_em')
+    .maybeSingle();
+
+  if (error) return responderErro(resposta, error, 'admin.arquivarContratante');
+  if (!data) return resposta.status(404).json({ erro: 'Contratante não encontrado.' });
   resposta.json(data);
 }
 
@@ -251,14 +291,62 @@ export async function obterMetricas(requisicao, resposta) {
 // gerado aqui ainda precisa ser colado manualmente no contratante
 // certo — nunca ligado automaticamente entre as duas tabelas.
 
-export async function listarSubcontas(_requisicao, resposta) {
-  const { data, error } = await supabase
+export async function listarSubcontas(requisicao, resposta) {
+  const incluirArquivadas = requisicao.query?.incluirArquivados === '1';
+
+  let consulta = supabase
     .from('subcontas')
     .select('*')
     .order('criado_em', { ascending: false });
 
+  if (!incluirArquivadas) consulta = consulta.is('arquivado_em', null);
+
+  const { data, error } = await consulta;
   if (error) return responderErro(resposta, error, 'admin.listarSubcontas');
   resposta.json(data);
+}
+
+/**
+ * Arquiva ou desarquiva uma subconta. Faz MENOS que o de contratante, e
+ * a diferença importa: a subconta é uma conta na Asaas, que continua
+ * existindo lá, recebendo split e aparecendo no painel deles. Isto aqui
+ * só tira da lista do painel do checkout.
+ *
+ * Não existe apagar subconta pela API da Asaas sem entrar na conta dela,
+ * então "excluir" seria mentira — e a tela diz isso em vez de fingir.
+ *
+ * A resposta inclui `contratantesUsando`: se o `wallet_id` desta
+ * subconta ainda está no cadastro de algum contratante ATIVO, arquivar
+ * esconde da lista algo que segue recebendo dinheiro. Não é bloqueio,
+ * é informação — quem decide é o operador, mas não às cegas.
+ */
+export async function arquivarSubconta(requisicao, resposta) {
+  const arquivar = requisicao.body?.arquivar;
+  if (typeof arquivar !== 'boolean') {
+    return resposta.status(400).json({ erro: 'arquivar deve ser true ou false.' });
+  }
+
+  const { data, error } = await supabase
+    .from('subcontas')
+    .update({ arquivado_em: arquivar ? new Date().toISOString() : null })
+    .eq('id', requisicao.params.id)
+    .select('id, nome, wallet_id, arquivado_em')
+    .maybeSingle();
+
+  if (error) return responderErro(resposta, error, 'admin.arquivarSubconta');
+  if (!data) return resposta.status(404).json({ erro: 'Subconta não encontrada.' });
+
+  let contratantesUsando = [];
+  if (data.wallet_id) {
+    const { data: ligados } = await supabase
+      .from('contratantes')
+      .select('id, nome')
+      .eq('wallet_id', data.wallet_id)
+      .is('arquivado_em', null);
+    contratantesUsando = ligados ?? [];
+  }
+
+  resposta.json({ ...data, contratantesUsando });
 }
 
 export async function criarSubconta(requisicao, resposta) {
