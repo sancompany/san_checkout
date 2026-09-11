@@ -109,6 +109,14 @@ não de parceiro que saiu.
   27 + guarda fiscal). A rotina de expurgo ainda não existe e a validação
   jurídica é da Estação 7 — ver `docs/inventario-de-dados.md` §6.
 - **Gargalos conhecidos, em ordem de probabilidade**:
+  0. **Memória da instância: 512 MiB, e o plano de US$ 7 NÃO aumenta
+     isso** — conferido na página de preços da Render em 11/09/2026: free
+     e Starter têm os mesmos 512 MiB, e o que o pago resolve é a
+     hibernação (gargalo 1), não a memória. Mais memória só a partir do
+     plano seguinte. Isto está aqui porque em 11/09/2026 a instância
+     estourou de verdade, com duas derivações scrypt de ~128 MiB ao mesmo
+     tempo, e a reação natural — "pagar o plano" — não teria resolvido
+     nada. A contenção foi limitar a simultaneidade, não comprar memória.
   1. **Plano gratuito do Render** — hiberna por inatividade. Mitigado com
      ping externo (cron-job.org) em `/api/saude` a cada 10 minutos, que
      de quebra mantém o Supabase ativo. **Quando o tráfego real começar,
@@ -346,8 +354,17 @@ documenta na seção 7.2 — mas ele **não funciona hoje**, e isso não é
 defeito: depende de liberação da Asaas. O projeto já trata isso certo
 por desenho: no cadastro de contratante, "Assinatura por Pix" **nasce
 desmarcada**, com a explicação na própria tela. Habilitar o método antes
-da liberação criaria um caminho de pagamento que falha na hora de
-cobrar.
+da liberação criaria um caminho de pagamento que falha na hora de cobrar
+— o comprador escolhe e a cobrança não sai.
+
+> ⚠️ **Isso esteve QUEBRADO até 11/09/2026, e o documento afirmava o
+> contrário.** O `admin.html` trazia a caixa desmarcada, mas
+> `abrirModalContratante` a sobrescrevia: sem contratante para copiar,
+> ele caía na lista `METODOS`, que inclui `assinatura_pix`. Duas fontes
+> para o mesmo padrão, e a que valia era a errada — contratante criado
+> nesse período pode ter saído com o método habilitado, então vale
+> conferir os cadastros existentes. Corrigido com uma constante só
+> (`METODOS_PADRAO`, espelho do `default` da coluna no banco).
 
 ## 2.5 O log de auditoria do webhook não guarda payload (Leis 7 e 8)
 

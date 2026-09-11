@@ -18,6 +18,22 @@ import { buscarEnderecoPorCep } from './utils/cep.js';
 const CHAVE_SESSAO = 'san-checkout-admin-login';
 
 const METODOS = ['pix', 'boleto', 'cartao', 'assinatura', 'assinatura_pix'];
+
+/**
+ * O que vem marcado num contratante NOVO. Espelha o `default` da coluna
+ * `metodos_habilitados` no banco, e a diferença para `METODOS` é uma só
+ * e proposital: **`assinatura_pix` nasce DESMARCADA.**
+ *
+ * O Pix Automático não está liberado nesta conta Asaas
+ * (`CONSTRAINTS.md` §2.4). Habilitar o método para um contratante antes
+ * da liberação cria um caminho de pagamento que falha na hora de cobrar
+ * — o comprador escolhe, e a cobrança não sai.
+ *
+ * Isto existia como `checked` no HTML e era desfeito pelo JS, que caía
+ * em `METODOS` quando não havia contratante para copiar. Duas fontes
+ * para o mesmo padrão, e a que valia era a errada.
+ */
+const METODOS_PADRAO = METODOS.filter((m) => m !== 'assinatura_pix');
 const NOME_METODO = { pix: 'Pix', boleto: 'Boleto', cartao: 'Cartão', assinatura: 'Assinatura', assinatura_pix: 'Assinatura por Pix' };
 
 /** Estado da tela — a lista crua que o backend devolveu, pra abrir o
@@ -26,10 +42,10 @@ let contratantes = [];
 let subcontas = [];
 let subcontaDoLink = null;
 
-/** Arquivado fica fora da lista por padrão — é para isso que arquivar
- *  serve. O botão "mostrar arquivados" existe para desfazer, não para
- *  ser o estado normal da tela. */
-let mostrarArquivados = false;
+/** O que está arquivado vive na tela "Arquivados", não misturado nas
+ *  listas de trabalho. Guardado aqui para a tela conseguir desenhar sem
+ *  buscar de novo. */
+let arquivados = { contratantes: [], subcontas: [] };
 
 const $ = (id) => document.getElementById(id);
 
@@ -208,7 +224,10 @@ async function alternarArquivoContratante(id, arquivar) {
   try {
     await admin.patch(`/contratantes/${id}/arquivar`, { arquivar });
     mostrarToast(arquivar ? `${nome} arquivado.` : `${nome} de volta à lista.`);
-    await carregarContratantes();
+    // Só a tela que está aberta é redesenhada. Cada `admin.get` custa uma
+    // derivação de senha (~3s), então recarregar as duas listas a cada
+    // clique dobraria a espera sem ninguém ver a diferença.
+    await (arquivar ? carregarContratantes() : carregarArquivados());
   } catch (erro) {
     mostrarToast(erro.message, 'erro');
   }
@@ -247,26 +266,89 @@ async function alternarArquivoSubconta(id, arquivar) {
     } else {
       mostrarToast(arquivar ? `${nome} arquivada.` : `${nome} de volta à lista.`);
     }
-    await carregarSubcontas();
+    await (arquivar ? carregarSubcontas() : carregarArquivados());
   } catch (erro) {
     mostrarToast(erro.message, 'erro');
   }
 }
 
-function alternarMostrarArquivados() {
-  mostrarArquivados = !mostrarArquivados;
-  for (const id of ['btn-arquivados-contratantes', 'btn-arquivados-subcontas']) {
-    const botao = $(id);
-    if (botao) botao.textContent = mostrarArquivados ? 'Ocultar arquivados' : 'Mostrar arquivados';
+/**
+ * A tela dos arquivados. Busca com `incluirArquivados=1` e fica só com o
+ * que tem carimbo — as duas listas de trabalho continuam pedindo apenas
+ * os ativos, então nada aqui muda o que elas mostram.
+ *
+ * Duas requisições de admin, e cada uma custa ~3s por causa da derivação
+ * de senha (ver a pendência de arquitetura de acesso no CLAUDE.md). Por
+ * isso esta tela só busca quando alguém abre ela, nunca no login.
+ */
+async function carregarArquivados() {
+  try {
+    // UMA de cada vez, nunca `Promise.all`. Cada chamada de admin dispara
+    // uma derivação scrypt de ~128 MiB no servidor, e duas simultâneas
+    // estouram os 512 MiB da instância — foi assim que a produção caiu em
+    // 11/09/2026. O servidor passou a enfileirar por conta própria
+    // (`senhaAdmin.js`), mas o cliente não tem por que empurrar a fila:
+    // aqui o paralelismo não economizaria tempo nenhum, só amontoaria
+    // espera do outro lado.
+    const listaContratantes = await admin.get('/contratantes?incluirArquivados=1');
+    const listaSubcontas = await admin.get('/subcontas?incluirArquivados=1');
+
+    arquivados = {
+      contratantes: listaContratantes.filter((c) => c.arquivado_em),
+      subcontas: listaSubcontas.filter((s) => s.arquivado_em)
+    };
+
+    const total = arquivados.contratantes.length + arquivados.subcontas.length;
+    $('contador-arquivados').textContent = String(total);
+    $('vazio-arquivados').hidden = total > 0;
+
+    $('tabela-contratantes-arquivados').innerHTML = arquivados.contratantes.map((c) => `
+      <tr class="linha-arquivada">
+        <td><span class="badge-id">${escapar(c.id)}</span></td>
+        <td class="celula-principal">${escapar(c.nome)}</td>
+        <td class="celula-url" title="${escapar(c.api_base_url)}">${escapar(c.api_base_url)}</td>
+        <td>${formatarQuando(c.arquivado_em)}</td>
+        <td>
+          <div class="acoes-linha">
+            <button class="btn btn-primario btn-mini" type="button" data-desarquivar-contratante="${escapar(c.id)}">Restaurar</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+
+    $('lista-subcontas-arquivadas').innerHTML = arquivados.subcontas.map((s) => `
+      <article class="subconta-card linha-arquivada">
+        <div class="subconta-topo">
+          <div>
+            <h3 class="subconta-nome">${escapar(s.nome)}</h3>
+            <p class="subconta-doc">${escapar(mascararDocumento(s.documento))}</p>
+          </div>
+          <span class="subconta-status">
+            <span class="pill pill-pendente" title="Só fora da lista — a conta segue ativa na Asaas">arquivada em ${formatarQuando(s.arquivado_em)}</span>
+          </span>
+        </div>
+        <div class="subconta-rodape">
+          <p class="rodape-nota">A conta continua existindo na Asaas e continua recebendo split.</p>
+          <button class="btn btn-primario btn-mini" type="button" data-desarquivar-subconta="${escapar(s.id)}">Restaurar</button>
+        </div>
+      </article>
+    `).join('');
+
+    document.querySelectorAll('[data-desarquivar-contratante]').forEach((botao) => {
+      botao.addEventListener('click', () => alternarArquivoContratante(botao.dataset.desarquivarContratante, false));
+    });
+    document.querySelectorAll('[data-desarquivar-subconta]').forEach((botao) => {
+      botao.addEventListener('click', () => alternarArquivoSubconta(botao.dataset.desarquivarSubconta, false));
+    });
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
   }
-  carregarContratantes();
-  carregarSubcontas();
 }
 
 /* ------------------------------------------------------------------
    Navegação entre seções
 ------------------------------------------------------------------ */
-const SECOES = ['contratantes', 'subcontas', 'metricas', 'webhook'];
+const SECOES = ['contratantes', 'subcontas', 'arquivados', 'metricas', 'webhook'];
 
 document.querySelectorAll('.nav-item').forEach((item) => {
   item.addEventListener('click', () => {
@@ -276,6 +358,7 @@ document.querySelectorAll('.nav-item').forEach((item) => {
     // do painel e não faz sentido rodar em todo login.
     if (item.dataset.secao === 'metricas') carregarMetricas();
     if (item.dataset.secao === 'webhook') carregarWebhook();
+    if (item.dataset.secao === 'arquivados') carregarArquivados();
   });
 });
 
@@ -283,22 +366,17 @@ document.querySelectorAll('.nav-item').forEach((item) => {
    Contratantes
 ------------------------------------------------------------------ */
 async function carregarContratantes() {
-  contratantes = await admin.get(`/contratantes${mostrarArquivados ? '?incluirArquivados=1' : ''}`);
-  // O contador conta os ATIVOS, sempre. Ele responde "quantos estão em
-  // uso", e essa resposta não pode mudar porque alguém abriu a gaveta
-  // dos arquivados.
-  $('contador-contratantes').textContent = String(contratantes.filter((c) => !c.arquivado_em).length);
+  contratantes = await admin.get('/contratantes');
+  $('contador-contratantes').textContent = String(contratantes.length);
   $('vazio-contratantes').hidden = contratantes.length > 0;
 
   $('tabela-contratantes').innerHTML = contratantes.map((c) => {
-    const metodos = Array.isArray(c.metodos_habilitados) ? c.metodos_habilitados : METODOS;
-    const arquivado = Boolean(c.arquivado_em);
+    const metodos = Array.isArray(c.metodos_habilitados) ? c.metodos_habilitados : METODOS_PADRAO;
     return `
-      <tr class="${arquivado ? 'linha-arquivada' : ''}">
+      <tr>
         <td><span class="badge-id">${escapar(c.id)}</span></td>
         <td class="celula-principal">
           ${escapar(c.nome)}
-          ${arquivado ? '<span class="pill pill-pendente" title="Fora da lista e sem cobrar">arquivado</span>' : ''}
           ${c.wallet_id ? '<span class="pill pill-ok" title="Tem wallet_id — cobrança sai com split">split</span>' : ''}
         </td>
         <td class="celula-url" title="${escapar(c.api_base_url)}">${escapar(c.api_base_url)}</td>
@@ -310,10 +388,8 @@ async function carregarContratantes() {
         <td>${blocoSegredo(c.api_key, 'api_key')}</td>
         <td>
           <div class="acoes-linha">
-            ${arquivado
-              ? `<button class="btn btn-primario btn-mini" type="button" data-desarquivar-contratante="${escapar(c.id)}">Restaurar</button>`
-              : `<button class="btn btn-secundario btn-mini" type="button" data-editar-contratante="${escapar(c.id)}">Editar</button>
-                 <button class="btn btn-secundario btn-mini" type="button" data-arquivar-contratante="${escapar(c.id)}">Arquivar</button>`}
+            <button class="btn btn-secundario btn-mini" type="button" data-editar-contratante="${escapar(c.id)}">Editar</button>
+            <button class="btn btn-secundario btn-mini" type="button" data-arquivar-contratante="${escapar(c.id)}">Arquivar</button>
           </div>
         </td>
       </tr>
@@ -349,7 +425,9 @@ function abrirModalContratante(id = null) {
   $('f-webhook-url').value = alvo?.webhook_url ?? '';
   $('f-wallet-id').value = alvo?.wallet_id ?? '';
 
-  const metodos = Array.isArray(alvo?.metodos_habilitados) ? alvo.metodos_habilitados : METODOS;
+  // Contratante existente: espelha o que está salvo. Novo: o padrão, que
+  // NÃO inclui assinatura_pix — ver METODOS_PADRAO acima.
+  const metodos = Array.isArray(alvo?.metodos_habilitados) ? alvo.metodos_habilitados : METODOS_PADRAO;
   METODOS.forEach((m) => { $(`f-metodo-${m}`).checked = metodos.includes(m); });
 
   limparErro('msg-contratante');
@@ -425,22 +503,20 @@ function enderecoCompleto(s) {
 }
 
 async function carregarSubcontas() {
-  subcontas = await admin.get(`/subcontas${mostrarArquivados ? '?incluirArquivados=1' : ''}`);
-  $('contador-subcontas').textContent = String(subcontas.filter((s) => !s.arquivado_em).length);
+  subcontas = await admin.get('/subcontas');
+  $('contador-subcontas').textContent = String(subcontas.length);
   $('vazio-subcontas').hidden = subcontas.length > 0;
 
   $('lista-subcontas').innerHTML = subcontas.map((s) => {
     const temLink = Boolean(s.link_ativacao);
-    const arquivada = Boolean(s.arquivado_em);
     return `
-      <article class="subconta-card ${arquivada ? 'linha-arquivada' : ''}">
+      <article class="subconta-card">
         <div class="subconta-topo">
           <div>
             <h3 class="subconta-nome">${escapar(s.nome)}</h3>
             <p class="subconta-doc">${escapar(mascararDocumento(s.documento))}</p>
           </div>
           <span class="subconta-status">
-            ${arquivada ? '<span class="pill pill-pendente" title="Só fora da lista — a conta segue ativa na Asaas">arquivada</span>' : ''}
             ${seloSituacao(s.situacao_geral)}
             <span class="pill ${temLink ? 'pill-ok' : 'pill-pendente'}">${temLink ? 'Acesso salvo' : 'Aguardando link'}</span>
           </span>
@@ -484,9 +560,7 @@ async function carregarSubcontas() {
                </a>
                <button class="btn btn-secundario btn-mini" type="button" data-link-subconta="${escapar(s.id)}">Trocar link</button>`
             : `<button class="btn btn-primario btn-mini" type="button" data-link-subconta="${escapar(s.id)}">Colar link de ativação</button>`}
-          ${arquivada
-            ? `<button class="btn btn-primario btn-mini" type="button" data-desarquivar-subconta="${escapar(s.id)}">Restaurar</button>`
-            : `<button class="btn btn-secundario btn-mini" type="button" data-arquivar-subconta="${escapar(s.id)}">Arquivar</button>`}
+          <button class="btn btn-secundario btn-mini" type="button" data-arquivar-subconta="${escapar(s.id)}">Arquivar</button>
         </div>
       </article>
     `;
@@ -846,10 +920,24 @@ async function carregarWebhook() {
 async function carregarTudo() {
   await carregarContratantes();
   await carregarSubcontas();
-  // O resumo do webhook entra no login, e não só ao abrir a aba:
-  // alerta que depende de alguém ir olhar não é alerta. Falha dele não
-  // pode derrubar o login — o painel serve para outras coisas.
-  try { await carregarResumoWebhook(); } catch { /* a aba mostra o erro quando for aberta */ }
+
+  /* O resumo do webhook é disparado SEM `await`, e isso é decisão de
+     latência medida, não estilo: cada rota de `/api/admin` roda a
+     derivação scrypt da senha e custa ~3s em produção (a mesma rota com
+     banco e sem senha custa ~500ms). Esperar por ele deixava o painel
+     três requisições em fila antes de aparecer — quase 10 segundos.
+
+     Ele continua sendo buscado no login, e não só ao abrir a aba,
+     porque alerta que depende de alguém ir olhar não é alerta: o
+     contador de eventos não tratados aparece sozinho, alguns segundos
+     depois da tela.
+
+     A correção de verdade da lentidão é sessão de curta duração em vez
+     de derivar a senha a cada requisição — arquitetura de acesso, na
+     lista de pendências e na Estação 6. Paralelizar as três chamadas
+     seria o contrário do certo: três derivações simultâneas pedem
+     ~384 MiB numa instância de 512 MiB. */
+  carregarResumoWebhook().catch(() => { /* a aba Webhook mostra o erro quando for aberta */ });
 }
 
 async function tentarEntrar(usuarioForcado, senhaForcada) {
@@ -894,8 +982,6 @@ $('btn-salvar-contratante').addEventListener('click', salvarContratante);
 $('btn-abrir-nova-subconta').addEventListener('click', () => { limparErro('msg-subconta'); alternarCamposPorDocumento(); abrirModal('modal-subconta'); });
 $('btn-criar-subconta').addEventListener('click', criarSubconta);
 $('btn-salvar-link').addEventListener('click', salvarLinkAtivacao);
-$('btn-arquivados-contratantes').addEventListener('click', alternarMostrarArquivados);
-$('btn-arquivados-subcontas').addEventListener('click', alternarMostrarArquivados);
 $('metricas-periodo').addEventListener('change', carregarMetricas);
 $('webhook-filtro').addEventListener('change', carregarWebhook);
 $('btn-recarregar-webhook').addEventListener('click', carregarWebhook);

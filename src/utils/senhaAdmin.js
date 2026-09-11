@@ -48,6 +48,41 @@ import { promisify } from 'node:util';
 
 const derivar = promisify(scrypt);
 
+/**
+ * UMA derivação por vez neste processo. Não é otimização — é o que
+ * impede o serviço de cair.
+ *
+ * A N=2^17 cada derivação pede **~128 MiB**, e a instância do Render tem
+ * 512 MiB. Duas simultâneas já são 256 MiB em cima do que o Node e o
+ * cliente Supabase já ocupam; em 11/09/2026 isso derrubou a produção de
+ * verdade, com reinício automático e serviço indisponível. O gatilho foi
+ * banal: uma tela do painel que disparava duas chamadas de admin sem
+ * esperar a primeira.
+ *
+ * O rate limit de 10/min por IP que já existe **não protege disto** —
+ * ele limita a TAXA, não a simultaneidade. Dez chamadas disparadas no
+ * mesmo segundo passam pelo limite e pedem 1,28 GB juntas.
+ *
+ * A fila troca memória ilimitada por espera ilimitada, que é o lado
+ * certo de ceder: requisição parada na fila custa um socket, requisição
+ * derivando custa 128 MiB. Quem espera vê o painel lento; quem não
+ * esperava via o serviço reiniciar.
+ *
+ * Fica aqui, e não em quem chama, porque é o único ponto por onde toda
+ * derivação passa — guarda espalhada pelos chamadores é guarda que o
+ * próximo chamador esquece.
+ */
+let filaDeDerivacao = Promise.resolve();
+
+function umaDerivacaoPorVez(tarefa) {
+  const resultado = filaDeDerivacao.then(tarefa, tarefa);
+  // A fila não pode morrer com uma falha: `catch` vazio mantém o
+  // encadeamento vivo para os próximos, sem engolir o erro de quem pediu
+  // (esse vai no `resultado`, devolvido ao chamador).
+  filaDeDerivacao = resultado.then(() => {}, () => {});
+  return resultado;
+}
+
 /** Mínimo recomendado (OWASP): N=2^17, r=8, p=1. */
 const CUSTO = { N: 131072, r: 8, p: 1 };
 const TAMANHO_CHAVE = 64;
@@ -63,9 +98,11 @@ function limiteDeMemoria({ N, r }) {
 export async function gerarHashSenha(senha) {
   if (!senha) throw new Error('Senha vazia.');
   const sal = randomBytes(TAMANHO_SAL);
-  const derivada = await derivar(String(senha), sal, TAMANHO_CHAVE, {
-    ...CUSTO, maxmem: limiteDeMemoria(CUSTO)
-  });
+  const derivada = await umaDerivacaoPorVez(() =>
+    derivar(String(senha), sal, TAMANHO_CHAVE, {
+      ...CUSTO, maxmem: limiteDeMemoria(CUSTO)
+    })
+  );
   const linha = `scrypt$${CUSTO.N}$${CUSTO.r}$${CUSTO.p}$${sal.toString('base64')}$${derivada.toString('base64')}`;
   return Buffer.from(linha, 'utf8').toString('base64');
 }
@@ -107,9 +144,11 @@ export async function senhaConfere(senha, armazenadoBase64) {
     const esperada = Buffer.from(hashBase64, 'base64');
     if (sal.length === 0 || esperada.length === 0) return false;
 
-    const derivada = await derivar(String(senha ?? ''), sal, esperada.length, {
-      ...parametros, maxmem: limiteDeMemoria(parametros)
-    });
+    const derivada = await umaDerivacaoPorVez(() =>
+      derivar(String(senha ?? ''), sal, esperada.length, {
+        ...parametros, maxmem: limiteDeMemoria(parametros)
+      })
+    );
 
     return timingSafeEqual(derivada, esperada);
   } catch {
@@ -152,5 +191,36 @@ if (process.argv[1]?.endsWith('senhaAdmin.js')) {
   })();
   assert.ok(await senhaConfere('antiga', antigo), 'hash com parâmetro antigo continua verificável (não tranca ninguém pra fora)');
 
-  console.log('senhaAdmin: 18 checagens OK');
+  // --- Uma derivação por vez -------------------------------------
+  /* O que esta fila impede é o serviço cair: a N=2^17 cada derivação
+     pede ~128 MiB, e duas simultâneas estouram os 512 MiB da instância.
+     Aconteceu em produção em 11/09/2026 — ver
+     docs/erros/2026-09-11-duas-derivacoes-simultaneas-derrubaram-o-servico.md
+
+     O teste prova a SERIALIZAÇÃO, não o tempo: instrumenta a fila com
+     tarefas que anunciam quando entram e quando saem, e verifica que
+     nenhuma entra antes da anterior sair. Medir por relógio seria teste
+     que falha sozinho em máquina lenta. */
+  {
+    let simultaneas = 0;
+    let pico = 0;
+    const espiar = async () => {
+      simultaneas += 1;
+      pico = Math.max(pico, simultaneas);
+      await new Promise((r) => setTimeout(r, 5));
+      simultaneas -= 1;
+      return 'pronto';
+    };
+
+    const resultados = await Promise.all([espiar, espiar, espiar, espiar].map(umaDerivacaoPorVez));
+    assert.deepEqual(resultados, ['pronto', 'pronto', 'pronto', 'pronto'], 'todas as tarefas da fila completam');
+    assert.equal(pico, 1, 'a fila deixa no máximo UMA derivação por vez — duas estouram a memória da instância');
+
+    // Falha no meio não pode matar a fila para quem vem depois.
+    const quebrada = umaDerivacaoPorVez(() => { throw new Error('scrypt falhou'); });
+    await assert.rejects(quebrada, /scrypt falhou/, 'o erro chega em quem pediu');
+    assert.equal(await umaDerivacaoPorVez(async () => 'seguinte'), 'seguinte', 'a fila sobrevive à falha anterior');
+  }
+
+  console.log('senhaAdmin: 22 checagens OK');
 }

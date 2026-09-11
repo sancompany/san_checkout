@@ -156,6 +156,20 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Abertas, não bloqueiam
 
+- **🟠 Lei 5 · o cache de JS e CSS em produção ainda é de 4 horas.** O
+  `Cache-Control: max-age=0` do bloco `/*` do `_headers` vale para o
+  HTML e **é sobreposto pelo Cloudflare Pages nos assets** — medido ao
+  vivo em 11/09/2026. A correção que o
+  `docs/erros/2026-09-11-cache-desencontrado-html-novo-js-velho.md`
+  registrava como pronta não funciona para `.js` e `.css`, e o registro
+  foi corrigido. Efeito prático: depois de todo deploy que mexa em JS ou
+  CSS, o navegador pode rodar HTML novo com script velho por até 4h —
+  que é exatamente o defeito que derrubou o painel no login uma vez.
+  **Contorno hoje: Ctrl+Shift+R depois do deploy.** Correção de verdade:
+  Transform Rule de resposta na zona para `/js/*` e `/css/*`. Não
+  bloqueia porque tem contorno conhecido, mas é a primeira coisa da
+  Estação 6.
+
 - **Lei 8 · eventos que chegam e só entram no log.**
   `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e
   os grupos de transferência/saldo estão marcados no painel e caem no
@@ -174,11 +188,31 @@ Esta é a lista única. O que não está aqui, está fechado.
   gravação da auditoria). Falta teste que suba o Express e exercite as
   rotas de criação de cobrança (`/api/checkout/pix`, `/cartao`,
   `/boleto`) de ponta a ponta.
+- **🟠 Estação 6 · o painel é LENTO, e a causa está medida.** Em
+  produção, 11/09/2026: `/api/admin/*` leva **~3.000ms**, enquanto a
+  mesma rota com banco e sem senha (`/api/checkout/pedido/...`) leva
+  **~500ms**. A diferença é a derivação scrypt N=2^17, que roda em
+  **toda** requisição de admin — é consequência direta de não haver
+  sessão. Cada clique que fala com o backend paga 3 segundos.
+  **Paralelizar as chamadas seria o contrário do certo:** três
+  derivações simultâneas pedem ~384 MiB numa instância de 512 MiB (ver o
+  item de amplificação de memória abaixo). O que resolve é sessão de
+  curta duração, que é o mesmo item logo abaixo — os dois são a mesma
+  correção vista de dois ângulos, e fazer uma resolve a outra.
 - **Estação 6 · a senha do admin trafega em todo request** (`X-Admin-Pass`)
   e fica no `sessionStorage` do navegador. O hash protege o repouso, não
   o trânsito. Um XSS no painel entrega a senha. Correção é token de
   sessão de curta duração — arquitetura de acesso, avaliada pela skill
   `seguranca-san`.
+- **Estação 6 · amplificação de memória em `/api/admin` — ACONTECEU.**
+  Deixou de ser risco previsto e virou incidente em 11/09/2026: o serviço
+  estourou os 512 MiB e o Render reiniciou a instância. Contido com fila
+  de uma derivação por vez em `senhaAdmin.js`
+  (`docs/erros/2026-09-11-duas-derivacoes-simultaneas-derrubaram-o-servico.md`).
+  **A memória está limitada; a lentidão não.** Cada requisição de admin
+  continua custando ~3s, e agora elas também esperam na fila umas pelas
+  outras — o que torna a sessão de curta duração mais urgente, não menos.
+  O texto abaixo é o registro original do risco:
 - **Estação 6 · amplificação de memória em `/api/admin`.** Cada tentativa
   de login deriva scrypt a N=2^17, que custa **128 MB**. O rate limit
   atual (10/min por IP) limita a taxa, não a simultaneidade: 10 chamadas

@@ -71,6 +71,11 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
         Métricas
       </button>
+      <button class="nav-item" type="button" data-secao="arquivados">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/></svg>
+        Arquivados
+        <span class="nav-contador" id="contador-arquivados">0</span>
+      </button>
       <button class="nav-item" type="button" data-secao="webhook">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>
         Webhook
@@ -93,7 +98,6 @@
             </p>
           </div>
           <div class="secao-header-acoes">
-            <button class="btn btn-secundario" id="btn-arquivados-contratantes" type="button">Mostrar arquivados</button>
             <button class="btn btn-primario" id="btn-abrir-novo-contratante" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Novo contratante
@@ -139,7 +143,6 @@
             </p>
           </div>
           <div class="secao-header-acoes">
-            <button class="btn btn-secundario" id="btn-arquivados-subcontas" type="button">Mostrar arquivados</button>
             <button class="btn btn-primario" id="btn-abrir-nova-subconta" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Criar subconta
@@ -221,6 +224,55 @@
           <div class="vazio">
             <p class="vazio-titulo">Nenhuma cobrança no período</p>
             <p class="vazio-texto">Assim que houver cobranças, os números aparecem aqui.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Arquivados ---------- -->
+      <!-- Tela própria, e não um botão de alternar dentro das listas de
+           trabalho: arquivar existe para tirar da frente o que não está
+           em uso, e um interruptor que mistura os dois na mesma tabela
+           desfaz metade disso a cada clique. -->
+      <section id="secao-arquivados" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Arquivados</h2>
+            <p class="secao-descricao">
+              O que saiu das listas de trabalho, guardado inteiro.
+              Contratante arquivado <strong>não cobra</strong>: link antigo
+              dele responde "contratante não encontrado" e a api_key não
+              autentica estorno. Subconta arquivada continua ativa na
+              Asaas — aqui ela só sai da lista.
+            </p>
+          </div>
+        </div>
+
+        <div class="painel" style="margin-top:16px">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>id</th>
+                  <th>nome</th>
+                  <th>API base</th>
+                  <th>arquivado em</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tabela-contratantes-arquivados"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="lista-subcontas" id="lista-subcontas-arquivadas" style="margin-top:16px"></div>
+
+        <div class="painel" id="vazio-arquivados" hidden>
+          <div class="vazio">
+            <p class="vazio-titulo">Nada arquivado</p>
+            <p class="vazio-texto">
+              O que você arquivar em Contratantes ou Subcontas aparece
+              aqui, e volta de onde veio pelo botão "Restaurar".
+            </p>
           </div>
         </div>
       </section>
