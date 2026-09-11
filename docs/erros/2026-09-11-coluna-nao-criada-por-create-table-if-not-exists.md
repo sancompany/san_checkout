@@ -29,3 +29,5 @@ primeira ida a produção precisa de `alter table ... add column if not
 exists` no corpo executável, nunca em comentário. Sinal de alerta que
 passou batido: um campo voltando `null` da API sem motivo claro — foi
 explicado como "linha antiga" quando era "coluna inexistente".
+
+**Ecossistema:** sim — o padrão "um arquivo de schema idempotente rodado de novo" é comum fora do Postgres também, e em todos eles `create table if not exists` é no-op numa tabela existente: coluna nova exige alteração explícita no corpo executável.

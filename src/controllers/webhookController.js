@@ -21,23 +21,27 @@
  * (confirmado/estornado/vencido) no próprio `webhook_url` e decide o
  * que fazer do lado dele (ver `montarPayloadConfirmacaoPedido`).
  *
- * ⚠️ NUNCA TESTADO AO VIVO nesta v2. O formato do payload de PAYMENT_*
- * já foi confirmado numa versão anterior deste projeto. O formato
- * exato de CHECKOUT_* (onde exatamente vem o `payment.id` criado —
- * dentro de `checkout.payment` ou solto em `payment`?) NÃO foi
- * confirmado — o código abaixo tenta os dois caminhos, e o
- * console.log existe de propósito pra você ver o payload real assim
- * que o primeiro webhook de teste chegar e corrigir se precisar.
+ * ✅ NOMES DE EVENTO CONFERIDOS contra a documentação oficial da Asaas
+ * em 11/09/2026 — os 21 que este arquivo cita existem e estão escritos
+ * certo, inclusive as duas grafias que divergem entre si e são fáceis
+ * de errar: `CHECKOUT_CANCELED` com um L e
+ * `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` com dois.
  *
- * ⚠️ NOMES DE EVENTO NOVOS NESTA RODADA (07/09) — pesquisados na doc
- * oficial da Asaas, mas SEM confirmação em sandbox ainda (esta v2
- * nunca recebeu um webhook de verdade): PAYMENT_REFUND_IN_PROGRESS,
- * PAYMENT_REFUND_DENIED, PAYMENT_PARTIALLY_REFUNDED, PAYMENT_OVERDUE,
- * e o campo `payment.subscription`. Se algum vier com nome diferente,
- * o pior caso é o evento cair no "não mapeado" e ser ignorado
- * silenciosamente — nada quebra, só não atualiza o status. Conferir
- * contra o console.log assim que o primeiro evento de cada tipo
- * chegar de verdade.
+ * ⚠️ O que continua NÃO confirmado é o FORMATO do payload em tráfego
+ * real, não os nomes — esta v2 nunca recebeu um webhook de verdade. O
+ * formato de PAYMENT_* já foi confirmado numa versão anterior deste
+ * projeto; o de CHECKOUT_* não: onde exatamente vem o `payment.id`
+ * criado (dentro de `checkout.payment` ou solto em `payment`? o código
+ * tenta os dois caminhos), e se `payment.cycle` e `payment.nextDueDate`
+ * chegam junto. É por isso que o console.log lá embaixo existe: para
+ * ler o primeiro evento real de cada tipo e corrigir se precisar.
+ *
+ * ⚠️ Nome certo no código não basta: o evento só chega se estiver
+ * MARCADO no painel da Asaas. A seleção é individual, não existe
+ * "receber todos", e evento não marcado simplesmente nunca chega — o
+ * pedido fica pendente para sempre do lado do contratante, sem erro em
+ * lugar nenhum. A lista do que está marcado, e o motivo de cada um, é o
+ * `CONSTRAINTS.md` seção 2.2 — referência única do assunto.
  */
 
 import {
@@ -53,6 +57,12 @@ import {
 } from '../services/cobrancaService.js';
 import { upsertAssinatura, atualizarStatusAssinatura } from '../services/assinaturaService.js';
 import { cancelarAssinatura as cancelarAssinaturaNaAsaas } from '../services/asaasService.js';
+import {
+  registrarEventoWebhook,
+  registrarRejeicaoWebhook,
+  redigirPayload,
+  extrairReferencia
+} from '../services/auditoriaWebhookService.js';
 import { compararSeguro } from '../utils/validadores.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
 
@@ -83,7 +93,12 @@ const dependenciasPadrao = {
   upsertAssinatura,
   atualizarStatusAssinatura,
   cancelarAssinaturaNaAsaas,
-  notificar: (url, dados, segredo) => notificarContratante(url, dados, segredo)
+  notificar: (url, dados, segredo) => notificarContratante(url, dados, segredo),
+  // A auditoria entra na costura junto com o resto: sem isso, o
+  // autoteste não conseguiria afirmar que a linha é gravada — e uma
+  // auditoria que ninguém testa é a que descobre estar quebrada no dia
+  // em que era a única fonte de informação.
+  registrarAuditoria: (dados) => registrarEventoWebhook(dados)
 };
 
 /**
@@ -99,12 +114,27 @@ const dependenciasPadrao = {
 export function verificarWebhookAsaas(requisicao, resposta, proximo) {
   const { ASAAS_WEBHOOK_TOKEN } = process.env;
   if (!ASAAS_WEBHOOK_TOKEN) {
+    registrarRejeicaoWebhook({ ip: ipDaRequisicao(requisicao), tinhaToken: Boolean(requisicao.get('asaas-access-token')), motivo: 'sem ASAAS_WEBHOOK_TOKEN configurado' });
     return resposta.status(503).json({ erro: 'ASAAS_WEBHOOK_TOKEN não configurado no .env — webhook desativado.' });
   }
   if (!compararSeguro(requisicao.get('asaas-access-token'), ASAAS_WEBHOOK_TOKEN)) {
+    // Contagem acumulada em memória, não uma linha por requisição: isto
+    // aqui é alimentado por quem NÃO tem token, e uma escrita no banco
+    // por tentativa entregaria escrita ilimitada a qualquer um que
+    // descobrisse a URL. Ver auditoriaWebhookService.js.
+    registrarRejeicaoWebhook({ ip: ipDaRequisicao(requisicao), tinhaToken: Boolean(requisicao.get('asaas-access-token')), motivo: 'token inválido' });
     return resposta.status(401).json({ erro: 'Token de webhook inválido.' });
   }
   proximo();
+}
+
+/** `req.ip` depende do `trust proxy` do Express; no Render o endereço
+ *  real vem no `x-forwarded-for`. Só o primeiro salto interessa — o
+ *  resto da cadeia é forjável por quem manda a requisição. */
+function ipDaRequisicao(requisicao) {
+  const encaminhado = requisicao.get?.('x-forwarded-for');
+  if (encaminhado) return String(encaminhado).split(',')[0].trim();
+  return requisicao.ip ?? null;
 }
 
 const EVENTOS_PAYMENT_CONFIRMACAO = ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED'];
@@ -182,26 +212,39 @@ const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
  * É exportada para o autoteste, não para ser reaproveitada em rota.
  */
 export async function processarWebhook(corpo, deps = dependenciasPadrao) {
-  const evento = corpo?.event;
+  switch (classificarEvento(corpo?.event)) {
+    case 'checkout': return processarEventoCheckout(corpo, deps);
+    case 'payment': return processarEventoPayment(corpo, deps);
+    case 'subconta': return processarEventoSubconta(corpo, deps);
+    case 'chave_api': return registrarAlertaChaveApi(corpo);
+    case 'pix_automatico': return processarAutorizacaoPixAutomatico(corpo, deps);
+    default:
+      // Evento sem ramo (ex.: PAYMENT_CREATED, PIX_AUTOMATIC_RECURRING_
+      // ELIGIBILITY_UPDATED, INVOICE_*) chega aqui e não faz nada. Não
+      // some mais, porém: a auditoria grava a linha como `nao_mapeado`
+      // e ela aparece no contador do painel.
+      return undefined;
+  }
+}
 
-  if (evento?.startsWith('CHECKOUT_')) {
-    return processarEventoCheckout(corpo, deps);
-  }
-  if (EVENTOS_PAYMENT_TRATADOS.includes(evento)) {
-    return processarEventoPayment(corpo, deps);
-  }
-  if (evento?.startsWith('ACCOUNT_STATUS_')) {
-    return processarEventoSubconta(corpo, deps);
-  }
-  if (evento?.startsWith('ACCESS_TOKEN_')) {
-    return registrarAlertaChaveApi(corpo);
-  }
-  if (evento?.startsWith('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_')) {
-    return processarAutorizacaoPixAutomatico(corpo, deps);
-  }
-  // outros eventos (ex.: PAYMENT_CREATED, CHECKOUT_CREATED, INVOICE_*)
-  // chegam aqui mas não fazem nada — nota fiscal é responsabilidade
-  // de cada contratante, não do San Checkout.
+/**
+ * Qual ramo do roteador atende este evento — `null` quando nenhum.
+ *
+ * Existe separado por um motivo só, e é o que impede a auditoria de
+ * mentir: o rótulo que vai para o log ("tratado" ou "não mapeado")
+ * precisa sair da MESMA decisão que despacha o evento. Duas listas
+ * paralelas divergiriam no primeiro evento novo, e o log passaria a
+ * afirmar que algo foi tratado quando não foi — que é pior do que não
+ * ter log, porque ninguém checa o que o painel já garantiu.
+ */
+export function classificarEvento(evento) {
+  if (typeof evento !== 'string') return null;
+  if (evento.startsWith('CHECKOUT_')) return 'checkout';
+  if (EVENTOS_PAYMENT_TRATADOS.includes(evento)) return 'payment';
+  if (evento.startsWith('ACCOUNT_STATUS_')) return 'subconta';
+  if (evento.startsWith('ACCESS_TOKEN_')) return 'chave_api';
+  if (evento.startsWith('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_')) return 'pix_automatico';
+  return null;
 }
 
 /**
@@ -218,12 +261,55 @@ export async function processarWebhook(corpo, deps = dependenciasPadrao) {
  */
 export function criarReceptorWebhook(deps = dependenciasPadrao) {
   return async function receberWebhookAsaas(requisicao, resposta) {
-    console.log('[webhook/asaas] payload recebido:', JSON.stringify(requisicao.body, null, 2));
+    const corpo = requisicao.body;
+    const evento = corpo?.event;
+    const rota = classificarEvento(evento);
+    const referencia = extrairReferencia(corpo);
+
+    // O payload CRU não é mais impresso. Ele carrega nome, e-mail,
+    // CPF/CNPJ, telefone e endereço do comprador, e o log do Render é
+    // retido por terceiro — era pendência aberta da Lei 10. O que
+    // sobra é a versão redigida, que responde as mesmas perguntas de
+    // diagnóstico (inclusive "onde vem o payment.id do CHECKOUT_PAID",
+    // pelo mapa de chaves) sem carregar dado de pessoa nenhuma.
+    const campos = redigirPayload(corpo);
+    console.log('[webhook/asaas] evento:', JSON.stringify({ evento, rota, referencia, campos }));
+
+    let resultado = rota ? 'tratado' : 'nao_mapeado';
+    let detalhe = null;
 
     try {
-      await processarWebhook(requisicao.body, deps);
+      await processarWebhook(corpo, deps);
     } catch (erro) {
+      resultado = 'erro';
+      detalhe = erro.message;
       console.error('[webhook/asaas] erro ao processar:', erro.message);
+    }
+
+    // Sem `await` DE PROPÓSITO. A Asaas pausa a fila depois de 15
+    // falhas seguidas (CONSTRAINTS.md §2.3), e resposta lenta conta
+    // como falha: fazer a confirmação de pagamento esperar uma escrita
+    // de diagnóstico trocaria o risco pequeno (perder uma linha de
+    // log) pelo grande (perder a fila inteira). A função chamada não
+    // lança — o `catch` aqui é cinto e suspensório.
+    try {
+      deps.registrarAuditoria({
+        evento,
+        rota,
+        resultado,
+        detalhe,
+        referenciaTipo: referencia.tipo,
+        referenciaId: referencia.id,
+        statusMapeado: mapearStatusPayment(evento),
+        campos
+      })?.catch?.((erro) => console.error('[webhook/asaas] auditoria falhou:', erro.message));
+    } catch (erro) {
+      // O `catch` do promise cobre a falha assíncrona; este cobre a
+      // síncrona. Parece redundante e não é: uma implementação que
+      // estourasse ANTES de devolver o promise escaparia do primeiro e
+      // impediria o 200 de ser enviado — auditoria derrubando o
+      // caminho do dinheiro, exatamente o que ela não pode fazer.
+      console.error('[webhook/asaas] auditoria falhou:', erro.message);
     }
 
     // sempre 200 — a Asaas para de reenviar se receber erro repetido
@@ -899,6 +985,114 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   await receptor({ body: { event: 'CHECKOUT_PAID', checkout: { id: 'chk_erro' } } }, resposta);
   assert.equal(resposta._status, 200, 'erro no processamento ainda responde 200');
   assert.deepEqual(resposta._json, { recebido: true });
+
+  // --- Auditoria (Lei 8) ------------------------------------------
+
+  /* O rótulo do log tem que sair da MESMA decisão que despacha o
+     evento. Aqui isso é verificado de fora: para cada evento, o que
+     `classificarEvento` diz bate com o ramo que realmente rodou? */
+  const CASOS_DE_ROTA = [
+    ['PAYMENT_CONFIRMED', 'payment'],
+    ['PAYMENT_OVERDUE', 'payment'],
+    ['CHECKOUT_PAID', 'checkout'],
+    ['CHECKOUT_CANCELED', 'checkout'],
+    ['ACCOUNT_STATUS_DOCUMENT_APPROVED', 'subconta'],
+    ['ACCESS_TOKEN_EXPIRING_SOON', 'chave_api'],
+    ['PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED', 'pix_automatico'],
+    // Marcado no painel, mas fora do prefixo que o código trata: tem
+    // que aparecer como NÃO mapeado, não como tratado.
+    ['PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED', null],
+    ['PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_REFUSED', null],
+    ['PAYMENT_SPLIT_CANCELLED', null],
+    ['PAYMENT_CREATED', null],
+    ['INVOICE_CREATED', null],
+    [undefined, null],
+    [null, null]
+  ];
+  for (const [evento, esperado] of CASOS_DE_ROTA) {
+    assert.equal(classificarEvento(evento), esperado, `rota de ${evento}`);
+  }
+
+  // Todo evento com rota reconhecida tem que produzir ALGUM efeito —
+  // senão `classificarEvento` diria "tratado" para algo que o
+  // roteador na verdade ignora, e o log mentiria.
+  for (const [evento, rota] of CASOS_DE_ROTA.filter(([, r]) => r !== null)) {
+    const espiao = depsFalsas({
+      buscarCobranca: cobrancaPix,
+      buscarCobrancaPorCheckoutId: cobrancaPix
+    });
+    await processarWebhook(
+      { event: evento, payment: { id: 'pay_1' }, checkout: { id: 'chk_1' }, account: { id: 'acc_1' } },
+      espiao
+    );
+    const teveEfeito = espiao.chamadas.length > 0 || obterAlertasChaveApi().length > 0;
+    assert.ok(teveEfeito, `${evento} foi classificado como ${rota} mas não fez nada`);
+  }
+
+  /** Receptor com auditoria espiã, e um console.log capturado — os dois
+   *  juntos porque a mesma chamada precisa provar duas coisas: o que
+   *  foi GRAVADO e o que foi IMPRESSO. */
+  async function receber(corpo, retornos = {}) {
+    const espiao = depsFalsas(retornos);
+    const receptor = criarReceptorWebhook(espiao);
+    const res = {
+      _status: null, _json: null,
+      status(c) { this._status = c; return this; },
+      json(o) { this._json = o; return this; }
+    };
+    const impresso = [];
+    const logOriginal = console.log;
+    console.log = (...args) => impresso.push(args.map(String).join(' '));
+    try {
+      await receptor({ body: corpo, get: () => undefined, ip: '203.0.113.7' }, res);
+    } finally {
+      console.log = logOriginal;
+    }
+    return { espiao, res, impresso: impresso.join('\n'), auditoria: espiao.chamou('registrarAuditoria')[0]?.args[0] };
+  }
+
+  let a = await receber({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, { buscarCobranca: cobrancaPix });
+  assert.equal(a.auditoria.resultado, 'tratado', 'evento com ramo: tratado');
+  assert.equal(a.auditoria.rota, 'payment');
+  assert.equal(a.auditoria.referenciaId, 'pay_1');
+  assert.equal(a.auditoria.referenciaTipo, 'payment');
+  assert.equal(a.auditoria.statusMapeado, 'confirmado');
+
+  a = await receber({ event: 'PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED', account: { id: 'acc_9' } });
+  assert.equal(a.auditoria.resultado, 'nao_mapeado', 'evento sem ramo entra no log como não mapeado');
+  assert.equal(a.auditoria.rota, null);
+  assert.equal(a.res._status, 200, 'evento não mapeado ainda responde 200');
+
+  a = await receber(
+    { event: 'CHECKOUT_PAID', checkout: { id: 'chk_erro' } },
+    { buscarCobrancaPorCheckoutId: () => { throw new Error('banco fora do ar'); } }
+  );
+  assert.equal(a.auditoria.resultado, 'erro', 'exceção no processamento vira resultado=erro no log');
+  assert.equal(a.auditoria.detalhe, 'banco fora do ar', 'o motivo do erro é guardado');
+  assert.equal(a.res._status, 200, 'erro registrado ainda responde 200');
+
+  // A auditoria é diagnóstico. Ela quebrando não pode derrubar a
+  // confirmação de pagamento — a Asaas pausa a fila depois de 15
+  // falhas seguidas (CONSTRAINTS.md §2.3).
+  a = await receber(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } },
+    { buscarCobranca: cobrancaPix, registrarAuditoria: () => { throw new Error('tabela sumiu'); } }
+  );
+  assert.equal(a.res._status, 200, 'auditoria quebrada não derruba o webhook');
+  assert.equal(a.espiao.chamou('notificar').length, 1, 'auditoria quebrada não impede a notificação');
+
+  // Lei 10: o payload cru NÃO é mais impresso. Um CPF que entra pelo
+  // webhook não pode sair no log do Render.
+  a = await receber({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_1', status: 'CONFIRMED' },
+    customer: { name: 'Maria Aparecida', cpfCnpj: '52998224725', email: 'maria@exemplo.com' }
+  }, { buscarCobranca: cobrancaPix });
+  for (const proibido of ['52998224725', 'Maria Aparecida', 'maria@exemplo.com']) {
+    assert.ok(!a.impresso.includes(proibido), `dado pessoal vazou no log: ${proibido}`);
+  }
+  assert.ok(a.impresso.includes('PAYMENT_CONFIRMED'), 'mas o evento continua identificável no log');
+  assert.ok(a.impresso.includes('customer.cpfCnpj'), 'e o CAMINHO da chave continua visível, sem o valor');
 
   console.log('webhookController: caminho crítico OK');
 }

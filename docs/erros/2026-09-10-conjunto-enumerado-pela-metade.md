@@ -26,3 +26,5 @@ checkout conhece o conjunto INTEIRO** — não o pedaço que o projeto da vez
 usa. Antes de enumerar qualquer coisa vinda de terceiro, ler a definição
 completa na documentação dele, não a lista de valores que apareceram até
 agora.
+
+**Ecossistema:** sim — todo projeto que integra um terceiro enumera algum conjunto fechado dele (status, moeda, tipo de documento, ciclo). Conhecer só o pedaço que o projeto da vez usa é a forma padrão de criar dívida que volta como "requisito novo".

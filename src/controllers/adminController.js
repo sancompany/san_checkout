@@ -20,6 +20,12 @@ import { senhaConfere } from '../utils/senhaAdmin.js';
 import { responderErro } from '../utils/erros.js';
 import { criarSubconta as criarSubcontaNaAsaas } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
+import {
+  listarEventosWebhook,
+  contarEventosNaoTratados,
+  ultimoEventoRecebido,
+  resumoRejeicoes
+} from '../services/auditoriaWebhookService.js';
 
 /** Aplicado a toda rota de /api/admin — um guard só, não um por handler. */
 /**
@@ -339,4 +345,93 @@ export async function atualizarLinkAtivacaoSubconta(requisicao, resposta) {
   if (error) return responderErro(resposta, error, 'admin.atualizarLinkAtivacaoSubconta');
   if (!data) return resposta.status(404).json({ erro: 'Subconta não encontrada.' });
   resposta.json(data);
+}
+
+// --- Auditoria do webhook (Lei 8) --------------------------------------
+// O log existe porque evento que o código não trata tinha um destino só:
+// `console.log` no Render, retenção curta, e ninguém olha. Ver
+// CONSTRAINTS.md §2.2 para o que está marcado no painel da Asaas, e
+// `auditoriaWebhookService.js` para o que é (e o que não é) gravado.
+
+/**
+ * Quando o operador vir isto no painel, é porque a Asaas mudou a
+ * elegibilidade da conta para Pix Automático. A instrução tem que vir
+ * junto do evento, não numa conversa de meses atrás: são 10 eventos no
+ * grupo e marcar os errados é pior que não marcar nenhum.
+ *
+ * Os 10 nomes foram conferidos na documentação oficial da Asaas em
+ * 11/09/2026 (Eventos para Pix Automático).
+ */
+const INSTRUCOES_POR_EVENTO = {
+  PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED: {
+    titulo: 'A Asaas mudou a elegibilidade desta conta para Pix Automático',
+    passos: [
+      'Confira no painel da Asaas se a conta foi LIBERADA (o evento também dispara se ela for bloqueada).',
+      'Se foi liberada, vá em Integrações → Webhooks → editar o webhook do checkout, grupo Pix Automático.',
+      'Marque SOMENTE os cinco de autorização: _AUTHORIZATION_CREATED, _ACTIVATED, _CANCELLED (dois L), _EXPIRED e _REFUSED. São os únicos que o código trata.',
+      'Marque também _PAYMENT_INSTRUCTION_REFUSED: é cobrança da recorrência que não foi agendada, ou seja, dinheiro que não entra. O código ainda não trata, mas cai aqui neste log.',
+      'NÃO marque _PAYMENT_INSTRUCTION_CREATED, _SCHEDULED nem _CANCELLED: disparam a cada cobrança da recorrência e não dizem nada que a confirmação já não diga.',
+      'Só depois disso habilite "Assinatura por Pix" em algum contratante — antes da liberação, o método falha na hora de cobrar.'
+    ]
+  }
+};
+
+export async function listarAuditoriaWebhook(requisicao, resposta) {
+  try {
+    const eventos = await listarEventosWebhook({
+      limite: requisicao.query.limite,
+      resultado: requisicao.query.resultado || undefined,
+      evento: requisicao.query.evento || undefined,
+      antesDe: requisicao.query.antesDe || undefined
+    });
+
+    // O contratante é resolvido AQUI, sobre a página que está sendo
+    // exibida — e não gravado a cada webhook. Ver o comentário na
+    // migration 0002: o caminho do dinheiro não paga consulta extra
+    // para enfeitar coluna de diagnóstico.
+    const referencias = [...new Set(eventos.map((e) => e.referencia_id).filter(Boolean))];
+    const porReferencia = new Map();
+
+    if (referencias.length > 0) {
+      // Duas consultas com `.in()` em vez de uma `.or()` montada por
+      // concatenação. O `referencia_id` vem do payload da Asaas — dado
+      // de fora, mesmo depois da guarda de origem — e vírgula ou
+      // parêntese num id escaparia de um filtro montado como texto.
+      // `.in()` recebe array e escapa sozinho; o custo é uma consulta
+      // a mais numa tela que quase ninguém abre.
+      const colunas = 'charge_id, asaas_checkout_id, pedido_id, contratante_id, status';
+      const [porCharge, porCheckout] = await Promise.all([
+        supabase.from('cobrancas').select(colunas).in('charge_id', referencias),
+        supabase.from('cobrancas').select(colunas).in('asaas_checkout_id', referencias)
+      ]);
+
+      for (const c of [...(porCharge.data ?? []), ...(porCheckout.data ?? [])]) {
+        if (c.charge_id) porReferencia.set(c.charge_id, c);
+        if (c.asaas_checkout_id) porReferencia.set(c.asaas_checkout_id, c);
+      }
+    }
+
+    resposta.json(eventos.map((e) => ({
+      ...e,
+      cobranca: porReferencia.get(e.referencia_id) ?? null,
+      instrucao: INSTRUCOES_POR_EVENTO[e.evento] ?? null
+    })));
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.listarAuditoriaWebhook');
+  }
+}
+
+export async function obterResumoWebhook(requisicao, resposta) {
+  const dias = Math.min(Number(requisicao.query.dias) || 7, 90);
+  try {
+    const [naoTratados, ultimo, rejeicoes] = await Promise.all([
+      contarEventosNaoTratados(dias),
+      ultimoEventoRecebido(),
+      resumoRejeicoes()
+    ]);
+
+    resposta.json({ periodoDias: dias, naoTratados, ultimoEvento: ultimo, rejeicoes });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.obterResumoWebhook');
+  }
 }

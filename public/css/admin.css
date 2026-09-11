@@ -357,3 +357,61 @@ dialog::backdrop { background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(2px
 }
 .barra-taxa-preenchida { display: block; height: 100%; border-radius: 3px; background: var(--status-success); }
 .barra-taxa-numero { font-weight: 600; font-size: 0.75rem; min-width: 42px; text-align: right; }
+
+/* ------------------------------------------------------------------
+   Webhook — faixa de tentativas recusadas e cartão de instrução
+
+   Só o que não existia. Resultado do evento usa a `.pill` de sempre e
+   id usa `.badge-id`: elemento visual nasce em um lugar só (Lei 5).
+------------------------------------------------------------------ */
+
+/* Contador do menu em alerta — o mesmo `.nav-contador`, só que
+   chamando atenção quando há evento não tratado esperando. */
+.nav-contador--alerta { background: rgba(217, 119, 6, 0.14); color: var(--status-warning); }
+
+/* Fica ACIMA do log porque é sinal de segurança, não de operação:
+   alguém está batendo no endereço do webhook sem o token. */
+.faixa-rejeicoes {
+  background: var(--bg-card); border: 1px solid var(--border-color);
+  border-left: 3px solid var(--status-warning);
+  border-radius: var(--radius-input); margin-bottom: 16px; overflow: hidden;
+}
+.faixa-rejeicoes-topo {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 12px 16px; background: none; border: none; cursor: pointer;
+  text-align: left; color: var(--text-main); font-size: 0.875rem;
+}
+.faixa-rejeicoes-topo:hover { background: var(--bg-input-hover); }
+.faixa-rejeicoes-icone { display: flex; color: var(--status-warning); flex-shrink: 0; }
+.faixa-rejeicoes-icone svg { width: 20px; height: 20px; }
+.faixa-rejeicoes-texto { flex: 1; min-width: 0; }
+.faixa-rejeicoes-nota { display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; }
+.faixa-rejeicoes-seta { color: var(--text-muted); transition: transform var(--transition-fast); }
+.faixa-rejeicoes-topo[aria-expanded="true"] .faixa-rejeicoes-seta { transform: rotate(180deg); }
+.faixa-rejeicoes-detalhe { border-top: 1px solid var(--border-color); padding: 12px 16px 16px; }
+.faixa-rejeicoes-explicacao {
+  font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 12px; max-width: 70ch;
+}
+
+/* A instrução aparece junto do evento que a exige, em vez de morar num
+   documento que ninguém abre na hora em que o evento chega. */
+/* `.painel` não traz padding — quem tem conteúdo próprio (tabela,
+   estado vazio) põe o seu. Este cartão é um desses. */
+.cartao-instrucao {
+  margin-top: 16px; padding: 16px 20px;
+  border-left: 3px solid var(--action-primary);
+}
+.cartao-instrucao-titulo { font-weight: 600; margin-bottom: 10px; }
+.cartao-instrucao-passos {
+  margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 0.875rem; color: var(--text-secondary); max-width: 80ch;
+}
+
+/* O payload não é guardado: o que se mostra é o resultado da redação.
+   O mapa de chaves completo vai no `title`. Largura presa porque são
+   tokens longos em monoespaçada — sem isso a coluna come a tabela. */
+.campos-redigidos {
+  display: inline-block; max-width: 240px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem;
+  color: var(--text-secondary); cursor: help; overflow-wrap: anywhere;
+}

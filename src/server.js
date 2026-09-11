@@ -28,6 +28,7 @@ import rateLimit from 'express-rate-limit';
 
 import { supabase } from './config/supabase.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
+import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
 import { obterAlertasChaveApi } from './controllers/webhookController.js';
 import rotasPedido from './routes/pedidoRoutes.js';
 import rotasCheckout from './routes/checkoutRoutes.js';
@@ -174,4 +175,12 @@ app.listen(PORTA, () => {
   // Render reinicia sozinho de vez em quando e o boot já ressincroniza.
   sincronizarTaxasAsaas();
   setInterval(sincronizarTaxasAsaas, UM_DIA_MS).unref();
+
+  // O log de auditoria do webhook é diagnóstico, não dado fiscal: não
+  // herda os 5 anos de retenção das cobranças. Pega carona no mesmo
+  // ciclo de 24h em vez de ganhar agendador próprio, e roda no boot
+  // porque o processo do Render reinicia sozinho — não dá para contar
+  // com um intervalo de 24h ser alcançado.
+  expurgarAuditoria();
+  setInterval(expurgarAuditoria, UM_DIA_MS).unref();
 });

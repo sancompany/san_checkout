@@ -27,3 +27,5 @@ revalidação forçada. Diagnóstico: quando o código local funciona e o
 publicado não, comparar **os headers**, não só o conteúdo dos arquivos —
 `fetch(url).then(r => r.headers.get('cache-control'))` resolve em
 segundos o que dedução não resolve.
+
+**Ecossistema:** sim — qualquer hospedagem estática serve HTML e assets com políticas de cache diferentes por padrão. Sem cache-busting, o navegador roda HTML novo com script velho, e o código local funciona enquanto o publicado não.

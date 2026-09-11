@@ -1,73 +1,48 @@
 # Total ausente aparecia como "R$ NaN", e "consertar para zero" era pior
 
-> **Candidata a lição do ecossistema.** Vale para qualquer tela que
-> exiba valor vindo de API. Promover para `licoes-aprendidas.md` na
-> próxima republicação do plugin.
+**Sintoma.** No resumo do checkout, `subtotal`, `desconto` e
+`taxasTotais` eram lidos com `Number(x ?? 0)`; só o total não
+(`const total = taxa.valorCobrado;`). Faltando esse campo na resposta, a
+tela mostrava **"Total R$ NaN"** — com o formulário e o botão de pagar
+inteiros ao lado.
 
-## Sintoma
+**Causa raiz.** Três das quatro linhas de dinheiro foram defendidas e a
+quarta não. Não era alcançável na prática (o backend sempre manda o
+campo), mas era a única sem guarda, e o custo de errar ali é o mais alto
+da tela.
 
-No resumo do checkout, `subtotal`, `desconto` e `taxasTotais` eram lidos
-com `Number(x ?? 0)`; só o total não:
+**Correção.** A correção óbvia — igualar as quatro com
+`Number(taxa?.valorCobrado ?? 0)` — é a **errada**, e quase entrou: ela
+troca "R$ NaN" por "R$ 0,00", que é pior. NaN é visivelmente quebrado e
+ninguém confirma uma compra assim; "R$ 0,00" parece compra grátis, o
+comprador confirma, e o valor cobrado não é o da tela — vem do modelo
+pull no servidor. A tela mentiria e o cartão seria debitado com outro
+número. **Valor desconhecido não é valor zero: zero é um preço, ausência
+não é.**
 
-```js
-const total = taxa.valorCobrado;
-```
+O que entrou foi falhar o carregamento, que é o que gateway nenhum faz
+diferente — sessão sem total não vira checkout. `aplicarNoResumo` lança
+quando `valorCobrado` não é finito ou é `<= 0`, e o `catch` de
+`resolverContexto` chama `marcarPedidoIndisponivel`, que escreve o erro,
+troca os valores por travessão e **esconde o painel de pagamento**.
 
-Faltando esse campo na resposta, a tela mostrava **"Total R$ NaN"** —
-com o formulário e o botão de pagar inteiros ao lado.
+**Guarda.** A verificação é com a tela renderizada, e foi ela que pegou a
+correção incompleta: a primeira versão parava no `throw` e no erro do
+título, o que parecia suficiente **lendo o código**. Renderizada, a tela
+mostrava "Total **R$ 0,00**" e o botão "Gerar QR Code Pix" ativo — porque
+o `0,00` é o **placeholder do HTML**, e lançar antes de preencher
+simplesmente o deixa lá. A correção contra o "parece compra grátis"
+tinha produzido exatamente "parece compra grátis".
 
-## Causa raiz
+**Como evitar na origem.** Ao defender um valor exibido, defender
+**todos** os irmãos na mesma passada — três de quatro protegidos é sinal
+de que a quarta foi esquecida, não de que é segura. Ausência de valor
+nunca vira zero numa tela de dinheiro: ou o dado aparece, ou a tela
+deixa de oferecer a ação. E estado de erro precisa **apagar o
+placeholder**: marcação que começa com `0,00` ou `--` no HTML vira dado
+falso no instante em que o carregamento falha — o que sobra na tela
+quando o preenchimento não acontece é invisível na leitura do código.
 
-Três das quatro linhas de dinheiro foram defendidas e a quarta não. Não
-é alcançável hoje (o backend sempre manda o campo), mas era a única sem
-guarda, e o custo de errar ali é o mais alto da tela.
-
-## A correção errada, que quase entrou
-
-O reflexo é igualar as quatro: `Number(taxa?.valorCobrado ?? 0)`. Isso
-troca "R$ NaN" por **"R$ 0,00"**, que é pior:
-
-- NaN é visivelmente quebrado; ninguém confirma uma compra assim.
-- "R$ 0,00" parece compra grátis. O comprador confirma — e o valor
-  cobrado não é o da tela, vem do modelo pull no servidor. A tela mente
-  e o cartão é debitado com outro número.
-
-**Valor desconhecido não é valor zero.** Zero é um preço; ausência não é.
-
-## A correção certa
-
-Falhar o carregamento em vez de exibir preço que não se sabe — é o que
-gateway nenhum faz diferente: sessão sem total não vira checkout.
-
-1. `aplicarNoResumo` lança quando `valorCobrado` não é finito ou é `<= 0`
-   (o backend já recusa esse intervalo em `valorValido`).
-2. O `catch` de `resolverContexto` chama `marcarPedidoIndisponivel`, que
-   escreve o erro, troca os valores por travessão (`—`) e **esconde o
-   painel de pagamento**.
-3. O `app.js` já saía antes de ligar os botões; agora a tela mostra o
-   mesmo que o sistema faz.
-
-## O detalhe que só a tela revelou
-
-A primeira versão da correção parava no passo 1: lançava e escrevia o
-erro no título. Parecia suficiente **lendo o código**. Renderizada, a
-tela mostrava "Total **R$ 0,00**" e o botão "Gerar QR Code Pix" ativo —
-porque o `0,00` é o **placeholder do HTML**, e lançar antes de preencher
-simplesmente o deixa lá.
-
-Ou seja: a correção contra o "parece compra grátis" tinha produzido
-exatamente "parece compra grátis", e a revisão por leitura não pegou.
-
-## Como evitar na origem
-
-- Ao defender um valor exibido, defender **todos** os irmãos na mesma
-  passada. Três de quatro protegidos é sinal de que a quarta foi
-  esquecida, não de que ela é segura.
-- Ausência de valor **nunca** vira zero numa tela de dinheiro: ou o dado
-  aparece, ou a tela deixa de oferecer a ação.
-- Estado de erro precisa **apagar o placeholder**. Marcação que começa
-  com `0,00`, `R$ 0,00` ou `--` no HTML vira dado falso no instante em
-  que o carregamento falha.
-- Conferir estado de erro **renderizado**, nunca só pelo código: o que
-  sobra na tela quando o preenchimento não acontece é invisível na
-  leitura.
+**Ecossistema:** sim — vale para qualquer tela que exiba valor vindo de
+API, em qualquer stack. O par "ausência virou zero" + "placeholder
+sobrevivendo ao erro" não depende de nada deste código.

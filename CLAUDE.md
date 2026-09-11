@@ -14,6 +14,9 @@ e cobra o valor que recebeu nessa resposta.
 - `README.md` — como rodar e como executar os testes
 - `API.md` — o contrato com quem integra (fica na raiz de propósito: é o documento mais lido do repositório)
 - `docs/inventario-de-dados.md` — que dado de pessoa este projeto coleta
+- `docs/proximas-versoes.md` — o que ficou para depois. **Não autoriza
+  construir nada**: o `CONSTRAINTS.md` diz "não construa", este diz
+  "ainda não"
 
 ## Classificação
 
@@ -53,34 +56,57 @@ conferido contra a modelagem (§6.2) e o dado pessoal do histórico do git
 removido (§6.1). Reverificado ao vivo no commit `d515317`: árvore do
 GitHub e CI verde (run #7).
 
-**Estação 5 (Construção) fechada.** As três condições, verificadas:
+**Estação 5 (Construção) está ABERTA.** Ela chegou a ser dada como
+fechada em 11/09/2026 e **não estava** — ver
+`docs/erros/2026-09-11-abri-a-estacao-seguinte-com-a-anterior-aberta.md`.
+Duas das três condições estão cumpridas; a terceira depende de uma ação
+que ainda não aconteceu.
 
-- *Escopo da v1 implementado* — já estava, em produção.
-- *Teste no caminho crítico* — o webhook de entrada, onde dinheiro é
-  confirmado, ganhou suíte cobrindo guarda de origem, mapa de
+- *Escopo da v1 implementado* — **parcial.** O que está em produção está
+  implementado, mas o log de auditoria do webhook (migration `0002`,
+  `auditoriaWebhookService.js`, a aba Webhook no painel) existe só no
+  disco: não foi commitado, não foi enviado ao GitHub, a migration não
+  rodou no Supabase e o Render não recebeu deploy. **Construção que não
+  subiu não é construção fechada.**
+- *Teste no caminho crítico* — feito. O webhook de entrada, onde dinheiro
+  é confirmado, tem suíte cobrindo guarda de origem, mapa de
   evento→status, idempotência, ciclo novo de assinatura, a ordem do
-  cancelamento na renovação e o contrato de sempre responder 200. Para
-  isso o `webhookController.js` ganhou injeção de dependências, com o
-  núcleo (`processarWebhook`) separado da casca do Express — nenhum
-  arquivo fora dele mudou. Os testes foram validados por mutação: quebrar
-  a idempotência e inverter a ordem do cancelamento faz a suíte falhar.
-- *Ciclo de revisão limpo* — a skill `revisar` rodou sobre os dois diffs
-  desta estação: 4 ciclos no do webhook, 3 no do frontend, os dois
-  terminando sem achado novo.
+  cancelamento na renovação, o contrato de sempre responder 200 e a
+  gravação da linha de auditoria. Para isso o `webhookController.js`
+  ganhou injeção de dependências, com o núcleo (`processarWebhook`)
+  separado da casca do Express. Validados por mutação: quebrar a
+  idempotência, inverter a ordem do cancelamento, furar a lista branca da
+  redação, voltar a imprimir o payload cru ou aguardar a auditoria antes
+  do 200 fazem a suíte falhar.
+- *Ciclo de revisão limpo* — feito. A skill `revisar` rodou sobre os três
+  diffs desta estação: 4 ciclos no do webhook, 3 no do frontend e 3 no do
+  log de auditoria, todos terminando sem achado novo.
 
-Leis verificadas: 2 (as exceções registradas seguem valendo; a separação
-núcleo/casca melhorou), 5 (auditada com a tela renderizada — anel de foco
-restaurado, campo com definição única, total que não mente) e 6 (fechada
-na Estação 4). Documentação oficial consultada onde a estação pede: o
-mínimo de contraste do indicador de foco veio do WCAG 2.2 (1.4.11), não
-de memória — citado em `docs/erros/2026-09-11-reset-apagou-o-anel-de-foco.md`.
+Leis verificadas até aqui: 2 (as exceções registradas seguem valendo; a
+separação núcleo/casca melhorou), 5 (auditada com a tela renderizada —
+anel de foco restaurado, campo com definição única, total que não mente,
+aba Webhook conferida a 1280px e a 400px) e 6 (fechada na Estação 4).
+Documentação oficial consultada onde a estação pede: o mínimo de
+contraste do indicador de foco veio do WCAG 2.2 (1.4.11) e os 10 eventos
+do grupo Pix Automático vieram da documentação da Asaas — nenhum dos dois
+de memória.
 
-**Estação 6 (Prontidão) é a próxima** — segurança em ciclos, teste no
-navegador, limites declarados, log e alerta; verifica as Leis 4, 7 e 8,
-com a skill `seguranca-san`. **A tabela pede Opus com esforço alto, e
-aqui eu manteria:** é ciclo de segurança sobre motor de pagamento com
-dado de terceiro, onde errar é caro e difícil de detectar — exatamente o
-caso em que a tabela não deve ser afrouxada.
+**O que falta para a Estação 5 fechar** está na lista de pendências
+abaixo, e é ação do dono: commit, push, migration `0002` no SQL Editor do
+Supabase, e deploy no Render.
+
+**Estação 6 (Prontidão) NÃO foi iniciada**, e não pode ser enquanto a 5
+estiver aberta. Quando abrir, ela faz segurança em ciclos, teste no
+navegador, limites declarados, log e alerta, verificando as Leis 4, 7 e 8
+com a skill `seguranca-san` — e o que ela verifica é **o que está no ar**.
+Rodá-la sobre código que só existe no disco mede o lugar errado, que é
+exatamente o motivo de a ordem das estações não ser negociável. A tabela
+pede Opus com esforço alto.
+
+**O log de auditoria é construção da Estação 5, não entrega da 6.**
+Escrever código que a Lei 8 um dia vai verificar não abre a estação que
+faz essa verificação: estação é etapa, lei é verificação, e as duas
+numerações não se correspondem.
 
 (A Lei 0 como um todo continua aberta e não bloqueia — ver pendências:
 falta a skill `revisar` rodar sobre o que está em produção.)
@@ -98,16 +124,48 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-Nenhuma.
+- **🔴 A construção desta estação não subiu.** Está tudo no disco e em
+  lugar nenhum mais. Enquanto isso durar, a Estação 5 não fecha e a 6 não
+  abre — e qualquer verificação feita agora mediria uma estrutura
+  diferente da que está no ar. Na ordem:
+
+  1. `git add -A && git commit && git push` — nada foi commitado desde
+     `b4f567e`.
+  2. Rodar `supabase/migrations/0002_webhook_auditoria.sql` **no SQL
+     Editor do Supabase**. Não existe `DATABASE_URL` neste projeto e não
+     há nada a configurar no Render para isso — é decisão da Lei 6,
+     registrada em `CONSTRAINTS.md` §2.1.
+  3. Deploy no Render.
+  4. Conferir ao vivo: `/api/saude` respondendo, o webhook devolvendo 401
+     sem o token, e a aba Webhook do painel abrindo sem erro.
+
+  Sem o passo 2 o backend sobe e a auditoria só loga erro a cada webhook:
+  o código novo escreve numa tabela que ainda não existe.
+
+- **🔴 Apagar `docs/erros/2026-09-11-editei-uma-copia-velha-do-arquivo.md`.**
+  É duplicata de `2026-09-11-auditoria-contra-copia-velha.md`, que já
+  cobre o mesmo erro e absorveu o conteúdo novo. Nunca foi commitado. A
+  ponte com o computador escreve arquivo mas não apaga, então é `del` na
+  mão.
 
 ### Abertas, não bloqueiam
 
+- **Lei 8 · eventos que chegam e só entram no log.**
+  `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e
+  os grupos de transferência/saldo estão marcados no painel e caem no
+  ramo de não mapeado. Isso é o desenho, não descuido: a aba Webhook os
+  mostra, e o primeiro payload real é o que decide o tratamento. Dar
+  comportamento a eles é entrada em `docs/proximas-versoes.md`, porque
+  mexeria no mapa de status que o `API.md` publica como contrato —
+  caminho de dinheiro e contrato de estrutura, os dois na lista curta da
+  lei.
 - **Lei 0 · a skill `revisar` nunca rodou** sobre o que está em produção.
-- **Lei 0 · cobertura de teste ainda não alcança as rotas HTTP.** As 5
+- **Lei 0 · cobertura de teste ainda não alcança as rotas HTTP.** As 6
   suítes cobrem assinatura de webhook, conversão de taxa, id
-  imprevisível, hash de senha e o caminho crítico do webhook de entrada
-  (guarda de origem, mapa de evento→status, idempotência, ciclo de
-  assinatura, sempre-200). Falta teste que suba o Express e exercite as
+  imprevisível, hash de senha, a redação do log de auditoria e o caminho
+  crítico do webhook de entrada (guarda de origem, mapa de
+  evento→status, idempotência, ciclo de assinatura, sempre-200 e a
+  gravação da auditoria). Falta teste que suba o Express e exercite as
   rotas de criação de cobrança (`/api/checkout/pix`, `/cartao`,
   `/boleto`) de ponta a ponta.
 - **Estação 6 · a senha do admin trafega em todo request** (`X-Admin-Pass`)
@@ -128,10 +186,8 @@ Nenhuma.
   expurgo (verificado na Estação 4 — ver `docs/inventario-de-dados.md`
   §6.2); falta escrever a rotina. Validação jurídica é da Estação 7, com
   a skill `legal`.
-- **Lei 10 · log de produção grava dado pessoal em texto puro.** O
-  `webhookController.js` registra o payload cru dos webhooks da Asaas,
-  que contém dado do comprador (não contém dado de cartão), retido pelo
-  Render. Estava só no `docs/inventario-de-dados.md` §7 e não nesta
-  lista — a lista é uma só, então passa a constar aqui. Reduzir aos
-  campos de diagnóstico assim que o formato dos eventos estiver
-  confirmado ao vivo.
+- **Lei 10 · a rotina de expurgo do dado do COMPRADOR não existe.** O
+  prazo (5 anos) está decidido e a modelagem suporta, mas nada apaga
+  cobrança nenhuma hoje. O expurgo que passou a existir em 11/09/2026 é
+  o do log de auditoria (90 dias) — é rotina de verdade, rodando, mas
+  cobre outra coisa.

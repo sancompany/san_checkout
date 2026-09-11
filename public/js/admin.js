@@ -143,7 +143,7 @@ document.addEventListener('click', (evento) => {
 /* ------------------------------------------------------------------
    Navegação entre seções
 ------------------------------------------------------------------ */
-const SECOES = ['contratantes', 'subcontas', 'metricas'];
+const SECOES = ['contratantes', 'subcontas', 'metricas', 'webhook'];
 
 document.querySelectorAll('.nav-item').forEach((item) => {
   item.addEventListener('click', () => {
@@ -152,6 +152,7 @@ document.querySelectorAll('.nav-item').forEach((item) => {
     // Métricas só é buscada quando alguém olha — é a consulta mais cara
     // do painel e não faz sentido rodar em todo login.
     if (item.dataset.secao === 'metricas') carregarMetricas();
+    if (item.dataset.secao === 'webhook') carregarWebhook();
   });
 });
 
@@ -538,12 +539,169 @@ async function carregarMetricas() {
   }
 }
 
+
+/* ------------------------------------------------------------------
+   Webhook — log de auditoria
+
+   O contador do menu é buscado no login, não só quando a aba é aberta:
+   o ponto do log é avisar que algo não tratado chegou, e aviso que só
+   aparece para quem já foi olhar não avisa nada.
+------------------------------------------------------------------ */
+function formatarQuando(iso) {
+  if (!iso) return '—';
+  const data = new Date(iso);
+  if (Number.isNaN(data.getTime())) return '—';
+  return data.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Há quanto tempo, em palavras. Serve para a leitura mais importante
+ *  desta tela: a Asaas PAUSA a fila depois de 15 falhas seguidas, e
+ *  fila pausada não manda evento nenhum — o que se vê é ausência. */
+function haQuantoTempo(iso) {
+  if (!iso) return null;
+  const minutos = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(minutos) || minutos < 0) return null;
+  if (minutos < 60) return `há ${minutos} min`;
+  const horas = Math.floor(minutos / 60);
+  if (horas < 48) return `há ${horas}h`;
+  return `há ${Math.floor(horas / 24)} dias`;
+}
+
+/* Reaproveita a `.pill` que o painel já usa em toda tabela, em vez de
+   um selo novo só para esta aba — Lei 5: elemento visual nasce em um
+   lugar só. "Não mapeado" fica em amarelo e não em vermelho de
+   propósito: é aviso de que algo novo chegou, não falha. */
+const PILL_RESULTADO = {
+  tratado: { classe: 'pill-ok', rotulo: 'tratado' },
+  nao_mapeado: { classe: 'pill-pendente', rotulo: 'não mapeado' },
+  erro: { classe: 'pill-erro', rotulo: 'erro' }
+};
+
+function celulaResultado(evento) {
+  const marca = PILL_RESULTADO[evento.resultado] ?? { classe: '', rotulo: evento.resultado };
+  const titulo = evento.detalhe ? ` title="${escapar(evento.detalhe)}"` : '';
+  return `<span class="pill ${marca.classe}"${titulo}>${escapar(marca.rotulo)}</span>`;
+}
+
+/** Os campos redigidos, compactos: primeiro os valores que a lista
+ *  branca deixou passar, depois quantos caminhos de chave sobraram. O
+ *  mapa inteiro vai no `title`, que é onde se responde "onde vem o
+ *  payment.id deste CHECKOUT_PAID". */
+function celulaCampos(campos) {
+  if (!campos) return '<span class="celula-fraca">—</span>';
+  // `escapar` nos DOIS lados, e isto não é zelo: tanto o nome da chave
+  // quanto o valor vêm do payload da Asaas. A lista branca da redação
+  // decide QUAIS campos passam, não o que tem dentro deles — um
+  // `status` com `<img src=x onerror=...>` chegaria inteiro aqui e
+  // executaria no painel do admin.
+  const valores = Object.entries(campos.valores ?? {})
+    .filter(([chave]) => chave !== 'event')
+    .map(([chave, valor]) => `${escapar(chave.split('.').pop())}=${escapar(String(valor))}`);
+  const caminhos = campos.caminhos ?? [];
+  const resumo = valores.slice(0, 2).join(' · ') || '<span class="celula-fraca">sem valor legível</span>';
+  return `<span class="campos-redigidos" title="${escapar(caminhos.join('\n'))}">${resumo}<span class="celula-fraca"> (${caminhos.length} campos)</span></span>`;
+}
+
+function linhaWebhook(evento) {
+  const cobranca = evento.cobranca;
+  const pedido = cobranca
+    ? `${escapar(cobranca.pedido_id ?? '—')}<span class="celula-fraca"> · ${escapar(cobranca.contratante_id ?? 'sem contratante')}</span>`
+    : '<span class="celula-fraca">—</span>';
+
+  return `
+    <tr>
+      <td class="celula-principal">${formatarQuando(evento.recebido_em)}</td>
+      <td><code class="badge-id">${escapar(evento.evento ?? '—')}</code></td>
+      <td>${celulaResultado(evento)}</td>
+      <td>${evento.referencia_id ? `<code class="badge-id">${escapar(evento.referencia_id)}</code>` : '<span class="celula-fraca">—</span>'}</td>
+      <td>${pedido}</td>
+      <td>${celulaCampos(evento.campos)}</td>
+    </tr>
+  `;
+}
+
+/** Instrução que vem junto do evento em vez de numa conversa de meses
+ *  atrás. Hoje só o Pix Automático tem uma — ver INSTRUCOES_POR_EVENTO
+ *  no adminController.js. */
+function cartaoInstrucao(instrucao) {
+  return `
+    <div class="painel cartao-instrucao">
+      <p class="cartao-instrucao-titulo">${escapar(instrucao.titulo)}</p>
+      <ol class="cartao-instrucao-passos">
+        ${instrucao.passos.map((passo) => `<li>${escapar(passo)}</li>`).join('')}
+      </ol>
+    </div>
+  `;
+}
+
+async function carregarResumoWebhook() {
+  const resumo = await admin.get('/webhook/resumo');
+
+  const contador = $('contador-webhook');
+  contador.textContent = String(resumo.naoTratados);
+  contador.hidden = resumo.naoTratados === 0;
+  contador.classList.toggle('nav-contador--alerta', resumo.naoTratados > 0);
+
+  const desde = haQuantoTempo(resumo.ultimoEvento?.recebido_em);
+  $('webhook-resumo').innerHTML = `
+    <div class="cartao-metrica ${resumo.naoTratados > 0 ? 'cartao-metrica--destaque' : ''}">
+      <p class="cartao-metrica-rotulo">Eventos não tratados</p>
+      <p class="cartao-metrica-valor">${resumo.naoTratados}</p>
+      <p class="cartao-metrica-nota">nos últimos ${resumo.periodoDias} dias</p>
+    </div>
+    <div class="cartao-metrica">
+      <p class="cartao-metrica-rotulo">Último evento recebido</p>
+      <p class="cartao-metrica-valor">${desde ?? '—'}</p>
+      <p class="cartao-metrica-nota">${escapar(resumo.ultimoEvento?.evento ?? 'nenhum até agora')}</p>
+    </div>
+  `;
+
+  const rejeicoes = resumo.rejeicoes ?? { total: 0, ultimaHora: 0, amostras: [] };
+  $('faixa-rejeicoes').hidden = rejeicoes.total === 0;
+  $('rejeicoes-total').textContent = String(rejeicoes.total);
+  $('rejeicoes-hora').textContent = String(rejeicoes.ultimaHora);
+  $('rejeicoes-desde').textContent = rejeicoes.desde ? `desde ${formatarQuando(rejeicoes.desde)}` : '';
+  $('tabela-rejeicoes').innerHTML = (rejeicoes.amostras ?? []).map((a) => `
+    <tr>
+      <td class="celula-principal">${formatarQuando(a.em)}</td>
+      <td><code class="badge-id">${escapar(a.ip ?? '—')}</code></td>
+      <td>${a.tinhaToken ? 'sim, errado' : '<span class="celula-fraca">não mandou</span>'}</td>
+      <td>${escapar(a.motivo ?? '—')}</td>
+    </tr>
+  `).join('');
+}
+
+async function carregarWebhook() {
+  try {
+    await carregarResumoWebhook();
+
+    const filtro = $('webhook-filtro').value;
+    const eventos = await admin.get(`/webhook/eventos?limite=100${filtro ? `&resultado=${filtro}` : ''}`);
+
+    $('vazio-webhook').hidden = eventos.length > 0;
+    $('tabela-webhook').innerHTML = eventos.map(linhaWebhook).join('');
+
+    // Uma instrução por tipo de evento, não uma por linha.
+    const vistas = new Set();
+    $('webhook-instrucoes').innerHTML = eventos
+      .filter((e) => e.instrucao && !vistas.has(e.evento) && vistas.add(e.evento))
+      .map((e) => cartaoInstrucao(e.instrucao))
+      .join('');
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
 /* ------------------------------------------------------------------
    Login / logout
 ------------------------------------------------------------------ */
 async function carregarTudo() {
   await carregarContratantes();
   await carregarSubcontas();
+  // O resumo do webhook entra no login, e não só ao abrir a aba:
+  // alerta que depende de alguém ir olhar não é alerta. Falha dele não
+  // pode derrubar o login — o painel serve para outras coisas.
+  try { await carregarResumoWebhook(); } catch { /* a aba mostra o erro quando for aberta */ }
 }
 
 async function tentarEntrar(usuarioForcado, senhaForcada) {
@@ -589,6 +747,13 @@ $('btn-abrir-nova-subconta').addEventListener('click', () => { limparErro('msg-s
 $('btn-criar-subconta').addEventListener('click', criarSubconta);
 $('btn-salvar-link').addEventListener('click', salvarLinkAtivacao);
 $('metricas-periodo').addEventListener('change', carregarMetricas);
+$('webhook-filtro').addEventListener('change', carregarWebhook);
+$('btn-recarregar-webhook').addEventListener('click', carregarWebhook);
+$('btn-expandir-rejeicoes').addEventListener('click', () => {
+  const detalhe = $('rejeicoes-detalhe');
+  detalhe.hidden = !detalhe.hidden;
+  $('btn-expandir-rejeicoes').setAttribute('aria-expanded', String(!detalhe.hidden));
+});
 
 ligarMascarasSubconta();
 

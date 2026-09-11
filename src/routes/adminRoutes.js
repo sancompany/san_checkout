@@ -7,7 +7,9 @@ import {
   listarSubcontas,
   criarSubconta,
   atualizarLinkAtivacaoSubconta,
-  obterMetricas
+  obterMetricas,
+  listarAuditoriaWebhook,
+  obterResumoWebhook
 } from '../controllers/adminController.js';
 
 const router = Router();
@@ -19,5 +21,7 @@ router.get('/subcontas', listarSubcontas);
 router.post('/subcontas', criarSubconta);
 router.patch('/subcontas/:id', atualizarLinkAtivacaoSubconta);
 router.get('/metricas', obterMetricas);
+router.get('/webhook/eventos', listarAuditoriaWebhook);
+router.get('/webhook/resumo', obterResumoWebhook);
 
 export default router;

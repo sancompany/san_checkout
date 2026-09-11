@@ -12,12 +12,14 @@ procurava a variável **velha**, que já não existia. Falha fechada
 funcionando como projetado — e por isso o serviço caiu em vez de aceitar
 qualquer senha.
 
-**Como identificar rápido.** A mensagem do 503 diz qual variável o
-código procura. Citando `CHECKOUT_ADMIN_PASS` é código velho no ar;
-citando `CHECKOUT_ADMIN_PASS_HASH` é código novo com variável faltando.
-São diagnósticos opostos, e a mensagem distingue sem adivinhação.
-
 **Correção.** Subir o código. Nada a desfazer no Render.
+
+**Guarda.** A própria mensagem do 503 nomeia a variável que o código
+procura, e isso separa os dois diagnósticos opostos sem adivinhação:
+citando `CHECKOUT_ADMIN_PASS` é código velho no ar; citando
+`CHECKOUT_ADMIN_PASS_HASH` é código novo com variável faltando. Vale
+manter: mensagem de falha fechada que não diz o que falta obriga a
+adivinhar justamente quando o serviço está fora.
 
 **Como evitar na origem.** Mudança que troca o nome de uma variável de
 ambiente tem uma ordem só que não derruba nada:
@@ -31,3 +33,7 @@ e aqui, de propósito, ele não aceita: aceitar a antiga significaria
 manter viva a senha em texto puro, que era exatamente o que a mudança
 veio eliminar. Sem transição, a ordem acima não é preferência, é
 requisito.
+
+**Ecossistema:** sim — qualquer projeto que renomeie uma variável de
+ambiente tem os dois passos e a ordem entre eles; e quanto mais correta
+a falha fechada, mais barulhento é o efeito de inverter a ordem.

@@ -18,3 +18,5 @@ constante — sem ele, a próxima pessoa "simplifica" de volta.
 **Como evitar na origem.** Middleware com estado interno não é valor
 reutilizável: é instância. Reaproveitar a mesma instância em montagens
 diferentes compartilha o estado, e o sintoma aparece só sob carga.
+
+**Ecossistema:** sim — middleware com estado interno existe em qualquer framework. Reaproveitar a instância em montagens diferentes compartilha o contador em todas elas, e o sintoma só aparece sob carga.

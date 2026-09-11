@@ -120,6 +120,250 @@ Vale a partir de 11/09/2026.
   exceções que a Lei 6 admite (DML em runtime, backup/restauração,
   ferramenta somente-leitura, ambiente local) continuam valendo.
 
+## 2.2 Eventos do webhook da Asaas — o que está marcado e por quê (Lei 7)
+
+Conferido contra o painel da Asaas e contra a documentação oficial em
+11/09/2026. Esta seção é a referência única do assunto: o que estiver
+aqui é o que deve estar marcado no painel.
+
+Três fatos mandam nela:
+
+1. **A seleção é individual. Não existe "receber todos".** Evento não
+   marcado **nunca chega**.
+2. **Evento faltando falha em silêncio** — sem erro, sem log, sem 4xx. O
+   pagamento acontece na Asaas e o pedido fica pendente para sempre do
+   lado do contratante. É o modo de falha mais caro deste projeto.
+3. **Marcar evento que o código ignora não é grátis:** ele chega, é
+   logado inteiro (payload cru, com dado pessoal — pendência aberta no
+   `CLAUDE.md`) e é descartado. Marcar o que tem uso, não tudo.
+
+Webhook existente **pode ser editado** para acrescentar eventos — não é
+preciso criar outro. O limite é de 10 webhooks por conta, cada um com seu
+próprio conjunto.
+
+**Onde os eventos nascem.** Toda cobrança é criada com a chave da
+conta-mãe (`ASAAS_API_KEY`) levando `split` quando o contratante tem
+`wallet_id` — a cobrança **não** nasce dentro da subconta, que só recebe
+a parte dela. Por isso `PAYMENT_*` e `CHECKOUT_*` disparam na conta-mãe,
+que é onde o webhook do checkout está.
+
+### Grupo "Cobranças" — 17 marcados
+
+Treze que o código trata:
+
+`PAYMENT_CONFIRMED` · `PAYMENT_RECEIVED` · `PAYMENT_OVERDUE` ·
+`PAYMENT_REFUNDED` · `PAYMENT_PARTIALLY_REFUNDED` ·
+`PAYMENT_REFUND_IN_PROGRESS` · `PAYMENT_REFUND_DENIED` ·
+`PAYMENT_AWAITING_RISK_ANALYSIS` · `PAYMENT_REPROVED_BY_RISK_ANALYSIS` ·
+`PAYMENT_CREDIT_CARD_CAPTURE_REFUSED` · `PAYMENT_CHARGEBACK_REQUESTED` ·
+`PAYMENT_AWAITING_CHARGEBACK_REVERSAL` · `PAYMENT_RECEIVED_IN_CASH_UNDONE`
+
+Quatro que o código **não** trata, marcados de propósito para o payload
+chegar e ficar no log — são dinheiro que não chegou ao contratante, e
+hoje só se descobriria se ele reclamasse. Dar comportamento a eles em
+código é construção de uma versão futura, não item de estação nenhuma
+desta — entrada em `docs/proximas-versoes.md`:
+
+`PAYMENT_APPROVED_BY_RISK_ANALYSIS` · `PAYMENT_SPLIT_DIVERGENCE_BLOCK` ·
+`PAYMENT_SPLIT_DIVERGENCE_BLOCK_FINISHED` · `PAYMENT_SPLIT_CANCELLED`
+
+`PAYMENT_SPLIT_DONE` fica **fora** de propósito: é o caminho feliz,
+dispara em toda cobrança com split e não informa nada que a confirmação
+já não tenha dito — só engorda o log.
+
+### Grupo "Checkouts" — 3 marcados
+
+`CHECKOUT_PAID` · `CHECKOUT_CANCELED` · `CHECKOUT_EXPIRED` — os três
+tratados. `CHECKOUT_CREATED` fica fora: a sessão é criada por nós, já
+sabemos.
+
+### Grupo "Chaves de API" — 4 marcados
+
+`ACCESS_TOKEN_EXPIRING_SOON` · `ACCESS_TOKEN_EXPIRED` ·
+`ACCESS_TOKEN_DISABLED` · `ACCESS_TOKEN_DELETED` — alimentam o alerta de
+chave prestes a expirar em `/api/saude` (gargalo 3 da seção 2). Sem eles
+a integração morre sozinha um dia, sem aviso. `CREATED` e `ENABLED` ficam
+fora: o código os descarta explicitamente por serem rotina.
+
+### Grupos "Transferências", "Movimentações Internas" e "Bloqueios de Saldo" — marcados
+
+`TRANSFER_*`, `INTERNAL_TRANSFER_*` e `BALANCE_VALUE_*` falam da conta
+do operador (saque, movimentação interna, saldo bloqueado), não do
+pedido de um comprador — **o código não trata nenhum deles**. Estavam
+fora até 11/09/2026 exatamente por isso; passaram a ser marcados quando
+o log de auditoria (§2.5) deu a eles um destino visível, em vez de uma
+linha no console do Render que ninguém lê.
+
+Caem no ramo de evento não mapeado, respondem 200 e viram linha na aba
+Webhook do painel. O leitor futuro é a Fairy, que é quem vai cuidar de
+aviso financeiro — ver `docs/proximas-versoes.md`.
+
+### Grupo "Situação da conta" — 18 marcados, o grupo inteiro
+
+São 18 eventos em quatro famílias (`GENERAL_APPROVAL`, `COMMERCIAL_INFO`,
+`BANK_ACCOUNT_INFO`, `DOCUMENT`, cada uma com
+APPROVED/AWAITING_APPROVAL/PENDING/REJECTED), e o código trata **por
+prefixo** — aceita qualquer nome da família. Volume é baixo: situação de
+subconta muda raramente.
+
+Alimentam a coluna de situação da subconta no painel administrativo.
+Payload conferido na doc: `account.id` + `accountStatus.{general,
+commercialInfo, bankAccountInfo, documentation}` — exatamente o que
+`processarEventoSubconta` lê, e cada evento traz as quatro situações, não
+só a que mudou.
+
+> ⚠️ **Inferência ainda não confirmada ao vivo:** o código assume que a
+> conta-mãe recebe os eventos de situação **das subcontas**, e não só da
+> própria conta. O payload documentado tem um campo `ownerId` (nulo no
+> exemplo, que é a própria conta), o que sustenta a leitura de que
+> subconta preenche esse campo apontando para a mãe — mas a documentação
+> não afirma isso. Se a suposição estiver errada, o efeito é uma coluna
+> que nunca atualiza; nada quebra. O primeiro evento real resolve.
+
+Subconta **pode** ter webhook próprio (campo `webhooks` na criação). Este
+projeto não usa isso e não precisa no modelo atual. Se um dia a subconta
+passar a emitir cobrança própria, o roteamento precisa ser confirmado
+antes, não presumido.
+
+### Grupos deliberadamente desmarcados
+
+- **Notas fiscais (`INVOICE_*`)** — só disparam para nota emitida *nesta*
+  conta, e este projeto não emite nenhuma (§1.9). A nota do contratante
+  sai do sistema dele e não toca nossa conta Asaas: não chegaria aqui nem
+  se quiséssemos. Não há nada "passando por nós" para repassar.
+- **Créditos Pix (`PIX_CREDIT_*`)** — Pix sem cobrança vinculada (venda
+  física). Aqui sempre existe cobrança.
+- **Ruído de cobrança** — `PAYMENT_CREATED`, `PAYMENT_UPDATED`,
+  `PAYMENT_DELETED`, `PAYMENT_RESTORED`, `PAYMENT_ANTICIPATED`,
+  `PAYMENT_AUTHORIZED`, `PAYMENT_DUNNING_*`, `PAYMENT_BANK_SLIP_VIEWED`,
+  `PAYMENT_CHECKOUT_VIEWED`. `PAYMENT_BANK_SLIP_CANCELLED` e
+  `PAYMENT_CHARGEBACK_DISPUTE` também ficam fora: são estados
+  intermediários de algo que o pedido já registrou por outro evento
+  (`vencido` e `chargeback`).
+- **Pix Automático** — ver §2.4: o grupo está indisponível nesta conta,
+  com uma exceção.
+
+**Grafia que engana:** `CHECKOUT_CANCELED` tem **um** L e
+`PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` tem **dois**. As duas
+estão assim na documentação oficial e assim no código.
+
+## 2.3 A Asaas PAUSA o webhook depois de 15 falhas seguidas (Lei 7)
+
+Descoberto na documentação oficial em 11/09/2026, e é limite assumido
+porque muda o que acontece num dia ruim: **após 15 falhas consecutivas a
+fila é interrompida e só volta com reativação manual**, e os eventos
+ficam retidos por **14 dias** — depois disso são apagados de vez.
+
+Por que isso importa aqui mais que em outro projeto: o backend roda no
+plano gratuito do Render, que hiberna (gargalo 1). O `sempre 200` do
+`receberWebhookAsaas` existe justamente para nunca contar como falha —
+mas ele só protege enquanto o serviço responde. Serviço fora do ar
+durante uma janela de deploy ruim, ou uma queda de mais de 15 eventos
+seguidos, derruba a fila inteira **sem alarme do nosso lado**.
+
+O que fazer quando acontecer: reativar o webhook no painel da Asaas e
+rodar a conciliação (`API.md` 5.2 para pedido, 5.3 para assinatura)
+sobre tudo que ficou "aguardando pagamento" — é ela que recupera o que a
+fila perdeu, desde que dentro dos 14 dias.
+
+**Detectar isso ainda não existe**, e é entrada em
+`docs/proximas-versoes.md`, não item desta versão: não há nada que avise
+que a fila foi pausada. Hoje a descoberta seria por
+ausência — ninguém recebe confirmação nenhuma — que é o pior jeito.
+
+## 2.4 Pix Automático: indisponível nesta conta, menos um evento (Lei 7)
+
+O grupo tem **10 eventos**, conferidos na documentação oficial da Asaas
+em 11/09/2026 (*Eventos para Pix Automático*), e eles não são
+intercambiáveis:
+
+| Família | Eventos | O código trata? |
+|---|---|---|
+| Elegibilidade | `..._ELIGIBILITY_UPDATED` | **Não** |
+| Autorização | `..._AUTHORIZATION_` + `CREATED`, `ACTIVATED`, `CANCELLED` (dois L), `EXPIRED`, `REFUSED` | **Sim**, pelo prefixo |
+| Instrução de pagamento | `..._PAYMENT_INSTRUCTION_` + `CREATED`, `SCHEDULED`, `REFUSED`, `CANCELLED` (dois L) | **Não** |
+
+Conferido no painel da Asaas na mesma data: os de **autorização** e os
+de **instrução de pagamento** estão desabilitados, com a mensagem *"O
+Pix Automático não está disponível para sua conta no momento."*
+
+`PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED` é a exceção: **está
+disponível para marcar** mesmo com o resto do grupo bloqueado. Faz
+sentido — ele é o aviso de que a elegibilidade da conta mudou, ou seja,
+o evento que anuncia a liberação que os outros esperam. É o único jeito
+de saber que a Asaas liberou sem ficar conferindo o painel na mão.
+
+**O código não trata este evento**, e não há prefixo que o alcance:
+`..._ELIGIBILITY_UPDATED` não começa com `..._AUTHORIZATION_`. Marcado,
+ele cai no ramo de evento não mapeado, responde 200 e vira linha na aba
+Webhook — que é exatamente o uso pretendido, e por isso não é mudança de
+código.
+
+**Quando ele aparecer, o painel já mostra o que fazer.** A instrução
+está no `adminController.js` (`INSTRUCOES_POR_EVENTO`) e aparece junto
+do evento na tela, em vez de morar só aqui — instrução que depende de
+alguém lembrar deste documento no dia certo não é instrução. Ela diz:
+
+1. Conferir no painel da Asaas se a conta foi **liberada** — o mesmo
+   evento dispara se ela for bloqueada.
+2. Marcar **os cinco de autorização**, que são os que o código trata.
+3. Marcar também `..._PAYMENT_INSTRUCTION_REFUSED`: é cobrança da
+   recorrência que não foi agendada, ou seja, dinheiro que não entra. O
+   código ainda não trata — cai no log, como os de split.
+4. **Não** marcar `..._PAYMENT_INSTRUCTION_CREATED`, `_SCHEDULED` nem
+   `_CANCELLED`: disparam a cada cobrança da recorrência e não dizem
+   nada que a confirmação já não diga. Mesmo critério que mantém
+   `PAYMENT_SPLIT_DONE` fora.
+5. Só **depois** disso habilitar "Assinatura por Pix" em algum
+   contratante.
+
+O fluxo completo (`assinatura_pix`) está implementado e o `API.md` o
+documenta na seção 7.2 — mas ele **não funciona hoje**, e isso não é
+defeito: depende de liberação da Asaas. O projeto já trata isso certo
+por desenho: no cadastro de contratante, "Assinatura por Pix" **nasce
+desmarcada**, com a explicação na própria tela. Habilitar o método antes
+da liberação criaria um caminho de pagamento que falha na hora de
+cobrar.
+
+## 2.5 O log de auditoria do webhook não guarda payload (Leis 7 e 8)
+
+Criado em 11/09/2026 pela migration `0002_webhook_auditoria.sql`. É o
+que dá destino visível ao evento que o código não trata — antes dele,
+esse evento virava `console.log` no Render e sumia, o que tornava inútil
+marcar evento "para usar um dia".
+
+Os limites que ele assume, e que são o motivo de estar aqui e não só no
+`README`:
+
+- **O payload cru não é gravado, e não é mais nem impresso.** O que
+  entra é o resultado da redação por **lista branca** de nome de campo
+  (`redigirPayload`, em `src/services/auditoriaWebhookService.js`): o
+  que não está na lista vira só o **caminho da chave**, sem valor. Lista
+  branca e não lista negra porque lista negra falha aberta, e falhar
+  aberta aqui é CPF no banco. Isso fechou a pendência da Lei 10 sobre
+  dado pessoal em log (ver `docs/inventario-de-dados.md` §7).
+- **Retenção de 90 dias**, com o expurgo rodando de fato (`server.js`,
+  no boot e a cada 24h). Log de diagnóstico não herda os 5 anos do dado
+  de cobrança.
+- **Tentativa recusada pela guarda de origem não vira uma linha por
+  requisição.** É contada em memória e descarregada por hora, com no
+  máximo 20 amostras por hora. Isso não é economia: essa contagem é
+  alimentada por requisição **não autenticada**, e uma linha por
+  tentativa daria escrita ilimitada no banco a quem só descobriu a URL.
+- **O token recusado nunca é gravado** — é credencial em texto puro, e
+  quem errar uma letra do token certo gravaria o token certo.
+- **A auditoria nunca derruba o webhook.** A escrita não é aguardada
+  antes do 200, porque resposta lenta conta como falha para a Asaas e 15
+  falhas seguidas pausam a fila (§2.3). Perder uma linha de log é
+  aceitável; perder a fila não é.
+
+**O que este log NÃO faz:** detectar que a fila da Asaas foi pausada.
+Fila pausada não manda evento, então o que existe é ausência — o painel
+mostra "último evento recebido há X", o que a torna visível para quem
+olha, mas não avisa ninguém. Detecção de verdade está em
+`docs/proximas-versoes.md`.
+
+
 ---
 
 ## 3. Exceções de conformidade registradas

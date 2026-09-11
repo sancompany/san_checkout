@@ -61,7 +61,7 @@ senha em texto puro não é guardada em lugar nenhum — o que fica no Render
 
 | Onde | O quê | Observação |
 |---|---|---|
-| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas quatro tabelas; só o backend acessa, com `service_role` |
+| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role` |
 | Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador |
 | Render | Logs da aplicação | Ver seção 7 |
 | Cloudflare Pages | Nada — front estático | Não recebe dado pessoal em repouso |
@@ -146,12 +146,38 @@ não precisa mudar para atender a LGPD art. 18.
 
 ## 7. Log
 
-O backend registra o payload cru dos webhooks da Asaas
-(`console.log` em `webhookController.js`). Esse payload **contém dado
-pessoal do comprador**. Não contém dado de cartão.
+**Corrigido em 11/09/2026.** Até então o backend imprimia o payload
+**cru** dos webhooks da Asaas, que contém nome, e-mail, CPF/CNPJ,
+telefone e endereço do comprador (nunca dado de cartão), retido pelo
+Render — era a pendência aberta desta seção.
 
-> ⚠️ **PENDÊNCIA ABERTA.** Log de produção com dado pessoal em texto
-> puro, retido pelo Render. Avaliar reduzir para os campos necessários ao
-> diagnóstico assim que o formato dos eventos estiver confirmado ao vivo
-> — o log completo existe justamente porque o formato ainda não foi
-> confirmado.
+Hoje o `webhookController.js` imprime e grava a versão **redigida**
+(`redigirPayload`, em `src/services/auditoriaWebhookService.js`): passa
+por lista branca de nome de campo, e o que não está nela vira só o
+**caminho da chave**, sem valor nenhum. O autoteste do serviço prova
+isso com um payload realista — se um CPF, nome, e-mail, telefone,
+endereço ou id de cliente sobreviver à redação, a suíte falha.
+
+A troca não custou diagnóstico: a pergunta que mantinha o log cru vivo
+("no `CHECKOUT_PAID` real, o id vem em `checkout.payment.id` ou em
+`payment.id`?") é sobre formato, e o mapa de caminhos responde sem
+carregar dado de pessoa.
+
+## 7.1 Tabelas do log de auditoria do webhook
+
+Criadas pela migration `0002_webhook_auditoria.sql`.
+
+| Tabela | Dado pessoal | Retenção |
+|---|---|---|
+| `webhook_eventos` | **Nenhum** — só nome de evento, id da cobrança na Asaas, resultado e os campos redigidos | 90 dias, apagados pela rotina `expurgarAuditoria` (roda no boot e a cada 24h, `server.js`) |
+| `webhook_rejeicoes` | **Endereço IP** de quem tentou usar o endereço do webhook sem o token, dentro de `amostras` | As amostras (onde o IP mora) são esvaziadas depois de **30 dias**. A linha de contagem por hora fica, e não tem dado de pessoa nenhum |
+
+O IP entra por ser registro de segurança — é o que separa uma sondagem
+automática de um erro de configuração do lado da Asaas. O **token
+recusado nunca é gravado**: além de ser credencial em texto puro, quem
+errasse uma letra do token certo gravaria o token certo no banco.
+
+Estas tabelas são diagnóstico, **não herdam os 5 anos da seção 6** — e
+a rotina que as expurga é a primeira rotina de expurgo que este projeto
+tem de fato. A da seção 6, sobre o dado do comprador, continua
+pendente.

@@ -21,6 +21,7 @@ const SUITES = [
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
+  'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/controllers/webhookController.js' // caminho crítico do webhook: guarda, mapa de status, soma de taxas
 ];
 

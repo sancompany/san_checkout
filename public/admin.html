@@ -71,6 +71,11 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
         Métricas
       </button>
+      <button class="nav-item" type="button" data-secao="webhook">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>
+        Webhook
+        <span class="nav-contador" id="contador-webhook" hidden>0</span>
+      </button>
     </nav>
 
     <main class="conteudo">
@@ -214,6 +219,97 @@
           <div class="vazio">
             <p class="vazio-titulo">Nenhuma cobrança no período</p>
             <p class="vazio-texto">Assim que houver cobranças, os números aparecem aqui.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Webhook (log de auditoria) ---------- -->
+      <section id="secao-webhook" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Webhook</h2>
+            <p class="secao-descricao">
+              Tudo que a Asaas mandou para este checkout. Evento que o
+              código ainda não trata aparece aqui como
+              <strong>não mapeado</strong> — é assim que se descobre que
+              a Asaas passou a mandar algo novo. O payload não é
+              guardado: só o nome dos campos e os valores que não
+              identificam ninguém.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <select class="campo-input" id="webhook-filtro" aria-label="Filtrar eventos do webhook" style="width:auto">
+              <option value="">Todos os eventos</option>
+              <option value="nao_mapeado">Só os não mapeados</option>
+              <option value="erro">Só os que deram erro</option>
+              <option value="tratado">Só os tratados</option>
+            </select>
+            <button class="btn btn-secundario" id="btn-recarregar-webhook" type="button">Recarregar</button>
+          </div>
+        </div>
+
+        <!-- Tentativas recusadas pela guarda de origem: fica ACIMA do
+             log porque é sinal de segurança, não de operação. -->
+        <div class="faixa-rejeicoes" id="faixa-rejeicoes" hidden>
+          <button class="faixa-rejeicoes-topo" type="button" id="btn-expandir-rejeicoes" aria-expanded="false" aria-controls="rejeicoes-detalhe">
+            <span class="faixa-rejeicoes-icone" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+            </span>
+            <span class="faixa-rejeicoes-texto">
+              <strong id="rejeicoes-total">0</strong> tentativas recusadas pela guarda de origem
+              <span class="faixa-rejeicoes-nota"><span id="rejeicoes-hora">0</span> na última hora · <span id="rejeicoes-desde"></span></span>
+            </span>
+            <span class="faixa-rejeicoes-seta" aria-hidden="true">▾</span>
+          </button>
+          <div class="faixa-rejeicoes-detalhe" id="rejeicoes-detalhe" hidden>
+            <p class="faixa-rejeicoes-explicacao">
+              Requisição que chegou no endereço do webhook sem o token
+              certo. O token recusado nunca é guardado — só a hora, o IP
+              e se veio algum token. A contagem é acumulada por hora;
+              as amostras são apagadas depois de 30 dias.
+            </p>
+            <div class="tabela-rolagem">
+              <table>
+                <thead>
+                  <tr><th>quando</th><th>ip</th><th>mandou token?</th><th>motivo</th></tr>
+                </thead>
+                <tbody id="tabela-rejeicoes"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="cartoes-metrica" id="webhook-resumo"></div>
+
+        <div id="webhook-instrucoes"></div>
+
+        <div class="painel" style="margin-top:16px">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>quando</th>
+                  <th>evento</th>
+                  <th>resultado</th>
+                  <th>referência</th>
+                  <th>pedido / contratante</th>
+                  <th>campos</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-webhook"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="painel" id="vazio-webhook" hidden>
+          <div class="vazio">
+            <p class="vazio-titulo">Nenhum webhook recebido ainda</p>
+            <p class="vazio-texto">
+              Assim que a Asaas mandar o primeiro evento, ele aparece
+              aqui. Se você esperava eventos e não chegou nenhum,
+              confira se o webhook está ativo no painel da Asaas — ela
+              pausa a fila depois de 15 falhas seguidas.
+            </p>
           </div>
         </div>
       </section>
