@@ -446,6 +446,27 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
    A diferença para a obscuridade que havia antes é de natureza:
    obscuridade depende de ninguém adivinhar, Access depende de alguém
    provar quem é.
+
+   > **Furo encontrado e fechado no mesmo dia (11/09/2026).** O
+   > Cloudflare Pages serve o mesmo arquivo **também sem a extensão** —
+   > `/admin` entrega `admin.html` — e a política casa caminho exato.
+   > Durante algumas horas, requisição sem cookie nenhum a
+   > `checkout.sancocore.com.br/admin` **recebia o painel**, sem passar
+   > pelo Access.
+   >
+   > O aplicativo tem hoje **quatro destinos**, não dois: `/admin.html` e
+   > `/admin` em cada um dos dois domínios. Conferido depois: `/admin` nos
+   > dois passa a ser interceptado, e `/index.html` continua público —
+   > que é o teste que importa nos dois sentidos, porque caminho mal
+   > escopado colocaria o Access na frente do checkout inteiro.
+   >
+   > **A lição atravessa o caso, e é de método:** testar controle de
+   > acesso de dentro da sessão autenticada não testa nada. O primeiro
+   > teste passou porque o navegador já tinha o cookie do Access — a
+   > verificação tem que vir de onde não há cookie, e tem que cobrir as
+   > outras grafias da mesma URL: com e sem extensão, com e sem barra
+   > final.
+
 2. **Usuário e senha validados no backend**, em toda rota de
    `/api/admin` (`verificarAdminKey`), com scrypt a N=2^17. Vale mesmo
    que a camada 1 caia ou não esteja configurada, e é ela que protege a

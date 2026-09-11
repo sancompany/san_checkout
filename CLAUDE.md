@@ -109,13 +109,32 @@ reversível num clique.
 **O que falta para a Estação 5 fechar** está na lista de pendências
 abaixo, e é ação do dono.
 
-**Estação 6 (Prontidão) NÃO foi iniciada**, e não pode ser enquanto a 5
-estiver aberta. Quando abrir, ela faz segurança em ciclos, teste no
-navegador, limites declarados, log e alerta, verificando as Leis 4, 7 e 8
-com a skill `seguranca-san` — e o que ela verifica é **o que está no ar**.
-Rodá-la sobre código que só existe no disco mede o lugar errado, que é
-exatamente o motivo de a ordem das estações não ser negociável. A tabela
-pede Opus com esforço alto.
+**Estação 6 (Prontidão) ABERTA em 11/09/2026.** Aberta por decisão do
+dono com a 5 na última conferência (o teste de ponta a ponta do painel,
+que exige a senha de admin). Ela faz segurança em ciclos, teste no
+navegador, limites declarados, log e alerta — Leis 4, 7 e 8, com a skill
+`seguranca-san`. Modelo: **Opus, esforço alto**, que é o que a tabela
+pede e o que esta sessão já roda.
+
+O que ela verifica é **o que está no ar**, e é por isso que ela só pôde
+abrir agora: a versão está em produção, com Access na borda, migrations
+aplicadas e as 6 suítes passando.
+
+A fila de trabalho dela, em ordem de tamanho do risco:
+
+1. **Sessão de curta duração** no lugar de derivar a senha a cada
+   requisição. Resolve de uma vez os três itens abertos que são o mesmo
+   problema visto de ângulos diferentes: a senha trafegando em todo
+   request, a amplificação de memória (que já derrubou a produção uma
+   vez) e os ~3s por clique no painel.
+2. **Ciclo da `seguranca-san` sobre o que está no ar**, incluindo o teste
+   no navegador que a skill descreve — controle de acesso pela URL,
+   formulário sem o cliente, erro exposto, valor do pagamento vindo do
+   servidor.
+3. **Cache de 4h em JS e CSS** (item abaixo) — passou de incômodo a
+   bloqueio de verificação.
+4. **Detectar a fila pausada da Asaas** e o alerta de serviço fora do ar
+   (Lei 8), hoje inexistentes.
 
 **O log de auditoria é construção da Estação 5, não entrega da 6.**
 Escrever código que a Lei 8 um dia vai verificar não abre a estação que
@@ -138,14 +157,18 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 Rodar `supabase/migrations/0003_arquivamento.sql`** no SQL Editor
-  do Supabase. Sem ela o backend sobe e toda listagem de contratante e
-  de subconta falha: as consultas filtram por uma coluna que ainda não
-  existe.
+- **🟡 Última conferência da Estação 5, e só o dono consegue fazer:**
+  entrar no painel (passando pelo Cloudflare Access), cadastrar um
+  contratante conferindo que **"Assinatura por Pix" vem desmarcada**,
+  arquivar, abrir a aba "Arquivados" e restaurar.
 
-- **🔴 Subir e conferir ao vivo:** commit, push, deploy, e então abrir o
-  painel (passando pelo Cloudflare Access), cadastrar um contratante,
-  arquivar, e confirmar que ele sai da lista e volta com "Restaurar".
+  Tudo que dá para conferir de fora já foi, em 11/09/2026 e em produção:
+  backend novo respondendo, migration `0003` aplicada (o `/pedido` devolve
+  404 e não 500, então a coluna existe), guarda do webhook devolvendo 401
+  sem token, frontend com a correção sequencial e o `METODOS_PADRAO`, as
+  6 suítes passando, e o Access barrando `/admin` nos dois domínios sem
+  barrar o checkout. **O que falta é o teste de ponta a ponta do painel,
+  que exige a senha do admin — e a senha é sua.**
 
   Em 11/09/2026 os dois contratantes que existiam (`admin-master` e o de
   teste) foram apagados pelo dono — os dois eram rascunho e nenhum tinha
@@ -156,7 +179,27 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Abertas, não bloqueiam
 
-- **🟠 Lei 5 · o cache de JS e CSS em produção ainda é de 4 horas.** O
+- **🔴 Lei 5 · o cache de JS e CSS em produção ainda é de 4 horas, e já
+  bloqueia verificação.** Subiu de 🟠 para 🔴 em 11/09/2026: pela
+  terceira vez no dia, uma correção **já publicada e correta no servidor**
+  apareceu como "não funcionou" porque o navegador estava rodando o
+  arquivo antigo — desta vez a caixa "Assinatura por Pix", que o servidor
+  já servia desmarcada. Deixou de ser incômodo: faz correção certa
+  parecer errada, que é o pior tipo de ruído.
+
+  **A correção certa é uma Cache Rule na zona** (Regras → Cache Rules),
+  com *Browser TTL* forçado para zero em `/js/*` e `/css/*`. É
+  configuração de painel, incluída no plano gratuito, e vale sem depender
+  de deploy.
+
+  **Deliberadamente NÃO foi feito** o paliativo de `?v=` nas tags do HTML:
+  exige lembrar de incrementar a cada mudança de JS ou CSS, e ritual que
+  se esquece é proteção de mentira — pior que ausência, porque dá
+  confiança. Se um dia houver passo de build, o certo é hash no nome do
+  arquivo.
+
+  **Contorno enquanto não existe: Ctrl+Shift+R depois de todo deploy.**
+- **(registro original)** Lei 5 · o cache de JS e CSS em produção ainda é de 4 horas. O
   `Cache-Control: max-age=0` do bloco `/*` do `_headers` vale para o
   HTML e **é sobreposto pelo Cloudflare Pages nos assets** — medido ao
   vivo em 11/09/2026. A correção que o
