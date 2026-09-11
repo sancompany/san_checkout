@@ -26,6 +26,19 @@
 }
 .order-subtitle { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
 .order-title { font-size: 1.0625rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+/* Cronômetro de expiração do pedido — o prazo é REAL (campo `expiraEm`
+   do contratante), nunca um contador inventado de escassez. Fica
+   discreto enquanto sobra tempo e vira alerta no fim. */
+.order-timer {
+  display: flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-size: 0.8125rem; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.order-timer svg { width: 14px; height: 14px; flex: none; color: var(--text-muted); }
+.order-timer strong { font-weight: 700; color: var(--text-main); }
+.order-timer--urgente { color: var(--status-error); }
+.order-timer--urgente svg, .order-timer--urgente strong { color: var(--status-error); }
 .order-description { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
 
 /* Lista de itens do pedido — rolável, pra não estourar o card quando

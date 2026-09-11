@@ -8,8 +8,25 @@ import { get } from '../utils/api.js';
 
 let contextoResolvido = null;
 
+/**
+ * TODOS os ciclos que a Asaas aceita — os sete, não só os que o projeto
+ * da vez usa.
+ *
+ * Essa lista já esteve incompleta duas vezes: nasceu só com MONTHLY, e
+ * a Vitrina (planos B2B) obrigou a adicionar QUARTERLY/SEMIANNUALLY/
+ * YEARLY. WEEKLY, BIWEEKLY e BIMONTHLY continuavam faltando — um plano
+ * semanal mostrava "weekly", em inglês, pro comprador brasileiro.
+ *
+ * A regra que evita a terceira vez: onde a Asaas define um conjunto
+ * fechado, o checkout conhece o conjunto INTEIRO. Espelhado no backend
+ * em `src/controllers/asaasCheckoutController.js` (CICLOS_VALIDOS) —
+ * mexeu aqui, mexe lá.
+ */
 const ROTULOS_CICLO = {
+  WEEKLY: 'semanal',
+  BIWEEKLY: 'quinzenal',
   MONTHLY: 'mensal',
+  BIMONTHLY: 'bimestral',
   QUARTERLY: 'trimestral',
   SEMIANNUALLY: 'semestral',
   YEARLY: 'anual'
@@ -47,4 +64,11 @@ export function obterPagadorPreenchidoAssinatura() {
 
 export function rotularCiclo(ciclo) {
   return ROTULOS_CICLO[ciclo] ?? String(ciclo ?? '').toLowerCase();
+}
+
+/** Métodos que este contratante pode cobrar — vem em `_checkout` na
+ *  resposta do plano (o resto do objeto é do contratante). `null` = sem
+ *  restrição, contratante cadastrado antes da migração v3. */
+export function obterMetodosDoPlano() {
+  return contextoResolvido?.plano?._checkout?.metodosHabilitados ?? null;
 }

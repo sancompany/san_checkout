@@ -33,9 +33,15 @@
 
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
 import { calcularTaxa, metodoCartaoPorParcelas } from '../services/taxaService.js';
-import { criarSessaoAsaasCheckout } from '../services/asaasService.js';
+import {
+  criarSessaoAsaasCheckout,
+  criarAutorizacaoPixAutomatico,
+  frequenciaPixAutomatico,
+  buscarOuCriarCliente
+} from '../services/asaasService.js';
 import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
+import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import { documentoValido, emailValido, valorValido, telefoneValido, cepValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -43,6 +49,17 @@ function parcelasValidas(valor) {
   const numero = Number(valor);
   return Number.isInteger(numero) && numero >= 1 && numero <= 12;
 }
+
+/**
+ * Os SETE ciclos que a Asaas aceita — o conjunto inteiro, não o pedaço
+ * que o projeto da vez usa. Espelhado no front em
+ * `public/js/modules/assinaturaHandler.js` (ROTULOS_CICLO), que traduz
+ * cada um pra português; mexeu aqui, mexe lá.
+ */
+export const CICLOS_VALIDOS = [
+  'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'BIMONTHLY',
+  'QUARTERLY', 'SEMIANNUALLY', 'YEARLY'
+];
 
 export async function criarCheckoutCartao(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
@@ -68,7 +85,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   const numeroParcelas = Number(parcelas);
 
   try {
-    const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId);
+    const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'cartao' });
 
     const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);
     if (!valorValido(valorBase)) {
@@ -161,8 +178,11 @@ function formatarDataHoraAsaas(data) {
  * POST /api/checkout/assinatura/:contratanteId/:planoId
  * Cria a sessão RECURRENT — o pagador digita o cartão uma única vez na
  * pop-up e a Asaas passa a cobrar sozinha todo ciclo (ver
- * VISAO_COMPLETA.md seção 4.4). Só cartão — Pix Automático foi
- * descartado por decisão do operador.
+ * VISAO_COMPLETA.md seção 4.4).
+ *
+ * Existe também a assinatura por PIX AUTOMÁTICO, sem cartão, em
+ * `criarAssinaturaPixAutomatico` no fim deste arquivo (a nota antiga
+ * aqui dizia que Pix Automático tinha sido descartado — isso mudou).
  *
  * ⚠️ NÃO IMPLEMENTADO NESTA PARTE: o webhook de cobranças de ciclos
  * seguintes (`tipo: "assinatura"`, eventos criada/cobranca_confirmada/
@@ -173,7 +193,8 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
   const {
     nome, email, documento, telefone,
-    endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge
+    endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
+    renovar
   } = requisicao.body ?? {};
 
   if (!nome || !email || !documento || !telefone) {
@@ -191,12 +212,38 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   if (!cepValido(cep)) return resposta.status(400).json({ erro: 'CEP inválido.' });
 
   try {
-    const { contratante, plano } = await resolverPlano(contratanteId, planoId);
+    const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura' });
 
     const valor = Number(plano.valor ?? 0);
     if (!valorValido(valor)) {
       return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
     }
+
+    // O ciclo vem da API do contratante, então é entrada externa e é
+    // checada aqui. Antes ia direto pra Asaas: um valor errado só
+    // falhava lá, com mensagem da Asaas, difícil de rastrear até o
+    // plano do parceiro.
+    const ciclo = plano.ciclo ?? 'MONTHLY';
+    if (!CICLOS_VALIDOS.includes(ciclo)) {
+      return resposta.status(400).json({
+        erro: `Ciclo de assinatura inválido: "${ciclo}". Valores aceitos: ${CICLOS_VALIDOS.join(', ')}.`
+      });
+    }
+
+    // RENOVAÇÃO (link com `&renovar=1`): o assinante está trocando o
+    // cartão de uma assinatura que já existe. Não dá pra trocar o
+    // cartão pela API da Asaas sem receber número e CVV no nosso
+    // servidor — isso colocaria o projeto dentro do escopo PCI, que é
+    // exatamente o que a pop-up hospedada evita. Então o caminho é
+    // criar uma assinatura NOVA pela pop-up e cancelar a antiga quando
+    // a nova confirmar (webhookController).
+    //
+    // Guarda só a referência aqui; nada é cancelado antes do pagamento
+    // entrar — se a renovação não for concluída, a assinatura antiga
+    // continua intacta.
+    const assinaturaSubstituida = renovar
+      ? await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])
+      : null;
 
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
@@ -214,7 +261,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
         value: valor
       }],
       subscription: {
-        cycle: plano.ciclo ?? 'MONTHLY',
+        cycle: ciclo,
         nextDueDate: formatarDataHoraAsaas(new Date())
       },
       customerData: {
@@ -254,6 +301,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       taxaIsenta: true, // nesta leva, assinatura nunca aplica taxa — não é uma isenção concedida, é a simplificação atual
       valorCobrado: valor,
       metodoPagamento: 'assinatura',
+      substituiAssinaturaId: assinaturaSubstituida?.id ?? null,
       parcelas: 1
     });
 
@@ -287,5 +335,92 @@ export async function consultarStatusCheckout(requisicao, resposta) {
     resposta.json({ status: mapa[cobranca.status] ?? cobranca.status });
   } catch (erro) {
     responderErro(resposta, erro, 'asaas-checkout/status');
+  }
+}
+
+/**
+ * POST /api/checkout/assinatura-pix/:contratanteId/:planoId
+ *
+ * Assinatura por PIX AUTOMÁTICO — recorrência sem cartão. O pagador lê
+ * um QR no app do banco e, no mesmo ato, paga a primeira cobrança e
+ * autoriza os débitos seguintes.
+ *
+ * Diferente da assinatura por cartão, aqui NÃO tem pop-up nem endereço:
+ * o endereço só existia por exigência antifraude do cartão. Menos
+ * atrito, e alcança quem não tem cartão de crédito.
+ */
+export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
+  const { contratanteId, planoId } = requisicao.params;
+  const { nome, email, documento, telefone } = requisicao.body ?? {};
+
+  if (!nome || !email || !documento) {
+    return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
+  }
+  if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+  if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
+
+  try {
+    const { plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });
+
+    const valor = Number(plano.valor ?? 0);
+    if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+
+    const ciclo = plano.ciclo ?? 'MONTHLY';
+    if (!CICLOS_VALIDOS.includes(ciclo)) {
+      return resposta.status(400).json({
+        erro: `Ciclo de assinatura inválido: "${ciclo}". Valores aceitos: ${CICLOS_VALIDOS.join(', ')}.`
+      });
+    }
+
+    // O Pix Automático cobre menos ciclos que a assinatura por cartão —
+    // recusa aqui, com o motivo, em vez de deixar a Asaas rejeitar com
+    // mensagem obscura.
+    const frequencia = frequenciaPixAutomatico(ciclo);
+    if (!frequencia) {
+      return resposta.status(400).json({
+        erro: `O ciclo "${ciclo}" não existe no Pix Automático. ` +
+              `Use assinatura por cartão para este plano, ou um destes ciclos: ` +
+              `${CICLOS_VALIDOS.filter((c) => frequenciaPixAutomatico(c)).join(', ')}.`
+      });
+    }
+
+    const clienteId = await buscarOuCriarCliente({ nome, email, documento });
+
+    const autorizacao = await criarAutorizacaoPixAutomatico({
+      clienteId,
+      // `contractId` é o que liga a autorização ao objeto cobrado do
+      // nosso lado — o plano do contratante.
+      contratoId: `${contratanteId}:${planoId}`,
+      frequencia,
+      valor,
+      descricao: plano.nome ?? 'Assinatura via SAN & CO. Pay Engine',
+      inicioEm: new Date().toISOString().slice(0, 10)
+    });
+
+    await registrarCobrancaPendentePopup({
+      asaasCheckoutId: autorizacao.autorizacaoId, // a autorização faz o papel da sessão aqui
+      contratanteId,
+      planoId,
+      documento,
+      email,
+      telefone,
+      valorCheio: valor,
+      valorComDesconto: valor,
+      taxaAsaas: 0,
+      taxaPropria: 0,
+      taxaIsenta: true, // mesma regra da assinatura por cartão nesta leva
+      valorCobrado: valor,
+      metodoPagamento: 'assinatura_pix',
+      parcelas: 1
+    });
+
+    resposta.json({
+      autorizacaoId: autorizacao.autorizacaoId,
+      status: autorizacao.status,
+      qrCodeBase64: autorizacao.qrCodeBase64,
+      copiaECola: autorizacao.copiaECola
+    });
+  } catch (erro) {
+    responderErro(resposta, erro, 'asaasCheckout.criarAssinaturaPixAutomatico');
   }
 }

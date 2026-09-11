@@ -40,18 +40,22 @@ export async function atualizarStatusAssinatura(id, status) {
   if (error) console.error('[assinaturaService.atualizarStatusAssinatura]', error.message);
 }
 
-/** Busca a assinatura ATIVA de um contratante+plano+documento — usado
- *  só pelo endpoint de cancelamento, que recebe planoId/documento (não
- *  o id da assinatura na Asaas, que o projeto contratante nunca chega
- *  a ver). */
-export async function buscarAssinaturaAtiva(contratanteId, planoId, documento) {
+/** Busca a assinatura de um contratante+plano+documento — a busca é por
+ *  esses três porque é o que o projeto contratante tem em mãos (o id da
+ *  assinatura na Asaas ele nunca chega a ver).
+ *
+ * @param {string[]} [statusAceitos] — por padrão só `ativa`, que é o que
+ *   o cancelamento sempre quis. Retomar precisa achar uma `pausada`, e
+ *   por isso o parâmetro existe.
+ */
+export async function buscarAssinaturaAtiva(contratanteId, planoId, documento, statusAceitos = ['ativa']) {
   const { data, error } = await supabase
     .from('assinaturas')
     .select('*')
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
     .eq('documento', documento)
-    .eq('status', 'ativa')
+    .in('status', statusAceitos)
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle();

@@ -1,0 +1,1263 @@
+# San Checkout — Documentação da API
+
+**SAN & CO. Pay Engine** — referência completa de integração.
+Versão do contrato: **1** · Atualizado em 11/09/2026
+
+> Este é o documento **de fronteira**: tudo que atravessa a linha entre o
+> San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
+> sistema deve conseguir integrar do zero lendo só este arquivo.
+>
+> Não descreve a arquitetura interna do checkout (banco, serviços,
+> controllers) — nada disso é contrato e pode mudar sem aviso.
+
+---
+
+## Índice
+
+1. [Como funciona — o modelo pull](#1-como-funciona--o-modelo-pull)
+2. [Antes de começar — o que é combinado manualmente](#2-antes-de-começar--o-que-é-combinado-manualmente)
+3. [Links de checkout](#3-links-de-checkout)
+4. [O que o SEU projeto precisa expor](#4-o-que-o-seu-projeto-precisa-expor)
+   - 4.1 [`GET /pedido/{pedidoId}`](#41-get-pedidopedidoid)
+   - 4.2 [`GET /plano/{planoId}`](#42-get-planoplanoid)
+   - 4.3 [`POST {webhook_url}` — receber as notificações](#43-post-webhook_url--receber-as-notificações)
+5. [A API que VOCÊ chama](#5-a-api-que-você-chama)
+   - 5.1 [Convenções gerais](#51-convenções-gerais)
+   - 5.2 [Consultar uma cobrança (conciliação)](#52-consultar-uma-cobrança-conciliação)
+   - 5.3 [Conciliar uma assinatura](#53-conciliar-uma-assinatura)
+   - 5.4 [Estornar](#54-estornar)
+   - 5.5 [Cancelar, pausar e retomar assinatura](#55-cancelar-pausar-e-retomar-assinatura)
+   - 5.6 [Página pública de status do comprador](#56-página-pública-de-status-do-comprador)
+   - 5.7 [Saúde do serviço](#57-saúde-do-serviço)
+6. [Métodos de pagamento](#6-métodos-de-pagamento)
+7. [Assinaturas em detalhe](#7-assinaturas-em-detalhe)
+8. [Taxas, split e o valor cobrado](#8-taxas-split-e-o-valor-cobrado)
+9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
+10. [Compatibilidade e versionamento](#10-compatibilidade-e-versionamento)
+11. [Checklist de integração](#11-checklist-de-integração)
+12. [Referência rápida](#12-referência-rápida)
+
+---
+
+## 1. Como funciona — o modelo pull
+
+O San Checkout **não guarda catálogo**. Ele não sabe o que você vende,
+por quanto, nem para quem — e isso é proposital: você continua dono dos
+seus dados, e nada de valor trafega por onde o comprador possa mexer.
+
+```
+  SEU PROJETO                   SAN CHECKOUT                    ASAAS
+      │                              │                            │
+ (1)  │ cria o pedido no seu banco   │                            │
+      │                              │                            │
+ (2)  │ manda o comprador pro link ─►│                            │
+      │                              │                            │
+ (3)  │◄── GET /pedido/{id} ─────────│  "o que é esse pedido?"    │
+      │    X-Checkout-Key            │                            │
+      │                              │                            │
+ (4)  │ ─── itens, valores ─────────►│                            │
+      │                              │                            │
+ (5)  │                              │ cobra o valor que RECEBEU ►│
+      │                              │                            │
+ (6)  │                              │◄── webhook de pagamento ───│
+      │                              │                            │
+ (7)  │◄── POST {webhook_url} ───────│  assinado (HMAC)           │
+      │    "status: confirmado"      │                            │
+      │                              │                            │
+ (8)  │ libera o pedido, emite NF,   │                            │
+      │ avisa o cliente              │                            │
+```
+
+Três consequências que valem entender antes de escrever qualquer linha:
+
+- **O valor cobrado vem sempre da sua API**, nunca da URL nem do
+  navegador. Se alguém adulterar o link, não muda nada.
+- **Seu endpoint de pedido é consultado mais de uma vez** — quando a
+  tela abre e de novo no instante de cobrar. Ele precisa responder a
+  mesma coisa nas duas vezes (ou refletir uma mudança real: um pedido
+  que virou `pago` no intervalo faz o checkout recusar a cobrança).
+- **A notificação é a via rápida, não a única.** Existe consulta de
+  conciliação (seção 5.2) para quando o webhook se perder.
+
+---
+
+## 2. Antes de começar — o que é combinado manualmente
+
+Nada disso é autoatendimento: são dados sensíveis, cadastrados por quem
+administra o San Checkout, no painel `/admin.html`.
+
+| Dado | Para que serve |
+|---|---|
+| `contratante_id` | O valor que vai no `?c=` do link |
+| URL base da sua API | Para onde o checkout liga (seções 4.1 e 4.2) |
+| `X-Checkout-Key` | Sua chave. Autentica as chamadas **nas duas direções**: o checkout a envia ao consultar você, e você a envia ao chamar a API dele. É também o segredo que assina os webhooks |
+| `webhook_url` | Para onde as notificações são enviadas (seção 4.3) |
+| `wallet_id` da Asaas | Opcional — se informado, sua parte do dinheiro é separada por split automaticamente |
+| Métodos habilitados | Quais formas de pagamento aparecem para os seus compradores (seção 6.4) |
+
+> **A `X-Checkout-Key` é um segredo de servidor.** Nunca a coloque em
+> código de front-end, em variável de build de site estático, nem em
+> repositório público. Quem tem a chave pode consultar e **estornar**
+> cobranças suas, e forjar webhooks assinados.
+
+Para trocar qualquer um desses dados, fale com quem administra o
+checkout. A URL base da sua API e o `webhook_url` podem ser alterados
+sem quebrar nada; o `contratante_id` e a chave, não — os links já
+distribuídos param de funcionar.
+
+---
+
+## 3. Links de checkout
+
+Existem três links. Todos apontam para o domínio do checkout e carregam
+apenas **referências opacas** — nunca preço, nome de produto ou dado
+pessoal.
+
+### Pagamento avulso
+
+```
+https://{CHECKOUT}/index.html?c={contratante_id}&pedido={pedidoId}
+```
+
+### Assinatura
+
+```
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}
+```
+
+### Renovação de assinatura (trocar o cartão)
+
+```
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+```
+
+| Parâmetro | Obrigatório | Descrição |
+|---|---|---|
+| `c` | sim | Seu `contratante_id` |
+| `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
+| `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
+| `renovar` | não | `1` = o assinante está trocando o cartão de uma assinatura existente (seção 7.3) |
+
+Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
+
+### ⚠️ O id precisa ser imprevisível — isto é obrigatório
+
+Use **UUID, hash ou outro identificador que ninguém consiga adivinhar**.
+Nunca o id sequencial da sua tabela.
+
+**Por quê:** a rota que carrega o pedido é pública por necessidade — o
+comprador precisa dela antes de existir qualquer login. Com id
+sequencial, qualquer pessoa varre `?pedido=1`, `?pedido=2`, `?pedido=3`
+e lê valor, itens e os dados do pagador pré-preenchidos de **todos os
+pedidos do seu projeto**. Com id imprevisível, não há o que varrer.
+
+O checkout **recusa** (HTTP 400) um `pedido` ou `assinatura` formado só
+por dígitos com **menos de 8 caracteres**.
+
+```
+✅  550e8400-e29b-41d4-a716-446655440000
+✅  PED-9f2c1a44b3e
+✅  1789023226000          (timestamp — 13 dígitos, passa)
+❌  1
+❌  4271
+```
+
+Se o id no seu banco é sequencial, não precisa trocar o banco: gere um
+token opaco por pedido (uma coluna a mais) e use só ele no link.
+
+---
+
+## 4. O que o SEU projeto precisa expor
+
+Duas rotas `GET` (só a que corresponder aos métodos que você usa) e uma
+rota `POST` para receber notificações.
+
+Toda chamada que o checkout faz até você leva o header:
+
+```
+X-Checkout-Key: {sua chave}
+```
+
+**Confira essa chave e recuse 401 se não bater.** Sem isso, seu endpoint
+de pedido é público para a internet inteira.
+
+### 4.1 `GET /pedido/{pedidoId}`
+
+```http
+GET {sua_base_url}/pedido/{pedidoId}
+X-Checkout-Key: {sua chave}
+```
+
+Prazo de resposta: **45 segundos**. Não é arbitrário — é calibrado para
+o pior cold start de hospedagem gratuita (Render e similares levam 30-50s
+para "acordar"). Passou disso, o comprador vê erro.
+
+**Resposta 200:**
+
+```json
+{
+  "pedidoId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pendente",
+  "itens": [
+    { "nome": "Ingresso Pista — Lote 1", "quantidade": 2, "valorUnitario": 80.00 },
+    { "nome": "Ingresso VIP — Lote 2",   "quantidade": 2, "valorUnitario": 150.00 }
+  ],
+  "valorCheio": 460.00,
+  "desconto": 20.00,
+  "cupom": "LOTE1PROMO",
+  "valorComDesconto": 440.00,
+  "frete": 0,
+  "taxaDoProjeto": 0,
+  "isentarTaxa": false,
+  "descricao": "Trimundi9 — Lote 1",
+  "contratanteLogoUrl": "https://seu-projeto.com/logo.png",
+  "bannerUrl": "https://seu-projeto.com/banner.png",
+  "pagador": {
+    "nome": "Maria Silva",
+    "email": "maria@exemplo.com",
+    "documento": "11144477735",
+    "telefone": "47988887777"
+  },
+  "expiraEm": "2026-10-01T23:29:59Z"
+}
+```
+
+| Campo | Tipo | Obrig. | Observação |
+|---|---|:--:|---|
+| `pedidoId` | string | sim | Deve bater com o `?pedido=` do link |
+| `status` | string | sim | Ver 4.1.1 |
+| `itens` | array | sim | **Só exibição.** O checkout não soma nada — você manda o total pronto |
+| `itens[].nome` | string | sim | |
+| `itens[].quantidade` | number | sim | |
+| `itens[].valorUnitario` | number | sim | Em reais com centavos (`80.00`, nunca `8000`) |
+| `valorCheio` | number | sim | Antes de qualquer desconto |
+| `desconto` | number | não (`0`) | |
+| `cupom` | string \| null | não | Só referência — o checkout não valida cupom |
+| `valorComDesconto` | number | sim | `valorCheio - desconto`. **É a base da cobrança** |
+| `frete` | number | não (`0`) | Somado à base |
+| `taxaDoProjeto` | number | não (`0`) | Taxa do SEU projeto, se houver. Repassada de volta no webhook |
+| `isentarTaxa` | boolean | não (`false`) | `true` = esta venda não paga a taxa do checkout (seção 8) |
+| `descricao` | string | sim | Aparece no resumo e vai como descrição da cobrança na Asaas |
+| `contratanteLogoUrl` | string (URL) | não | Sua logo, ao lado da do San Checkout no cabeçalho |
+| `bannerUrl` | string (URL) | não | Imagem retangular entre o cabeçalho e o resumo. Sem o campo, o espaço não existe |
+| `pagador` | object | não | Pré-preenche a tela. A pessoa ainda pode editar |
+| `pagador.nome` | string | não | |
+| `pagador.email` | string | não | |
+| `pagador.documento` | string | não | CPF (11 dígitos) ou CNPJ (14) — detectado pelo tamanho |
+| `pagador.telefone` | string | não | 10 ou 11 dígitos. Cartão e assinatura **exigem** telefone; mandando aqui, o comprador não redigita |
+| `expiraEm` | string ISO 8601 | não | Prazo real da reserva. Ver 4.1.2 |
+
+Campos desconhecidos que você mandar são ignorados sem erro — pode
+reaproveitar um objeto interno seu, desde que os nomes acima estejam lá.
+
+#### 4.1.1 O campo `status`
+
+Isto é proteção contra cobrança duplicada, não metadado.
+
+| Valor | Efeito no checkout |
+|---|---|
+| `pago` | **Recusa cobrar** (409). É o que protege quem recarregou a página ou abriu duas abas |
+| `cancelado` | **Recusa cobrar** (409) |
+| qualquer outro (`pendente`, …) | Segue normalmente |
+
+Mantenha esse campo atualizado do seu lado assim que o webhook de
+confirmação chegar — é a sua segunda camada contra pagamento em
+duplicidade.
+
+#### 4.1.2 O campo `expiraEm`
+
+Existe para reserva com prazo: ingresso, vaga, slot de agenda.
+
+- Se a data já passou, o checkout **recusa cobrar** (409), mesmo que o
+  `status` ainda diga `pendente`.
+- Enquanto não passou, a tela mostra um **cronômetro regressivo** para o
+  comprador, e some com o botão quando zera.
+- **Boleto fica indisponível** em pedido com `expiraEm` — boleto leva até
+  3 dias úteis para compensar, e reservar por prazo curto algo que só
+  confirma depois é contradição. O checkout recusa (400) mesmo se a
+  chamada vier direto na API.
+
+Se o seu produto não tem prazo, simplesmente omita o campo.
+
+#### 4.1.3 Erros que o seu endpoint deve devolver
+
+| Situação | Você responde | O comprador vê |
+|---|---|---|
+| Pedido não existe | `404` | "Pedido não encontrado" |
+| Pedido cancelado por você | `200` com `status: "cancelado"` | "Este pedido já está com status cancelado" |
+| Erro interno seu | `5xx` | "Não foi possível carregar os dados do pedido, tente novamente" |
+| Sem resposta em 45s | (timeout nosso) | Mesma mensagem acima |
+
+O checkout **não tenta de novo automaticamente**: a pessoa vê o erro e
+pode recarregar a página, o que gera nova tentativa.
+
+---
+
+### 4.2 `GET /plano/{planoId}`
+
+Só necessário se você vende assinatura. Mesma autenticação, mesmo prazo
+de 45s.
+
+```http
+GET {sua_base_url}/plano/{planoId}
+X-Checkout-Key: {sua chave}
+```
+
+**Resposta 200:**
+
+```json
+{
+  "planoId": "plano-vitrina-9f2c",
+  "nome": "Plano Mensal",
+  "descricao": "Acesso completo, cobrança mensal",
+  "valor": 49.90,
+  "ciclo": "MONTHLY",
+  "contratanteLogoUrl": "https://seu-projeto.com/logo.png",
+  "bannerUrl": "https://seu-projeto.com/banner.png",
+  "pagador": { "nome": "...", "email": "...", "documento": "...", "telefone": "..." }
+}
+```
+
+| Campo | Tipo | Obrig. | Observação |
+|---|---|:--:|---|
+| `planoId` | string | sim | Deve bater com o `?assinatura=` |
+| `nome` | string | sim | Vira o nome do item cobrado |
+| `descricao` | string | não | |
+| `valor` | number | sim | Valor de **cada ciclo**, em reais |
+| `ciclo` | string | sim | Um dos sete da tabela da seção 7.1 |
+| `contratanteLogoUrl` | string | não | Igual ao pedido |
+| `bannerUrl` | string | não | Igual ao pedido |
+| `pagador` | object | não | Igual ao pedido |
+
+O checkout acrescenta à resposta um objeto `_checkout` (com os métodos
+habilitados para você) antes de entregar ao front. O prefixo `_` existe
+para nunca colidir com um campo seu — **não use esse nome** nos seus
+próprios dados.
+
+> **`planoId` não precisa ser um id de catálogo.** Pode ser um
+> identificador único por assinante — é assim que a Vitrina ADS usa, com
+> valor e prefill específicos por anunciante. O checkout não impõe
+> formato; só chama `GET /plano/{o que vier}`.
+
+> **`valor` e `ciclo` são congelados na criação da assinatura.** Os
+> ciclos seguintes cobram o que foi combinado naquele momento — o
+> checkout **não reconsulta** `/plano/{id}` a cada cobrança. Para mudar o
+> preço de um assinante, cancele e crie uma assinatura nova.
+
+---
+
+### 4.3 `POST {webhook_url}` — receber as notificações
+
+```http
+POST {seu_webhook_url}
+Content-Type: application/json
+X-Checkout-Signature: sha256={hmac hex do corpo}
+X-Checkout-Timestamp: {epoch em segundos}
+```
+
+Responda **200 rápido**. Não precisa processar antes: responda 200 e
+processe depois.
+
+#### 4.3.1 ⚠️ Verifique a assinatura — passo obrigatório
+
+Sem isso, qualquer pessoa que descubra a URL do seu webhook manda um
+POST dizendo `"status": "confirmado"` e o seu sistema libera o pedido
+**sem ninguém ter pagado**. A URL sozinha não prova nada; quem prova é a
+assinatura.
+
+Todo webhook é assinado com a **mesma `X-Checkout-Key`** que você já usa.
+
+1. Recuse se `X-Checkout-Timestamp` estiver a mais de **300 segundos** de
+   agora — impede que alguém capture uma requisição legítima e a reenvie
+   depois.
+2. Monte a string `"{timestamp}.{corpo cru}"` — o corpo **exatamente como
+   chegou**. Não reserialize o JSON: a ordem das chaves muda e a
+   assinatura não fecha.
+3. Calcule `HMAC-SHA256` dessa string com a sua chave como segredo.
+4. Compare com `X-Checkout-Signature` em **tempo constante**
+   (`timingSafeEqual`, `hash_equals`), nunca com `==`.
+
+**Node.js / Express**
+
+```js
+import crypto from 'node:crypto';
+
+// IMPORTANTE: precisa do corpo CRU, não do JSON já parseado
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const assinatura = req.get('X-Checkout-Signature') ?? '';
+  const timestamp  = req.get('X-Checkout-Timestamp') ?? '';
+  const corpoCru   = req.body.toString('utf8');
+
+  if (Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp)) > 300) {
+    return res.status(401).send('timestamp fora da janela');
+  }
+
+  const esperada = 'sha256=' + crypto
+    .createHmac('sha256', SUA_CHECKOUT_KEY)
+    .update(`${timestamp}.${corpoCru}`)
+    .digest('hex');
+
+  const a = Buffer.from(esperada);
+  const b = Buffer.from(assinatura);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).send('assinatura inválida');
+  }
+
+  const evento = JSON.parse(corpoCru);
+  res.status(200).json({ ok: true });   // responda antes de processar
+  // ... processa o evento aqui
+});
+```
+
+**PHP**
+
+```php
+$corpoCru   = file_get_contents('php://input');
+$assinatura = $_SERVER['HTTP_X_CHECKOUT_SIGNATURE'] ?? '';
+$timestamp  = $_SERVER['HTTP_X_CHECKOUT_TIMESTAMP'] ?? '';
+
+if (abs(time() - (int)$timestamp) > 300) {
+    http_response_code(401); exit('timestamp fora da janela');
+}
+
+$esperada = 'sha256=' . hash_hmac('sha256', "$timestamp.$corpoCru", SUA_CHECKOUT_KEY);
+
+if (!hash_equals($esperada, $assinatura)) {
+    http_response_code(401); exit('assinatura inválida');
+}
+
+$evento = json_decode($corpoCru, true);
+http_response_code(200);
+```
+
+**Python / Flask**
+
+```python
+import hmac, hashlib, time
+from flask import request, abort
+
+@app.post('/webhook')
+def webhook():
+    corpo_cru = request.get_data()                      # bytes, cru
+    assinatura = request.headers.get('X-Checkout-Signature', '')
+    timestamp = request.headers.get('X-Checkout-Timestamp', '0')
+
+    if abs(int(time.time()) - int(timestamp)) > 300:
+        abort(401)
+
+    esperada = 'sha256=' + hmac.new(
+        SUA_CHECKOUT_KEY.encode(),
+        f'{timestamp}.'.encode() + corpo_cru,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(esperada, assinatura):
+        abort(401)
+
+    evento = request.get_json()
+    return '', 200
+```
+
+#### 4.3.2 Dois formatos no mesmo endpoint
+
+O mesmo `webhook_url` recebe notificação de **pedido avulso** e de
+**assinatura**. Diferencie pelo campo `tipo`:
+
+```js
+if (evento.tipo === 'assinatura') { /* seção 4.3.4 */ }
+else                              { /* seção 4.3.3 — pedido avulso */ }
+```
+
+O payload de pedido **não tem** o campo `tipo`.
+
+#### 4.3.3 Payload de pedido avulso
+
+```json
+{
+  "versao": 1,
+  "pedidoId": "550e8400-e29b-41d4-a716-446655440000",
+  "chargeId": "pay_8392017465",
+  "status": "confirmado",
+  "valorCheio": 460.00,
+  "desconto": 20.00,
+  "cupom": "LOTE1PROMO",
+  "valorComDesconto": 440.00,
+  "frete": 0,
+  "taxaDoProjeto": 0,
+  "taxaAsaas": 8.80,
+  "taxaPropria": 0.50,
+  "taxaIsenta": false,
+  "taxasTotais": 9.30,
+  "metodoPagamento": "cartao_credito",
+  "valorCobrado": 449.30
+}
+```
+
+| Campo | Descrição |
+|---|---|
+| `versao` | Versão do contrato. Hoje sempre `1` (seção 10) |
+| `pedidoId` | O mesmo id que você mandou no link |
+| `chargeId` | Id da cobrança na Asaas. Pode ser `null` em alguns eventos de pop-up |
+| `status` | Ver a tabela abaixo |
+| `valorCheio` … `taxaDoProjeto` | Exatamente o que a sua API devolveu — repassado de volta para conciliar |
+| `taxaAsaas` | Custo real da Asaas naquele método |
+| `taxaPropria` | Margem do San Checkout |
+| `taxaIsenta` | `true` se você mandou `isentarTaxa` |
+| `taxasTotais` | `taxaDoProjeto + taxaAsaas + taxaPropria` |
+| `metodoPagamento` | `pix`, `boleto`, `cartao_credito` |
+| `valorCobrado` | O que o comprador efetivamente pagou |
+
+**Vocabulário de `status`** — chega em toda mudança, não só na confirmação:
+
+| `status` | Quando chega | O que fazer |
+|---|---|---|
+| `confirmado` | O dinheiro caiu | **Libere o pedido.** Gatilho para nota fiscal e e-mail ao comprador |
+| `em_analise` | Antifraude da Asaas segurou para revisão | **Não libere ainda**, e não trate como falha — vem `confirmado` ou `recusado` depois |
+| `recusado` | Antifraude reprovou, ou a captura do cartão falhou | Não será pago. Pode devolver o estoque/vaga |
+| `vencido` | Passou do vencimento sem pagar (boleto) | Idem |
+| `chargeback` | O portador contestou a compra no banco | **Suspenda a entrega/acesso.** A disputa corre fora do checkout |
+| `estornado` | Estorno concluído | Reverta o pedido do seu lado |
+| `estorno_solicitado` | Só boleto — estorno iniciado, aguardando o pagador (seção 5.4) | Aguarde o `estornado` |
+| `estorno_negado` | A Asaas recusou o estorno | O pagamento continua válido |
+| `pendente` | Uma baixa manual foi desfeita na Asaas | Trate como não pago de novo |
+
+> **Status desconhecido = ignore por enquanto**, nunca erro. Responda 200
+> do mesmo jeito. Novos status podem ser adicionados (seção 10).
+
+> **Nota fiscal e e-mail de confirmação são responsabilidade sua.** O San
+> Checkout processa o pagamento e avisa; ele não emite nota nem manda
+> e-mail ao comprador — inclusive a Asaas foi configurada para **não**
+> notificar o cliente final em nome dela.
+
+#### 4.3.4 Payload de assinatura
+
+```json
+{
+  "versao": 1,
+  "tipo": "assinatura",
+  "planoId": "plano-vitrina-9f2c",
+  "documento": "11144477735",
+  "evento": "cobranca_confirmada"
+}
+```
+
+| `evento` | Quando chega |
+|---|---|
+| `criada` | Assinatura criada e **primeira cobrança paga** |
+| `cobranca_confirmada` | Um ciclo foi cobrado com sucesso |
+| `cobranca_falhou` | Um ciclo não entrou — cartão recusado ou cobrança vencida. **Mande o link de renovação** (seção 7.3) |
+| `cobranca_estornada` | Um ciclo foi estornado |
+| `cobranca_contestada` | Chargeback num ciclo — **suspenda o acesso** |
+| `cancelada` | Assinatura encerrada |
+
+O par `planoId` + `documento` é a chave: é por ele que você localiza o
+assinante do seu lado, e é ele que você manda ao cancelar, pausar ou
+retomar.
+
+> O payload de assinatura **não carrega valores** de propósito: o valor é
+> o do plano que você já tem cadastrado. Se precisar do valor exato de um
+> ciclo específico, ele está no painel da Asaas.
+
+> **Assinatura paga por Pix Automático usa exatamente estes mesmos
+> eventos.** Para você é a mesma assinatura; muda só como o assinante
+> pagou.
+
+#### 4.3.5 Quando NÃO chega notificação
+
+Nem todo desfecho gera webhook. Não espere um:
+
+- **Pop-up de cartão fechada sem pagar** (`CHECKOUT_EXPIRED`): nada é
+  enviado. O pedido continua pendente do seu lado, corretamente.
+- **Pop-up cancelada** em pagamento avulso: nada é enviado. (Em
+  assinatura, chega `cancelada`.)
+- **Pix/boleto gerado e nunca pago**: só o `vencido`, quando vencer.
+
+A ausência de notificação nunca significa "pago". Se precisa ter certeza
+sobre um pedido específico, pergunte (seção 5.2).
+
+#### 4.3.6 Política de novas tentativas
+
+Se o seu endpoint não responder `200`, o checkout tenta de novo **3
+vezes: 1 min, 5 min e 15 min** depois. Esgotadas, ele desiste e registra
+no próprio log.
+
+Duas consequências práticas:
+
+- **A fila de retry é em memória.** Se o processo do checkout reiniciar
+  entre as tentativas, aquela notificação se perde.
+- **O pagamento continua confirmado do lado do checkout** — o dinheiro
+  entrou. O que se perde é só o aviso.
+
+Por isso a conciliação da seção 5.2 não é opcional para quem leva
+dinheiro a sério: rode uma vez por dia sobre tudo que ainda está
+"aguardando pagamento" do seu lado.
+
+Webhook pode chegar **mais de uma vez** para o mesmo fato (uma tentativa
+que na verdade chegou, mas cuja resposta se perdeu). Trate o
+processamento como **idempotente**: a chave natural é `chargeId` +
+`status`.
+
+---
+
+## 5. A API que VOCÊ chama
+
+### 5.1 Convenções gerais
+
+**Base:**
+
+```
+https://san-checkout.onrender.com
+```
+
+**Autenticação:** header `X-Checkout-Key` com a sua chave. Sem ela, `401`.
+
+> **Chame sempre do seu servidor, nunca do navegador.** O CORS do
+> checkout libera um único domínio (o do próprio checkout), então a
+> chamada do browser falharia de qualquer forma — e mandar a chave ao
+> browser seria entregá-la a quem abrir o DevTools.
+
+**Formato:** JSON na entrada e na saída. Todo erro tem o mesmo corpo:
+
+```json
+{ "erro": "mensagem legível, em português" }
+```
+
+**Códigos:**
+
+| Código | Significa |
+|---|---|
+| `200` | Deu certo |
+| `400` | Dado inválido na sua requisição — a mensagem diz o quê |
+| `401` | `X-Checkout-Key` ausente ou inválida |
+| `403` | A chave é válida, mas não pertence ao recurso pedido |
+| `404` | Não existe |
+| `409` | Conflito de estado (pedido já pago, cancelado ou expirado) |
+| `429` | Limite de requisições — ver abaixo |
+| `502` / `504` | Falha ao falar com a Asaas ou com a **sua** API (504 = timeout) |
+
+**Limite de requisições** (por IP, janela de 60 segundos):
+
+| Rotas | Limite |
+|---|---|
+| Criação e ações de dinheiro (`/estornar`, `/cancelar-assinatura`, criação de cobrança) | **10/min** |
+| Consultas (`/cobranca`, `/pedido`, `/plano`, `/status`) | **60/min** por rota |
+
+Estourou, vem `429` com `{ "erro": "Muitas tentativas em pouco tempo. Aguarde um minuto." }`. Os headers padrão `RateLimit-*` acompanham a resposta.
+
+**Moeda:** sempre BRL. Não existe parâmetro de moeda — se um dia isso
+mudar, é uma versão nova deste contrato, não um campo opcional.
+
+---
+
+### 5.2 Consultar uma cobrança (conciliação)
+
+```http
+GET {BASE}/api/checkout/cobranca/{contratanteId}/{pedidoId}
+X-Checkout-Key: {sua chave}
+```
+
+A resposta é **o mesmo formato do webhook de pedido** (seção 4.3.3), de
+propósito: você reaproveita o parser que já escreveu. Traz dois campos a
+mais, `criadoEm` e `chargeId`.
+
+```json
+{
+  "versao": 1,
+  "pedidoId": "550e8400-...",
+  "chargeId": "pay_8392017465",
+  "status": "confirmado",
+  "valorCheio": 460.00,
+  "desconto": 20.00,
+  "cupom": "LOTE1PROMO",
+  "valorComDesconto": 440.00,
+  "frete": 0,
+  "taxaDoProjeto": 0,
+  "taxaAsaas": 8.80,
+  "taxaPropria": 0.50,
+  "taxaIsenta": false,
+  "taxasTotais": 9.30,
+  "metodoPagamento": "pix",
+  "valorCobrado": 449.30,
+  "criadoEm": "2026-09-10T14:02:11.482Z"
+}
+```
+
+| Código | Significa |
+|---|---|
+| `200` | Cobrança encontrada |
+| `401` | Chave ausente ou inválida |
+| `403` | A chave não pertence ao `contratanteId` da URL |
+| `404` | Nenhuma cobrança foi gerada para esse pedido ainda (ninguém chegou a pagar) |
+
+> Esta rota **reconsulta a Asaas** quando a cobrança ainda parece
+> pendente e corrige o registro antes de responder — então ela enxerga
+> pagamento que o webhook perdeu. Em caso de divergência, **o que ela
+> responde é o correto.**
+
+**Esta rota é só para pedido avulso.** A consulta é por `pedidoId`, e
+cobrança de assinatura é gravada com `planoId` — para conciliar
+recorrência, use a rota da seção 5.3.
+
+---
+
+### 5.3 Conciliar uma assinatura
+
+A rota da seção 5.2 não alcança recorrência. Esta alcança:
+
+```http
+POST {BASE}/api/checkout/consultar-assinatura
+X-Checkout-Key: {sua chave}
+Content-Type: application/json
+
+{ "planoId": "plano-vitrina-9f2c", "documento": "11144477735" }
+```
+
+Mesma autenticação e **mesmo body** de cancelar, pausar e retomar
+(seção 5.5) — quem já chama aquelas três não precisa aprender nada novo.
+É `POST` e não `GET` porque o CPF/CNPJ identifica o assinante, e
+documento em caminho de URL vaza para log de acesso, histórico e referer.
+
+**Resposta 200:**
+
+```json
+{
+  "versao": 1,
+  "tipo": "assinatura",
+  "planoId": "plano-vitrina-9f2c",
+  "documento": "11144477735",
+  "assinaturaId": "sub_000123456789",
+  "status": "ativa",
+  "valor": 349.90,
+  "ciclo": "MONTHLY",
+  "proximaCobranca": "2026-10-11T00:00:00.000Z",
+  "ultimaCobranca": {
+    "chargeId": "pay_8392017465",
+    "status": "confirmado",
+    "metodoPagamento": "assinatura",
+    "valorCobrado": 349.90,
+    "criadoEm": "2026-09-11T14:02:11.482Z"
+  }
+}
+```
+
+| Campo | Descrição |
+|---|---|
+| `assinaturaId` | Id na Asaas. `null` se a primeira cobrança ainda não confirmou |
+| `status` | `ativa`, `pausada` ou `cancelada`. `null` enquanto não existe assinatura |
+| `valor`, `ciclo` | Congelados na criação (seção 4.2) |
+| `proximaCobranca` | Quando a Asaas vai cobrar de novo. `null` se não houver |
+| `ultimaCobranca` | O ciclo mais recente, com o `status` do vocabulário da seção 4.3.3. `null` se nada foi cobrado |
+
+**As duas metades respondem a perguntas diferentes:** `status` diz se o
+vínculo existe; `ultimaCobranca.status` diz se o último ciclo entrou. Um
+assinante `ativa` com última cobrança `vencido` é justamente o caso que
+pede o link de renovação (seção 7.3).
+
+Como a 5.2, esta rota **reconsulta a Asaas** quando a última cobrança
+ainda parece pendente e corrige o registro antes de responder — é assim
+que ela enxerga pagamento que o webhook perdeu.
+
+| Código | Significa |
+|---|---|
+| `200` | Encontrado |
+| `400` | `planoId`/`documento` ausentes, ou CPF/CNPJ inválido |
+| `401` | Chave ausente ou inválida |
+| `404` | Nunca houve assinatura **nem tentativa de cobrança** desse plano para esse documento |
+
+> O `404` é estreito de propósito. Uma assinatura que foi tentada e não
+> confirmou ainda não tem `assinaturaId`, mas **tem** `ultimaCobranca` —
+> e responde `200`. Se respondesse `404`, a conciliação não conseguiria
+> distinguir "ele tentou e não pagou" de "ele nunca veio", que é metade
+> do motivo de esta rota existir.
+
+---
+
+### 5.4 Estornar
+
+```http
+POST {BASE}/api/checkout/estornar
+X-Checkout-Key: {sua chave}
+Content-Type: application/json
+
+{ "pedidoId": "550e8400-..." }
+```
+
+**Resposta 200:**
+
+```json
+{ "chargeId": "pay_8392017465", "status": "estornado" }
+```
+
+- **Sempre tudo ou nada.** Não existe estorno parcial de um item dentro
+  de um pedido. Para cancelar só parte, estorne tudo e crie um pedido
+  novo com o que sobrou.
+- Depois do estorno você também recebe o webhook correspondente
+  (seção 4.3.3).
+
+**Exceção — boleto não é instantâneo.** Pix e cartão estornam numa
+chamada só. Boleto não: a Asaas gera um link que o **pagador** precisa
+preencher (dados bancários e documentos) antes do dinheiro voltar. Nesse
+caso a resposta vem com `"status": "estorno_solicitado"`, e o
+`"estornado"` chega por webhook depois, quando ele concluir. É um estado
+intermediário real, não erro.
+
+| Código | Significa |
+|---|---|
+| `200` | Estorno executado ou solicitado |
+| `400` | `pedidoId` ausente |
+| `401` | Chave ausente ou inválida |
+| `404` | Nenhuma cobrança encontrada para esse pedido |
+| `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
+
+---
+
+### 5.5 Cancelar, pausar e retomar assinatura
+
+As três usam a **mesma autenticação e o mesmo body**:
+
+```http
+POST {BASE}/api/checkout/cancelar-assinatura
+POST {BASE}/api/checkout/pausar-assinatura
+POST {BASE}/api/checkout/retomar-assinatura
+X-Checkout-Key: {sua chave}
+Content-Type: application/json
+
+{ "planoId": "plano-vitrina-9f2c", "documento": "11144477735" }
+```
+
+**Resposta 200:**
+
+```json
+{ "assinaturaId": "sub_000123456789", "status": "cancelada" }
+```
+
+Se a assinatura já estava no estado pedido, vem `200` com
+`"jaEstava": true` — pedir duas vezes não é erro.
+
+| Ação | O que acontece |
+|---|---|
+| **Pausar** | Para de gerar cobranças. O vínculo continua existindo |
+| **Retomar** | Volta a cobrar no mesmo valor e ciclo |
+| **Cancelar** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
+
+> Use **pausar** quando o assinante quer parar por um tempo. Cancelar
+> nesse caso vira churn: quem cancela raramente refaz todo o processo.
+
+Cancelar aqui só **para as cobranças futuras** — não estorna nada já
+pago. Se precisar devolver o último ciclo, use `/estornar`
+separadamente.
+
+> **Só o seu projeto aciona.** O pagador nunca cancela sozinho pelo
+> checkout — a decisão (e a regra de negócio por trás dela) é sua.
+
+| Código | Significa |
+|---|---|
+| `200` | Executado |
+| `400` | `planoId`/`documento` ausentes ou CPF/CNPJ inválido |
+| `401` | Chave ausente ou inválida |
+| `404` | Nenhuma assinatura nesse estado para esse plano/documento |
+
+---
+
+### 5.6 Página pública de status do comprador
+
+Toda cobrança de Pix ou Boleto tem uma página permanente:
+
+```
+https://{CHECKOUT}/status.html?c={contratanteId}&pedido={pedidoId}
+```
+
+Ela mostra o estado atual e, enquanto a cobrança estiver válida,
+**devolve o QR Code do Pix e a linha digitável do boleto** — a segunda
+via de quem fechou a aba. Atualiza sozinha a cada 10 segundos e reage
+quando o pagamento cai.
+
+O checkout já mostra esse link ao comprador na hora de gerar a cobrança.
+**Se você manda e-mail de confirmação de pedido, inclua o link também**
+— é o que evita a maior parte dos "perdi meu boleto" chegando no seu
+suporte.
+
+A página não expõe nenhum dado pessoal: só valor, forma de pagamento e
+estado. Ainda assim ela só é alcançável por quem tem o `pedidoId`, o que
+reforça a exigência de id imprevisível da seção 3.
+
+Se quiser montar a sua própria tela, o JSON por trás dela é público:
+
+```http
+GET {BASE}/api/checkout/status/{contratanteId}/{pedidoId}
+```
+
+```json
+{
+  "pedidoId": "550e8400-...",
+  "status": "pendente",
+  "metodoPagamento": "pix",
+  "valorCobrado": 449.30,
+  "criadoEm": "2026-09-10T14:02:11.482Z",
+  "pagamento": {
+    "qrCodeBase64": "iVBORw0KGgo...",
+    "copiaECola": "00020126580014BR.GOV.BCB.PIX..."
+  }
+}
+```
+
+`pagamento` vem `null` quando a cobrança já não é mais pagável, e traz
+`boletoUrl`, `linhaDigitavel`, `codigoBarras` e `vencimento` no caso do
+boleto. **Não há autenticação aqui** — por isso nada de pessoal trafega.
+
+---
+
+### 5.7 Saúde do serviço
+
+```http
+GET {BASE}/api/saude
+```
+
+```json
+{
+  "status": "ok",
+  "chaveAsaasConfigurada": true,
+  "supabaseConfigurado": true,
+  "supabaseRespondendo": true,
+  "alertasChaveAsaas": []
+}
+```
+
+Sem autenticação. Útil para um monitor externo. `alertasChaveAsaas` não
+vazio significa que a chave de API da Asaas está para expirar ou já
+expirou — nesse estado, cobranças param de funcionar.
+
+---
+
+## 6. Métodos de pagamento
+
+### 6.1 O que cada um exige do comprador
+
+| Método | Dados pedidos na tela | Confirmação | Observações |
+|---|---|---|---|
+| **Pix** | nome, e-mail, CPF/CNPJ, (telefone) | segundos | QR Code + copia-e-cola na própria tela |
+| **Boleto** | nome, e-mail, CPF/CNPJ, (telefone) | 1-3 dias úteis | Indisponível em pedido com `expiraEm` |
+| **Cartão de crédito** | + telefone e **endereço completo** | segundos | 1 a 12 parcelas. Dados do cartão numa pop-up da Asaas |
+| **Assinatura (cartão)** | + telefone e **endereço completo** | segundos | Cobrança automática a cada ciclo |
+| **Assinatura (Pix Automático)** | nome, e-mail, CPF/CNPJ | minutos | Sem cartão e **sem endereço** |
+
+O endereço em cartão não é capricho: é exigência antifraude da Asaas. O
+checkout resolve rua/bairro/cidade a partir do CEP automaticamente.
+
+### 6.2 Onde os dados do cartão passam
+
+**Em lugar nenhum do San Checkout, e em lugar nenhum do seu projeto.**
+Número e CVV são digitados numa pop-up hospedada pela própria Asaas.
+Nenhum dado de cartão toca os nossos servidores, o que mantém os dois
+lados fora do escopo PCI-DSS.
+
+Consequência prática: não existe API para "trocar o cartão de uma
+assinatura" — a troca é feita pelo link de renovação (seção 7.3).
+
+### 6.3 Cobrança duplicada não acontece
+
+Se o comprador recarregar a página e pedir um Pix de novo, ele recebe **o
+mesmo Pix** — o checkout reaproveita a cobrança pendente daquele pedido
+em vez de criar uma segunda igualmente pagável. Vale para boleto também,
+onde o estrago seria maior (o antigo segue pagável por dias). A resposta
+traz `"reaproveitada": true` nesse caso.
+
+### 6.4 Métodos habilitados por contratante
+
+Cada contratante tem uma lista de métodos liberados, definida no painel
+do administrador. O comprador só vê os métodos liberados para você, e
+uma chamada direta a um método bloqueado recebe:
+
+```json
+{ "erro": "Este contratante não aceita pagamento por boleto." }
+```
+com HTTP `403`.
+
+Valores possíveis: `pix`, `boleto`, `cartao`, `assinatura`,
+`assinatura_pix`.
+
+**`assinatura_pix` nasce desmarcado**, sempre: Pix Automático depende de
+liberação da Asaas na conta. Combine a liberação antes de pedir para
+ativar.
+
+---
+
+## 7. Assinaturas em detalhe
+
+### 7.1 Ciclos aceitos
+
+Os sete, exatamente como escritos:
+
+| `ciclo` | Cobra a cada | Pix Automático |
+|---|---|:--:|
+| `WEEKLY` | 1 semana | ✅ |
+| `BIWEEKLY` | 15 dias | ❌ |
+| `MONTHLY` | 1 mês | ✅ |
+| `BIMONTHLY` | 2 meses | ❌ |
+| `QUARTERLY` | 3 meses | ✅ |
+| `SEMIANNUALLY` | 6 meses | ✅ |
+| `YEARLY` | 1 ano | ✅ |
+
+Qualquer outro valor é recusado com `400` nomeando os aceitos — o
+checkout nunca repassa ciclo desconhecido para a Asaas.
+
+`BIWEEKLY` e `BIMONTHLY` não existem no Pix Automático. Um plano com
+esses ciclos recebe `400` explicando e **continua funcionando
+normalmente por cartão**.
+
+### 7.2 Assinatura por Pix Automático
+
+O assinante lê **um** QR Code no app do banco e, no mesmo ato, paga a
+primeira cobrança **e autoriza os débitos seguintes**. Depois disso, o
+banco debita sozinho a cada ciclo.
+
+Por que importa:
+
+- Alcança quem **não tem cartão de crédito**.
+- Elimina o churn involuntário por cartão vencido ou sem limite — a
+  maior perda silenciosa de receita em recorrência.
+- **Não existe chargeback de Pix.**
+
+**Você não precisa fazer nada diferente.** É o mesmo link de assinatura,
+o mesmo `GET /plano/{id}`, os mesmos eventos de webhook. O checkout
+mostra "Assinar com Pix — sem cartão" abaixo do botão de cartão quando o
+método está habilitado.
+
+Se o banco do assinante recusar um débito, a Asaas **tenta de novo
+sozinha** (até três vezes em sete dias) antes de considerar o ciclo
+perdido.
+
+O QR Code da primeira cobrança vale **1 hora**. Passou disso sem ler, o
+assinante abre o link de novo e recebe um QR novo — nada é cobrado nem
+autorizado enquanto ele não ler.
+
+### 7.3 Renovação — cartão vencido ou troca de cartão
+
+Mande o assinante para o link de assinatura com **`&renovar=1`**:
+
+```
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+```
+
+Ele preenche o cartão novo na pop-up de sempre, e **a assinatura antiga é
+cancelada automaticamente assim que a nova for paga** — nessa ordem, para
+que ele nunca fique sem assinatura nenhuma se o pagamento falhar.
+
+Use isso ao receber `cobranca_falhou`.
+
+> **A renovação gera um id de assinatura NOVO na Asaas.** Do seu lado é a
+> continuação do mesmo assinante (mesmo `planoId`, mesmo `documento`).
+> Se você guarda o id da assinatura, atualize-o.
+>
+> Por que não trocamos só o cartão: a API da Asaas exige receber número e
+> CVV para isso, o que colocaria o checkout — e por tabela você — dentro
+> do escopo PCI-DSS.
+
+### 7.4 Ciclo de vida completo
+
+```
+   link ?assinatura=...
+        │
+        ▼
+   pagamento da 1ª cobrança ──► webhook  evento: criada
+        │
+        ├──► ciclo cobrado ────► webhook  evento: cobranca_confirmada
+        │
+        ├──► ciclo falhou ─────► webhook  evento: cobranca_falhou
+        │         │
+        │         └──► você manda o link &renovar=1
+        │
+        ├──► POST /pausar-assinatura ──► para de cobrar, vínculo vivo
+        │         │
+        │         └──► POST /retomar-assinatura ──► volta a cobrar
+        │
+        └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
+                                          (definitivo)
+```
+
+---
+
+## 8. Taxas, split e o valor cobrado
+
+```
+taxaAsaas    = tabela por MÉTODO (sincronizada com a conta real)
+taxaPropria  = percentual + fixo do San Checkout, igual em qualquer método
+
+SE isentarTaxa = true:
+    taxasTotais = taxaDoProjeto
+SENÃO:
+    taxasTotais = taxaDoProjeto + taxaAsaas + taxaPropria
+
+valorCobrado = valorComDesconto + frete + taxasTotais
+```
+
+A taxa do checkout é **somada por cima**, nunca descontada do que você
+configurou: você recebe `valorComDesconto + frete` integral — via split,
+se tiver `wallet_id` cadastrado; direto na conta, se não tiver.
+
+**Tabela da Asaas (valores de referência):**
+
+| Método | Taxa |
+|---|---|
+| Pix | R$ 1,99 fixo |
+| Boleto | R$ 1,99 fixo |
+| Cartão de débito | R$ 0,35 + 1,89% |
+| Cartão de crédito à vista | R$ 0,49 + 2,99% |
+| Cartão de crédito 2-6x | R$ 0,49 + 3,49% |
+| Cartão de crédito 7-12x | R$ 0,49 + 3,99% |
+
+> Estes números são o **ponto de partida**. O checkout consulta as taxas
+> reais da conta na Asaas no boot e a cada 24 horas, e passa a usá-las —
+> então um reajuste da Asaas, ou uma taxa melhor negociada por volume,
+> vale automaticamente. O valor que vale para uma cobrança específica é
+> sempre o `taxaAsaas` que vem no webhook dela.
+
+**Isenção pontual (`isentarTaxa`):** é você, pedido a pedido, quem decide
+se uma venda fica sem a taxa do checkout (ex.: campanha "taxa zero"). Não
+existe configuração fixa de "este contratante nunca paga taxa" — a
+flexibilidade é só por pedido. A isenção é da taxa do checkout; a sua
+`taxaDoProjeto` continua sendo cobrada.
+
+> **Assinatura é exceção:** nesta versão, assinatura **não** aplica
+> `taxaAsaas`/`taxaPropria` — cobra exatamente o `valor` do plano.
+> `taxaIsenta` sempre vem `true` nos webhooks de assinatura.
+
+---
+
+## 9. Limites e validações do sistema
+
+Tudo abaixo é validado **no servidor**, não só na tela. Chamar a API
+direto não contorna nada.
+
+| Regra | Limite | Erro |
+|---|---|---|
+| Valor da cobrança | R$ 0,01 a **R$ 100.000,00** | `400` "Valor do pedido inválido" |
+| Valor do plano | idem | `400` "Valor do plano inválido" |
+| Parcelas no cartão | 1 a 12 | `400` |
+| CPF | 11 dígitos, com dígito verificador conferido | `400` "CPF/CNPJ inválido" |
+| CNPJ | 14 dígitos, com dígito verificador conferido | `400` idem |
+| Telefone | 10 ou 11 dígitos | `400` "Telefone inválido" |
+| CEP | 8 dígitos | `400` "CEP inválido" |
+| `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
+| Timeout da sua API | 45 segundos | `504` |
+| Requisições | 10/min (dinheiro) · 60/min (consulta) | `429` |
+
+CPF e CNPJ dividem o mesmo campo `documento` — o checkout detecta qual é
+pelo tamanho.
+
+---
+
+## 10. Compatibilidade e versionamento
+
+Todo payload traz `versao` (hoje `1`).
+
+**O compromisso do San Checkout com você:**
+
+- Podemos **adicionar** campos novos a qualquer momento.
+- Podemos **adicionar** valores novos de `status` e de `evento`.
+- **Nunca** removemos nem renomeamos um campo existente.
+- **Nunca** mudamos o significado de um campo existente.
+- Se algo precisar quebrar de verdade, vira `versao: 2`, e a `versao: 1`
+  continua sendo enviada para quem já integrou.
+
+**O que isso exige de você** — duas linhas de cuidado que evitam que uma
+melhoria nossa derrube a sua integração:
+
+1. **Ignore campos que você não conhece.** Nada de validar o payload com
+   lista fechada de campos permitidos.
+2. **Trate `status`/`evento` desconhecido como "ignore por enquanto"**,
+   nunca como erro. Responda `200` do mesmo jeito.
+
+---
+
+## 11. Checklist de integração
+
+**Do seu lado:**
+
+- [ ] Expor `GET /pedido/{pedidoId}` conferindo a `X-Checkout-Key`, respondendo em até 45s
+- [ ] (Se vende recorrência) expor `GET /plano/{planoId}`, mesma autenticação
+- [ ] Gerar `pedidoId` **imprevisível** — UUID, hash ou token opaco
+- [ ] Manter `status` atualizado (`pendente`/`pago`/`cancelado`)
+- [ ] Preencher `expiraEm` se a venda tem prazo (e saber que isso desliga o boleto)
+- [ ] Expor o `webhook_url` respondendo `200` rápido
+- [ ] **Verificar a assinatura HMAC** de todo webhook antes de confiar nele
+- [ ] Tratar o processamento do webhook como idempotente (`chargeId` + `status`)
+- [ ] Ignorar campos, status e eventos desconhecidos
+- [ ] Emitir a sua nota fiscal e mandar o seu e-mail ao comprador no `confirmado`
+- [ ] Guardar a chave só no servidor
+- [ ] Rodar a conciliação diária sobre o que ainda está pendente — seção 5.2 para pedido avulso, **seção 5.3 para assinatura**
+- [ ] Mandar `pagador.documento` e `pagador.telefone` para poupar digitação
+- [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
+- [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar=1`
+
+**Combinado com quem administra o checkout:**
+
+- [ ] `contratante_id`
+- [ ] URL base da sua API
+- [ ] `X-Checkout-Key`
+- [ ] `webhook_url`
+- [ ] `wallet_id` (se for usar split)
+- [ ] Métodos habilitados (e liberação do Pix Automático na Asaas, se for usar)
+
+**Teste de ponta a ponta antes de anunciar:**
+
+1. Criar um pedido de valor baixo e abrir o link — o resumo bate?
+2. Pagar por Pix — o webhook chega assinado e válido?
+3. Fechar a aba e abrir `status.html` — o QR volta?
+4. Chamar `/api/checkout/cobranca/...` — o status confere?
+5. Estornar — o webhook de estorno chega?
+6. (Recorrência) assinar, e depois pausar, retomar e cancelar.
+
+---
+
+## 12. Referência rápida
+
+**Rotas que VOCÊ expõe:**
+
+| Rota | Autenticação | Seção |
+|---|---|---|
+| `GET {sua_base}/pedido/{pedidoId}` | `X-Checkout-Key` (confira!) | 4.1 |
+| `GET {sua_base}/plano/{planoId}` | `X-Checkout-Key` (confira!) | 4.2 |
+| `POST {webhook_url}` | HMAC (verifique!) | 4.3 |
+
+**Rotas que VOCÊ chama:**
+
+| Rota | Autenticação | Seção |
+|---|---|---|
+| `GET /api/checkout/cobranca/{contratanteId}/{pedidoId}` | `X-Checkout-Key` | 5.2 |
+| `POST /api/checkout/consultar-assinatura` | `X-Checkout-Key` | 5.3 |
+| `POST /api/checkout/estornar` | `X-Checkout-Key` | 5.4 |
+| `POST /api/checkout/cancelar-assinatura` | `X-Checkout-Key` | 5.5 |
+| `POST /api/checkout/pausar-assinatura` | `X-Checkout-Key` | 5.5 |
+| `POST /api/checkout/retomar-assinatura` | `X-Checkout-Key` | 5.5 |
+| `GET /api/checkout/status/{contratanteId}/{pedidoId}` | pública | 5.6 |
+| `GET /api/saude` | pública | 5.7 |
+
+**Rotas internas do checkout** — usadas pela própria tela de pagamento,
+documentadas aqui só para quem for auditar o tráfego. Não as chame
+diretamente:
+
+`GET /api/checkout/pedido/…` · `GET /api/checkout/plano/…` ·
+`POST /api/checkout/pix/…` · `GET /api/checkout/pix/status/…` ·
+`POST /api/checkout/boleto/…` · `GET /api/checkout/boleto/status/…` ·
+`POST /api/checkout/cartao/…` · `POST /api/checkout/assinatura/…` ·
+`POST /api/checkout/assinatura-pix/…` ·
+`GET /api/checkout/asaas-checkout/status/…` ·
+`POST /api/webhooks/asaas` (recebe a Asaas) · `/api/admin/*` (painel).
+
+**Glossário:**
+
+| Termo | O que é |
+|---|---|
+| **Contratante** | Você — o projeto que usa o checkout |
+| **Pedido** | Uma venda avulsa, pagamento único |
+| **Plano** | A definição de uma cobrança recorrente |
+| **Assinatura** | Um assinante específico ligado a um plano |
+| **Cobrança** (`chargeId`) | Uma cobrança individual na Asaas. Uma assinatura gera várias ao longo do tempo |
+| **Split** | Divisão automática do dinheiro, via `wallet_id` |
+| **Pull** | O modelo em que o checkout liga de volta para você em vez de guardar seus dados |
+
+---
+
+*San Checkout — SAN & CO. Pay Engine. Dúvida que este documento não
+responde é lacuna do documento: reporte para quem administra o checkout.*

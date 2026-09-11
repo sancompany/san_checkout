@@ -21,7 +21,10 @@
 
 import { buscarContratantePorChave } from '../services/pedidoService.js';
 import { buscarAssinaturaAtiva, atualizarStatusAssinatura } from '../services/assinaturaService.js';
-import { cancelarAssinatura as cancelarAssinaturaNaAsaas } from '../services/asaasService.js';
+import {
+  cancelarAssinatura as cancelarAssinaturaNaAsaas,
+  alterarStatusAssinatura
+} from '../services/asaasService.js';
 import { documentoValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -50,3 +53,66 @@ export async function cancelarAssinatura(requisicao, resposta) {
     responderErro(resposta, erro, 'assinaturaController.cancelarAssinatura');
   }
 }
+
+/**
+ * Pausar e retomar — `POST /api/checkout/pausar-assinatura` e
+ * `/retomar-assinatura`, mesma autenticação e mesmo body do
+ * cancelamento.
+ *
+ * Por que isso importa: antes só existia CANCELAR, que é definitivo. Um
+ * assinante que queria parar por um mês tinha que ser cancelado e
+ * assinar tudo de novo depois — na prática, virava churn. Pausado, o
+ * mesmo vínculo volta a cobrar quando for reativado.
+ *
+ * Uma fábrica em vez de dois handlers quase idênticos: só mudam o
+ * status na Asaas, o status local e quais status locais são aceitos na
+ * busca.
+ */
+function criarHandlerDeStatus({ statusAsaas, statusLocal, statusAceitos, jaEstaAssim }) {
+  return async function handler(requisicao, resposta) {
+    const chave = requisicao.get('X-Checkout-Key');
+    const { planoId, documento } = requisicao.body ?? {};
+
+    if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
+    if (!planoId || !documento) return resposta.status(400).json({ erro: 'planoId e documento são obrigatórios.' });
+    if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+    try {
+      const contratante = await buscarContratantePorChave(chave);
+      if (!contratante) return resposta.status(401).json({ erro: 'Chave inválida.' });
+
+      const assinatura = await buscarAssinaturaAtiva(contratante.id, planoId, documento, statusAceitos);
+      if (!assinatura) {
+        return resposta.status(404).json({ erro: `Nenhuma assinatura ${statusAceitos.join(' ou ')} encontrada pra esse plano/documento.` });
+      }
+
+      // Já está no estado pedido: responde sucesso sem chamar a Asaas.
+      // Repetir a chamada não quebraria nada, mas gastar uma requisição
+      // pra confirmar o que já é verdade não tem por quê.
+      if (assinatura.status === statusLocal) {
+        return resposta.json({ assinaturaId: assinatura.id, status: statusLocal, jaEstava: true });
+      }
+
+      await alterarStatusAssinatura(assinatura.id, statusAsaas);
+      await atualizarStatusAssinatura(assinatura.id, statusLocal);
+
+      resposta.json({ assinaturaId: assinatura.id, status: statusLocal });
+    } catch (erro) {
+      responderErro(resposta, erro, `assinaturaController.${jaEstaAssim}`);
+    }
+  };
+}
+
+export const pausarAssinatura = criarHandlerDeStatus({
+  statusAsaas: 'INACTIVE',
+  statusLocal: 'pausada',
+  statusAceitos: ['ativa', 'pausada'],
+  jaEstaAssim: 'pausarAssinatura'
+});
+
+export const retomarAssinatura = criarHandlerDeStatus({
+  statusAsaas: 'ACTIVE',
+  statusLocal: 'ativa',
+  statusAceitos: ['pausada', 'ativa'],
+  jaEstaAssim: 'retomarAssinatura'
+});

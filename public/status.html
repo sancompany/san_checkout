@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Status do pagamento — SAN &amp; CO.</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/theme-engine.css" />
+  <link rel="stylesheet" href="css/components/card.css" />
+  <link rel="stylesheet" href="css/components/forms.css" />
+  <link rel="stylesheet" href="css/components/status.css" />
+</head>
+<body>
+
+  <main class="checkout-container">
+    <div class="checkout-card">
+      <div class="status-page" id="status-root">
+
+        <header class="status-header">
+          <img class="brand-logo brand-logo--operator" src="assets/logo-sanco.png" alt="SAN &amp; CO." />
+        </header>
+
+        <!-- Carregando -->
+        <section class="status-bloco" id="bloco-carregando">
+          <p class="status-carregando">Consultando o pagamento...</p>
+        </section>
+
+        <!-- Erro / não encontrado -->
+        <section class="status-bloco hidden" id="bloco-erro">
+          <div class="status-selo status-selo--neutro" id="erro-selo">Não encontrado</div>
+          <h1 class="status-titulo" id="erro-titulo">Pagamento não encontrado</h1>
+          <p class="status-texto" id="erro-texto">
+            Confira se o link está completo. Se você acabou de pagar, aguarde
+            alguns instantes e recarregue a página.
+          </p>
+        </section>
+
+        <!-- Resultado -->
+        <section class="status-bloco hidden" id="bloco-resultado">
+          <div class="status-selo" id="selo-status">—</div>
+          <h1 class="status-titulo" id="titulo-status">—</h1>
+          <p class="status-texto" id="texto-status"></p>
+
+          <dl class="status-resumo">
+            <div class="status-resumo-linha">
+              <dt>Valor</dt>
+              <dd id="resumo-valor">—</dd>
+            </div>
+            <div class="status-resumo-linha">
+              <dt>Forma de pagamento</dt>
+              <dd id="resumo-metodo">—</dd>
+            </div>
+          </dl>
+
+          <!-- Segunda via do Pix -->
+          <div class="status-pagamento hidden" id="pagamento-pix">
+            <div class="qr-wrapper">
+              <img id="pix-qr-image" class="qr-image" src="" alt="QR Code Pix para pagamento" />
+            </div>
+            <div class="pix-copy-group">
+              <label for="pix-copy-code">Código Pix Copia e Cola</label>
+              <div class="copy-input-wrapper">
+                <input type="text" id="pix-copy-code" readonly aria-label="Código Pix Copia e Cola" />
+                <button type="button" class="btn-secondary" id="btn-copy-pix">Copiar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Segunda via do boleto -->
+          <div class="status-pagamento hidden" id="pagamento-boleto">
+            <div class="pix-copy-group">
+              <label for="boleto-copy-code">Linha digitável</label>
+              <div class="copy-input-wrapper">
+                <input type="text" id="boleto-copy-code" readonly aria-label="Linha digitável do boleto" />
+                <button type="button" class="btn-secondary" id="btn-copy-boleto">Copiar</button>
+              </div>
+            </div>
+            <p class="status-vencimento hidden" id="boleto-vencimento"></p>
+            <a class="btn-primary status-botao" id="boleto-abrir" href="#" target="_blank" rel="noopener noreferrer">
+              Abrir boleto
+            </a>
+          </div>
+
+          <p class="status-rodape" id="status-rodape"></p>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script type="module" src="js/status.js"></script>
+</body>
+</html>

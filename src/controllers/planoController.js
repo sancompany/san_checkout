@@ -13,8 +13,17 @@ export async function obterPlano(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
 
   try {
-    const { plano } = await resolverPlano(contratanteId, planoId);
-    resposta.json(plano);
+    const { contratante, plano } = await resolverPlano(contratanteId, planoId);
+
+    // O plano vai CRU (o front espera os campos direto, ver
+    // INTEGRACAO.md 6.1). O que é nosso entra debaixo de `_checkout`,
+    // com underscore, pra nunca colidir com um campo do contratante —
+    // acrescentar campo é permitido pelo contrato, renomear/roubar
+    // nome não seria.
+    resposta.json({
+      ...plano,
+      _checkout: { metodosHabilitados: contratante.metodos_habilitados ?? null }
+    });
   } catch (erro) {
     responderErro(resposta, erro, 'planoController.obterPlano', 500);
   }

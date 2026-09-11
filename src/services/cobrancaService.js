@@ -74,6 +74,11 @@ export async function registrarCobrancaPendentePopup(dados) {
     taxa_isenta: dados.taxaIsenta ?? false,
     valor_cobrado: dados.valorCobrado,
     metodo_pagamento: dados.metodoPagamento,
+    // Renovação de assinatura (v3.4): guarda qual assinatura esta aqui
+    // vem substituir. Só é preenchido quando o link traz `&renovar=1` —
+    // cancelar a antiga é efeito com consequência em dinheiro, então
+    // depende de intenção declarada, nunca de heurística.
+    substitui_assinatura_id: dados.substituiAssinaturaId ?? null,
     parcelas: dados.parcelas ?? 1,
     status: 'pendente'
   });
@@ -129,7 +134,13 @@ export async function registrarCicloAssinatura(dados) {
 export async function buscarCobrancaPorCheckoutId(asaasCheckoutId) {
   const { data, error } = await supabase
     .from('cobrancas')
-    .select('*')
+    // BUG CORRIGIDO (10/09): aqui era `.select('*')`, SEM o join de
+    // contratantes. Como `notificarConformeMetodo` (webhookController)
+    // desiste logo no `if (!cobranca.contratantes?.webhook_url)`, todo
+    // pagamento de Cartão e de Assinatura era confirmado no banco e
+    // NUNCA notificava a loja — silenciosamente. Passou despercebido
+    // porque o fluxo de pop-up nunca chegou a rodar com webhook real.
+    .select('*, contratantes(webhook_url, nome, api_key)')
     .eq('asaas_checkout_id', asaasCheckoutId)
     .maybeSingle();
 
@@ -191,12 +202,40 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
   return data;
 }
 
+/**
+ * Última cobrança de uma assinatura, localizada pelo que o CONTRATANTE
+ * tem em mãos: plano + documento. Mesmo par que cancelar/pausar/retomar
+ * já usam — `buscarCobrancaPorSubscriptionId` faz algo parecido, mas
+ * exige o id da assinatura na Asaas, que o contratante nunca vê.
+ *
+ * ponytail: sem índice novo — `idx_cobrancas_contratante` já reduz a
+ * varredura ao contratante, e o volume por contratante é pequeno.
+ * Vira índice composto quando (e se) isso aparecer como lentidão.
+ */
+export async function buscarUltimaCobrancaDaAssinatura(contratanteId, planoId, documento) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('*')
+    .eq('contratante_id', contratanteId)
+    .eq('plano_id', planoId)
+    .eq('documento', documento)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 /** Busca a cobrança + contratante dono dela (join), usado pelo webhook
  *  e pelo estorno. */
 export async function buscarCobranca(chargeId) {
   const { data, error } = await supabase
     .from('cobrancas')
-    .select('*, contratantes(webhook_url, nome)')
+    // api_key entra aqui porque é o segredo que assina o webhook de
+    // saída (utils/assinaturaWebhook.js) — sem ela a notificação não
+    // é enviada.
+    .select('*, contratantes(webhook_url, nome, api_key)')
     .eq('charge_id', chargeId)
     .maybeSingle();
 
@@ -206,6 +245,58 @@ export async function buscarCobranca(chargeId) {
 
 /** Busca a cobrança mais recente de um pedido — usado no /estornar,
  *  que recebe pedidoId (não chargeId) do contratante. */
+/**
+ * Grava a situação cadastral de uma subconta, vinda do webhook
+ * ACCOUNT_STATUS_* da Asaas. Antes disso, o operador conferia na mão se
+ * a Asaas já tinha aprovado cada subconta criada via API.
+ *
+ * Não falha alto de propósito: é informativo, e uma subconta que a gente
+ * não conhece (criada fora do painel) não deve gerar erro.
+ */
+export async function atualizarSituacaoSubconta(asaasAccountId, situacao) {
+  const { error } = await supabase
+    .from('subcontas')
+    .update({
+      situacao_geral: situacao.geral,
+      situacao_comercial: situacao.comercial,
+      situacao_bancaria: situacao.bancaria,
+      situacao_documentos: situacao.documentos,
+      situacao_atualizada_em: new Date().toISOString()
+    })
+    .eq('asaas_account_id', asaasAccountId);
+
+  if (error) console.error('[cobrancaService.atualizarSituacaoSubconta]', error.message);
+}
+
+/**
+ * Cobrança PENDENTE já criada pra esse pedido nesse mesmo método.
+ *
+ * É o que impede a cobrança em duplicidade: sem isso, o comprador que
+ * recarrega a página e clica de novo gera um SEGUNDO Pix/boleto na
+ * Asaas, e os dois ficam pagáveis (gente paga o QR antigo que ficou no
+ * WhatsApp — aí é estorno na mão). O front já desabilita o botão, mas
+ * isso não sobrevive a um F5.
+ *
+ * Filtra por método de propósito: quem gerou um Pix e depois escolheu
+ * boleto deve conseguir o boleto.
+ */
+export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('*')
+    .eq('contratante_id', contratanteId)
+    .eq('pedido_id', pedidoId)
+    .eq('metodo_pagamento', metodoPagamento)
+    .eq('status', 'pendente')
+    .not('charge_id', 'is', null)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
   const { data, error } = await supabase
     .from('cobrancas')

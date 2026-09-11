@@ -1,9 +1,10 @@
-import { resolverContexto, obterPagadorPreenchido, obterPedidoResolvido } from './modules/pedidoHandler.js';
-import { resolverAssinatura, obterIdsAssinaturaResolvidos, obterPagadorPreenchidoAssinatura, rotularCiclo } from './modules/assinaturaHandler.js';
+import { resolverContexto, obterPagadorPreenchido, obterPedidoResolvido, obterMetodosHabilitados, iniciarCronometroExpiracao } from './modules/pedidoHandler.js';
+import { resolverAssinatura, obterIdsAssinaturaResolvidos, obterPagadorPreenchidoAssinatura, rotularCiclo, obterMetodosDoPlano } from './modules/assinaturaHandler.js';
 import { gerarPix, copiarCodigoPix, pararPolling as pararPollingPix } from './modules/pixHandler.js';
 import { continuarComCartao, pararPollingCartao } from './modules/cartaoHandler.js';
 import { gerarBoleto, copiarCodigoBoleto, pararPollingBoleto } from './modules/boletoHandler.js';
 import { assinarAgora } from './modules/assinaturaCheckoutHandler.js';
+import { assinarComPix, pararPollingAssinaturaPix } from './modules/assinaturaPixHandler.js';
 import { mascararDocumento, mascararTelefone, mascararCep } from './utils/masks.js';
 import { validarDocumento, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
 import { buscarEnderecoPorCep } from './utils/cep.js';
@@ -17,6 +18,20 @@ function mostrarToast(mensagem, tipo = 'info') {
   if (tipo === 'sucesso') toast.style.borderColor = 'var(--status-success)';
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 4500);
+}
+
+/** Copiar com fallback: alguns navegadores bloqueiam a área de
+ *  transferência; selecionar o campo deixa a pessoa copiar na mão em
+ *  vez de só falhar. */
+async function copiarCampo(idCampo, rotulo) {
+  const campo = document.getElementById(idCampo);
+  try {
+    await navigator.clipboard.writeText(campo.value);
+    mostrarToast(`${rotulo} copiado.`, 'sucesso');
+  } catch {
+    campo.select();
+    mostrarToast('Não consegui copiar: o texto está selecionado, use Ctrl+C.', 'erro');
+  }
 }
 
 function formatarMoeda(valor) {
@@ -208,6 +223,17 @@ async function iniciarModoPedido() {
     if (id === 'btn-copy-pix') return copiarCodigoPix();
     if (id === 'btn-copy-boleto') return copiarCodigoBoleto();
 
+    // Saída do cartão recusado: leva pra aba do Pix já aberta. Não gera
+    // a cobrança sozinho de propósito — a pessoa confere o valor e
+    // aperta, como em qualquer outro caminho.
+    if (id === 'btn-tentar-pix') {
+      evento.preventDefault();
+      document.getElementById('saida-pix-cartao')?.classList.add('hidden');
+      selecionarMetodo('pix');
+      document.getElementById('btn-generate-pix')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
     if (!ids) {
       mostrarToast('O pedido não foi carregado — recarregue a página antes de pagar.', 'erro');
       return;
@@ -217,6 +243,7 @@ async function iniciarModoPedido() {
       evento.preventDefault();
       if (!termosAceitos()) return;
       if (!validarDadosPagador()) return;
+      mostrarLinkPermanente(ids, 'pix');
       return gerarPix({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: coletarDadosPagador(), mostrarToast });
     }
 
@@ -231,7 +258,8 @@ async function iniciarModoPedido() {
         pedidoId: ids.pedidoId,
         parcelas,
         dadosPagador: { ...coletarDadosPagador(), ...coletarEndereco() },
-        mostrarToast
+        mostrarToast,
+        aoNaoConcluir: oferecerPixAposFalhaNoCartao
       });
     }
 
@@ -239,6 +267,7 @@ async function iniciarModoPedido() {
       evento.preventDefault();
       if (!termosAceitos()) return;
       if (!validarDadosPagador()) return;
+      mostrarLinkPermanente(ids, 'boleto');
       return gerarBoleto({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: coletarDadosPagador(), mostrarToast });
     }
   });
@@ -256,6 +285,74 @@ async function iniciarModoPedido() {
   if (pedido && !pedido.expiraEm) {
     document.getElementById('metodo-boleto-wrapper').classList.remove('hidden');
   }
+
+  aplicarMetodosHabilitados();
+
+  // Contagem regressiva quando o pedido tem prazo de verdade. Ao zerar,
+  // desabilita os botões que cobram — o backend já recusaria
+  // (resolverPedido checa expiraEm), mas deixar o botão clicável só pra
+  // devolver erro é pior que dizer na hora o que aconteceu.
+  iniciarCronometroExpiracao(() => {
+    document.querySelectorAll('#btn-generate-pix, #btn-continuar-cartao, #btn-gerar-boleto')
+      .forEach((botao) => { botao.disabled = true; });
+    mostrarToast('Esta reserva expirou. Recarregue a página ou volte à loja para gerar um novo pedido.', 'erro');
+  });
+}
+
+/**
+ * Cartão não concluído: oferece o Pix ali mesmo, em vez de deixar a
+ * pessoa sem caminho nenhum depois da pop-up fechar.
+ *
+ * Só aparece se o contratante tiver Pix habilitado — oferecer um método
+ * que o backend vai recusar com 403 seria pior que não oferecer nada.
+ */
+function oferecerPixAposFalhaNoCartao() {
+  const metodos = obterMetodosHabilitados();
+  if (metodos && !metodos.includes('pix')) return;
+
+  const bloco = document.getElementById('saida-pix-cartao');
+  if (!bloco) return;
+  bloco.classList.remove('hidden');
+}
+
+/**
+ * Mostra o link permanente de status junto do Pix/boleto gerado.
+ *
+ * Sem isso a página de status não existe na prática: ninguém recebe a
+ * URL. É o único caminho pra pessoa que fechou a aba voltar ao QR sem
+ * ligar pra loja.
+ */
+function mostrarLinkPermanente(ids, metodo) {
+  const url = `${window.location.origin}/status.html?c=${encodeURIComponent(ids.contratanteId)}&pedido=${encodeURIComponent(ids.pedidoId)}`;
+  const bloco = document.getElementById(`link-permanente-${metodo}`);
+  const link = document.getElementById(`link-status-${metodo}`);
+  if (!bloco || !link) return;
+
+  link.href = url;
+  bloco.classList.remove('hidden');
+}
+
+/**
+ * Esconde da tela os métodos que o contratante não tem habilitados
+ * (tipos de cobrança, ver admin.html) — o backend já bloqueia a
+ * cobrança de verdade (pedidoService.js), isso aqui só evita mostrar
+ * uma opção que ia dar 403 na hora de pagar.
+ */
+function aplicarMetodosHabilitados() {
+  const metodos = obterMetodosHabilitados();
+  if (!metodos) return; // sem restrição — não mexe em nada
+
+  let algumAtivoSobrou = false;
+  document.querySelectorAll('.payment-method').forEach((item) => {
+    const habilitado = metodos.includes(item.dataset.method);
+    item.classList.toggle('hidden', !habilitado);
+    if (habilitado && item.classList.contains('active')) algumAtivoSobrou = true;
+  });
+
+  if (algumAtivoSobrou) return;
+
+  const primeiroDisponivel = document.querySelector('.payment-method:not(.hidden)');
+  if (primeiroDisponivel) selecionarMetodo(primeiroDisponivel.dataset.method);
 }
 
 /* ------------------------------------------------------------------
@@ -277,8 +374,43 @@ async function iniciarModoAssinatura() {
   // visível direto, sem depender de seleção de método.
   document.getElementById('endereco-fieldset')?.classList.remove('hidden');
 
+  // Pix Automático é alternativa ao cartão neste mesmo modo. Aparece só
+  // se o contratante tiver o método habilitado — ele depende de a Asaas
+  // ter liberado Pix Automático na conta, então nunca é presumido.
+  const metodosDoPlano = obterMetodosDoPlano();
+  const temPixAutomatico = !metodosDoPlano || metodosDoPlano.includes('assinatura_pix');
+  if (!falhou && temPixAutomatico) {
+    document.getElementById('assinatura-pix-bloco')?.classList.remove('hidden');
+  }
+
   form.addEventListener('click', (evento) => {
-    if (evento.target.closest('button')?.id !== 'btn-assinar') return;
+    const idBotao = evento.target.closest('button')?.id;
+
+    if (idBotao === 'btn-copy-assinatura-pix') {
+      evento.preventDefault();
+      return copiarCampo('assinatura-pix-codigo', 'Código Pix');
+    }
+
+    // Pix Automático não pede endereço: aquilo era antifraude do cartão.
+    if (idBotao === 'btn-assinar-pix') {
+      evento.preventDefault();
+      if (falhou) {
+        mostrarToast('O plano não foi carregado — recarregue a página antes de assinar.', 'erro');
+        return;
+      }
+      if (!termosAceitos()) return;
+      if (!validarDadosPagador()) return;
+
+      const ids = obterIdsAssinaturaResolvidos() ?? resultado.ids;
+      return assinarComPix({
+        contratanteId: ids.contratanteId,
+        planoId: ids.planoId,
+        dadosPagador: coletarDadosPagador(),
+        mostrarToast
+      });
+    }
+
+    if (idBotao !== 'btn-assinar') return;
     evento.preventDefault();
 
     if (falhou) {
@@ -294,7 +426,13 @@ async function iniciarModoAssinatura() {
     return assinarAgora({
       contratanteId: idsResolvidos.contratanteId,
       planoId: idsResolvidos.planoId,
-      dadosPagador: { ...coletarDadosPagador(), ...coletarEndereco() },
+      // `&renovar=1` na URL = troca de cartão de uma assinatura que já
+      // existe. O backend cancela a antiga só depois que esta confirmar.
+      dadosPagador: {
+        ...coletarDadosPagador(),
+        ...coletarEndereco(),
+        renovar: new URLSearchParams(window.location.search).get('renovar') === '1'
+      },
       mostrarToast
     });
   });
@@ -336,9 +474,34 @@ async function iniciarModoAssinatura() {
   preencherCamposPagador(obterPagadorPreenchidoAssinatura());
 }
 
+/**
+ * Sem `c` E sem `pedido`/`assinatura` na URL não é um link de loja
+ * parceira mal configurado (esse caso já cai no erro normal de "pedido
+ * não encontrado" dentro de resolverContexto/resolverAssinatura) — é
+ * alguém batendo direto no domínio nu. Nesse caso a página nem chama a
+ * API: troca o conteúdo por uma mensagem genérica, sem dar pista
+ * nenhuma de que isso é um checkout de pagamento. ponytail: só troca
+ * o HTML, não esconde nada com CSS — visitante nenhum vê o formulário
+ * nem por um instante.
+ */
+function mostrarIndisponivel() {
+  document.getElementById('checkout-root').innerHTML = `
+    <div style="padding:48px 24px;text-align:center;max-width:360px;margin:0 auto">
+      <h1 style="font-size:1.125rem;margin:0 0 8px">Acesso não autorizado</h1>
+      <p style="margin:0;color:var(--text-secondary,#666);font-size:0.9rem">
+        Esta página não está disponível para acesso direto.
+      </p>
+    </div>
+  `;
+}
+
 async function iniciar() {
   const parametros = new URLSearchParams(window.location.search);
-  if (parametros.has('assinatura')) return iniciarModoAssinatura();
+  const temPedido = parametros.has('c') && parametros.has('pedido');
+  const temAssinatura = parametros.has('c') && parametros.has('assinatura');
+  if (!temPedido && !temAssinatura) return mostrarIndisponivel();
+
+  if (temAssinatura) return iniciarModoAssinatura();
   return iniciarModoPedido();
 }
 

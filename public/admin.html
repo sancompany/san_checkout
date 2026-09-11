@@ -6,80 +6,432 @@
 <meta name="robots" content="noindex, nofollow" />
 <title>San Checkout — Admin</title>
 <link rel="icon" type="image/png" href="assets/favicon.png" />
-<style>
-  :root { color-scheme: light; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 32px 16px; min-height: 100vh;
-    background: #0f172a; color: #e5e7eb;
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
-  .wrap { max-width: 760px; margin: 0 auto; }
-  h1 { font-size: 1.25rem; margin: 0 0 24px; }
-  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 24px; margin-bottom: 24px; }
-  label { display: block; font-size: 0.8125rem; color: #94a3b8; margin: 12px 0 4px; }
-  label:first-child { margin-top: 0; }
-  input {
-    width: 100%; height: 40px; padding: 0 12px; border-radius: 6px;
-    border: 1px solid #475569; background: #0f172a; color: #e5e7eb; font-size: 0.875rem;
-  }
-  input:focus { outline: 2px solid #2563eb; outline-offset: 1px; }
-  button {
-    margin-top: 16px; height: 40px; padding: 0 20px; border: none; border-radius: 6px;
-    background: #2563eb; color: #fff; font-size: 0.875rem; font-weight: 600; cursor: pointer;
-  }
-  button:hover { background: #1d4ed8; }
-  .msg { margin-top: 10px; font-size: 0.8125rem; }
-  .msg.erro { color: #f87171; }
-  .msg.ok { color: #4ade80; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #334155; vertical-align: top; }
-  th { color: #94a3b8; font-weight: 600; }
-  code { font-family: ui-monospace, monospace; user-select: all; word-break: break-all; }
-  [hidden] { display: none !important; }
-</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<!-- theme-engine.css é a MESMA paleta do checkout — mudou lá, muda aqui. -->
+<link rel="stylesheet" href="css/theme-engine.css" />
+<link rel="stylesheet" href="css/admin.css" />
 </head>
 <body>
-<div class="wrap">
-  <h1>San Checkout — Admin</h1>
 
-  <div class="card" id="painel-login">
-    <label for="admin-user">Usuário</label>
-    <input type="text" id="admin-user" autocomplete="off" />
-    <label for="admin-pass">Senha</label>
-    <input type="password" id="admin-pass" autocomplete="off" />
-    <button id="btn-entrar" type="button">Entrar</button>
-    <div class="msg erro" id="msg-login" hidden></div>
-  </div>
+<!-- ================= LOGIN ================= -->
+<div class="login-shell" id="tela-login">
+  <div class="login-card">
+    <img class="login-logo" src="assets/logo-sanco.png" alt="SAN &amp; CO." />
+    <h1 class="login-title">Pay Engine — Admin</h1>
+    <p class="login-subtitle">Acesso restrito ao operador</p>
 
-  <div id="painel-app" hidden>
-    <div class="card">
-      <h2 style="margin:0 0 4px;font-size:1rem">Cadastrar contratante</h2>
-      <label for="f-id">id (slug, ex.: trimundi9)</label>
-      <input type="text" id="f-id" />
-      <label for="f-nome">nome</label>
-      <input type="text" id="f-nome" />
-      <label for="f-api-base-url">apiBaseUrl (onde o checkout busca GET /pedido/{id})</label>
-      <input type="text" id="f-api-base-url" placeholder="https://api-do-projeto.com" />
-      <label for="f-webhook-url">webhookUrl (opcional)</label>
-      <input type="text" id="f-webhook-url" placeholder="https://api-do-projeto.com/webhook" />
-      <label for="f-wallet-id">walletId (opcional, só se for usar split Asaas)</label>
-      <input type="text" id="f-wallet-id" />
-      <button id="btn-cadastrar" type="button">Cadastrar</button>
-      <div class="msg" id="msg-cadastro" hidden></div>
+    <div class="campo">
+      <label class="campo-label" for="admin-user">Usuário</label>
+      <input class="campo-input" type="text" id="admin-user" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    </div>
+    <div class="campo">
+      <label class="campo-label" for="admin-pass">Senha</label>
+      <input class="campo-input" type="password" id="admin-pass" autocomplete="off" />
     </div>
 
-    <div class="card">
-      <h2 style="margin:0 0 12px;font-size:1rem">Contratantes cadastrados</h2>
-      <table>
-        <thead>
-          <tr><th>id</th><th>nome</th><th>api_base_url</th><th>webhook_url</th><th>wallet_id</th><th>api_key</th></tr>
-        </thead>
-        <tbody id="tabela-contratantes"></tbody>
-      </table>
-    </div>
+    <button class="btn btn-primario btn-bloco" id="btn-entrar" type="button">Entrar</button>
+    <div class="erro-inline" id="msg-login" hidden></div>
   </div>
 </div>
+
+<!-- ================= PAINEL ================= -->
+<div id="tela-painel" hidden>
+
+  <header class="topbar">
+    <img class="topbar-logo" src="assets/logo-sanco.png" alt="SAN &amp; CO." />
+    <div class="topbar-divider"></div>
+    <span class="topbar-title">Pay Engine — Admin</span>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-user">
+      <span class="topbar-user-dot"></span>
+      <span id="rotulo-usuario">operador</span>
+    </div>
+    <button class="btn btn-secundario btn-mini" id="btn-sair" type="button">Sair</button>
+  </header>
+
+  <div class="app-body">
+
+    <nav class="sidebar" aria-label="Seções do painel">
+      <p class="sidebar-label">Gestão</p>
+      <button class="nav-item ativo" type="button" data-secao="contratantes">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg>
+        Contratantes
+        <span class="nav-contador" id="contador-contratantes">0</span>
+      </button>
+      <button class="nav-item" type="button" data-secao="subcontas">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+        Subcontas Asaas
+        <span class="nav-contador" id="contador-subcontas">0</span>
+      </button>
+      <button class="nav-item" type="button" data-secao="metricas">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+        Métricas
+      </button>
+    </nav>
+
+    <main class="conteudo">
+
+      <!-- ---------- Contratantes ---------- -->
+      <section id="secao-contratantes">
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Contratantes</h2>
+            <p class="secao-descricao">
+              Cada contratante é um projeto que usa o checkout. O checkout
+              pergunta os dados do pedido direto pra API dele — a
+              <strong>api_key</strong> abaixo é o que autentica essa
+              pergunta, e precisa ser configurada no servidor do projeto.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <button class="btn btn-primario" id="btn-abrir-novo-contratante" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              Novo contratante
+            </button>
+          </div>
+        </div>
+
+        <div class="painel">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <!-- webhook_url e wallet_id ficam fora da tabela de
+                     propósito: são configuração, aparecem e se editam no
+                     modal. Aqui só o que se olha de relance. -->
+                <tr>
+                  <th>id</th>
+                  <th>nome</th>
+                  <th>API base</th>
+                  <th>tipos de cobrança</th>
+                  <th>api_key</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tabela-contratantes"></tbody>
+            </table>
+          </div>
+          <div class="vazio" id="vazio-contratantes" hidden>
+            <p class="vazio-titulo">Nenhum contratante cadastrado</p>
+            <p class="vazio-texto">Cadastre o primeiro projeto que vai usar o checkout.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Subcontas ---------- -->
+      <section id="secao-subcontas" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Subcontas Asaas</h2>
+            <p class="secao-descricao">
+              Contas criadas direto pela API da Asaas (modelo não-BaaS).
+              A Asaas manda o link de ativação por e-mail — cole ele na
+              subconta correspondente pra ter o acesso guardado aqui.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <button class="btn btn-primario" id="btn-abrir-nova-subconta" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              Criar subconta
+            </button>
+          </div>
+        </div>
+
+        <div class="lista-subcontas" id="lista-subcontas"></div>
+        <div class="painel" id="vazio-subcontas" hidden>
+          <div class="vazio">
+            <p class="vazio-titulo">Nenhuma subconta criada</p>
+            <p class="vazio-texto">Crie a primeira subconta pra gerar um wallet_id sem abrir o site da Asaas.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- Métricas ---------- -->
+      <section id="secao-metricas" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Métricas</h2>
+            <p class="secao-descricao">
+              Quantas cobranças geradas viram pagamento. A taxa considera
+              só o que já se resolveu — cobrança ainda em aberto não
+              conta como perdida.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <select class="campo-input" id="metricas-periodo" style="width:auto">
+              <option value="7">Últimos 7 dias</option>
+              <option value="30" selected>Últimos 30 dias</option>
+              <option value="90">Últimos 90 dias</option>
+              <option value="365">Últimos 12 meses</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cartoes-metrica" id="metricas-resumo"></div>
+
+        <div class="painel" style="margin-top:16px">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>forma de pagamento</th>
+                  <th>geradas</th>
+                  <th>pagas</th>
+                  <th>em aberto</th>
+                  <th>não pagas</th>
+                  <th>taxa de pagamento</th>
+                  <th>valor recebido</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-metricas-metodo"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="painel" style="margin-top:16px">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>contratante</th>
+                  <th>geradas</th>
+                  <th>pagas</th>
+                  <th>em aberto</th>
+                  <th>não pagas</th>
+                  <th>taxa de pagamento</th>
+                  <th>valor recebido</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-metricas-contratante"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="painel" id="vazio-metricas" hidden>
+          <div class="vazio">
+            <p class="vazio-titulo">Nenhuma cobrança no período</p>
+            <p class="vazio-texto">Assim que houver cobranças, os números aparecem aqui.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ================= MODAL: contratante (criar e editar) ================= -->
+<dialog id="modal-contratante">
+  <div class="modal">
+    <div class="modal-topo">
+      <div>
+        <h3 class="modal-titulo" id="modal-contratante-titulo">Novo contratante</h3>
+        <p class="modal-descricao" id="modal-contratante-descricao">A api_key é gerada automaticamente no cadastro.</p>
+      </div>
+      <button class="modal-fechar" type="button" data-fechar-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-corpo">
+      <div class="campo" id="campo-contratante-id">
+        <label class="campo-label" for="f-id">id (slug)</label>
+        <input class="campo-input" type="text" id="f-id" placeholder="trimundi9" autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">Letras minúsculas, números e hífen. Vai aparecer na URL do checkout (<code>?c=</code>) e não pode ser alterado depois.</span>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="f-nome">nome</label>
+        <input class="campo-input" type="text" id="f-nome" placeholder="Trimundi Produções" />
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="f-api-base-url">apiBaseUrl</label>
+        <input class="campo-input" type="text" id="f-api-base-url" placeholder="https://api-do-projeto.com" autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">Onde o checkout busca <code>GET /pedido/{id}</code> e <code>GET /plano/{id}</code>.</span>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="f-webhook-url">webhookUrl <span class="celula-fraca">(opcional)</span></label>
+        <input class="campo-input" type="text" id="f-webhook-url" placeholder="https://api-do-projeto.com/webhook" autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">Pra onde as confirmações de pagamento são enviadas.</span>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="f-wallet-id">walletId <span class="celula-fraca">(opcional)</span></label>
+        <input class="campo-input" type="text" id="f-wallet-id" placeholder="cole aqui o wallet_id de uma subconta" autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">Só se for usar split da Asaas. Sem isso, tudo cai na conta-mãe.</span>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label">tipos de cobrança habilitados</label>
+        <div class="grupo-check">
+          <label class="check-pill"><input type="checkbox" id="f-metodo-pix" checked /> Pix</label>
+          <label class="check-pill"><input type="checkbox" id="f-metodo-boleto" checked /> Boleto</label>
+          <label class="check-pill"><input type="checkbox" id="f-metodo-cartao" checked /> Cartão</label>
+          <label class="check-pill"><input type="checkbox" id="f-metodo-assinatura" checked /> Assinatura</label>
+          <label class="check-pill" title="Recorrência sem cartão. Exige que a Asaas tenha habilitado Pix Automático na sua conta."><input type="checkbox" id="f-metodo-assinatura_pix" /> Assinatura por Pix</label>
+        </div>
+        <span class="campo-dica">Método desmarcado some da tela do checkout e é recusado pelo backend. <strong>Assinatura por Pix</strong> nasce desmarcada: depende de a Asaas ter habilitado Pix Automático na conta.</span>
+      </div>
+
+      <div class="erro-inline" id="msg-contratante" hidden></div>
+    </div>
+
+    <div class="modal-rodape">
+      <button class="btn btn-secundario" type="button" data-fechar-modal>Cancelar</button>
+      <button class="btn btn-primario" id="btn-salvar-contratante" type="button">Cadastrar</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ================= MODAL: nova subconta ================= -->
+<dialog id="modal-subconta">
+  <div class="modal">
+    <div class="modal-topo">
+      <div>
+        <h3 class="modal-titulo">Criar subconta na Asaas</h3>
+        <p class="modal-descricao">Todos os dados enviados ficam salvos aqui no painel.</p>
+      </div>
+      <button class="modal-fechar" type="button" data-fechar-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-corpo">
+      <div class="aviso">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        <span>
+          O link de ativação vai para o e-mail informado abaixo — a Asaas
+          nunca devolve esse link pela API. Assim que ele chegar, cole na
+          subconta pra guardar o acesso.
+        </span>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="s-nome">nome / razão social</label>
+        <input class="campo-input" type="text" id="s-nome" />
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="s-email">e-mail</label>
+        <input class="campo-input" type="email" id="s-email" autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">Recebe o link de ativação da Asaas.</span>
+      </div>
+
+      <div class="campo-grade">
+        <div class="campo">
+          <label class="campo-label" for="s-documento">CPF ou CNPJ</label>
+          <input class="campo-input" type="text" id="s-documento" inputmode="numeric" />
+        </div>
+        <div class="campo">
+          <label class="campo-label" for="s-faturamento">faturamento mensal (R$)</label>
+          <input class="campo-input" type="text" id="s-faturamento" inputmode="decimal" placeholder="5000" />
+        </div>
+      </div>
+
+      <div class="campo-grade">
+        <div class="campo">
+          <label class="campo-label" for="s-celular">celular</label>
+          <input class="campo-input" type="text" id="s-celular" inputmode="numeric" />
+        </div>
+        <div class="campo">
+          <label class="campo-label" for="s-telefone">telefone <span class="celula-fraca">(opcional)</span></label>
+          <input class="campo-input" type="text" id="s-telefone" inputmode="numeric" />
+        </div>
+      </div>
+
+      <div class="campo-grade">
+        <div class="campo">
+          <label class="campo-label" for="s-cep">CEP</label>
+          <input class="campo-input" type="text" id="s-cep" inputmode="numeric" />
+          <span class="campo-dica">Preenche endereço e bairro sozinho.</span>
+        </div>
+        <div class="campo">
+          <label class="campo-label" for="s-bairro">bairro</label>
+          <input class="campo-input" type="text" id="s-bairro" />
+        </div>
+      </div>
+
+      <div class="campo-grade-3">
+        <div class="campo" style="grid-column: span 2">
+          <label class="campo-label" for="s-endereco">endereço</label>
+          <input class="campo-input" type="text" id="s-endereco" />
+        </div>
+        <div class="campo">
+          <label class="campo-label" for="s-endereco-numero">número</label>
+          <input class="campo-input" type="text" id="s-endereco-numero" />
+        </div>
+      </div>
+
+      <div class="campo">
+        <label class="campo-label" for="s-complemento">complemento <span class="celula-fraca">(opcional)</span></label>
+        <input class="campo-input" type="text" id="s-complemento" />
+      </div>
+
+      <!-- Só um dos dois é exigido pela Asaas, conforme o documento. O JS
+           mostra/esconde os dois conforme o CPF/CNPJ digitado. -->
+      <div class="campo" id="campo-tipo-empresa" hidden>
+        <label class="campo-label" for="s-tipo-empresa">tipo de empresa</label>
+        <select class="campo-input" id="s-tipo-empresa">
+          <option value="MEI">MEI</option>
+          <option value="LIMITED">Limitada (LTDA)</option>
+          <option value="INDIVIDUAL">Individual</option>
+          <option value="ASSOCIATION">Associação</option>
+        </select>
+        <span class="campo-dica">Exigido pela Asaas quando o documento é CNPJ.</span>
+      </div>
+
+      <div class="campo" id="campo-data-nascimento" hidden>
+        <label class="campo-label" for="s-data-nascimento">data de nascimento</label>
+        <input class="campo-input" type="date" id="s-data-nascimento" />
+        <span class="campo-dica">Exigido pela Asaas quando o documento é CPF.</span>
+      </div>
+
+      <div class="erro-inline" id="msg-subconta" hidden></div>
+    </div>
+
+    <div class="modal-rodape">
+      <button class="btn btn-secundario" type="button" data-fechar-modal>Cancelar</button>
+      <button class="btn btn-primario" id="btn-criar-subconta" type="button">Criar subconta</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ================= MODAL: link de ativação ================= -->
+<dialog id="modal-link">
+  <div class="modal">
+    <div class="modal-topo">
+      <div>
+        <h3 class="modal-titulo">Link de ativação</h3>
+        <p class="modal-descricao" id="modal-link-descricao">Cole o link que a Asaas enviou por e-mail.</p>
+      </div>
+      <button class="modal-fechar" type="button" data-fechar-modal>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-corpo">
+      <div class="campo">
+        <label class="campo-label" for="f-link-ativacao">URL</label>
+        <input class="campo-input" type="text" id="f-link-ativacao" placeholder="https://..." autocapitalize="off" spellcheck="false" />
+        <span class="campo-dica">
+          Fica salvo nesta subconta e vira o botão “Entrar na subconta”.
+        </span>
+      </div>
+      <div class="erro-inline" id="msg-link" hidden></div>
+    </div>
+
+    <div class="modal-rodape">
+      <button class="btn btn-secundario" type="button" data-fechar-modal>Cancelar</button>
+      <button class="btn btn-primario" id="btn-salvar-link" type="button">Salvar link</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast-container" id="toasts"></div>
 
 <script type="module" src="js/admin.js"></script>
 </body>

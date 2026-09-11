@@ -42,6 +42,16 @@
         <section class="order-summary" aria-label="Resumo do Pedido">
           <span class="order-subtitle" id="order-category">Produto / Serviço</span>
           <h1 class="order-title" id="order-title">Carregando detalhes...</h1>
+
+          <!-- Contagem regressiva REAL, vinda do `expiraEm` do pedido —
+               não é escassez de marketing. Só aparece quando o
+               contratante mandou uma expiração de verdade. -->
+          <div class="order-timer hidden" id="order-timer" role="status" aria-live="polite">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+            </svg>
+            <span id="order-timer-texto">Reserva expira em <strong id="order-timer-valor">--:--</strong></span>
+          </div>
           <div class="order-items-list hidden" id="order-items-list"></div>
           <p class="order-description hidden" id="order-description"></p>
 
@@ -186,6 +196,13 @@
                   <span class="status-pulse"></span>
                   <span class="status-text" id="pix-status-message">Aguardando pagamento em tempo real...</span>
                 </div>
+
+                <!-- Link permanente: sem isso, fechar a aba perde o QR e
+                     vira chamado de suporte. Preenchido por app.js. -->
+                <div class="link-permanente hidden" id="link-permanente-pix">
+                  <span>Precisa fechar esta página?</span>
+                  <a href="#" id="link-status-pix">Salve este link para voltar ao pagamento</a>
+                </div>
               </div>
             </div>
           </div>
@@ -222,6 +239,15 @@
               <button type="button" class="btn-primary" id="btn-continuar-cartao">
                 <span>Continuar</span>
               </button>
+
+              <!-- Cartão recusado deixava o comprador sem saída: a
+                   pop-up fecha e não sobra caminho nenhum. Aqui ele
+                   troca pro Pix num clique. Só aparece se o contratante
+                   tiver Pix habilitado (app.js decide). -->
+              <div class="saida-alternativa hidden" id="saida-pix-cartao">
+                <p>O pagamento por cartão não foi concluído. Você pode pagar por Pix agora — a confirmação é imediata.</p>
+                <button type="button" class="btn-secondary" id="btn-tentar-pix">Pagar com Pix</button>
+              </div>
             </div>
           </div>
 
@@ -260,6 +286,13 @@
                   <span class="status-pulse"></span>
                   <span class="status-text" id="boleto-status-message">Aguardando confirmação do pagamento (pode levar até 3 dias úteis)...</span>
                 </div>
+
+                <!-- Boleto vence em 3 dias: o link permanente é ainda
+                     mais necessário aqui do que no Pix. -->
+                <div class="link-permanente hidden" id="link-permanente-boleto">
+                  <span>Precisa da segunda via depois?</span>
+                  <a href="#" id="link-status-boleto">Salve este link para reabrir o boleto</a>
+                </div>
               </div>
             </div>
           </div>
@@ -274,6 +307,37 @@
           <button type="button" class="btn-primary" id="btn-assinar">
             <span>Assinar Agora</span>
           </button>
+
+          <!-- Pix Automático: recorrência sem cartão. Só aparece se o
+               contratante tiver esse método habilitado (app.js decide) —
+               ele depende de a Asaas ter liberado o recurso na conta. -->
+          <div class="assinatura-pix hidden" id="assinatura-pix-bloco">
+            <div class="assinatura-pix-ou"><span>ou</span></div>
+            <button type="button" class="btn-secondary" id="btn-assinar-pix">
+              Assinar com Pix — sem cartão
+            </button>
+            <p class="assinatura-pix-nota">
+              Você lê um QR Code no app do banco. Esse mesmo QR paga a
+              primeira cobrança e autoriza as próximas automaticamente.
+            </p>
+
+            <div class="pix-result hidden" id="assinatura-pix-resultado">
+              <div class="qr-wrapper">
+                <img id="assinatura-pix-qr" class="qr-image" src="" alt="QR Code para autorizar a assinatura por Pix" />
+              </div>
+              <div class="pix-copy-group">
+                <label for="assinatura-pix-codigo">Código Pix Copia e Cola</label>
+                <div class="copy-input-wrapper">
+                  <input type="text" id="assinatura-pix-codigo" readonly aria-label="Código Pix Copia e Cola" />
+                  <button type="button" class="btn-secondary" id="btn-copy-assinatura-pix">Copiar</button>
+                </div>
+              </div>
+              <div class="pix-status-tracker">
+                <span class="status-pulse"></span>
+                <span class="status-text">Aguardando a autorização no app do seu banco...</span>
+              </div>
+            </div>
+          </div>
         </div>
       </form>
 

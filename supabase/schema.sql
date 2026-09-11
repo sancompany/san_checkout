@@ -17,6 +17,7 @@ create table if not exists contratantes (
   webhook_url text,                       -- pra onde a confirmação de pagamento é enviada
   wallet_id text,                         -- Asaas walletId, se for usar split
   drive_folder_id text,                   -- reservado pra próxima leva (nota fiscal no Drive)
+  metodos_habilitados text[] not null default array['pix','boleto','cartao','assinatura'], -- quais métodos esse contratante pode cobrar
   criado_em timestamptz not null default now()
 );
 
@@ -40,6 +41,7 @@ create table if not exists cobrancas (
   documento text,                         -- CPF (pessoa física) ou CNPJ (pessoa jurídica) do pagador
   email text,                             -- coletado em todos os métodos (front sempre pede) —
                                            -- usado só pro e-mail de confirmação (seção 9).
+  substitui_assinatura_id text,           -- v3.4: assinatura que esta cobrança substitui (renovação)
   asaas_subscription_id text,             -- id da assinatura na Asaas — só em cobranças
                                            -- 'assinatura' (1ª cobrança E cada ciclo seguinte),
                                            -- é o que liga um ciclo novo de volta à assinatura
@@ -72,7 +74,11 @@ create table if not exists cobrancas (
   nota_fiscal_status text default 'pendente', -- pendente | autorizada | cancelamento_em_processamento |
                                            -- cancelamento_solicitado | cancelada | cancelamento_negado
   status text not null default 'pendente', -- pendente | confirmado | estornado | estorno_solicitado |
-                                           -- estorno_negado | vencido | cancelado | expirado
+                                           -- estorno_negado | vencido | cancelado | expirado |
+                                           -- em_analise | recusado | chargeback
+                                           -- (os três últimos entraram na v3.2 — antes esses
+                                           --  eventos da Asaas caíam no "não mapeado" e o pedido
+                                           --  ficava pendente pra sempre do lado do contratante)
   criado_em timestamptz not null default now(),
   atualizado_em timestamptz not null default now()
 );
@@ -82,10 +88,26 @@ create table if not exists cobrancas (
 -- tanto em banco novo quanto em produção já criada.
 alter table cobrancas
   add column if not exists email text,
-  add column if not exists asaas_subscription_id text;
+  add column if not exists asaas_subscription_id text,
+  -- v3.4: renovação de assinatura. Guarda o id da assinatura que esta
+  -- cobrança vem substituir — a antiga só é cancelada quando a nova
+  -- confirma, e só quando o link trouxe `&renovar=1`.
+  add column if not exists substitui_assinatura_id text;
 
 create index if not exists idx_cobrancas_contratante on cobrancas(contratante_id);
 create index if not exists idx_cobrancas_pedido on cobrancas(contratante_id, pedido_id);
+
+-- Trava de duplicidade: no máximo UMA cobrança pendente por
+-- pedido+método. A checagem principal é no código
+-- (checkoutController.reaproveitarCobrancaPendente), mas ela tem uma
+-- janela de corrida — duas requisições simultâneas passam as duas pela
+-- consulta antes de qualquer insert. Este índice é o que realmente
+-- impede o segundo registro. Índice PARCIAL de propósito: só vale
+-- enquanto está 'pendente', então o mesmo pedido pode ter uma cobrança
+-- nova depois que a anterior venceu ou foi cancelada.
+create unique index if not exists idx_cobrancas_pendente_unica
+  on cobrancas(contratante_id, pedido_id, metodo_pagamento)
+  where status = 'pendente' and pedido_id is not null;
 create index if not exists idx_cobrancas_checkout on cobrancas(asaas_checkout_id);
 create index if not exists idx_cobrancas_subscription on cobrancas(asaas_subscription_id);
 
@@ -101,7 +123,9 @@ create table if not exists assinaturas (
   documento text not null,                -- CPF ou CNPJ do assinante
   valor numeric(10,2) not null,
   ciclo text not null,
-  status text not null default 'ativa',   -- ativa | cancelada
+  status text not null default 'ativa',   -- ativa | pausada | cancelada
+                                          -- (pausada = v3.3; 'cancelada' é definitivo na Asaas,
+                                          --  'pausada' volta a cobrar quando reativada)
   proxima_cobranca timestamptz,
   criado_em timestamptz not null default now()
 );
@@ -109,6 +133,57 @@ alter table assinaturas
   add column if not exists plano_id text;
 
 create index if not exists idx_assinaturas_contratante_plano_documento on assinaturas(contratante_id, plano_id, documento);
+
+-- Subcontas Asaas — criadas via API (POST /v3/accounts) pela tela
+-- admin, pra automatizar o que antes era manual (abrir conta na Asaas
+-- e colar o walletId à mão). Modelo NÃO-BaaS: a Asaas manda e-mail de
+-- ativação pro endereço informado aqui — quem ativa e acessa o painel
+-- da Asaas é sempre o operador (nunca o contratante final). Tabela
+-- separada de `contratantes` de propósito — o wallet_id gerado aqui
+-- ainda precisa ser colado à mão no contratante certo (mesmo
+-- princípio de sempre: dado que move dinheiro nunca é ligado
+-- automaticamente entre tabelas).
+create table if not exists subcontas (
+  id uuid primary key default gen_random_uuid(),
+  asaas_account_id text,                  -- id da conta na Asaas (campo `id` da resposta)
+  nome text not null,
+  email text not null,
+  documento text not null,                -- CPF ou CNPJ de quem abre a subconta
+  telefone text,
+  celular text,
+  endereco text,
+  endereco_numero text,
+  complemento text,
+  bairro text,
+  cep text,
+  faturamento numeric(12,2),              -- incomeValue, exigido pela Asaas na criação
+  tipo_empresa text,                      -- companyType — só quando documento é CNPJ
+  data_nascimento date,                   -- birthDate — só quando documento é CPF
+  wallet_id text,                         -- devolvido pela Asaas na criação
+  api_key text,                           -- devolvido pela Asaas na criação — guardado porque foi
+                                           -- pedido explicitamente; mesma exposição que
+                                           -- contratantes.api_key já tem hoje (tela só do
+                                           -- operador, atrás de autenticação).
+  link_ativacao text,                     -- colado manualmente depois — a Asaas só manda esse
+                                           -- link por e-mail, nunca devolve na resposta da API.
+  -- Situação cadastral, preenchida pelos webhooks ACCOUNT_STATUS_* da
+  -- Asaas (v3.3). Valores: APPROVED | AWAITING_APPROVAL | PENDING |
+  -- REJECTED. Antes disso a aprovação era conferida na mão no painel.
+  situacao_geral text,
+  situacao_comercial text,
+  situacao_bancaria text,
+  situacao_documentos text,
+  situacao_atualizada_em timestamptz,
+  criado_em timestamptz not null default now()
+);
+-- `create table if not exists` é no-op em tabela já criada — por isso as
+-- colunas de situação entram também via alter (v3.3).
+alter table subcontas
+  add column if not exists situacao_geral text,
+  add column if not exists situacao_comercial text,
+  add column if not exists situacao_bancaria text,
+  add column if not exists situacao_documentos text,
+  add column if not exists situacao_atualizada_em timestamptz;
 
 -- ---------------------------------------------------------------------
 -- MIGRAÇÃO (rodar manualmente no SQL Editor do Supabase se a tabela
@@ -133,6 +208,25 @@ create index if not exists idx_assinaturas_contratante_plano_documento on assina
 -- alter table cobrancas rename column cpf to documento;
 -- alter table assinaturas rename column cpf to documento;
 -- alter index idx_assinaturas_contratante_plano_cpf rename to idx_assinaturas_contratante_plano_documento;
+--
+-- MIGRAÇÃO v3 (tipos de cobrança) — rodar manualmente se a tabela
+-- `contratantes` já existe em produção/sandbox:
+--
+-- alter table contratantes
+--   add column if not exists metodos_habilitados text[] not null default array['pix','boleto','cartao','assinatura'];
+--
+-- MIGRAÇÃO v3.1 (trava de cobrança duplicada) — rodar manualmente se a
+-- tabela `cobrancas` já existe. Se a criação falhar por duplicidade já
+-- existente, rode antes o SELECT abaixo pra ver os pedidos com mais de
+-- uma cobrança pendente e resolva na mão (cancele as extras na Asaas):
+--
+-- select contratante_id, pedido_id, metodo_pagamento, count(*)
+--   from cobrancas where status = 'pendente' and pedido_id is not null
+--   group by 1,2,3 having count(*) > 1;
+--
+-- create unique index if not exists idx_cobrancas_pendente_unica
+--   on cobrancas(contratante_id, pedido_id, metodo_pagamento)
+--   where status = 'pendente' and pedido_id is not null;
 -- ---------------------------------------------------------------------
 
 -- RLS — o backend só usa a SUPABASE_SERVICE_KEY (service_role), que
@@ -143,3 +237,4 @@ create index if not exists idx_assinaturas_contratante_plano_documento on assina
 alter table contratantes enable row level security;
 alter table cobrancas enable row level security;
 alter table assinaturas enable row level security;
+alter table subcontas enable row level security;

@@ -1,0 +1,67 @@
+/**
+ * public/css/components/status.css
+ * Página de status do pagamento (public/status.html) — a que devolve a
+ * segunda via do Pix/boleto pra quem fechou a aba.
+ *
+ * Reaproveita card.css e forms.css (QR, copy-group, botões); aqui só o
+ * que é específico desta tela. Mesma paleta do checkout, como tudo.
+ */
+
+.status-page { padding: 32px 28px 28px; }
+
+.status-header { display: flex; justify-content: center; margin-bottom: 24px; }
+.status-header .brand-logo { height: 26px; width: auto; }
+
+.status-bloco { text-align: center; }
+
+.status-carregando { color: var(--text-muted); font-size: 0.875rem; padding: 32px 0; }
+
+.status-selo {
+  display: inline-block; font-size: 0.6875rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 5px 12px; border-radius: var(--radius-badge); margin-bottom: 12px;
+}
+.status-selo--pago { background: rgba(5, 150, 105, 0.10); color: var(--status-success); }
+.status-selo--aguardando { background: rgba(217, 119, 6, 0.12); color: var(--status-warning); }
+.status-selo--encerrado { background: rgba(220, 38, 38, 0.09); color: var(--status-error); }
+.status-selo--neutro { background: var(--bg-input); color: var(--text-secondary); }
+
+.status-titulo {
+  font-size: 1.125rem; font-weight: 700; color: var(--text-main);
+  letter-spacing: -0.01em; margin-bottom: 6px;
+}
+.status-texto {
+  font-size: 0.875rem; color: var(--text-secondary);
+  max-width: 38ch; margin: 0 auto; line-height: 1.55;
+}
+
+.status-resumo {
+  margin: 24px 0 0; padding: 16px 0 4px;
+  border-top: 1px solid var(--border-color);
+  text-align: left;
+}
+.status-resumo-linha {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 16px; padding: 7px 0; font-size: 0.875rem;
+}
+.status-resumo-linha dt { color: var(--text-secondary); }
+.status-resumo-linha dd { margin: 0; font-weight: 600; color: var(--text-main); }
+
+.status-pagamento {
+  margin-top: 20px; padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+}
+
+.status-vencimento { font-size: 0.8125rem; color: var(--text-secondary); }
+
+.status-botao { width: 100%; text-align: center; text-decoration: none; }
+
+.status-rodape {
+  margin-top: 22px; font-size: 0.75rem; color: var(--text-muted);
+  line-height: 1.5; max-width: 40ch; margin-left: auto; margin-right: auto;
+}
+
+@media (max-width: 480px) {
+  .status-page { padding: 24px 18px; }
+}

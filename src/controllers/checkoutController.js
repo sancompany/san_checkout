@@ -14,13 +14,48 @@
 
 import { resolverPedido, buscarContratante } from '../services/pedidoService.js';
 import { calcularTaxa } from '../services/taxaService.js';
-import { buscarOuCriarCliente, criarCobrancaPix, criarCobrancaBoleto, consultarStatus } from '../services/asaasService.js';
-import { registrarCobranca } from '../services/cobrancaService.js';
+import {
+  buscarOuCriarCliente,
+  criarCobrancaPix,
+  criarCobrancaBoleto,
+  consultarStatus,
+  recuperarCobrancaPix,
+  recuperarCobrancaBoleto
+} from '../services/asaasService.js';
+import { registrarCobranca, buscarCobrancaPendenteDoPedido } from '../services/cobrancaService.js';
 import { documentoValido, emailValido, valorValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function gerarReferenciaExterna(documento) {
   return `${documento}-${Date.now()}`;
+}
+
+/**
+ * Devolve a cobrança pendente que já existe pra esse pedido+método, se
+ * ainda estiver pagável na Asaas. É o que impede a duplicidade: o
+ * comprador que recarrega a página e clica de novo recebe o MESMO
+ * Pix/boleto, em vez de um segundo igualmente pagável.
+ *
+ * Qualquer erro aqui é engolido de propósito: se a consulta falhar, o
+ * pior caso é cair no comportamento antigo (criar uma nova cobrança) —
+ * inaceitável seria a consulta derrubar um pagamento que ia dar certo.
+ *
+ * @param {Function} recuperar — recuperarCobrancaPix ou recuperarCobrancaBoleto
+ */
+async function reaproveitarCobrancaPendente({ contratanteId, pedidoId, metodo, recuperar }) {
+  try {
+    const pendente = await buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodo);
+    if (!pendente?.charge_id) return null;
+
+    const viva = await recuperar(pendente.charge_id);
+    if (!viva) return null;
+
+    console.log(`[checkout/${metodo}] reaproveitando cobrança ${pendente.charge_id} do pedido ${pedidoId} (evitou duplicidade)`);
+    return viva;
+  } catch (erro) {
+    console.error(`[checkout/${metodo}] falha ao checar cobrança pendente do pedido ${pedidoId}:`, erro.message);
+    return null;
+  }
 }
 
 export async function gerarPix(requisicao, resposta) {
@@ -36,7 +71,20 @@ export async function gerarPix(requisicao, resposta) {
   try {
     // Nunca confia no valor mandado pelo front — resolve o pedido de
     // novo, direto na fonte, na hora de cobrar.
-    const { pedido } = await resolverPedido(contratanteId, pedidoId);
+    const { pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'pix' });
+
+    // Antes de criar: esse pedido já tem Pix pendente e pagável?
+    const jaExiste = await reaproveitarCobrancaPendente({
+      contratanteId, pedidoId, metodo: 'pix', recuperar: recuperarCobrancaPix
+    });
+    if (jaExiste) {
+      return resposta.json({
+        chargeId: jaExiste.chargeId,
+        qrCodeBase64: jaExiste.qrCodeBase64,
+        copiaECola: jaExiste.copiaECola,
+        reaproveitada: true
+      });
+    }
 
     const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);
     if (!valorValido(valorBase)) {
@@ -119,13 +167,29 @@ export async function gerarBoleto(requisicao, resposta) {
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
-    const { pedido } = await resolverPedido(contratanteId, pedidoId);
+    const { pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'boleto' });
 
     // Reforço de segurança — o front já esconde o Boleto quando o
     // pedido tem expiraEm (VISAO_COMPLETA.md 4.3), mas o backend NUNCA
     // confia só na validação do front.
     if (pedido.expiraEm) {
       return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });
+    }
+
+    // Boleto duplicado é pior que Pix duplicado: o antigo segue pagável
+    // por dias. Mesma checagem, mesmo motivo.
+    const jaExiste = await reaproveitarCobrancaPendente({
+      contratanteId, pedidoId, metodo: 'boleto', recuperar: recuperarCobrancaBoleto
+    });
+    if (jaExiste) {
+      return resposta.json({
+        chargeId: jaExiste.chargeId,
+        boletoUrl: jaExiste.boletoUrl,
+        linhaDigitavel: jaExiste.linhaDigitavel,
+        codigoBarras: jaExiste.codigoBarras,
+        vencimento: jaExiste.vencimento,
+        reaproveitada: true
+      });
     }
 
     const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);

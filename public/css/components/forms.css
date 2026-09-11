@@ -70,3 +70,41 @@ select:focus { border-color: var(--border-focus); box-shadow: var(--shadow-input
 .checkbox-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand-primary); cursor: pointer; flex-shrink: 0; }
 .checkbox-row--termos { margin-top: 24px; align-items: flex-start; font-size: 0.75rem; color: var(--text-muted); }
 .checkbox-row--termos a { color: var(--action-primary); text-decoration: underline; }
+
+/* Link permanente pro status do pagamento — aparece junto do Pix/boleto
+   gerado. É o que evita que fechar a aba vire chamado de suporte. */
+.link-permanente {
+  width: 100%; text-align: center; padding-top: 14px;
+  border-top: 1px dashed var(--border-color);
+  font-size: 0.75rem; color: var(--text-muted);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.link-permanente a {
+  color: var(--action-primary); font-weight: 600; text-decoration: none;
+  word-break: break-all;
+}
+.link-permanente a:hover { text-decoration: underline; }
+
+/* Saída alternativa quando o cartão é recusado — troca "sem saída" por
+   "pague de outro jeito agora". */
+.saida-alternativa {
+  margin-top: 16px; padding: 14px;
+  background: var(--bg-summary); border: 1px solid var(--border-color);
+  border-radius: var(--radius-input);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.saida-alternativa p { font-size: 0.8125rem; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+
+/* Assinatura por Pix Automático — alternativa sem cartão, oferecida
+   abaixo do botão principal de assinar. */
+.assinatura-pix { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.assinatura-pix-ou {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.assinatura-pix-ou::before, .assinatura-pix-ou::after {
+  content: ''; flex: 1; height: 1px; background: var(--border-color);
+}
+.assinatura-pix-nota {
+  font-size: 0.75rem; color: var(--text-muted); text-align: center; line-height: 1.5; margin: 0;
+}

@@ -1,0 +1,359 @@
+/**
+ * public/css/admin.css
+ * Painel administrativo do San Checkout.
+ *
+ * Herda a MESMA paleta do checkout (css/theme-engine.css) — nada de cor
+ * hardcoded aqui fora de transparências. De propósito NÃO importa
+ * base.css: aquele centraliza o body com flex pro card único do
+ * checkout, o que briga com um layout de painel de largura cheia.
+ *
+ * Layout: topbar + sidebar + conteúdo — padrão de console de gateway
+ * (Stripe, Asaas, Mercado Pago): navegação lateral fixa por seção,
+ * cabeçalho de seção com a ação primária à direita, listas em tabela
+ * com estado vazio explícito, e segredo (api_key) sempre mascarado com
+ * botão de revelar/copiar em vez de impresso na tela.
+ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; height: 100%; }
+body {
+  min-height: 100%;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+img, svg { display: block; max-width: 100%; }
+button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; }
+input, select { font-family: inherit; font-size: inherit; }
+[hidden] { display: none !important; }
+
+/* ------------------------------------------------------------------
+   Tela de login — mesmo formato do card do checkout (branco, canto
+   generoso, sombra elevada), que é justamente o visual aprovado.
+------------------------------------------------------------------ */
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+.login-card {
+  width: 100%; max-width: 400px;
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 40px 32px 32px;
+}
+.login-logo { height: 34px; width: auto; margin: 0 auto 24px; }
+.login-title { font-size: 1.125rem; font-weight: 700; text-align: center; letter-spacing: -0.01em; }
+.login-subtitle { font-size: 0.8125rem; color: var(--text-muted); text-align: center; margin-top: 4px; margin-bottom: 28px; }
+
+/* ------------------------------------------------------------------
+   Shell do painel
+------------------------------------------------------------------ */
+.topbar {
+  height: 64px; background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 24px; position: sticky; top: 0; z-index: 20;
+}
+.topbar-logo { height: 24px; width: auto; }
+.topbar-divider { width: 1px; height: 22px; background: var(--border-color); }
+.topbar-title { font-size: 0.875rem; font-weight: 600; letter-spacing: -0.01em; }
+.topbar-spacer { flex: 1; }
+.topbar-user {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.8125rem; color: var(--text-secondary);
+  background: var(--bg-input); border: 1px solid var(--border-color);
+  border-radius: 999px; padding: 6px 14px;
+}
+.topbar-user-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-success); flex: none; }
+
+.app-body { display: grid; grid-template-columns: 232px minmax(0, 1fr); align-items: start; }
+
+.sidebar { padding: 24px 16px; position: sticky; top: 64px; }
+.sidebar-label {
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted); padding: 0 12px; margin-bottom: 10px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 12px; border-radius: var(--radius-btn);
+  font-size: 0.875rem; font-weight: 500; color: var(--text-secondary);
+  text-align: left; transition: background var(--transition-fast), color var(--transition-fast);
+}
+.nav-item:hover { background: var(--bg-input-hover); color: var(--text-main); }
+.nav-item.ativo { background: var(--bg-card); color: var(--text-main); font-weight: 600; box-shadow: var(--shadow-elevated); }
+.nav-item.ativo .nav-icon { color: var(--brand-primary); }
+.nav-icon { width: 17px; height: 17px; flex: none; color: var(--text-muted); }
+.nav-contador {
+  margin-left: auto; font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+  background: var(--bg-input); border-radius: var(--radius-badge); padding: 1px 7px; min-width: 22px; text-align: center;
+}
+
+.conteudo { padding: 28px 28px 64px; min-width: 0; }
+.secao-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.secao-titulo { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+.secao-descricao { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px; max-width: 62ch; }
+.secao-header-acoes { margin-left: auto; display: flex; gap: 8px; }
+
+/* ------------------------------------------------------------------
+   Botões
+------------------------------------------------------------------ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 40px; padding: 0 18px; border-radius: var(--radius-btn);
+  font-size: 0.875rem; font-weight: 600; white-space: nowrap; text-decoration: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+}
+.btn svg { width: 16px; height: 16px; }
+.btn-primario { background: var(--action-primary); color: var(--text-on-primary); box-shadow: var(--shadow-btn); }
+.btn-primario:hover { background: var(--action-primary-hover); }
+.btn-secundario { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-input); }
+.btn-secundario:hover { background: var(--bg-input-hover); }
+.btn-fantasma { color: var(--text-secondary); padding: 0 10px; }
+.btn-fantasma:hover { background: var(--bg-input-hover); color: var(--text-main); }
+.btn-marca { background: var(--brand-primary); color: var(--text-on-primary); }
+.btn-marca:hover { background: var(--brand-primary-hover); }
+.btn-bloco { width: 100%; height: 46px; margin-top: 8px; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-mini { height: 30px; padding: 0 12px; font-size: 0.75rem; font-weight: 600; border-radius: 8px; }
+
+/* ------------------------------------------------------------------
+   Formulários
+------------------------------------------------------------------ */
+.campo { margin-bottom: 16px; }
+.campo-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+.campo-dica { display: block; font-size: 0.75rem; color: var(--text-muted); margin-top: 5px; }
+.campo-input {
+  width: 100%; height: 44px; padding: 0 14px;
+  background: var(--bg-input); border: 1px solid var(--border-input);
+  border-radius: var(--radius-input); color: var(--text-main); font-size: 0.9375rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+.campo-input::placeholder { color: var(--text-muted); }
+.campo-input:hover { background: var(--bg-input-hover); }
+.campo-input:focus {
+  outline: none; background: var(--bg-card);
+  border-color: var(--border-focus); box-shadow: var(--shadow-input-focus);
+}
+.campo-grade { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.campo-grade-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; }
+
+.grupo-check { display: flex; flex-wrap: wrap; gap: 8px; }
+.check-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: var(--radius-btn);
+  background: var(--bg-input); border: 1px solid var(--border-input);
+  font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.check-pill:hover { background: var(--bg-input-hover); }
+.check-pill input { width: 15px; height: 15px; accent-color: var(--action-primary); cursor: pointer; }
+.check-pill:has(input:checked) {
+  background: var(--bg-card); border-color: var(--action-primary); color: var(--text-main);
+}
+
+/* ------------------------------------------------------------------
+   Cards, tabelas e estados
+------------------------------------------------------------------ */
+.painel {
+  background: var(--bg-card); border: 1px solid var(--border-color);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-elevated); overflow: hidden;
+}
+.tabela-rolagem { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+thead th {
+  text-align: left; font-weight: 600; font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted); padding: 12px 16px; background: var(--bg-summary);
+  border-bottom: 1px solid var(--border-color); white-space: nowrap;
+}
+tbody td { padding: 14px 16px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--bg-summary); }
+.celula-principal { font-weight: 600; color: var(--text-main); }
+.celula-fraca { color: var(--text-muted); }
+.celula-url { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.acoes-linha { display: flex; gap: 6px; justify-content: flex-end; }
+
+.vazio { padding: 48px 24px; text-align: center; }
+.vazio-titulo { font-size: 0.9375rem; font-weight: 600; margin-bottom: 4px; }
+.vazio-texto { font-size: 0.8125rem; color: var(--text-muted); }
+
+.badge-id {
+  display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem; background: var(--bg-input); border: 1px solid var(--border-color);
+  border-radius: var(--radius-badge); padding: 2px 8px; color: var(--text-main);
+}
+.pill {
+  display: inline-block; font-size: 0.6875rem; font-weight: 600;
+  border-radius: var(--radius-badge); padding: 3px 8px; white-space: nowrap;
+}
+.pill-metodo { background: rgba(37, 99, 235, 0.09); color: var(--action-primary); }
+.pill-ok { background: rgba(5, 150, 105, 0.10); color: var(--status-success); }
+.pill-pendente { background: rgba(217, 119, 6, 0.12); color: var(--status-warning); }
+.pill-erro { background: rgba(220, 38, 38, 0.09); color: var(--status-error); }
+.pill-linha { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Segredo mascarado — padrão de console de pagamento (Stripe/Asaas):
+   a chave nunca aparece na tela até alguém pedir explicitamente. */
+.segredo { display: inline-flex; align-items: center; gap: 4px; }
+.segredo-valor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem;
+  background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-badge);
+  padding: 3px 8px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-secondary);
+}
+.segredo-valor.revelado { color: var(--text-main); user-select: all; }
+.segredo-btn {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
+  color: var(--text-muted); transition: background var(--transition-fast), color var(--transition-fast);
+}
+.segredo-btn:hover { background: var(--bg-input-hover); color: var(--text-main); }
+.segredo-btn svg { width: 15px; height: 15px; }
+
+/* ------------------------------------------------------------------
+   Subcontas — card por conta (muitos campos + duas credenciais + ação,
+   não cabe bem numa linha de tabela).
+------------------------------------------------------------------ */
+.lista-subcontas { display: grid; gap: 16px; }
+.subconta-card {
+  background: var(--bg-card); border: 1px solid var(--border-color);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-elevated); overflow: hidden;
+}
+.subconta-topo { display: flex; align-items: flex-start; gap: 12px; padding: 20px 20px 16px; flex-wrap: wrap; }
+.subconta-nome { font-size: 0.9375rem; font-weight: 700; letter-spacing: -0.01em; }
+.subconta-doc { font-size: 0.8125rem; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.subconta-status { margin-left: auto; }
+.subconta-dados {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 20px;
+  padding: 0 20px 18px;
+}
+.dado-rotulo { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px; }
+.dado-valor { font-size: 0.8125rem; color: var(--text-main); word-break: break-word; }
+.subconta-credenciais {
+  display: flex; flex-wrap: wrap; gap: 16px 28px;
+  padding: 16px 20px; background: var(--bg-summary); border-top: 1px solid var(--border-color);
+}
+.subconta-rodape {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 16px 20px; border-top: 1px solid var(--border-color);
+}
+.rodape-nota { font-size: 0.75rem; color: var(--text-muted); margin-right: auto; max-width: 46ch; }
+
+/* ------------------------------------------------------------------
+   Modais — <dialog> nativo (sem biblioteca; ESC e backdrop de graça)
+------------------------------------------------------------------ */
+dialog {
+  /* `margin: auto` é o que centraliza um <dialog> nativo — o reset com
+     `* { margin: 0 }` lá em cima mata o default do navegador, então
+     precisa voltar explicitamente aqui. */
+  margin: auto;
+  border: none; padding: 0; background: transparent;
+  max-width: min(560px, calc(100vw - 32px)); width: 100%;
+  max-height: calc(100vh - 48px);
+}
+dialog::backdrop { background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(2px); }
+.modal {
+  background: var(--bg-card); border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card); display: flex; flex-direction: column; max-height: calc(100vh - 48px);
+}
+.modal-topo {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 24px 24px 16px; border-bottom: 1px solid var(--border-color);
+}
+.modal-titulo { font-size: 1.0625rem; font-weight: 700; letter-spacing: -0.01em; }
+.modal-descricao { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px; }
+.modal-fechar {
+  margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; flex: none;
+  border-radius: 8px; color: var(--text-muted);
+}
+.modal-fechar:hover { background: var(--bg-input-hover); color: var(--text-main); }
+.modal-fechar svg { width: 18px; height: 18px; }
+.modal-corpo { padding: 20px 24px; overflow-y: auto; }
+.modal-rodape {
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding: 16px 24px; border-top: 1px solid var(--border-color); background: var(--bg-summary);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+}
+
+.aviso {
+  display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--radius-input);
+  background: rgba(217, 119, 6, 0.08); border: 1px solid rgba(217, 119, 6, 0.22);
+  font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 20px;
+}
+.aviso svg { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--status-warning); }
+
+.erro-inline { font-size: 0.8125rem; color: var(--status-error); margin-top: 12px; }
+
+/* ------------------------------------------------------------------
+   Toasts — mesmo comportamento do checkout (base.css), replicado aqui
+   porque o admin não importa base.css.
+------------------------------------------------------------------ */
+.toast-container {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 9999;
+  width: calc(100% - 32px); max-width: 420px; pointer-events: none;
+}
+.toast {
+  pointer-events: auto; background: var(--bg-card); color: var(--text-main);
+  border: 1px solid var(--border-color); border-left: 3px solid var(--text-muted);
+  padding: 12px 16px; border-radius: 10px;
+  font-size: 0.875rem; font-weight: 500; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
+  animation: toastSlideUp 0.25s ease-out forwards;
+}
+.toast.ok { border-left-color: var(--status-success); }
+.toast.erro { border-left-color: var(--status-error); }
+@keyframes toastSlideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+.carregando { padding: 40px; text-align: center; font-size: 0.8125rem; color: var(--text-muted); }
+
+/* ------------------------------------------------------------------
+   Responsivo — sidebar vira barra horizontal
+------------------------------------------------------------------ */
+@media (max-width: 860px) {
+  .app-body { grid-template-columns: 1fr; }
+  .sidebar {
+    position: static; padding: 12px 16px 0;
+    display: flex; gap: 8px; overflow-x: auto;
+  }
+  .sidebar-label { display: none; }
+  .nav-item { width: auto; white-space: nowrap; }
+  .conteudo { padding: 20px 16px 56px; }
+  .campo-grade, .campo-grade-3 { grid-template-columns: 1fr; }
+  .topbar { padding: 0 16px; }
+  .topbar-user { display: none; }
+  .secao-header-acoes { margin-left: 0; width: 100%; }
+  .secao-header-acoes .btn { width: 100%; }
+}
+
+/* ------------------------------------------------------------------
+   Métricas
+------------------------------------------------------------------ */
+.cartoes-metrica {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px;
+}
+.cartao-metrica {
+  background: var(--bg-card); border: 1px solid var(--border-color);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-elevated);
+  padding: 18px 20px;
+}
+.cartao-metrica-rotulo {
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;
+}
+.cartao-metrica-valor {
+  font-size: 1.625rem; font-weight: 800; letter-spacing: -0.02em;
+  color: var(--text-main); line-height: 1.1;
+}
+.cartao-metrica-nota { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+.cartao-metrica--destaque .cartao-metrica-valor { color: var(--brand-primary); }
+
+/* Barra de taxa na tabela — lê mais rápido que só o número. */
+.barra-taxa { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.barra-taxa-trilho {
+  /* display:block nos dois: são <span>, e inline ignora altura/largura —
+     a barra ficava invisível. */
+  display: block; flex: 1; height: 6px; border-radius: 3px;
+  background: var(--bg-input); overflow: hidden;
+}
+.barra-taxa-preenchida { display: block; height: 100%; border-radius: 3px; background: var(--status-success); }
+.barra-taxa-numero { font-weight: 600; font-size: 0.75rem; min-width: 42px; text-align: right; }

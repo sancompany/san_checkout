@@ -64,7 +64,7 @@ function iniciarPollingPopup(asaasCheckoutId, { aoConfirmar, aoFalhar }) {
 /**
  * @param {{ contratanteId, pedidoId, parcelas, dadosPagador, mostrarToast }} contexto
  */
-export async function continuarComCartao({ contratanteId, pedidoId, parcelas, dadosPagador, mostrarToast }) {
+export async function continuarComCartao({ contratanteId, pedidoId, parcelas, dadosPagador, mostrarToast, aoNaoConcluir }) {
   const botao = document.getElementById('btn-continuar-cartao');
   const textoOriginal = botao.textContent;
   botao.disabled = true;
@@ -88,6 +88,9 @@ export async function continuarComCartao({ contratanteId, pedidoId, parcelas, da
         mostrarToast(`O pagamento não foi concluído (${status}).`, 'erro');
         botao.disabled = false;
         botao.textContent = textoOriginal;
+        // Recusa/cancelamento sem caminho alternativo é venda perdida —
+        // quem orquestra (app.js) oferece o Pix aqui.
+        if (typeof aoNaoConcluir === 'function') aoNaoConcluir(status);
       }
     });
 

@@ -21,6 +21,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { supabase } from './config/supabase.js';
+import { sincronizarTaxasAsaas } from './services/taxaService.js';
+import { obterAlertasChaveApi } from './controllers/webhookController.js';
 import rotasPedido from './routes/pedidoRoutes.js';
 import rotasCheckout from './routes/checkoutRoutes.js';
 import rotasAsaasCheckout from './routes/asaasCheckoutRoutes.js';
@@ -29,6 +31,7 @@ import rotasEstorno from './routes/refundRoutes.js';
 import rotasAssinatura from './routes/assinaturaRoutes.js';
 import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
+import rotasMaster from './routes/masterRoutes.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -86,12 +89,22 @@ app.use('/api/checkout/pix', limitadorCriacao);
 app.use('/api/checkout/cartao', limitadorCriacao);
 app.use('/api/checkout/boleto', limitadorCriacao);
 app.use('/api/checkout/assinatura', limitadorCriacao);
+app.use('/api/checkout/assinatura-pix', limitadorCriacao);
 app.use('/api/checkout/estornar', limitadorCriacao);
 app.use('/api/checkout/cancelar-assinatura', limitadorCriacao);
+// Pausar e retomar mexem no mesmo vínculo que o cancelamento e exigem a
+// mesma chave — ficaram sem limite quando entraram. Mesmo teto: o limite
+// aqui não é sobre volume de uso, é sobre força bruta na chave.
+app.use('/api/checkout/pausar-assinatura', limitadorCriacao);
+app.use('/api/checkout/retomar-assinatura', limitadorCriacao);
 app.use('/api/admin', limitadorCriacao); // mesmo teto de /estornar — só um admin usa, mas trava força-bruta na chave
 app.use('/api/checkout/pedido', criarLimitadorConsulta());
 app.use('/api/checkout/plano', criarLimitadorConsulta());
 app.use('/api/checkout/asaas-checkout', criarLimitadorConsulta());
+app.use('/api/checkout/status', criarLimitadorConsulta());   // pública (comprador)
+app.use('/api/checkout/cobranca', criarLimitadorConsulta()); // autenticada (contratante)
+app.use('/api/checkout/consultar-assinatura', criarLimitadorConsulta()); // conciliação de recorrência
+app.use('/pedido', criarLimitadorConsulta());                // contratante admin-master (raiz)
 
 app.use('/api/checkout', rotasPedido);
 app.use('/api/checkout', rotasCheckout);
@@ -101,6 +114,11 @@ app.use('/api/checkout', rotasEstorno);
 app.use('/api/checkout', rotasAssinatura);
 app.use('/api/admin', rotasAdmin);
 app.use('/api/webhooks', rotasWebhook);
+
+// Raiz, sem prefixo: o contratante `admin-master` aponta o api_base_url
+// pro próprio backend, e o modelo pull sempre chama {base}/pedido/{id}.
+// Ver src/controllers/masterController.js.
+app.use(rotasMaster);
 
 app.get('/api/saude', async (_req, resposta) => {
   // Faz uma consulta MÍNIMA de verdade no Supabase (não só verifica a
@@ -117,13 +135,22 @@ app.get('/api/saude', async (_req, resposta) => {
     supabaseAtivo = false;
   }
 
+  // `alertasChaveAsaas` não vazio = a Asaas avisou que a chave de API
+  // vai expirar (ou já expirou). É a única forma de isso chegar a
+  // alguém: sem monitoramento de erro, o console.error do webhook não é
+  // lido por ninguém, e a integração cairia sem aviso.
+  const alertasChaveAsaas = obterAlertasChaveApi();
+
   resposta.json({
     status: 'ok',
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
     supabaseConfigurado: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
-    supabaseRespondendo: supabaseAtivo
+    supabaseRespondendo: supabaseAtivo,
+    alertasChaveAsaas
   });
 });
+
+const UM_DIA_MS = 24 * 60 * 60 * 1000;
 
 app.listen(PORTA, () => {
   console.log(`[checkout] San Checkout v2 ouvindo em http://localhost:${PORTA}`);
@@ -133,4 +160,12 @@ app.listen(PORTA, () => {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
     console.warn('[checkout] Supabase não configurado.');
   }
+
+  // Taxa cobrada do comprador tem que refletir a taxa real desta conta
+  // na Asaas, não a tabela pública chumbada no código. Falha aqui não
+  // derruba nada: o taxaService mantém a tabela padrão como fallback.
+  // ponytail: setInterval simples em vez de agendador — o processo do
+  // Render reinicia sozinho de vez em quando e o boot já ressincroniza.
+  sincronizarTaxasAsaas();
+  setInterval(sincronizarTaxasAsaas, UM_DIA_MS).unref();
 });

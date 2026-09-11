@@ -20,6 +20,7 @@ export async function obterPedido(requisicao, resposta) {
 
     resposta.json({
       contratanteNome: contratante.nome,
+      metodosHabilitados: contratante.metodos_habilitados ?? null,
       pedido,
       taxa
     });

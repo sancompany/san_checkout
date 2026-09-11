@@ -134,3 +134,72 @@ export function obterIdsResolvidos() {
 export function obterPedidoResolvido() {
   return contextoResolvido?.pedido ?? null;
 }
+
+/** Lista de métodos que esse contratante pode cobrar — null = sem
+ *  restrição (contratante antigo, cadastrado antes da migração v3). */
+export function obterMetodosHabilitados() {
+  return contextoResolvido?.metodosHabilitados ?? null;
+}
+
+/* ------------------------------------------------------------------
+   Cronômetro de expiração
+------------------------------------------------------------------ */
+
+let intervaloTimer = null;
+
+function formatarRestante(milissegundos) {
+  const total = Math.max(0, Math.floor(milissegundos / 1000));
+  const horas = Math.floor(total / 3600);
+  const minutos = Math.floor((total % 3600) / 60);
+  const segundos = total % 60;
+  const dois = (n) => String(n).padStart(2, '0');
+  return horas > 0
+    ? `${dois(horas)}:${dois(minutos)}:${dois(segundos)}`
+    : `${dois(minutos)}:${dois(segundos)}`;
+}
+
+/**
+ * Mostra quanto falta pro pedido expirar. O prazo vem do `expiraEm` que
+ * o contratante mandou — é uma reserva de verdade (ingresso segurado,
+ * preço travado), não contador de escassez inventado. Se o pedido não
+ * tiver `expiraEm`, nada aparece.
+ *
+ * O backend continua sendo quem decide de fato: `resolverPedido` já
+ * recusa pedido expirado na hora de cobrar. Isto aqui é só o aviso
+ * visual — por isso zerar o contador não "trava" nada sozinho, só
+ * avisa e desabilita os botões de pagar.
+ *
+ * @param {Function} aoExpirar — chamado uma vez quando chega a zero
+ */
+export function iniciarCronometroExpiracao(aoExpirar) {
+  const pedido = contextoResolvido?.pedido;
+  const elemento = document.getElementById('order-timer');
+  if (!elemento || !pedido?.expiraEm) return;
+
+  const expiraEm = new Date(pedido.expiraEm).getTime();
+  if (Number.isNaN(expiraEm)) return; // data inválida do contratante — não inventa contador
+
+  const valor = document.getElementById('order-timer-valor');
+  const texto = document.getElementById('order-timer-texto');
+  elemento.classList.remove('hidden');
+
+  const tique = () => {
+    const restante = expiraEm - Date.now();
+
+    if (restante <= 0) {
+      clearInterval(intervaloTimer);
+      intervaloTimer = null;
+      elemento.classList.add('order-timer--urgente');
+      texto.textContent = 'Esta reserva expirou.';
+      if (typeof aoExpirar === 'function') aoExpirar();
+      return;
+    }
+
+    valor.textContent = formatarRestante(restante);
+    // Últimos 5 minutos viram alerta visual.
+    elemento.classList.toggle('order-timer--urgente', restante <= 5 * 60 * 1000);
+  };
+
+  tique();
+  intervaloTimer = setInterval(tique, 1000);
+}
