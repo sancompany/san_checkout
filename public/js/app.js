@@ -38,22 +38,6 @@ function formatarMoeda(valor) {
   return Number(valor ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/**
- * Atalho escondido pra tela de admin (`admin.html`) — digitar o e-mail
- * admin@sancocore.com.br no campo de e-mail do checkout público
- * redireciona direto pra lá, sem link nenhum visível na página. Só
- * esconde o CAMINHO — a tela em si ainda exige a CHECKOUT_ADMIN_KEY
- * pra fazer qualquer coisa (ver `adminController.js`).
- */
-function ligarAtalhoAdmin() {
-  const EMAIL_ADMIN = 'admin@sancocore.com.br';
-  const campo = document.getElementById('customer-email');
-  if (!campo) return;
-  campo.addEventListener('input', () => {
-    if (campo.value.trim().toLowerCase() === EMAIL_ADMIN) window.location.href = 'admin.html';
-  });
-}
-
 function preencherCamposPagador(pagador) {
   if (pagador?.nome) document.getElementById('customer-name').value = pagador.nome;
   if (pagador?.email) document.getElementById('customer-email').value = pagador.email;
@@ -505,5 +489,4 @@ async function iniciar() {
   return iniciarModoPedido();
 }
 
-ligarAtalhoAdmin();
 iniciar();

@@ -91,9 +91,18 @@ contraste do indicador de foco veio do WCAG 2.2 (1.4.11) e os 10 eventos
 do grupo Pix Automático vieram da documentação da Asaas — nenhum dos dois
 de memória.
 
+Em 11/09/2026 a versão subiu (commit, push, migration `0002` rodada no
+Supabase, deploy no Render e Cloudflare Pages) — e a **primeira
+verificação em produção achou um defeito desta mesma estação**: a guarda
+de total zero derrubou a porta de entrada do painel administrativo, que
+estava pendurada num contratante de mentira com pedido de R$ 0,00. O
+aparato inteiro foi removido e o painel passou a ser protegido na borda
+(`CONSTRAINTS.md` §2.6). Registro em
+`docs/erros/2026-09-11-guarda-de-total-zero-derrubou-a-porta-do-admin.md`.
+
 **O que falta para a Estação 5 fechar** está na lista de pendências
-abaixo, e é ação do dono: commit, push, migration `0002` no SQL Editor do
-Supabase, e deploy no Render.
+abaixo, e é ação do dono: subir esta correção e apagar os arquivos que a
+ponte com o computador não consegue apagar.
 
 **Estação 6 (Prontidão) NÃO foi iniciada**, e não pode ser enquanto a 5
 estiver aberta. Quando abrir, ela faz segurança em ciclos, teste no
@@ -124,29 +133,27 @@ Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
 
-- **🔴 A construção desta estação não subiu.** Está tudo no disco e em
-  lugar nenhum mais. Enquanto isso durar, a Estação 5 não fecha e a 6 não
-  abre — e qualquer verificação feita agora mediria uma estrutura
-  diferente da que está no ar. Na ordem:
+- **🔴 Apagar quatro arquivos.** A ponte com o computador escreve mas não
+  apaga, então é `del` na mão. Nenhum deles é referenciado por código
+  nenhum depois desta leva:
 
-  1. `git add -A && git commit && git push` — nada foi commitado desde
-     `b4f567e`.
-  2. Rodar `supabase/migrations/0002_webhook_auditoria.sql` **no SQL
-     Editor do Supabase**. Não existe `DATABASE_URL` neste projeto e não
-     há nada a configurar no Render para isso — é decisão da Lei 6,
-     registrada em `CONSTRAINTS.md` §2.1.
-  3. Deploy no Render.
-  4. Conferir ao vivo: `/api/saude` respondendo, o webhook devolvendo 401
-     sem o token, e a aba Webhook do painel abrindo sem erro.
+  - `src/controllers/masterController.js`
+  - `src/routes/masterRoutes.js`
+  - `docs/erros/2026-09-11-editei-uma-copia-velha-do-arquivo.md`
+    (duplicata de `2026-09-11-auditoria-contra-copia-velha.md`)
 
-  Sem o passo 2 o backend sobe e a auditoria só loga erro a cada webhook:
-  o código novo escreve numa tabela que ainda não existe.
+- **🔴 Apagar o contratante `admin-master` no Supabase.** A rota que ele
+  chamava não existe mais; a linha sobrando é um contratante ativo sem
+  uso, e contratante é o que autoriza cobrança.
 
-- **🔴 Apagar `docs/erros/2026-09-11-editei-uma-copia-velha-do-arquivo.md`.**
-  É duplicata de `2026-09-11-auditoria-contra-copia-velha.md`, que já
-  cobre o mesmo erro e absorveu o conteúdo novo. Nunca foi commitado. A
-  ponte com o computador escreve arquivo mas não apaga, então é `del` na
-  mão.
+- **🔴 Subir a correção e conferir ao vivo:** commit, push, deploy, e
+  então abrir `/admin.html` e o checkout de um contratante real.
+
+- **🔴 Configurar o Cloudflare Access sobre `/admin.html`.** É a camada 1
+  da §2.6 e a única que impede a página de ser entregue a quem não provou
+  quem é. Enquanto não existir, o painel é uma tela de login pública —
+  aceitável, porque nada nela vale sem a senha, mas não é o estado
+  desejado.
 
 ### Abertas, não bloqueiam
 

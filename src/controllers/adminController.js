@@ -5,12 +5,18 @@
  * (`CHECKOUT_ADMIN_USER` + `CHECKOUT_ADMIN_PASS_HASH`) — ver `verificarAdminKey` abaixo,
  * aplicado a toda rota de `/api/admin` em `adminRoutes.js`.
  *
- * A tela em si é acessada por um "atalho escondido" no formulário
- * público do checkout (digitar o e-mail admin@sancocore.com.br no
- * campo de e-mail redireciona pra admin.html — ver `public/js/app.js`,
- * `ligarAtalhoAdmin`). Isso só esconde o CAMINHO da tela — quem chegar
- * nela sem saber usuário+senha não consegue listar nem criar nada,
- * porque as duas coisas são sempre validadas aqui, no backend.
+ * A tela é servida como arquivo estático pelo Cloudflare Pages, em
+ * `/admin.html`. Até 11/09/2026 havia um "atalho escondido" no
+ * formulário público do checkout (digitar um e-mail específico
+ * redirecionava pra cá), sustentado por um contratante de mentira com
+ * pedido de R$ 0,00 — removido, porque escondia o caminho de quem olhava
+ * o checkout e de mais ninguém: a URL sempre respondeu direto. Esconder
+ * o caminho é trabalho da camada de borda (ver `CONSTRAINTS.md` §2.6),
+ * não de um campo de formulário.
+ *
+ * O que nunca dependeu disso, e continua valendo: quem chega na tela sem
+ * usuário+senha não lista nem cria nada, porque as duas coisas são
+ * sempre validadas aqui, no backend.
  */
 
 import { randomBytes } from 'node:crypto';

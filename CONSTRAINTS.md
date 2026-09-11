@@ -364,6 +364,58 @@ olha, mas não avisa ninguém. Detecção de verdade está em
 `docs/proximas-versoes.md`.
 
 
+## 2.6 Como o painel administrativo é protegido (Lei 4)
+
+Decidido em 11/09/2026, depois de o arranjo anterior quebrar em produção
+(`docs/erros/2026-09-11-guarda-de-total-zero-derrubou-a-porta-do-admin.md`).
+
+**O que havia até aqui, e por que saiu.** O caminho do painel era
+escondido dentro do checkout público: um contratante de mentira
+(`admin-master`) devolvia um pedido de R$ 0,00, a tela renderizava, e
+digitar um e-mail específico no campo de e-mail redirecionava para
+`admin.html`. Isso escondia o caminho de quem **olhava o checkout** e de
+mais ninguém — `https://checkout.sancocore.com.br/admin.html` sempre
+respondeu direto, para qualquer um, sem passar por nada. Em troca, o
+arranjo custava uma linha na tabela de contratantes, uma rota montada na
+raiz do backend, um id de pedido fantasma alcançável na página pública de
+status, e um ponto de acoplamento entre a porta de operação e o fluxo de
+pagamento — que foi exatamente o que quebrou.
+
+Removidos: `masterController.js`, `masterRoutes.js`, a rota na raiz, o
+contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
+
+**O que protege o painel agora**, em camadas independentes:
+
+1. **Cloudflare Access sobre `/admin.html`** — política de borda, no
+   mesmo Cloudflare que já serve o site. O arquivo não é entregue a
+   ninguém que não passe por uma identidade verificada. É a camada que
+   substitui a obscuridade, e a diferença é de natureza: obscuridade
+   depende de ninguém adivinhar, Access depende de alguém provar quem é.
+2. **Usuário e senha validados no backend**, em toda rota de
+   `/api/admin` (`verificarAdminKey`), com scrypt a N=2^17. Vale mesmo
+   que a camada 1 caia ou não esteja configurada, e é ela que protege a
+   API — que fica em outro domínio e não passa pelo Access.
+3. **`X-Robots-Tag: noindex, nofollow, noarchive`** em `public/_headers`,
+   para `/admin.html` e `/status.html`.
+
+**Por que NÃO existe `robots.txt` neste projeto:** um `robots.txt` com
+`Disallow: /admin.html` publica exatamente o caminho que se quer
+esconder — é lido por qualquer um, e vira índice do que interessa. O
+header alcança o mesmo buscador sem anunciar nada. Se alguém propuser
+criar o arquivo "por padrão", esta é a razão de não criar.
+
+**Limite assumido, declarado:** enquanto a camada 1 não estiver
+configurada, `/admin.html` é uma página pública que mostra um formulário
+de login — o que ela protege é o que está atrás dele, não a existência
+dela. Isso é aceitável porque nada na página vale sem a senha, mas não é
+o estado desejado, e está na lista de pendências do `CLAUDE.md`.
+
+**Renomear o arquivo para algo imprevisível** foi considerado e recusado:
+troca uma fechadura por um segredo que vive em URL — histórico do
+navegador, favoritos, cabeçalho de referência — e acrescenta risco de o
+operador único perder o próprio acesso. Obscuridade não vira segurança
+por ser mais difícil de adivinhar.
+
 ---
 
 ## 3. Exceções de conformidade registradas

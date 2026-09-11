@@ -12,3 +12,23 @@
   Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
   Cache-Control: public, max-age=0, must-revalidate
   Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://san-checkout.onrender.com https://viacep.com.br https://cloudflareinsights.com; upgrade-insecure-requests
+
+# Nem o painel nem a página de status devem aparecer em buscador. O
+# painel é operação; a de status expõe a situação de um pedido para quem
+# tem o id dele.
+#
+# Por que header e NÃO `robots.txt`: um `robots.txt` com
+# `Disallow: /admin.html` publica exatamente o caminho que se quer
+# esconder — vira índice do que interessa, e é a primeira coisa que
+# alguém curioso lê. O header alcança o mesmo buscador sem anunciar nada
+# a quem não pediu a página.
+#
+# E nenhum dos dois é controle de acesso: quem barra é a política de
+# borda no Cloudflare Access sobre /admin.html (CONSTRAINTS.md §2.6) e o
+# usuário+senha validados no backend. `noindex` resolve indexação, que é
+# problema diferente de invasão.
+/admin.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/status.html
+  X-Robots-Tag: noindex, nofollow, noarchive

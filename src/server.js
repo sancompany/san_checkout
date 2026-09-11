@@ -38,7 +38,6 @@ import rotasEstorno from './routes/refundRoutes.js';
 import rotasAssinatura from './routes/assinaturaRoutes.js';
 import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
-import rotasMaster from './routes/masterRoutes.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -111,7 +110,6 @@ app.use('/api/checkout/asaas-checkout', criarLimitadorConsulta());
 app.use('/api/checkout/status', criarLimitadorConsulta());   // pública (comprador)
 app.use('/api/checkout/cobranca', criarLimitadorConsulta()); // autenticada (contratante)
 app.use('/api/checkout/consultar-assinatura', criarLimitadorConsulta()); // conciliação de recorrência
-app.use('/pedido', criarLimitadorConsulta());                // contratante admin-master (raiz)
 
 app.use('/api/checkout', rotasPedido);
 app.use('/api/checkout', rotasCheckout);
@@ -121,11 +119,6 @@ app.use('/api/checkout', rotasEstorno);
 app.use('/api/checkout', rotasAssinatura);
 app.use('/api/admin', rotasAdmin);
 app.use('/api/webhooks', rotasWebhook);
-
-// Raiz, sem prefixo: o contratante `admin-master` aponta o api_base_url
-// pro próprio backend, e o modelo pull sempre chama {base}/pedido/{id}.
-// Ver src/controllers/masterController.js.
-app.use(rotasMaster);
 
 app.get('/api/saude', async (_req, resposta) => {
   // Faz uma consulta MÍNIMA de verdade no Supabase (não só verifica a

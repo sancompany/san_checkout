@@ -35,6 +35,24 @@ no SQL Editor do Supabase. Banco novo começa no `0001_baseline.sql`, que
 **Mudança de schema é sempre um arquivo novo** (`0002_…`, `0003_…`),
 nunca uma edição num que já rodou — ver `CONSTRAINTS.md`.
 
+## Como ver a tela do checkout sem um pedido real
+
+```bash
+node scripts/ver-checkout.mjs              # pedido avulso
+node scripts/ver-checkout.mjs assinatura   # mensalidade recorrente
+node scripts/ver-checkout.mjs sem-total    # o estado indisponível
+```
+
+Sobe um servidor local que serve o `public/` e responde a API com um
+pedido de mentira, e imprime o endereço para abrir no navegador. Não
+precisa de `.env`, não tem dependência nova, e não toca Asaas, Supabase
+nem produção — é para conferir a tela com o olho, que é o que a Lei 5
+pede e nenhuma leitura de código substitui.
+
+Roda na porta **3001** de propósito: é a que `public/js/utils/api.js`
+procura quando a página é servida de localhost. Se o backend de verdade
+estiver rodando aí, pare ele antes.
+
 ## Como rodar os testes
 
 ```bash
@@ -74,7 +92,10 @@ Nomes; os valores ficam no `.env` local e no painel do Render.
 
 ## Cadastrar um contratante
 
-Pelo painel: `/admin.html` → **Contratantes** → **Novo contratante**.
+Pelo painel: `/admin.html` → **Contratantes** → **Novo contratante**. O
+painel é alcançado pela própria URL (`checkout.sancocore.com.br/admin.html`)
+e protegido na borda — ver `CONSTRAINTS.md` §2.6. Não existe mais atalho
+escondido dentro do checkout público.
 A `api_key` é gerada pelo backend e mostrada uma vez — copie na hora.
 
 Nunca por API pública, e nunca inserindo linha à mão no Supabase.
