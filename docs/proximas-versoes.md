@@ -127,3 +127,30 @@ para um problema que talvez nem exista mais.
   tentativa real e repetida. Construir antes é escolher um limiar no
   escuro, e limiar no escuro em caminho de dinheiro trava contratante
   legítimo — que é pior que a sondagem que ele evitaria.
+
+## Split na assinatura por Pix Automático
+
+- **O quê** — `criarAssinaturaPixAutomatico`, em
+  `src/controllers/asaasCheckoutController.js`, é a única das três rotas
+  de checkout que **não monta split**. `criarCheckoutCartao` e
+  `criarCheckoutAssinatura` montam. Do jeito que está, uma assinatura
+  paga por Pix Automático deposita o valor inteiro na conta San & Co. e
+  **o contratante não recebe nada**.
+- **Por que** — é dinheiro que não chega a quem vendeu, e a descoberta
+  dependeria de o contratante reclamar. É o mesmo padrão de
+  `docs/erros/2026-09-10-conjunto-enumerado-pela-metade.md`: três
+  caminhos que fazem a mesma coisa, dois enumerados e um esquecido.
+- **De onde veio** — achado em 12/09/2026 ao remover consultas
+  duplicadas do caminho do dinheiro. Nunca rodou em produção porque o
+  Pix Automático não está liberado nesta conta Asaas (`CONSTRAINTS.md`
+  §2.4), então não há dano acumulado.
+- **O que toca** — só essa função. Mas **antes de tocar é preciso
+  responder uma pergunta que não é nossa:** a API da Asaas aceita
+  `split` no endpoint de autorização de recorrência do Pix Automático?
+  As outras duas rotas usam `POST /v3/checkouts`, que aceita; esta usa
+  outro endpoint. Corrigir sem confirmar isso é adivinhar no caminho do
+  dinheiro — e o dono autorizou a correção em 12/09/2026, mas a
+  autorização não substitui a documentação.
+- **Quando vale a pena** — junto da liberação do Pix Automático na
+  conta, que é quando o fluxo passa a poder rodar. Nem antes (não há
+  como testar) nem depois (aí já teria rodado errado uma vez).

@@ -1,0 +1,41 @@
+# =====================================================================
+# O QUE NUNCA ENTRA NA IMAGEM.
+#
+# A primeira linha é a que importa: sem ela, o `.env` — com a chave da
+# Asaas, a service_key do Supabase e o hash da senha do admin — é
+# copiado para dentro da imagem pelo `COPY . .` e passa a viajar junto
+# com ela, legível por quem tiver acesso ao registro de imagens.
+#
+# O `.gitignore` NÃO protege disto: ele decide o que vai para o Git, e o
+# contexto de build do Docker é a pasta do disco, não o que está
+# versionado. São duas listas diferentes e é preciso manter as duas.
+# =====================================================================
+.env
+.env.*
+!.env.example
+
+# Dependências resolvidas na máquina de quem desenvolve. Copiá-las
+# levaria binários compilados para outro sistema operacional para dentro
+# da imagem, por cima do que o `npm ci` acabou de instalar certo.
+node_modules/
+npm-debug.log*
+
+# Histórico do Git: peso puro, e carrega tudo que já foi commitado um
+# dia, inclusive o que foi removido depois.
+.git/
+.github/
+
+# Capturas de tela de sessão — contêm dado pessoal legível
+# (docs/inventario-de-dados.md §6.1).
+Claude outputs/
+
+# Nada disto roda em produção.
+tests/
+mock/
+scripts/
+docs/
+supabase/
+*.md
+
+# O front é servido pelo Cloudflare Pages, não por este contêiner.
+public/
