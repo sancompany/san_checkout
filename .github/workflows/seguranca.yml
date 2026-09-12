@@ -1,0 +1,84 @@
+# Verificações automáticas de segurança — trabalho da Estação 3.
+#
+# POR QUE AQUI E NÃO NA ESTAÇÃO 6
+# Ferramenta que depende de alguém lembrar de rodar não roda. E ligadas
+# só na prontidão, estas três descobrem na véspera do lançamento o que
+# descobririam na primeira semana.
+#
+# O agendamento semanal não é excesso: vulnerabilidade é publicada sem o
+# seu código mudar. Sem execução periódica, um projeto parado há dois
+# meses tem dois meses de exposição não vista.
+name: Segurança
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 9 * * 1'   # toda segunda, 06:00 em Brasília
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------
+  # 1. Dependência vulnerável.
+  #
+  # `--audit-level=high` e não `moderate`: em 12/09/2026 o projeto tinha
+  # 3 moderadas (`qs`, via body-parser e express) e nenhuma alta. Falhar
+  # em moderate quebraria a CI hoje, no primeiro push, por algo que não
+  # é exploração remota — e CI que quebra por ruído é CI que o time
+  # aprende a ignorar. As moderadas continuam visíveis na saída.
+  # -------------------------------------------------------------------
+  dependencias:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  # -------------------------------------------------------------------
+  # 2. Segredo no histórico.
+  #
+  # `fetch-depth: 0` é o que faz esta verificação existir: sem ele o
+  # checkout traz um commit só, e a varredura perde exatamente o que ela
+  # procura — credencial que entrou há seis meses e foi "apagada" depois.
+  #
+  # `--redact` impede que o log da própria verificação imprima o segredo
+  # achado. Sem isso o achado vaza no log do CI, que é mais visível que o
+  # commit original.
+  #
+  # O binário é baixado direto em vez de usar a ação do marketplace
+  # porque aquela exige licença em repositório de organização.
+  #
+  # ⚠️ ACHANDO ALGO, O CAMINHO É REVOGAR, NÃO APAGAR. Reescrever
+  # histórico não alcança clone, fork nem cache de quem já baixou — e
+  # este repositório já teve o histórico reescrito uma vez
+  # (docs/erros/2026-09-11-filter-repo-apagou-trabalho-nao-commitado.md).
+  # -------------------------------------------------------------------
+  segredos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Instalar gitleaks
+        run: |
+          VERSAO=8.28.0
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/gitleaks_${VERSAO}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+      - run: ./gitleaks detect --source . --redact --exit-code 1
+
+  # -------------------------------------------------------------------
+  # 3. Análise estática — padrão perigoso repetido que passa na leitura.
+  # -------------------------------------------------------------------
+  estatica:
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - run: semgrep scan --config p/owasp-top-ten --config p/secrets --error

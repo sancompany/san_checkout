@@ -90,9 +90,33 @@ entre as peças de estrutura da San & Co., e os quatro testes concordam:
   suportado é qualquer projeto contratante, não um só → estrutura.
 
 **Capacidades que consome da estrutura San & Co.**: domínio/DNS
-(`checkout.sancocore.com.br`, Cloudflare), conta GitHub (repositório),
-conta Render (hospedagem do backend), conta Cloudflare Pages
-(hospedagem do frontend estático).
+(`checkout.sancocore.com.br` e `api.sancocore.com.br`, Cloudflare), conta
+GitHub (repositório), conta Cloudflare Pages (hospedagem do frontend
+estático), conta de hospedagem do backend, e o **Cloudflare Access** como
+porta das áreas administrativas.
+
+> **Corrigido em 12/09/2026, reabrindo esta estação em dois pontos.**
+>
+> **O Cloudflare Access.** A skill `classificar` passou a listá-lo como
+> capacidade da plataforma, com a regra "projeto com login de
+> administrador consome o Access, não constrói proteção própria de
+> entrada" — e diz que a decisão e o registro são desta estação. Aqui
+> ele tinha sido decidido e registrado na estação 6, que é onde ele foi
+> aplicado. O registro passa a morar onde a lei pede; o *como* continua
+> no `CONSTRAINTS.md` §2.6.
+>
+> Uma ressalva que importa: o Access cobre o que a Cloudflare serve. A
+> API do backend fica em outro domínio e **não** passa por ele — quem a
+> protege é o usuário e senha validados no próprio backend. Isso é
+> desenho, não descuido, e está declarado no §2.6.
+>
+> **A hospedagem do backend.** Era "conta Render". O Render não tem
+> região na América do Sul, e o banco fica em São Paulo — a combinação
+> viola a regra de aplicação e banco na mesma região. A migração para o
+> **Northflank** (região América do Sul – Leste, Osasco) foi executada em
+> 12/09/2026, com o número medido que a regra exige: **23 ms** contra
+> 220 ms do Render, do navegador do dono, sem VPN. O Render segue no ar
+> até a Estação 6 fechar e a produção ser promovida no Northflank.
 
 **Banco**: próprio e isolado (Supabase dedicado a este projeto — ver
 `config/supabase.js`), nunca compartilhado com outro projeto ou peça de
