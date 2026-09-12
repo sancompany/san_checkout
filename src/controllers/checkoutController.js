@@ -12,7 +12,7 @@
  * continuam via pop-up, em asaasCheckoutController.js.
  */
 
-import { resolverPedido, buscarContratante } from '../services/pedidoService.js';
+import { resolverPedido } from '../services/pedidoService.js';
 import { calcularTaxa } from '../services/taxaService.js';
 import {
   buscarOuCriarCliente,
@@ -72,7 +72,14 @@ export async function gerarPix(requisicao, resposta) {
   try {
     // Nunca confia no valor mandado pelo front — resolve o pedido de
     // novo, direto na fonte, na hora de cobrar.
-    const { pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'pix' });
+    //
+    // `contratante` sai DAQUI e não de uma segunda consulta: o
+    // `resolverPedido` já foi ao banco buscá-lo para validar o método
+    // habilitado, e devolve o registro inteiro. Buscar de novo mais
+    // abaixo, só para ler o `wallet_id`, era uma ida ao banco a mais no
+    // caminho do dinheiro — medida em 213 ms em 12/09/2026, com o
+    // backend em Oregon e o Supabase em São Paulo.
+    const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'pix' });
 
     // Antes de criar: esse pedido já tem Pix pendente e pagável?
     const jaExiste = await reaproveitarCobrancaPendente({
@@ -101,7 +108,6 @@ export async function gerarPix(requisicao, resposta) {
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
-    const contratante = await buscarContratante(contratanteId);
     const split = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valorBase }]
       : undefined;
@@ -169,7 +175,8 @@ export async function gerarBoleto(requisicao, resposta) {
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
-    const { pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'boleto' });
+    // Mesmo motivo do Pix: o contratante vem do `resolverPedido`.
+    const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'boleto' });
 
     // Reforço de segurança — o front já esconde o Boleto quando o
     // pedido tem expiraEm (VISAO_COMPLETA.md 4.3), mas o backend NUNCA
@@ -208,7 +215,6 @@ export async function gerarBoleto(requisicao, resposta) {
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
-    const contratante = await buscarContratante(contratanteId);
     const split = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valorBase }]
       : undefined;

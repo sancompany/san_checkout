@@ -24,7 +24,8 @@ const SUITES = [
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
-  'tests/valor-vem-do-servidor.js'   // o corpo da requisição nunca dita quanto se cobra
+  'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
+  'tests/sem-consulta-repetida.js'   // nenhuma ida ao banco repetida no caminho do dinheiro
 ];
 
 /**
