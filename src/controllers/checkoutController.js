@@ -23,7 +23,7 @@ import {
   recuperarCobrancaBoleto
 } from '../services/asaasService.js';
 import { registrarCobranca, buscarCobrancaPendenteDoPedido } from '../services/cobrancaService.js';
-import { documentoValido, emailValido, valorValido } from '../utils/validadores.js';
+import { documentoValido, emailValido, valorValido, nomeValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function gerarReferenciaExterna(documento) {
@@ -65,6 +65,7 @@ export async function gerarPix(requisicao, resposta) {
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
+  if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
@@ -163,6 +164,7 @@ export async function gerarBoleto(requisicao, resposta) {
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
+  if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 

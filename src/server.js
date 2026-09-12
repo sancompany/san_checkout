@@ -111,6 +111,43 @@ app.use('/api/checkout/status', criarLimitadorConsulta());   // pública (compra
 app.use('/api/checkout/cobranca', criarLimitadorConsulta()); // autenticada (contratante)
 app.use('/api/checkout/consultar-assinatura', criarLimitadorConsulta()); // conciliação de recorrência
 
+// `/api/saude` NÃO é barata: ela faz uma consulta de verdade no Supabase
+// a cada chamada — é justamente isso que impede o projeto gratuito de ser
+// pausado por inatividade. Sem limite, é o caminho mais barato que existe
+// para queimar a quota do Supabase ou derrubar a instância de 512 MiB, e
+// não exige credencial nenhuma: só saber a URL.
+//
+// O teto é FOLGADO de propósito. Quem consulta de verdade é o cron
+// externo, a cada 10 minutos — 6 por hora. 30/min deixa espaço para o
+// operador abrir a página de status, para um segundo monitor e para
+// retentativa, e ainda assim corta a sondagem em ordem de grandeza.
+app.use('/api/saude', rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: 'Muitas requisições em pouco tempo. Aguarde um minuto.' }
+}));
+
+// O webhook é a única rota pública que aceita POST sem credencial ANTES
+// de olhar o token — a guarda recusa, mas recusar também custa. O teto
+// aqui é alto porque a Asaas dispara em rajada (um pagamento gera vários
+// eventos, e o reenvio da fila retida vem em bloco): cortar evento
+// legítimo é pior que absorver sondagem, porque a Asaas PAUSA a fila
+// depois de 15 falhas consecutivas (CONSTRAINTS.md §2.3) e só volta com
+// reativação manual.
+//
+// Ou seja: este limite existe para tapar o caso absurdo, não para ser
+// a defesa. A defesa é a guarda de token, e a contabilidade do que foi
+// recusado está em `webhook_rejeicoes` (migration 0002).
+app.use('/api/webhooks', rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: 'Muitas requisições em pouco tempo.' }
+}));
+
 app.use('/api/checkout', rotasPedido);
 app.use('/api/checkout', rotasCheckout);
 app.use('/api/checkout', rotasAsaasCheckout);
@@ -147,6 +184,55 @@ app.get('/api/saude', async (_req, resposta) => {
     supabaseConfigurado: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
     supabaseRespondendo: supabaseAtivo,
     alertasChaveAsaas
+  });
+});
+
+// ---------------------------------------------------------------------
+// FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
+// toda rota — Express escolhe por ordem de registro.
+//
+// POR QUE ISTO EXISTE, se o Express já tem os dois embutidos
+// Porque os embutidos respondem HTML (`<pre>Cannot POST /x</pre>`) numa
+// API que só fala JSON — o cliente recebe algo que não sabe ler e mostra
+// erro de parse em vez do erro real. E, no caso do erro, o embutido
+// devolve o STACK TRACE quando `NODE_ENV` não é exatamente
+// 'production'.
+//
+// Essa é a parte que importa: a higiene de erro em produção não pode
+// depender de uma variável de ambiente estar certa num painel que
+// ninguém revisa. Verificado em 11/09/2026 que daqui não dá para provar
+// o valor de `NODE_ENV` no Render (o proxy sobrescreve
+// `x-forwarded-proto`, que era a única pista observável de fora) — e
+// "provavelmente está certo" não é verificação. Com estes dois
+// tratadores, o vazamento fica impossível independente do valor.
+// ---------------------------------------------------------------------
+app.use((requisicao, resposta) => {
+  resposta.status(404).json({ erro: 'Rota não encontrada.' });
+});
+
+// eslint-disable-next-line no-unused-vars -- o 4º parâmetro é o que faz
+// o Express reconhecer isto como tratador de erro. Remover `proximo`
+// transforma o tratador em middleware comum e o erro volta a cair no
+// embutido, calado.
+app.use((erro, requisicao, resposta, proximo) => {
+  // O detalhe vai para o log do servidor, nunca para a resposta: aqui
+  // dentro cabe nome de tabela, caminho de arquivo e versão de
+  // biblioteca — informação de graça para quem está sondando.
+  console.error('[checkout] erro não tratado:', requisicao.method, requisicao.originalUrl, erro);
+
+  // Corpo JSON malformado chega aqui com status 400 já definido pelo
+  // express.json(). É erro do cliente, não do servidor, e merece o
+  // código certo — 500 aqui faria monitoramento futuro contar sondagem
+  // como falha nossa.
+  const status = Number.isInteger(erro?.status) && erro.status >= 400 && erro.status < 500
+    ? erro.status
+    : 500;
+
+  if (resposta.headersSent) return proximo(erro);
+  resposta.status(status).json({
+    erro: status === 500
+      ? 'Erro interno. Tente novamente em instantes.'
+      : 'Requisição inválida.'
   });
 });
 

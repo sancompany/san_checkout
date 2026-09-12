@@ -17,12 +17,14 @@ import { dirname, join } from 'node:path';
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SUITES = [
+  'src/utils/validadores.js',        // tetos de campo e comparação de credencial
   'src/utils/assinaturaWebhook.js',  // assinatura HMAC do webhook de saída
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
-  'src/controllers/webhookController.js' // caminho crítico do webhook: guarda, mapa de status, soma de taxas
+  'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
+  'tests/valor-vem-do-servidor.js'   // o corpo da requisição nunca dita quanto se cobra
 ];
 
 /**

@@ -104,3 +104,26 @@ para um problema que talvez nem exista mais.
 - **Quando vale a pena** — quando o painel passar a ser aberto do
   celular de verdade. Hoje ele é operado do computador, e a Fairy
   resolveria o mesmo problema melhor.
+
+## Contador de tentativa por credencial, e não por IP
+
+- **O quê** — bloquear temporariamente uma `X-Checkout-Key` (e o usuário
+  do admin) depois de N tentativas erradas, contando **por credencial**,
+  independente de qual endereço mandou.
+- **Por que** — o limite de hoje é por IP, e quem tem mais de um IP
+  multiplica o teto pelo número deles. Medido sem querer em 11/09/2026:
+  doze requisições passaram por um limite de 10/min porque o proxy de
+  saída alternava entre três endereços. Um /24 de qualquer nuvem
+  transforma 10/min em 2.560/min, e a chave do contratante não tem
+  nenhuma outra guarda além do tamanho dela. O limite por IP reduz ruído;
+  ele não é guarda de força bruta (`CONSTRAINTS.md` §2.7).
+- **De onde veio** — ciclo de segurança da Estação 6, em 11/09/2026.
+- **O que toca** — `src/server.js` (onde os limitadores moram), a guarda
+  de `X-Checkout-Key` e o `verificarAdminKey`. Precisa de estado
+  compartilhado com tempo de vida — hoje não existe nada assim no
+  projeto, e uma instância só do Render torna memória suficiente até
+  existir uma segunda.
+- **Quando vale a pena** — quando o log de rejeição (§2.5) mostrar
+  tentativa real e repetida. Construir antes é escolher um limiar no
+  escuro, e limiar no escuro em caminho de dinheiro trava contratante
+  legítimo — que é pior que a sondagem que ele evitaria.

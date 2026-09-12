@@ -42,7 +42,7 @@ import {
 import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
-import { documentoValido, emailValido, valorValido, telefoneValido, cepValido } from '../utils/validadores.js';
+import { documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function parcelasValidas(valor) {
@@ -71,6 +71,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   if (!nome || !email || !documento || !telefone) {
     return resposta.status(400).json({ erro: 'Nome, e-mail, CPF/CNPJ e telefone são obrigatórios.' });
   }
+  if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
@@ -200,6 +201,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   if (!nome || !email || !documento || !telefone) {
     return resposta.status(400).json({ erro: 'Nome, e-mail, CPF/CNPJ e telefone são obrigatórios.' });
   }
+  if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
@@ -356,6 +358,7 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
+  if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 

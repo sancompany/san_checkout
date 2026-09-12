@@ -24,11 +24,41 @@
 # a quem não pediu a página.
 #
 # E nenhum dos dois é controle de acesso: quem barra é a política de
-# borda no Cloudflare Access sobre /admin.html (CONSTRAINTS.md §2.6) e o
-# usuário+senha validados no backend. `noindex` resolve indexação, que é
-# problema diferente de invasão.
+# borda no Cloudflare Access sobre /admin.html e /admin (CONSTRAINTS.md
+# §2.6) e o usuário+senha validados no backend. `noindex` resolve
+# indexação, que é problema diferente de invasão.
+#
+# ⚠️ O CAMINHO SERVIDO NÃO É O CAMINHO DO ARQUIVO.
+#
+# O Cloudflare Pages responde 308 de `/admin.html` para `/admin` e de
+# `/status.html` para `/status`. Uma regra escrita só para `.html`
+# aplica o header no REDIRECIONAMENTO, e não na página — o buscador
+# segue o 308, recebe a página sem `noindex`, e indexa.
+#
+# Medido em produção em 11/09/2026: `/status.html` devolvia
+# `X-Robots-Tag` no 308 e `/status` devolvia a página SEM ele. O
+# `noindex` existia no arquivo e não existia na web.
+#
+# É o mesmo erro da política do Cloudflare Access, que casava
+# `/admin.html` exato enquanto o Pages também servia `/admin`
+# (CONSTRAINTS.md §2.6) — e é a mesma lição: a regra tem que citar o
+# caminho que o servidor ENTREGA, não o nome do arquivo no repositório.
+# As seis formas ficam listadas porque o custo de listar é zero e o
+# custo de errar é indexação silenciosa.
 /admin.html
   X-Robots-Tag: noindex, nofollow, noarchive
 
+/admin
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/admin/
+  X-Robots-Tag: noindex, nofollow, noarchive
+
 /status.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/status
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/status/
   X-Robots-Tag: noindex, nofollow, noarchive

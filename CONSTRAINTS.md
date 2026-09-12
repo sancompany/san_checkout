@@ -130,6 +130,8 @@ não de parceiro que saiu.
      `ACCESS_TOKEN_*` viram alerta em `/api/saude`.
   4. **Cota gratuita do Supabase** — projeto pausa com 7 dias sem
      consulta; o mesmo ping resolve.
+- **Limites de taxa e de tamanho**: ver §2.7 — declarados lá pelo que
+  entregam de fato, não pelo número na configuração.
 
 ---
 
@@ -472,7 +474,18 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
    que a camada 1 caia ou não esteja configurada, e é ela que protege a
    API — que fica em outro domínio e não passa pelo Access.
 3. **`X-Robots-Tag: noindex, nofollow, noarchive`** em `public/_headers`,
-   para `/admin.html` e `/status.html`.
+   para **seis** caminhos: `/admin.html`, `/admin`, `/admin/`,
+   `/status.html`, `/status` e `/status/`.
+
+   > **Corrigido em 11/09/2026, no ciclo da Estação 6.** Eram dois
+   > caminhos, e o header não chegava em nenhuma página. O Pages responde
+   > 308 de `/status.html` para `/status`, então a regra grudava o header
+   > no **redirecionamento** — o buscador segue o 308 e recebe a página
+   > final sem `noindex`. Medido: `/status.html` devolvia o header num
+   > 308, `/status` devolvia 200 sem ele. É o mesmo erro do furo do
+   > `/admin` acima, na camada de cima, e a mesma lição: a regra cita o
+   > caminho que o servidor **entrega**.
+   > (`docs/erros/2026-09-11-noindex-existia-no-arquivo-e-nao-na-web.md`)
 
 **Por que NÃO existe `robots.txt` neste projeto:** um `robots.txt` com
 `Disallow: /admin.html` publica exatamente o caminho que se quer
@@ -487,6 +500,27 @@ que a Cloudflare serve. Consequência prática: a senha do admin continua
 sendo a única barreira da API, e a pendência de ela trafegar em todo
 request (`X-Admin-Pass`) segue aberta e segue valendo.
 
+**Limite assumido, declarado (verificado em 11/09/2026):** a senha do
+admin fica em **`sessionStorage`, em texto puro**, enquanto a aba estiver
+aberta — é o que `public/js/admin.js` guarda para reenviar em
+`X-Admin-Pass` a cada requisição. Consequências, ditas por inteiro:
+
+- Qualquer XSS na página do painel lê a senha na hora. A CSP
+  (`script-src 'self'` sem `unsafe-inline`) é o que impede o script
+  injetado de executar, e por isso ela é parte da proteção da
+  credencial, não só higiene de cabeçalho. A XSS encontrada no ciclo de
+  revisão da Estação 5 (`celulaCampos`, dados do payload interpolados
+  sem escape) era exatamente esse par.
+- **Não há expiração por tempo.** Fechar a aba apaga; deixar aberta
+  mantém. Sair pelo botão apaga (`limparLogin`).
+- Um 401 no meio da sessão **não** limpa o login guardado: a aba segue
+  reenviando a senha velha, e cada tentativa custa uma derivação scrypt
+  no servidor.
+
+Isso é o desenho atual, não descuido, e é o que a pendência do **token
+de sessão de vida curta** existe para substituir — ela é a correção
+destes três itens de uma vez, e está aberta no `CLAUDE.md`.
+
 **Se o operador perder o acesso ao e-mail cadastrado**, o caminho de
 volta é o próprio painel da Cloudflare, com a conta dela — não há
 dependência circular entre as duas camadas.
@@ -496,6 +530,72 @@ troca uma fechadura por um segredo que vive em URL — histórico do
 navegador, favoritos, cabeçalho de referência — e acrescenta risco de o
 operador único perder o próprio acesso. Obscuridade não vira segurança
 por ser mais difícil de adivinhar.
+
+---
+
+## 2.7 Limites de taxa e de tamanho — o que eles realmente entregam (Lei 7)
+
+Escrito em 11/09/2026, no ciclo de segurança da Estação 6. Esta seção
+existe porque o número na configuração e a proteção efetiva **não são a
+mesma coisa**, e declarar o primeiro achando que declarou o segundo é o
+jeito mais comum de acreditar que se está protegido.
+
+### O teto por rota
+
+| Rota | Teto | Por quê esse número |
+|---|---|---|
+| `/api/checkout/{pix,cartao,boleto,assinatura,assinatura-pix}`, `/estornar`, `/cancelar-assinatura`, `/pausar-assinatura`, `/retomar-assinatura`, `/api/admin` | 10/min | Cria cobrança ou exige credencial. O teto é de força bruta, não de uso. |
+| `/api/checkout/{pedido,plano,asaas-checkout,status,cobranca,consultar-assinatura}` | 60/min **cada** | Consulta. Uma instância por rota — a mesma instância nas seis somaria num balde só (`docs/erros/2026-09-10-rate-limit-balde-compartilhado.md`). |
+| `/api/saude` | 30/min | Faz consulta real no Supabase por chamada. O consumidor legítimo é o cron externo: 6/hora. |
+| `/api/webhooks` | 300/min | Teto alto de propósito: a Asaas dispara em rajada, e cortar evento legítimo **pausa a fila dela por 15 falhas seguidas** (§2.3). |
+
+### O que esse teto NÃO entrega
+
+**O limite é por IP, e quem tiver mais de um IP multiplica o teto pelo
+número deles.** Isso não é hipótese: foi medido sem querer em
+11/09/2026, quando doze requisições de teste passaram por um limite de
+10/min porque o proxy de saída alternava entre três endereços
+(`docs/erros/2026-09-11-meu-proxy-rotacionou-ip-e-quase-reportei-limite-quebrado.md`).
+Um /24 de qualquer provedor de nuvem transforma 10/min em 2.560/min.
+
+Portanto, e isto é o que importa: **o limite por IP não é a guarda de
+força bruta da `X-Checkout-Key` nem da senha do admin.** Ele reduz
+ruído e tapa o caso absurdo. Quem protege a credencial é:
+
+- na chave do contratante — o tamanho e a imprevisibilidade dela, mais
+  nada. **Não há bloqueio por tentativas erradas**, e isso é limite
+  declarado, não pendência escondida.
+- na senha do admin — o Cloudflare Access na frente (§2.6), que impede a
+  requisição de chegar ao backend sem identidade verificada, e o scrypt
+  de ~800 ms, que faz cada tentativa custar caro **para o servidor
+  também** (por isso a fila de uma derivação por vez, §2, gargalo 0).
+
+Contador por credencial, e não por IP, é o próximo degrau. Está em
+`docs/proximas-versoes.md`, não aqui, porque ainda não há evidência de
+tentativa real — e o log de rejeição do webhook (§2.5) é o instrumento
+que vai produzir essa evidência.
+
+### O teto por campo
+
+`express.json()` limita o **corpo inteiro** a 100 KB (padrão do
+Express). Isso não é teto de campo: um corpo com um campo só transforma
+o limite do corpo no limite daquele campo, e foi assim que um `nome` de
+100 KB atravessou a validação
+(`docs/erros/2026-09-11-o-teto-do-corpo-parecia-teto-do-campo.md`).
+
+Os tetos por campo vivem em `TETOS`, em `src/utils/validadores.js`, e
+são aplicados **antes** da normalização:
+
+| Campo | Teto | Origem do número |
+|---|---|---|
+| `nome` | 2 a 150 | Nome de pessoa com folga; só tamanho, nunca formato — regra de "letras e espaços" recusa apóstrofo, hífen e outro alfabeto. |
+| `email` | 254 | Máximo de um endereço na RFC 5321. |
+| `documento` | 32 | CPF pontuado tem 14; folga para formatação. |
+| `telefone` | 32 | Telefone com DDD e traço tem 15. |
+| `cep` | 16 | CEP pontuado tem 9. |
+
+Longo demais é **recusa, não truncamento**: truncar aceitaria um dado
+que o comprador não digitou e mandaria isso para a Asaas.
 
 ---
 

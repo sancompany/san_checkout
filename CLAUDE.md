@@ -126,11 +126,16 @@ A fila de trabalho dela, em ordem de tamanho do risco:
    requisição. Resolve de uma vez os três itens abertos que são o mesmo
    problema visto de ângulos diferentes: a senha trafegando em todo
    request, a amplificação de memória (que já derrubou a produção uma
-   vez) e os ~3s por clique no painel.
-2. **Ciclo da `seguranca-san` sobre o que está no ar**, incluindo o teste
-   no navegador que a skill descreve — controle de acesso pela URL,
-   formulário sem o cliente, erro exposto, valor do pagamento vindo do
-   servidor.
+   vez) e os ~3s por clique no painel. **Ganhou um quarto ângulo no
+   ciclo 1:** a senha fica em `sessionStorage` em texto puro enquanto a
+   aba estiver aberta (`CONSTRAINTS.md` §2.6).
+2. ~~**Ciclo da `seguranca-san` sobre o que está no ar**~~ — **ciclo 1
+   rodado em 11/09/2026**, com o backend em produção, o navegador
+   integrado sobre `checkout.sancocore.com.br` e a suíte local. Seis
+   achados, todos corrigidos no repositório, todos com registro em
+   `docs/erros/`. **O ciclo 2 rodou limpo sobre o código corrigido, mas
+   rodou LOCAL** — as correções ainda não subiram. Ver a pendência
+   bloqueante abaixo.
 3. **Cache de 4h em JS e CSS** (item abaixo) — passou de incômodo a
    bloqueio de verificação.
 4. **Detectar a fila pausada da Asaas** e o alerta de serviço fora do ar
@@ -156,6 +161,36 @@ exceção registrada no `CONSTRAINTS.md`.
 Esta é a lista única. O que não está aqui, está fechado.
 
 ### Bloqueiam a esteira — dependem de ação do dono
+
+- **🔴 Estação 6 · as correções do ciclo 1 de segurança não estão em
+  produção.** A Estação 6 verifica **o que está no ar**, e o que está no
+  ar hoje é a versão anterior a estas seis correções. O ciclo 2 passou
+  limpo, mas passou sobre o repositório, não sobre produção — e é
+  exatamente essa distância que a estação existe para medir.
+
+  **A estação não fecha até isto subir e ser reconferido.** Arquivos
+  alterados, todos já no disco em `D:\san-checkout-v2`:
+
+  | Arquivo | O que mudou |
+  |---|---|
+  | `src/server.js` | limitador em `/api/saude` (30/min) e `/api/webhooks` (300/min); tratador de 404 e de erro em JSON no fim da pilha |
+  | `src/utils/validadores.js` | tabela `TETOS` por campo, `nomeValido`, guarda de vazio no `compararSeguro`, autoteste novo (40 checagens) |
+  | `src/controllers/checkoutController.js` | `nomeValido` nos 2 pontos de entrada |
+  | `src/controllers/asaasCheckoutController.js` | `nomeValido` nos 3 pontos de entrada |
+  | `public/_headers` | `noindex` nas seis grafias, não só nas duas com `.html` |
+  | `tests/valor-vem-do-servidor.js` | **arquivo novo** — o corpo da requisição nunca dita quanto se cobra |
+  | `tests/executar.js` | registra as duas suítes novas (8 no total) |
+
+  Depois do deploy, o que precisa ser reconferido **de fora**, e que só
+  faz sentido contra produção:
+
+  1. `curl -D- https://checkout.sancocore.com.br/status` tem que trazer
+     `x-robots-tag` **na página**, não só no 308 de `/status.html`.
+  2. `curl https://san-checkout.onrender.com/api/checkout/naoexiste` tem
+     que devolver `{"erro":"Rota não encontrada."}` em JSON, não HTML.
+  3. `/api/saude` tem que trazer `RateLimit-Limit: 30`.
+  4. Um `POST` em `/api/checkout/pix/...` com `nome` de 100 KB tem que
+     devolver `{"erro":"Nome inválido."}`.
 
 - **🟡 Última conferência da Estação 5, e só o dono consegue fazer:**
   entrar no painel (passando pelo Cloudflare Access), cadastrar um
@@ -213,6 +248,27 @@ Esta é a lista única. O que não está aqui, está fechado.
   bloqueia porque tem contorno conhecido, mas é a primeira coisa da
   Estação 6.
 
+- **🟠 Estação 6 · o limite por IP não é guarda de força bruta, e a
+  `X-Checkout-Key` não tem nenhuma outra.** Medido no ciclo 1: doze
+  requisições passaram por um teto de 10/min porque o proxy de saída
+  alternava entre três endereços. Declarado no `CONSTRAINTS.md` §2.7 como
+  limite assumido — contador por credencial está em
+  `docs/proximas-versoes.md`, esperando evidência de tentativa real no
+  log de rejeição. Não bloqueia: é limite conhecido e escrito, não
+  descoberta pendente.
+- **🟡 Estação 6 · `NODE_ENV` no Render nunca foi confirmado.** Não dá
+  para medir de fora — o proxy do Render sobrescreve o
+  `x-forwarded-proto`, que era a única pista observável. Deixou de ser
+  risco de vazamento (o tratador de erro novo fecha isso em código,
+  independente do valor), mas se `NODE_ENV` não for `production` o
+  **redirecionamento HTTP→HTTPS do `server.js` é código morto** —
+  inofensivo hoje, porque o Render e o Cloudflare já entregam só HTTPS e
+  o HSTS está ativo. Conferir no painel do Render quando abrir ele por
+  outro motivo; não vale uma viagem só para isso.
+- **🟡 Estação 6 · um 401 no meio da sessão não limpa o login guardado.**
+  A aba segue reenviando a senha velha, e cada tentativa custa uma
+  derivação scrypt no servidor. Some junto com a sessão de curta duração
+  — não vale correção própria antes dela.
 - **Lei 8 · eventos que chegam e só entram no log.**
   `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e
   os grupos de transferência/saldo estão marcados no painel e caem no
