@@ -5,7 +5,7 @@
  * recebido, e um contador por hora das tentativas que a guarda de
  * origem recusou. É o que a Lei 8 pede aqui, e é o que torna útil
  * marcar no painel da Asaas um evento que o código ainda não trata —
- * antes disto, esse evento virava `console.log` no Render e sumia.
+ * antes disto, esse evento virava `console.log` da hospedagem e sumia.
  *
  * A REGRA QUE MANDA NESTE ARQUIVO: payload de webhook da Asaas carrega
  * nome, e-mail, CPF/CNPJ, telefone e endereço do comprador. Nada disso
@@ -196,7 +196,7 @@ const AMOSTRAS_POR_HORA = 20;
  * Acumulado, uma sondagem de mil requisições por segundo continua
  * custando uma escrita por minuto.
  *
- * O que se perde num reinício do Render é o que ainda não desceu —
+ * O que se perde num reinício do serviço é o que ainda não desceu —
  * até 60 segundos de contagem. Aceito: o número serve para perceber
  * sondagem, não para fechar caixa.
  *

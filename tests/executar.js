@@ -22,10 +22,12 @@ const SUITES = [
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
+  'src/utils/sessaoAdmin.js',        // token de sessão do admin: forja, adulteração, validade
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
-  'tests/sem-consulta-repetida.js'   // nenhuma ida ao banco repetida no caminho do dinheiro
+  'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
+  'tests/senha-nao-fica-no-navegador.js' // a senha do admin não sobrevive ao login
 ];
 
 /**

@@ -42,12 +42,12 @@ import rotasWebhook from './routes/webhookRoutes.js';
 const app = express();
 const PORTA = process.env.PORT || 3001;
 
-// Atrás do proxy do Render — precisa disso pra x-forwarded-proto (força
+// Atrás do proxy da hospedagem — precisa disso pra x-forwarded-proto (força
 // HTTPS abaixo) e pro rate limit (rate-limit) identificarem o IP real do
 // cliente em vez do IP do proxy.
 app.set('trust proxy', 1);
 
-/** Força HTTPS em produção — Render sempre entrega https, mas o proxy
+/** Força HTTPS em produção — a hospedagem sempre entrega https, mas o proxy
  *  repassa a origem real em x-forwarded-proto; local (dev) não tem esse
  *  header, então não interfere no teste em http://localhost. */
 app.use((requisicao, resposta, proximo) => {
@@ -103,7 +103,29 @@ app.use('/api/checkout/cancelar-assinatura', limitadorCriacao);
 // aqui não é sobre volume de uso, é sobre força bruta na chave.
 app.use('/api/checkout/pausar-assinatura', limitadorCriacao);
 app.use('/api/checkout/retomar-assinatura', limitadorCriacao);
-app.use('/api/admin', limitadorCriacao); // mesmo teto de /estornar — só um admin usa, mas trava força-bruta na chave
+/* A ROTA DE LOGIN É O ÚNICO LUGAR CARO QUE SOBROU, e por isso tem o
+   teto mais apertado do projeto. Cada tentativa custa ~830 ms de CPU no
+   scrypt: a 10/min, um atacante consumiria 8,3 s de CPU por minuto numa
+   instância de 0,5 vCPU só tentando adivinhar — negação de serviço de
+   graça, sem nem precisar acertar.
+
+   Cinco por minuto é largo para quem sabe a senha (erra, corrige, entra)
+   e estreito para quem não sabe. Tem que vir ANTES do limitador de
+   /api/admin, senão o mais largo casa primeiro. */
+app.use('/api/admin/sessao', rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: 'Muitas tentativas de login. Aguarde um minuto.' }
+}));
+
+/* O resto do painel ficou BARATO — verificar o token custa ~36µs em vez
+   de 830 ms —, então o teto de 10/min que existia para conter a
+   derivação deixou de fazer sentido: ele estrangulava o uso normal (uma
+   tela que recarrega três listas gasta 3 das 10) sem proteger nada que a
+   rota de sessão já não proteja. */
+app.use('/api/admin', criarLimitadorConsulta());
 app.use('/api/checkout/pedido', criarLimitadorConsulta());
 app.use('/api/checkout/plano', criarLimitadorConsulta());
 app.use('/api/checkout/asaas-checkout', criarLimitadorConsulta());
@@ -200,8 +222,8 @@ app.get('/api/saude', async (_req, resposta) => {
 //
 // Essa é a parte que importa: a higiene de erro em produção não pode
 // depender de uma variável de ambiente estar certa num painel que
-// ninguém revisa. Verificado em 11/09/2026 que daqui não dá para provar
-// o valor de `NODE_ENV` no Render (o proxy sobrescreve
+// ninguém revisa. Verificado em 11/09/2026, ainda no Render, que daqui
+// não dá para provar o valor de `NODE_ENV` (o proxy sobrescreve
 // `x-forwarded-proto`, que era a única pista observável de fora) — e
 // "provavelmente está certo" não é verificação. Com estes dois
 // tratadores, o vazamento fica impossível independente do valor.
@@ -251,14 +273,14 @@ app.listen(PORTA, () => {
   // na Asaas, não a tabela pública chumbada no código. Falha aqui não
   // derruba nada: o taxaService mantém a tabela padrão como fallback.
   // ponytail: setInterval simples em vez de agendador — o processo do
-  // Render reinicia sozinho de vez em quando e o boot já ressincroniza.
+  // serviço reinicia sozinho de vez em quando e o boot já ressincroniza.
   sincronizarTaxasAsaas();
   setInterval(sincronizarTaxasAsaas, UM_DIA_MS).unref();
 
   // O log de auditoria do webhook é diagnóstico, não dado fiscal: não
   // herda os 5 anos de retenção das cobranças. Pega carona no mesmo
   // ciclo de 24h em vez de ganhar agendador próprio, e roda no boot
-  // porque o processo do Render reinicia sozinho — não dá para contar
+  // porque o processo da hospedagem reinicia sozinho — não dá para contar
   // com um intervalo de 24h ser alcançado.
   expurgarAuditoria();
   setInterval(expurgarAuditoria, UM_DIA_MS).unref();

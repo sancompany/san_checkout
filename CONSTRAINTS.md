@@ -469,10 +469,11 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
    > outras grafias da mesma URL: com e sem extensão, com e sem barra
    > final.
 
-2. **Usuário e senha validados no backend**, em toda rota de
-   `/api/admin` (`verificarAdminKey`), com scrypt a N=2^17. Vale mesmo
-   que a camada 1 caia ou não esteja configurada, e é ela que protege a
-   API — que fica em outro domínio e não passa pelo Access.
+2. **Token de sessão validado no backend**, em toda rota de
+   `/api/admin` (`verificarAdminKey`). Vale mesmo que a camada 1 caia ou
+   não esteja configurada, e é ela que protege a API — que fica em outro
+   domínio e não passa pelo Access. Como o token nasce e como ele é
+   conferido está logo abaixo, em "A sessão do admin".
 3. **`X-Robots-Tag: noindex, nofollow, noarchive`** em `public/_headers`,
    para **seis** caminhos: `/admin.html`, `/admin`, `/admin/`,
    `/status.html`, `/status` e `/status/`.
@@ -494,32 +495,65 @@ header alcança o mesmo buscador sem anunciar nada. Se alguém propuser
 criar o arquivo "por padrão", esta é a razão de não criar.
 
 **Limite assumido, declarado:** a API (`/api/admin/*`) fica em outro
-domínio, no Render, e **não passa pelo Access** — quem a protege é só a
-camada 2. Isso é o desenho, não descuido: o Access da Cloudflare cobre o
-que a Cloudflare serve. Consequência prática: a senha do admin continua
-sendo a única barreira da API, e a pendência de ela trafegar em todo
-request (`X-Admin-Pass`) segue aberta e segue valendo.
+domínio (`api.sancocore.com.br`, hoje no Northflank) e **não passa pelo
+Access** — quem a protege é só a camada 2. Isso é o desenho, não
+descuido: o Access da Cloudflare cobre o que a Cloudflare serve.
 
-**Limite assumido, declarado (verificado em 11/09/2026):** a senha do
-admin fica em **`sessionStorage`, em texto puro**, enquanto a aba estiver
-aberta — é o que `public/js/admin.js` guarda para reenviar em
-`X-Admin-Pass` a cada requisição. Consequências, ditas por inteiro:
+### A sessão do admin (substituiu a senha por requisição em 12/09/2026)
 
-- Qualquer XSS na página do painel lê a senha na hora. A CSP
+**Como era, e por que saiu.** O painel guardava `{usuario, senha}` em
+`sessionStorage` em texto puro e mandava `X-Admin-User`/`X-Admin-Pass`
+em toda chamada; o servidor rodava scrypt a N=2^17 a cada requisição.
+Três defeitos num arranjo só, e nenhum deles aparecia na tela: a senha
+ficava legível para qualquer XSS ou extensão que lesse storage, cada
+clique custava ~830 ms de CPU, e um 401 no meio da sessão não limpava
+nada — a aba seguia reenviando a senha velha, pagando uma derivação por
+tentativa.
+
+**Como é agora.** A senha entra em **um** ponto, `POST
+/api/admin/sessao`, e é trocada por um token. Nada além do token fica no
+navegador.
+
+- **Formato:** `base64url(conteúdo).base64url(HMAC-SHA256)`, conteúdo
+  `{u: usuário, exp: vencimento, n: 9 bytes aleatórios}`. Verificação em
+  ~25 µs, contra os ~830 ms do scrypt.
+- **A chave que assina é derivada do `CHECKOUT_ADMIN_PASS_HASH`**, não
+  de um segredo novo. Duas consequências deliberadas: **trocar a senha
+  do admin invalida todas as sessões abertas**, de graça, sem lista de
+  revogação; e não existe variável de ambiente nova que, faltando,
+  faria o sistema falhar aberto.
+- **Validade de 8 horas**, no `exp` assinado. Token sem `exp` é
+  recusado — falha fechada, não aberta.
+- **A assinatura é conferida ANTES do conteúdo**, com
+  `timingSafeEqual`. Conferir o conteúdo primeiro seria decidir a partir
+  de dado não autenticado.
+- **`/api/admin/sessao` é a única rota antes da guarda**, e tem o teto
+  mais apertado do projeto: **5/min**. É o único lugar caro que sobrou,
+  e a 10/min um atacante consumiria 8,3 s de CPU por minuto numa
+  instância de 0,5 vCPU só tentando adivinhar. O resto de `/api/admin`
+  passou de 10/min para 60/min, porque ficou barato.
+- **Um 401 com `sessaoExpirada` derruba o painel para a tela de login**,
+  com a razão escrita.
+
+**Limites que continuam valendo, ditos por inteiro:**
+
+- **A senha ainda passa pelo navegador uma vez**, no corpo do POST de
+  login. Uma XSS ativa no exato momento da digitação a alcança. A CSP
   (`script-src 'self'` sem `unsafe-inline`) é o que impede o script
   injetado de executar, e por isso ela é parte da proteção da
-  credencial, não só higiene de cabeçalho. A XSS encontrada no ciclo de
+  credencial, não só higiene de cabeçalho — a XSS encontrada no ciclo de
   revisão da Estação 5 (`celulaCampos`, dados do payload interpolados
   sem escape) era exatamente esse par.
-- **Não há expiração por tempo.** Fechar a aba apaga; deixar aberta
-  mantém. Sair pelo botão apaga (`limparLogin`).
-- Um 401 no meio da sessão **não** limpa o login guardado: a aba segue
-  reenviando a senha velha, e cada tentativa custa uma derivação scrypt
-  no servidor.
-
-Isso é o desenho atual, não descuido, e é o que a pendência do **token
-de sessão de vida curta** existe para substituir — ela é a correção
-destes três itens de uma vez, e está aberta no `CLAUDE.md`.
+- **O token no `sessionStorage` é roubável por XSS**, como a senha era.
+  A diferença é o que o roubo entrega: no máximo o que restar das 8
+  horas, e nada que sirva em outro lugar. A senha entregava acesso
+  permanente e reutilizável.
+- **Não há revogação individual.** Derrubar uma sessão específica não
+  existe; derrubar todas é trocar a senha do admin. Aceito para um
+  operador só.
+- O teste `tests/senha-nao-fica-no-navegador.js` trava o arranjo: falha
+  se a senha voltar a trafegar em cabeçalho, se a guarda voltar a
+  conferir senha, ou se `/sessao` cair para trás da guarda.
 
 **Se o operador perder o acesso ao e-mail cadastrado**, o caminho de
 volta é o próprio painel da Cloudflare, com a conta dela — não há

@@ -4,11 +4,25 @@
  * porque a CSP em public/_headers usa script-src 'self' sem
  * 'unsafe-inline'.
  *
- * Nada de credencial fica em código aqui: usuário e senha do admin são
- * digitados na tela, guardados só no sessionStorage desta aba e
- * enviados em todo request (X-Admin-User / X-Admin-Pass). Quem valida é
- * sempre o backend (verificarAdminKey em adminController.js) — esta
- * tela não decide acesso nenhum sozinha.
+ * Nada de credencial fica em código aqui, e — desde 12/09/2026 — nada
+ * de SENHA fica em lugar nenhum do navegador. A senha é digitada uma
+ * vez, trocada por um token de sessão em POST /api/admin/sessao, e
+ * esquecida: o que fica no sessionStorage desta aba é só o token.
+ *
+ * Duas coisas melhoraram de uma vez, e a segunda é a que importa mais:
+ *
+ * 1. Velocidade. Antes, TODA requisição levava a senha e o servidor
+ *    rodava scrypt (~830 ms) para conferi-la — três listas na abertura
+ *    do painel eram ~2,5 s só de derivação. Agora o custo é pago uma
+ *    vez, no login; conferir o token custa ~25 µs.
+ * 2. Superfície. Senha guardada na aba vazava em qualquer XSS, em
+ *    qualquer extensão que leia storage, e ia no cabeçalho de cada
+ *    chamada. Token vaza no máximo o que resta das 8 horas, e some
+ *    sozinho quando a senha do admin é trocada (a chave que o assina é
+ *    derivada do hash da senha).
+ *
+ * Quem valida continua sendo sempre o backend (verificarAdminKey em
+ * adminController.js) — esta tela não decide acesso nenhum sozinha.
  */
 
 import { chamarApi } from './utils/api.js';
@@ -52,27 +66,58 @@ const $ = (id) => document.getElementById(id);
 /* ------------------------------------------------------------------
    Sessão e chamadas
 ------------------------------------------------------------------ */
-function loginSalvo() {
-  try { return JSON.parse(sessionStorage.getItem(CHAVE_SESSAO)); } catch { return null; }
+function sessaoSalva() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(CHAVE_SESSAO));
+    return s?.token ? s : null;
+  } catch { return null; }
 }
 
-function salvarLogin(usuario, senha) {
-  try { sessionStorage.setItem(CHAVE_SESSAO, JSON.stringify({ usuario, senha })); } catch { /* navegador bloqueou — segue sem persistir */ }
+function salvarSessao(sessao) {
+  try { sessionStorage.setItem(CHAVE_SESSAO, JSON.stringify(sessao)); } catch { /* navegador bloqueou — segue sem persistir */ }
 }
 
-function limparLogin() {
+function limparSessao() {
   try { sessionStorage.removeItem(CHAVE_SESSAO); } catch { /* idem */ }
 }
 
+/** Vencido pelo relógio DESTA máquina. Não é a checagem que protege
+ *  nada — quem decide é o servidor, que confere o `exp` assinado — é só
+ *  para não mandar uma rodada de requisições fadadas ao 401 e devolver
+ *  a tela de login na hora certa. */
+function sessaoVencida(sessao) {
+  const limite = Date.parse(sessao?.expiraEm ?? '');
+  return Number.isFinite(limite) && limite <= Date.now();
+}
+
 function headersAuth() {
-  const login = loginSalvo();
-  return { 'X-Admin-User': login?.usuario ?? '', 'X-Admin-Pass': login?.senha ?? '' };
+  return { 'X-Admin-Token': sessaoSalva()?.token ?? '' };
+}
+
+/**
+ * Chamada autenticada do painel. O envelope existe por causa do 401 no
+ * MEIO da sessão: antes, o login guardado continuava lá, cada tela
+ * mostrava um toast de erro diferente e o operador ficava num painel
+ * que não respondia mais, sem entender por quê.
+ *
+ * Agora o token vencido (ou invalidado por troca de senha do admin)
+ * derruba para a tela de login uma vez, com a razão escrita. O erro
+ * continua subindo para quem chamou, que segue tratando o resto como
+ * antes.
+ */
+async function chamarAdmin(caminho, opcoes) {
+  try {
+    return await chamarApi(`/api/admin${caminho}`, { ...opcoes, headers: headersAuth() });
+  } catch (erro) {
+    if (erro.status === 401 && erro.corpo?.sessaoExpirada) encerrarSessao(erro.message);
+    throw erro;
+  }
 }
 
 const admin = {
-  get: (caminho) => chamarApi(`/api/admin${caminho}`, { method: 'GET', headers: headersAuth() }),
-  post: (caminho, dados) => chamarApi(`/api/admin${caminho}`, { method: 'POST', body: JSON.stringify(dados), headers: headersAuth() }),
-  patch: (caminho, dados) => chamarApi(`/api/admin${caminho}`, { method: 'PATCH', body: JSON.stringify(dados), headers: headersAuth() })
+  get: (caminho) => chamarAdmin(caminho, { method: 'GET' }),
+  post: (caminho, dados) => chamarAdmin(caminho, { method: 'POST', body: JSON.stringify(dados) }),
+  patch: (caminho, dados) => chamarAdmin(caminho, { method: 'PATCH', body: JSON.stringify(dados) })
 };
 
 /* ------------------------------------------------------------------
@@ -921,52 +966,79 @@ async function carregarTudo() {
   await carregarContratantes();
   await carregarSubcontas();
 
-  /* O resumo do webhook é disparado SEM `await`, e isso é decisão de
-     latência medida, não estilo: cada rota de `/api/admin` roda a
-     derivação scrypt da senha e custa ~3s em produção (a mesma rota com
-     banco e sem senha custa ~500ms). Esperar por ele deixava o painel
-     três requisições em fila antes de aparecer — quase 10 segundos.
+  /* O resumo do webhook é disparado SEM `await` porque ele não faz
+     parte da tela que o operador veio ver: é um contador de alerta, e
+     esperar por ele atrasaria contratantes e subcontas sem motivo.
 
      Ele continua sendo buscado no login, e não só ao abrir a aba,
      porque alerta que depende de alguém ir olhar não é alerta: o
-     contador de eventos não tratados aparece sozinho, alguns segundos
+     contador de eventos não tratados aparece sozinho, um instante
      depois da tela.
 
-     A correção de verdade da lentidão é sessão de curta duração em vez
-     de derivar a senha a cada requisição — arquitetura de acesso, na
-     lista de pendências e na Estação 6. Paralelizar as três chamadas
-     seria o contrário do certo: três derivações simultâneas pedem
-     ~384 MiB numa instância de 512 MiB. */
+     Aqui morava a razão real deste `sem await`: cada rota de
+     `/api/admin` conferia a senha com scrypt e custava ~830 ms, então
+     três chamadas em fila somavam segundos e três em paralelo pediriam
+     ~384 MiB de RAM. Com o token de sessão isso acabou (~25 µs por
+     requisição), e o `sem await` sobrevive só pelo motivo do primeiro
+     parágrafo. */
   carregarResumoWebhook().catch(() => { /* a aba Webhook mostra o erro quando for aberta */ });
 }
 
-async function tentarEntrar(usuarioForcado, senhaForcada) {
-  const usuario = usuarioForcado ?? $('admin-user').value.trim();
-  const senha = senhaForcada ?? $('admin-pass').value;
+/** Abre o painel com uma sessão que já existe. Não confere nada: quem
+ *  confere é o servidor, na primeira requisição que `carregarTudo`
+ *  fizer — e se ela voltar 401, `chamarAdmin` derruba de volta. */
+async function abrirPainel(usuario) {
+  limparErro('msg-login');
+  $('rotulo-usuario').textContent = usuario ?? 'operador';
+  $('tela-login').hidden = true;
+  $('tela-painel').hidden = false;
+  await carregarTudo();
+}
+
+async function tentarEntrar() {
+  const usuario = $('admin-user').value.trim();
+  const senha = $('admin-pass').value;
   if (!usuario || !senha) return;
 
-  salvarLogin(usuario, senha);
   const botao = $('btn-entrar');
   botao.disabled = true;
   try {
-    await carregarTudo();
-    limparErro('msg-login');
-    $('rotulo-usuario').textContent = usuario;
-    $('tela-login').hidden = true;
-    $('tela-painel').hidden = false;
+    /* O único lugar do painel inteiro em que a senha trafega. Vai no
+       corpo, não em cabeçalho: cabeçalho aparece em log de proxy com
+       muito mais facilidade do que corpo de POST. */
+    const sessao = await chamarApi('/api/admin/sessao', {
+      method: 'POST',
+      body: JSON.stringify({ usuario, senha })
+    });
+
+    // A senha morre aqui. Nem o storage nem o campo da tela ficam com ela.
+    $('admin-pass').value = '';
+    salvarSessao({ token: sessao.token, expiraEm: sessao.expiraEm, usuario });
+
+    await abrirPainel(usuario);
   } catch (erro) {
-    limparLogin();
+    limparSessao();
     mostrarErro('msg-login', erro.message);
   } finally {
     botao.disabled = false;
   }
 }
 
-function sair() {
-  limparLogin();
+/** Volta para a tela de login e apaga a sessão. `motivo` aparece na
+ *  tela quando a saída não foi escolhida pelo operador (token vencido,
+ *  senha do admin trocada) — sem isso, a tela de login reaparecendo do
+ *  nada parece bug. */
+function encerrarSessao(motivo) {
+  limparSessao();
   $('admin-pass').value = '';
   $('tela-painel').hidden = true;
   $('tela-login').hidden = false;
+  if (motivo) mostrarErro('msg-login', motivo);
+  else limparErro('msg-login');
+}
+
+function sair() {
+  encerrarSessao();
 }
 
 /* ------------------------------------------------------------------
@@ -993,6 +1065,11 @@ $('btn-expandir-rejeicoes').addEventListener('click', () => {
 
 ligarMascarasSubconta();
 
-// já tem login guardado nesta aba (sessionStorage) — pula direto pro painel
-const login = loginSalvo();
-if (login) tentarEntrar(login.usuario, login.senha);
+/* Já tem token guardado nesta aba (sessionStorage) — pula direto pro
+   painel, sem pedir senha de novo. Vencido pelo relógio local nem
+   chega a tentar: apaga e mostra o login com a razão. */
+const sessaoAberta = sessaoSalva();
+if (sessaoAberta) {
+  if (sessaoVencida(sessaoAberta)) encerrarSessao('Sessão expirada. Entre novamente.');
+  else abrirPainel(sessaoAberta.usuario).catch(() => { /* o 401 já derrubou pro login em chamarAdmin */ });
+}

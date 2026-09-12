@@ -128,7 +128,7 @@ export function verificarWebhookAsaas(requisicao, resposta, proximo) {
   proximo();
 }
 
-/** `req.ip` depende do `trust proxy` do Express; no Render o endereço
+/** `req.ip` depende do `trust proxy` do Express; atrás do proxy o endereço
  *  real vem no `x-forwarded-for`. Só o primeiro salto interessa — o
  *  resto da cadeia é forjável por quem manda a requisição. */
 function ipDaRequisicao(requisicao) {
@@ -267,7 +267,7 @@ export function criarReceptorWebhook(deps = dependenciasPadrao) {
     const referencia = extrairReferencia(corpo);
 
     // O payload CRU não é mais impresso. Ele carrega nome, e-mail,
-    // CPF/CNPJ, telefone e endereço do comprador, e o log do Render é
+    // CPF/CNPJ, telefone e endereço do comprador, e o log da hospedagem é
     // retido por terceiro — era pendência aberta da Lei 10. O que
     // sobra é a versão redigida, que responde as mesmas perguntas de
     // diagnóstico (inclusive "onde vem o payment.id do CHECKOUT_PAID",
@@ -398,7 +398,7 @@ function registrarAlertaChaveApi(corpo) {
   alertasChaveApi.push(alerta);
   console.error(
     `[ALERTA/chave-asaas] ${evento} — a chave de API da Asaas está para expirar ou foi desativada. ` +
-    'Gere uma nova no painel da Asaas e atualize ASAAS_API_KEY no Render ANTES que ela caia, ' +
+    'Gere uma nova no painel da Asaas e atualize ASAAS_API_KEY no Northflank ANTES que ela caia, ' +
     'senão toda cobrança para de funcionar sem aviso.'
   );
 }
@@ -1082,7 +1082,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(a.espiao.chamou('notificar').length, 1, 'auditoria quebrada não impede a notificação');
 
   // Lei 10: o payload cru NÃO é mais impresso. Um CPF que entra pelo
-  // webhook não pode sair no log do Render.
+  // webhook não pode sair no log da hospedagem.
   a = await receber({
     event: 'PAYMENT_CONFIRMED',
     payment: { id: 'pay_1', status: 'CONFIRMED' },

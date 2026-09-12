@@ -29,7 +29,7 @@
  * middleware que as usa também é.
  *
  * ── Por que o valor guardado é base64, e não `scrypt$N$r$p$sal$hash` cru ──
- * Era assim antes, e quebrou em produção: o Render trata `$` dentro do
+ * Era assim antes, e quebrou em produção (Render, set/2026): ele trata `$` dentro do
  * valor de uma variável de ambiente como início de substituição de shell
  * e apaga o que vem depois do primeiro `$` que não resolve — o hash
  * guardado chegava truncado. `senhaConfere` então falhava o teste de
@@ -52,10 +52,13 @@ const derivar = promisify(scrypt);
  * UMA derivação por vez neste processo. Não é otimização — é o que
  * impede o serviço de cair.
  *
- * A N=2^17 cada derivação pede **~128 MiB**, e a instância do Render tem
- * 512 MiB. Duas simultâneas já são 256 MiB em cima do que o Node e o
- * cliente Supabase já ocupam; em 11/09/2026 isso derrubou a produção de
- * verdade, com reinício automático e serviço indisponível. O gatilho foi
+ * A N=2^17 cada derivação pede **~128 MiB**. Em 11/09/2026, na instância
+ * de 512 MiB do Render, duas simultâneas eram 256 MiB em cima do que o
+ * Node e o cliente Supabase já ocupam, e isso derrubou a produção de
+ * verdade, com reinício automático e serviço indisponível. Hoje a
+ * instância (Northflank, 1024 MiB) tem mais folga, mas a conta não
+ * mudou de natureza — e desde o token de sessão a derivação roda uma vez
+ * por login, não uma vez por clique. O gatilho foi
  * banal: uma tela do painel que disparava duas chamadas de admin sem
  * esperar a primeira.
  *
@@ -166,7 +169,7 @@ if (process.argv[1]?.endsWith('senhaAdmin.js')) {
 
   const hash = await gerarHashSenha('senha-de-teste-123');
 
-  assert.ok(!hash.includes('$'), 'valor de saída não tem `$` — é seguro colar em variável de ambiente do Render');
+  assert.ok(!hash.includes('$'), 'valor de saída não tem `$` — é seguro colar em variável de ambiente de qualquer painel');
   const linhaDecodificada = Buffer.from(hash, 'base64').toString('utf8');
   assert.ok(linhaDecodificada.startsWith('scrypt$131072$8$1$'), 'por dentro, gera com o parâmetro mínimo da Lei 3, não com o padrão do Node');
   assert.ok(await senhaConfere('senha-de-teste-123', hash), 'senha certa confere');

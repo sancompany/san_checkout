@@ -23,6 +23,7 @@ import { randomBytes } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import { compararSeguro, documentoValido, emailValido, cepValido } from '../utils/validadores.js';
 import { senhaConfere } from '../utils/senhaAdmin.js';
+import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
 import { responderErro } from '../utils/erros.js';
 import { criarSubconta as criarSubcontaNaAsaas } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
@@ -40,21 +41,65 @@ import {
  * tempo inteiro, e toda rota de pagamento em voo congelaria junto a
  * cada tentativa de login no admin.
  */
-export async function verificarAdminKey(requisicao, resposta, proximo) {
+export function verificarAdminKey(requisicao, resposta, proximo) {
   const { CHECKOUT_ADMIN_USER, CHECKOUT_ADMIN_PASS_HASH } = process.env;
   if (!CHECKOUT_ADMIN_USER || !CHECKOUT_ADMIN_PASS_HASH) {
     return resposta.status(503).json({ erro: 'CHECKOUT_ADMIN_USER/CHECKOUT_ADMIN_PASS_HASH não configurados — admin desativado.' });
   }
 
+  /* Só token. A senha entra por UM lugar só, o `abrirSessao` abaixo —
+     que é o que torna possível limitar a força bruta num ponto e deixar
+     o resto do painel barato. Aceitar senha aqui também manteria os
+     830 ms por clique e daria dois caminhos para proteger em vez de um.
+
+     Deixou de ser `async` de propósito: não há mais nada lento aqui. */
+  const { valido, motivo } = verificarToken(requisicao.get('X-Admin-Token'), CHECKOUT_ADMIN_PASS_HASH);
+  if (!valido) {
+    /* `sessaoExpirada` existe para o painel saber a diferença entre
+       "seu token venceu, entre de novo" e "você não deveria estar
+       aqui" — sem isso, o operador vê "inválido" e acha que errou a
+       senha. */
+    return resposta.status(401).json({
+      erro: motivo === 'vencido' ? 'Sessão expirada. Entre novamente.' : 'Sessão inválida.',
+      sessaoExpirada: true
+    });
+  }
+  proximo();
+}
+
+/**
+ * POST /api/admin/sessao — o ÚNICO lugar que confere senha.
+ *
+ * É aqui, e só aqui, que os ~830 ms de scrypt são pagos: uma vez por
+ * login, em vez de uma vez por clique. Por ser o único ponto, é também
+ * o único que precisa de limite apertado contra força bruta — ver o
+ * limitador próprio em `server.js`.
+ *
+ * `async` de propósito, e o motivo é o mesmo de antes: a derivação
+ * bloquearia o event loop por 830 ms, e toda cobrança em voo congelaria
+ * junto a cada tentativa de login.
+ */
+export async function abrirSessao(requisicao, resposta) {
+  const { CHECKOUT_ADMIN_USER, CHECKOUT_ADMIN_PASS_HASH } = process.env;
+  if (!CHECKOUT_ADMIN_USER || !CHECKOUT_ADMIN_PASS_HASH) {
+    return resposta.status(503).json({ erro: 'CHECKOUT_ADMIN_USER/CHECKOUT_ADMIN_PASS_HASH não configurados — admin desativado.' });
+  }
+
+  const { usuario, senha } = requisicao.body ?? {};
+
   // As duas checagens rodam SEMPRE, mesmo com o usuário errado: sair
   // cedo quando o usuário não bate faria a resposta voltar rápido e
   // entregaria, por tempo, se o nome de usuário existe.
-  const usuarioOk = compararSeguro(requisicao.get('X-Admin-User'), CHECKOUT_ADMIN_USER);
-  const senhaOk = await senhaConfere(requisicao.get('X-Admin-Pass'), CHECKOUT_ADMIN_PASS_HASH);
+  const usuarioOk = compararSeguro(usuario, CHECKOUT_ADMIN_USER);
+  const senhaOk = await senhaConfere(senha, CHECKOUT_ADMIN_PASS_HASH);
   if (!usuarioOk || !senhaOk) {
     return resposta.status(401).json({ erro: 'Usuário ou senha de admin inválidos.' });
   }
-  proximo();
+
+  resposta.json({
+    token: emitirToken(usuario, CHECKOUT_ADMIN_PASS_HASH),
+    expiraEm: new Date(Date.now() + VALIDADE_SEGUNDOS * 1000).toISOString()
+  });
 }
 
 export async function listarContratantes(requisicao, resposta) {
@@ -443,7 +488,7 @@ export async function atualizarLinkAtivacaoSubconta(requisicao, resposta) {
 
 // --- Auditoria do webhook (Lei 8) --------------------------------------
 // O log existe porque evento que o código não trata tinha um destino só:
-// `console.log` no Render, retenção curta, e ninguém olha. Ver
+// `console.log` da hospedagem, retenção curta, e ninguém olha. Ver
 // CONSTRAINTS.md §2.2 para o que está marcado no painel da Asaas, e
 // `auditoriaWebhookService.js` para o que é (e o que não é) gravado.
 

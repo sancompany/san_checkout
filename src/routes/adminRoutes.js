@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   verificarAdminKey,
+  abrirSessao,
   listarContratantes,
   criarContratante,
   atualizarContratante,
@@ -15,6 +16,12 @@ import {
 } from '../controllers/adminController.js';
 
 const router = Router();
+
+/* ANTES da guarda, de propósito: é a rota que troca senha por token, e
+   por isso é a única que não pode exigir token. Toda rota abaixo do
+   `router.use` exige. */
+router.post('/sessao', abrirSessao);
+
 router.use(verificarAdminKey);
 router.get('/contratantes', listarContratantes);
 router.post('/contratantes', criarContratante);

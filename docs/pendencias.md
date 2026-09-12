@@ -39,24 +39,12 @@ zero em `/js/*` e `/css/*`. Configuração de painel, plano gratuito.
 lembrar de incrementar a cada mudança, e ritual que se esquece é proteção
 de mentira.
 
-### 🟠 Estação 6 · o token de sessão do admin
-Hoje a senha é derivada a cada requisição (scrypt, ~800 ms) e viaja em
-`X-Admin-Pass` em todo request, guardada em `sessionStorage` em texto
-puro (`CONSTRAINTS.md` §2.6). Um token de vida curta resolve quatro
-coisas de uma vez: a senha trafegando sempre, a amplificação de memória
-que já derrubou a produção, os ~3 s por clique no painel, e a senha em
-texto puro na aba. **Desenho antes de código.**
-
 ### 🟠 Estação 6 · o limite por IP não é guarda de força bruta
 Medido em 11/09: doze requisições passaram por um teto de 10/min porque o
 proxy de saída alternava entre três endereços. A `X-Checkout-Key` não tem
 nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
-
-### 🟡 Estação 6 · um 401 no meio da sessão não limpa o login guardado
-A aba segue reenviando a senha velha, e cada tentativa custa uma
-derivação scrypt no servidor. Some junto com o token de sessão.
 
 ### Lei 8 · erro em produção visível
 Não existe alerta de serviço fora do ar nem detecção de fila pausada da
@@ -74,8 +62,11 @@ e o primeiro payload real decide o tratamento. Entrada em
 ### Lei 0 · a skill `revisar` nunca rodou sobre produção
 
 ### Lei 0 · cobertura de teste não alcança as rotas HTTP
-As nove suítes cobrem módulos e invariantes de texto-fonte. Nenhuma sobe
-o Express e exercita uma rota de ponta a ponta.
+As onze suítes cobrem módulos e invariantes de texto-fonte. Nenhuma sobe
+o Express e exercita uma rota de ponta a ponta — o fluxo de login por
+token foi exercitado assim **à mão** em 12/09/2026 (login certo, senha
+errada, token adulterado, token de outro hash, teto de 5/min), e é
+exatamente esse roteiro que deveria virar suíte.
 
 ### Lei 10 · a rotina de expurgo de dado pessoal não existe
 Retenção de 5 anos está declarada (`docs/inventario-de-dados.md` §6), o
@@ -99,6 +90,7 @@ Cloudflare em **Full (strict)**, nunca Flexible.
 Três variáveis: `ASAAS_AMBIENTE` para `producao`, `ASAAS_API_KEY` e
 `ASAAS_WEBHOOK_TOKEN` para os de produção. Mais: apagar o webhook do
 painel sandbox da Asaas (ele acumularia 401 e pausaria a fila do
-sandbox), limpar as cobranças de teste antes de entrar dinheiro real, e
-apontar `public/js/utils/api.js` e o `connect-src` do `_headers` para
-`api.sancocore.com.br`.
+sandbox) e limpar as cobranças de teste antes de entrar dinheiro real.
+`public/js/utils/api.js` e o `connect-src` do `_headers` já apontam para
+`api.sancocore.com.br` desde 12/09 — trocar de host é trocar o CNAME, não
+mexer no código.
