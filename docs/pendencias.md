@@ -83,19 +83,6 @@ conferir o webhook, reabrir o status, conciliar e estornar.
 
 ## Abertas, não bloqueiam
 
-### 🟠 A chave do contratante de teste saiu do cofre
-Em 13/09 a `X-Checkout-Key` do `testemaster` foi colada numa conversa
-para pedir ajuda com a configuração do Worker. Não está em arquivo nenhum
-deste repositório, e é chave de contratante **de teste em sandbox** — o
-alcance é o pedido de mentira. Ainda assim, o caminho declarado aqui é
-revogar, não esquecer (é a mesma regra do `seguranca.yml`).
-
-**O caminho passou a existir no mesmo dia:** aba Contratantes → "Trocar
-chave" (`docs/funcional.md` §2.8). Antes disso não havia como trocar sem
-SQL na mão. Fechar esta pendência é: trocar pelo painel, copiar a chave
-nova e colar na secret `CHECKOUT_KEY` do Worker — nessa ordem, porque
-entre um passo e outro o contratante de teste fica sem resolver pedido.
-
 ### 🟡 Dois lugares menores ainda leem valor com `?? 0`
 `public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
 linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço
@@ -154,8 +141,13 @@ sobreposto pelo Cloudflare Pages nos assets** — medido ao vivo em
 rodar HTML novo com script velho por até 4h. Já fez correção certa
 parecer errada três vezes no mesmo dia.
 
-**Correção:** Cache Rule na zona (Regras → Cache Rules) com *Browser TTL*
-zero em `/js/*` e `/css/*`. Configuração de painel, plano gratuito.
+**Correção — só o dono, e só do computador** (o painel da Cloudflare não
+se navega bem no celular; combinado em 13/09 de ficar esperando acesso
+ao PC): conferir primeiro **Caching → Configuration → Browser Cache
+TTL** e pôr em *Respect Existing Headers*, que resolve o site inteiro de
+uma vez. Se o seletor já estiver assim, aí sim criar a Cache Rule
+(Regras → Cache Rules) com *Browser TTL* zero em `/js/*` e `/css/*`.
+Configuração de painel, plano gratuito.
 **Contorno hoje:** Ctrl+Shift+R depois do deploy.
 **Deliberadamente NÃO feito:** o paliativo de `?v=` nas tags — exige
 lembrar de incrementar a cada mudança, e ritual que se esquece é proteção

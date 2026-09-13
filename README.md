@@ -113,10 +113,11 @@ visível na linha do contratante para copiar.
 
 Nunca por API pública, e nunca inserindo linha à mão no Supabase.
 
-**Chave vazada?** Aba Contratantes → **Trocar chave** na linha dele. A
-troca é imediata: a chave antiga morre no ato e a integração do
-contratante fica parada até ele colar a nova, então a ordem é trocar,
-copiar, avisar. Não existe janela de convivência entre as duas.
+**Chave vazada?** Aba Contratantes → o ícone de setas em círculo ao lado
+da chave (o terceiro, depois do olho e do copiar). A troca é imediata: a
+chave antiga morre no ato e a integração do contratante fica parada até
+ele colar a nova, então a ordem é trocar, copiar, avisar. Não existe
+janela de convivência entre as duas.
 
 ## Onde roda
 

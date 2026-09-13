@@ -19,9 +19,9 @@ Porte: multi-inquilino · Dado: de terceiro, com dinheiro · Vida útil: longa
 
 ## Estado na esteira
 Estação atual: **entre estações**. A 5 está no ar com ressalva e a 6
-**não foi autorizada a começar** — a entrada é decisão do dono, e o
-gatilho combinado é a chave do `testemaster` rotacionada nos dois lados.
-Quando abrir, a 6 pede Opus com esforço alto.
+**espera só a autorização do dono** — a pendência que a segurava (chave
+do `testemaster`) foi resolvida em 13/09. Quando abrir, a 6 pede Opus
+com esforço alto.
 
 > Em 13/09 eu emendei direto no passo 1 da Estação 6 sem pedir. O
 > trabalho achou dois furos reais e mesmo assim estava fora de ordem —
@@ -37,9 +37,9 @@ Quando abrir, a 6 pede Opus com esforço alto.
 | 5 Construção | no ar, com ressalva | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404); pagamento ainda em **sandbox**, e a troca só acontece **depois** de a Estação 6 fechar (decisão do dono, 13/09) |
 | 6 Prontidão | **não iniciada** — falta autorização | contratante de teste `testemaster` cadastrado em 13/09; o passo 1 dos seis foi rodado fora de ordem e achou dois furos de total, corrigidos e no ar; ciclo 1 rodou contra o Render, não contra o que está no ar |
 
-**Para a 6 poder abrir:** a chave do `testemaster` rotacionada no painel
-e colada na secret `CHECKOUT_KEY` do Worker — é o que fecha a pendência
-que ficou aberta na estação anterior. Depois disso, autorização do dono.
+**Para a 6 poder abrir:** só a autorização. A chave do `testemaster` foi
+rotacionada no painel e colada na secret `CHECKOUT_KEY` do Worker em
+13/09, e o pull voltou a resolver — conferido.
 
 Falta para fechar a 6, quando ela abrir: o teste de ponta a ponta de
 seis passos e o ciclo de segurança refeito sobre o Northflank. A troca
@@ -59,8 +59,7 @@ Violação segue o ciclo da skill `leis`. Não existe estado final fora de
 conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 
 ## Pendências que bloqueiam a esteira
-- **A chave do `testemaster` precisa ser rotacionada.** Ela saiu do cofre em 13/09 e é o que segura a abertura da Estação 6. O caminho existe desde o mesmo dia: painel → Contratantes → "Trocar chave", copiar, colar na secret `CHECKOUT_KEY` do Worker. **Só o dono faz** (painel do checkout e painel da Cloudflare).
-- **Estação 6 · o teste de ponta a ponta de seis passos nunca foi feito.** Só começa depois da rotação e com autorização. O contratante de teste já existe (`testemaster`, API no Cloudflare Workers). O estorno do passo 6 parte do lojista de teste, que é como estorno acontece aqui.
+- **Estação 6 · o teste de ponta a ponta de seis passos nunca foi feito.** Só começa com autorização do dono. O contratante de teste já existe e responde (`testemaster`, API no Cloudflare Workers, chave rotacionada em 13/09). O estorno do passo 6 parte do lojista de teste, que é como estorno acontece aqui.
 - **Estação 5 · o deploy aponta para o sandbox da Asaas.** Decidido em 13/09: a troca vem **depois** de a Estação 6 fechar — a prontidão roda inteira no sandbox, e o ambiente real entra com o sistema já verificado. Custo assumido: o que muda entre ambientes (identificador, formato de webhook, assinatura, erro) não terá passado pelo ciclo.
 - **Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank**, que é onde a produção está.
 

@@ -86,11 +86,17 @@ devolve `walletId`, que é o que faz o split pagar o contratante.
 
 ### 2.8 Operador troca a chave de um contratante
 
-Aba Contratantes → **Trocar chave** na linha dele. A tela avisa, com o
-nome escrito, que a chave atual para de valer **na hora** e que a
+Aba Contratantes → o **terceiro ícone ao lado da chave** (setas em
+círculo), junto do olho que revela e do quadrado que copia. A tela avisa,
+com o nome escrito, que a chave atual para de valer **na hora** e que a
 integração do contratante fica parada até o outro lado colar a nova; só
-depois de confirmar a troca acontece. A chave nova aparece na própria
-linha, para copiar.
+depois de confirmar a troca acontece. A chave nova aparece na mesma
+célula, para revelar e copiar.
+
+O ícone fica junto da chave, e não na coluna de ações, porque é ali que
+o operador está olhando quando decide trocá-la. Ele só aparece na chave
+de contratante: a da subconta é emitida pela Asaas, e quem a troca é o
+painel deles.
 
 Existe porque "nunca trocar" não é política de segredo. Chave vaza — vai
 para um print, um chat, um log do parceiro —, e antes disso o único

@@ -210,6 +210,13 @@ tbody tr:hover { background: var(--bg-summary); }
 .segredo-btn:hover { background: var(--bg-input-hover); color: var(--text-main); }
 .segredo-btn svg { width: 15px; height: 15px; }
 
+/* O terceiro ícone não pode parecer irmão dos outros dois. Revelar e
+   copiar são leitura; trocar invalida a chave do contratante na hora.
+   A cor só aparece no hover — em repouso os três convivem sem poluir a
+   linha, e quem chega perto do destrutivo recebe o aviso antes do
+   clique, junto do `title`. */
+.segredo-btn--trocar:hover { background: rgba(220, 38, 38, 0.12); color: var(--status-error); }
+
 /* ------------------------------------------------------------------
    Subcontas — card por conta (muitos campos + duas credenciais + ação,
    não cabe bem numa linha de tabela).
