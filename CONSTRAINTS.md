@@ -94,6 +94,35 @@ Exclusão física segue possível **só pelo SQL Editor e só para
 contratante sem nenhuma cobrança** — caso de linha criada por engano,
 não de parceiro que saiu.
 
+### 1.11 Cobrar pedido de valor zero — VETADO (decidido em 13/09/2026)
+
+Pedido que não vale nada **não vira cobrança**, com taxa ligada ou
+desligada. O que existe hoje já recusa (`valorValido`: de R$ 0,01 a
+R$ 100.000), mas a regra estava só no código; aqui está o porquê.
+
+**Com a taxa ligada**, cobrar zero significa cobrar **só a taxa** — o
+comprador paga R$ 1,49 para levar nada. Não há como explicar isso na
+tela, e não é o que o contratante quis dizer quando mandou um pedido
+sem preço.
+
+**Com a taxa desligada**, sobra uma cobrança de R$ 0,00, que é pior:
+ela ocuparia uma linha em `cobrancas`, dispararia `cobranca_confirmada`
+no webhook do contratante e entraria na métrica de sucesso — "cobrança
+confirmada por contratante" (`docs/funcional.md` §9) passaria a contar
+pagamento que ninguém fez. Uma métrica que conta zero como sucesso
+deixa de servir para decidir qualquer coisa.
+
+**O caminho certo é do lado do contratante:** benefício gratuito se
+libera no projeto que vende, sem passar pelo checkout. O modelo pull já
+funciona assim por desenho — quem decide mandar o comprador para cá é o
+contratante, e pedido sem preço é sinal de que não havia o que cobrar.
+
+Consequência na tela, escrita em `docs/funcional.md` §4.1: pedido sem
+valor cobrável cai no estado **indisponível** (`R$ —`, sem botão), e não
+numa compra de R$ 1,49. Foi assim que o veto apareceu — como bug, antes
+de virar regra escrita
+(`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
+
 ---
 
 ## 2. Limites assumidos (Lei 7)

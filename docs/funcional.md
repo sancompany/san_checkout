@@ -209,6 +209,10 @@ normalizar: nome 2–150, e-mail 254, documento 32, telefone 32, CEP 16.
 Longo demais é recusa, nunca truncamento.
 
 **Valor por cobrança: R$ 0,01 a R$ 100.000,00. Parcelamento: 1 a 12.**
+Pedido de valor zero não vira cobrança nem com a taxa desligada — o que
+seria cobrado é só a taxa, e uma cobrança de R$ 0,00 contaria como
+pagamento na métrica da seção 9. Benefício gratuito se libera no projeto
+que vende, sem passar pelo checkout (`CONSTRAINTS.md` §1.11).
 
 ---
 
