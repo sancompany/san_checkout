@@ -116,16 +116,33 @@ O painel tem cinco seções: **Contratantes**, **Subcontas**, **Métricas**,
 |---|---|---|
 | Carregando | ao abrir, enquanto resolve o pedido | resumo em branco |
 | Pronto | pedido resolvido com valor | resumo, total, métodos habilitados, formulário |
-| **Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor** | total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
+| **Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor cobrável** — ausente, zero, negativa ou acima do teto | total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
 | Pedido encerrado | pedido já pago ou cancelado na origem | mensagem de encerrado; não deixa cobrar de novo |
 | Reserva expirada | `expiraEm` no passado | cronômetro zera e a tela diz "Esta reserva expirou." |
 | Resultado Pix | após gerar | QR, copia-e-cola, link permanente de status |
 | Resultado boleto | após gerar | linha digitável, link do PDF, link permanente |
 
 O estado **Indisponível** é o mais importante e o que já passou
-despercebido uma vez (`docs/erros/2026-09-11-total-ausente-virou-zero-na-tela.md`):
+despercebido duas vezes
+(`docs/erros/2026-09-11-total-ausente-virou-zero-na-tela.md` e
+`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`):
 ausência de total **nunca** vira zero na tela, e método de pagamento só
 aparece quando há valor para cobrar.
+
+**A régua é uma só, e é a do caminho que cobra** (`valorValido`: maior
+que zero e até R$ 100.000). Vale para os três lugares onde um número
+vira preço:
+
+- a rota que a tela consulta (`GET /pedido/…`) **não devolve taxa** —
+  logo, não devolve total — para pedido cuja base não é cobrável. Sem
+  isso ela anunciava R$ 1,49 de taxa sobre um pedido de R$ 0,00, e a
+  tela ficava comprável;
+- a tela do pedido recusa total não finito ou não positivo;
+- a tela da assinatura recusa plano sem valor utilizável, com a mesma
+  régua, em vez de deixar `R$ 0,00` aparecer com o botão de assinar
+  ligado.
+
+Protegido por `tests/total-nao-confiavel-nao-vira-tela-compravel.js`.
 
 ### 4.2 Status (`/status`)
 
@@ -225,7 +242,8 @@ servidor.
 | falha | o que o sistema faz |
 |---|---|
 | API do contratante fora do ar | 504, tela mostra indisponível, nenhuma cobrança criada |
-| API do contratante devolve pedido sem valor | tela indisponível, `R$ —`, botões escondidos |
+| API do contratante devolve pedido sem valor cobrável (ausente, zero ou fora da faixa) | rota do pedido devolve `taxa: null`, tela indisponível, `R$ —`, botões escondidos — nunca um total que é só a taxa |
+| API do contratante devolve plano de assinatura sem valor | tela indisponível com o aviso de pedir link novo ao vendedor; o botão de assinar recusa o clique |
 | Asaas fora do ar | erro genérico ao comprador, nada gravado como pago |
 | webhook com token errado | 401, contado em `webhook_rejeicoes` por hora, sem gravar linha por tentativa |
 | webhook de evento não mapeado | gravado como `nao_mapeado` na aba Webhook, resposta 200 para a Asaas não pausar a fila |

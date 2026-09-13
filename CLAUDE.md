@@ -39,7 +39,7 @@ ambiente real vem **depois** dela, e é o que fecha a 5 sem ressalva.
 - Dados: `supabase/migrations/` · variáveis `.env.example`
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
-- Testes: `tests/` — `npm test` roda as 11 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 12 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

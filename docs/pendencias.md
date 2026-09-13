@@ -69,9 +69,40 @@ O passo do estorno se faz como na vida real — a autorização parte do
 lojista de teste, com a `X-Checkout-Key` dele, porque é assim que estorno
 acontece aqui (`docs/funcional.md` §8).
 
+**Passo 1 feito em 13/09**, e ele já pagou o próprio custo: os três links
+resolvem pelo modelo pull, e o `ped_sem_valor` revelou dois furos de
+tela comprável sem valor cobrável — corrigidos no mesmo dia
+(`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
+**A correção só vale em produção depois do deploy**; até lá, o que está
+no ar ainda mostra R$ 1,49 de total para o pedido sem preço.
+
+Passos 2 a 6 pendentes: pagar o Pix no sandbox (é o dono quem paga),
+conferir o webhook, reabrir o status, conciliar e estornar.
+
 ---
 
 ## Abertas, não bloqueiam
+
+### 🟠 A chave do contratante de teste saiu do cofre
+Em 13/09 a `X-Checkout-Key` do `testemaster` foi colada numa conversa
+para pedir ajuda com a configuração do Worker. Não está em arquivo nenhum
+deste repositório, e é chave de contratante **de teste em sandbox** — o
+alcance é o pedido de mentira. Ainda assim, o caminho declarado aqui é
+revogar, não esquecer (é a mesma regra do `seguranca.yml`): gerar valor
+novo, trocar nos dois lados (painel do checkout e secret `CHECKOUT_KEY`
+do Worker) e nunca reaproveitar o exposto. Fechar esta pendência é ter
+feito a troca.
+
+### 🟡 Dois lugares menores ainda leem valor com `?? 0`
+`public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
+linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço
+— visto na tela em 13/09, dentro do estado indisponível.
+
+Nenhum dos dois é furo hoje: o da status lê da nossa base, onde o valor
+passou pelo guarda na criação, e o do item aparece numa tela que já está
+indisponível, sem nada para clicar. São o terceiro e o quarto lugar da
+mesma classe dos dois erros de total, e ficam anotados como os próximos
+se uma linha vier incompleta.
 
 ### 🟡 Métrica · a janela é de 24 h, não de dia civil
 `GET /api/admin/metricas?dias=N` conta as últimas N×24 h. "Quantos
