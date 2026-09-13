@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Só as páginas que fazem sentido em buscador. O checkout aberto sem
+  `?c=` e `?pedido=` não é conteúdo, e /status e /admin são `noindex`
+  por header (public/_headers) — listá-los aqui seria anunciar o que o
+  header esconde.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://checkout.sancocore.com.br/termos.html</loc>
+    <lastmod>2026-09-13</lastmod>
+    <changefreq>yearly</changefreq>
+  </url>
+  <url>
+    <loc>https://checkout.sancocore.com.br/privacidade.html</loc>
+    <lastmod>2026-09-13</lastmod>
+    <changefreq>yearly</changefreq>
+  </url>
+</urlset>

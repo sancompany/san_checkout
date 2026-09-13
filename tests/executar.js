@@ -27,7 +27,8 @@ const SUITES = [
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
-  'tests/senha-nao-fica-no-navegador.js' // a senha do admin não sobrevive ao login
+  'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login
+  'tests/total-nao-confiavel-nao-vira-tela-compravel.js' // total que não se cobra não vira tela com botão
 ];
 
 /**

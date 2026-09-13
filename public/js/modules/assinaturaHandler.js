@@ -46,6 +46,25 @@ export async function resolverAssinatura() {
 
   try {
     const plano = await get(`/api/checkout/plano/${ids.contratanteId}/${ids.planoId}`);
+
+    /* Plano sem valor utilizável não vira tela de assinar.
+
+       O `app.js` renderiza o total com `formatarMoeda(plano.valor)`, e
+       `formatarMoeda` faz `Number(valor ?? 0)` — sem este guarda, plano
+       com `valor` ausente, zero ou texto vira **"R$ 0,00" na tela**,
+       com o botão de assinar ligado. É literalmente o erro de
+       `docs/erros/2026-09-11-total-ausente-virou-zero-na-tela.md`,
+       que foi corrigido no caminho do pedido e nunca chegou aqui.
+
+       A regra é a mesma do backend (`valorValido`: maior que zero e até
+       100.000) e a mesma do pedido: ausência de total não vira zero,
+       vira estado indisponível — aqui, `erro`, que o `app.js` já trata
+       deixando o total em `R$ —` e recusando o clique. */
+    const valor = Number(plano?.valor);
+    if (!Number.isFinite(valor) || valor <= 0 || valor > 100000) {
+      return { ids, erro: 'Este plano está sem valor definido. Peça um link novo ao vendedor.' };
+    }
+
     contextoResolvido = { ...ids, plano };
     return { ids, plano };
   } catch (erro) {

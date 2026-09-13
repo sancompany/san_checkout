@@ -1,0 +1,15 @@
+{
+  "name": "SAN & CO. Pay Engine",
+  "short_name": "San Checkout",
+  "description": "Pagamento por Pix, boleto e cartão dos projetos da SAN & CO.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "theme_color": "#B8912A",
+  "background_color": "#F7F7F5",
+  "icons": [
+    { "src": "/assets/favicon.png", "sizes": "64x64", "type": "image/png" },
+    { "src": "/assets/logo-sanco.png", "sizes": "1378x1378", "type": "image/png" }
+  ]
+}

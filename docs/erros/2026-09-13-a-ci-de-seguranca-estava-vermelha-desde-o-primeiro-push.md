@@ -64,3 +64,24 @@ acontecendo com ela mesma.
   repositório inteiro.
 - Arquivo em `.github/workflows/` só o dono aplica: a ferramenta remota
   recusa escrita ali, de propósito, e o ciclo pausa até ele colar.
+
+## Corrigido
+
+O dono colou os dois workflows com SHA fixo e empurrou em `5f3adf3`
+("ultima atualização local"), em 13/09/2026.
+
+**Evidência, no formato que esta lição exige** — a execução, não o
+arquivo:
+
+| workflow | run | commit | veredito |
+|---|---|---|---|
+| `Segurança` | **#5** | `5f3adf3` | **success** (os três jobs: `dependencias`, `segredos`, `estatica`) |
+| `testes` | #22 | `5f3adf3` | success |
+
+Os SHAs foram reconferidos contra o upstream em 13/09, depois do push,
+por `git ls-remote`, e batem com a tag que o comentário ao lado declara:
+`actions/checkout@11d5960a326750d5838078e36cf38b85af677262` = `v4`, e
+`actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020` = `v4`
+(hoje `v4.4.0`). Conferir o SHA **depois** de fixar faz parte: fixar por
+SHA errado tem a mesma cara de fixar por SHA certo, e o CI verde não
+distingue os dois.

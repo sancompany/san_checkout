@@ -9,48 +9,26 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
-### 🔴 Estação 3 · a CI `Segurança` está vermelha desde o primeiro push
-Descoberto em 13/09 na auditoria retrógrada: as quatro execuções do
-workflow `Segurança` falharam (runs #1 a #4). O job `estatica` sai com
-código 1 — **6 achados do semgrep, todos da mesma regra e todos nos dois
-arquivos de workflow**: `actions/checkout@v4` e `actions/setup-node@v4`
-são tags móveis e precisam de SHA de 40 caracteres. Nada em `src/`, nada
-no caminho do dinheiro. Os jobs `dependencias` e `segredos` passam.
-
-**Só o dono aplica** — a ferramenta recusa escrita em
-`.github/workflows/`. Conteúdo pronto entregue com os SHAs conferidos na
-API do GitHub em 13/09. Enquanto não passar, a Estação 3 não fecha, e é
-o que trava a esteira.
-Causa raiz e lição em
-`docs/erros/2026-09-13-a-ci-de-seguranca-estava-vermelha-desde-o-primeiro-push.md`.
-
-### 🔴 Estação 1 · o spec não tem métrica de sucesso
-A lei nova fecha a Estação 1 com "a métrica de sucesso" escrita, e a
-Estação 4 depende dela para nomear de cinco a dez eventos. O
-`docs/specs/2026-09-11-san-checkout.md` não tem nenhuma das duas coisas.
-**Pergunta para o dono, não para a sessão:** o que conta como sucesso
-deste motor — cobrança confirmada por contratante? taxa de pagamento?
-tempo até o dinheiro cair?
-
-### 🔴 Estação 4 · faltam duas seções em `docs/funcional.md`
-O modelo novo pede dez seções. Existem 1 a 7 e a última ("o que fica
-fora"). Faltam:
-- **"Direitos e obrigações que viram tela"** — exportar dados, excluir
-  conta, revogar consentimento, canal do titular; e, por haver venda a
-  consumidor, confirmação da contratação, ticket de atendimento com
-  auto-resposta e **botão de arrependimento com estorno no mesmo fluxo**.
-  Nada disso existe hoje, nem na tela nem no documento.
-- **"Métrica de sucesso e eventos"** — depende da pendência da Estação 1.
-Sem elas a Estação 6 não fecha: ela exige responder "quantos ontem?" com
-número.
-
 ### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive
 pagamento", porque identificador, formato de webhook, assinatura e erro
-mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`. **Decisão do
-dono**, com trade-off real: trocar agora testa o que vai ser lançado;
-trocar depois repete a Estação 6 inteira contra outro ambiente.
+mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`.
+
+**Decidido pelo dono em 13/09/2026: a troca acontece depois de a Estação
+6 fechar.** A prontidão inteira — teste de ponta a ponta e ciclo de
+segurança — roda no sandbox, onde errar não custa dinheiro, e o ambiente
+real entra com o sistema já verificado. O que a troca envolve está no fim
+deste arquivo ("Ao trocar o Northflank para produção").
+
+**O custo assumido, escrito para não virar surpresa:** o que muda entre
+sandbox e produção não terá passado pelo ciclo — identificador de
+cobrança, formato do webhook, assinatura e mensagem de erro. Depois da
+troca, os pontos que dependem desses quatro precisam ser reconferidos um
+a um contra o ambiente real, mesmo com a Estação 6 fechada. Não é repetir
+o ciclo; é conferir a costura.
+
+Enquanto não trocar, a Estação 5 fica **no ar com ressalva registrada**.
 
 ### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
@@ -65,15 +43,81 @@ no Northflank, em São Paulo, com CDN na frente e outra topologia de
 proxy. A Estação 6 verifica **o que está no ar** — e o que vai ficar no
 ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
 
-### Estação 6 · o teste de ponta a ponta de seis passos
+### 🔴 Estação 6 · o teste de ponta a ponta de seis passos
 Exigido pela skill `checkout`, **antes** do ciclo de segurança: pedido de
 valor baixo, pagar por Pix, conferir webhook, reabrir a página de status,
-conciliar, estornar. Depende de o dono cadastrar um contratante de teste
-no sandbox. Nunca foi feito.
+conciliar, estornar. Nunca foi feito, e é o **próximo item da fila**.
+
+O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
+
+| campo | valor |
+|---|---|
+| id / nome | `testemaster` / TesteMaster |
+| API do pedido | `https://contratante-teste.brunosanches-bhs.workers.dev` |
+| webhook | a mesma URL, em `/webhook` |
+| wallet de split | vazio — sem split, tudo na conta-mãe |
+| métodos | Pix, boleto, cartão e assinatura (assinatura por Pix desmarcada, §2.4) |
+
+Os três links que ele expõe, e o que cada um serve para verificar:
+
+- `…/index.html?c=testemaster&pedido=ped_teste` — o caminho normal
+- `…/index.html?c=testemaster&assinatura=plano_mensal` — recorrência
+- `…/index.html?c=testemaster&pedido=ped_sem_valor` — o estado
+  **indisponível**, que é o que nunca pode virar `R$ 0,00` (§4.1)
+
+O passo do estorno se faz como na vida real — a autorização parte do
+lojista de teste, com a `X-Checkout-Key` dele, porque é assim que estorno
+acontece aqui (`docs/funcional.md` §8).
+
+**Passo 1 feito em 13/09**, e ele já pagou o próprio custo: os três links
+resolvem pelo modelo pull, e o `ped_sem_valor` revelou dois furos de
+tela comprável sem valor cobrável — corrigidos no mesmo dia
+(`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
+**A correção só vale em produção depois do deploy**; até lá, o que está
+no ar ainda mostra R$ 1,49 de total para o pedido sem preço.
+
+Passos 2 a 6 pendentes: pagar o Pix no sandbox (é o dono quem paga),
+conferir o webhook, reabrir o status, conciliar e estornar.
 
 ---
 
 ## Abertas, não bloqueiam
+
+### 🟠 A chave do contratante de teste saiu do cofre
+Em 13/09 a `X-Checkout-Key` do `testemaster` foi colada numa conversa
+para pedir ajuda com a configuração do Worker. Não está em arquivo nenhum
+deste repositório, e é chave de contratante **de teste em sandbox** — o
+alcance é o pedido de mentira. Ainda assim, o caminho declarado aqui é
+revogar, não esquecer (é a mesma regra do `seguranca.yml`): gerar valor
+novo, trocar nos dois lados (painel do checkout e secret `CHECKOUT_KEY`
+do Worker) e nunca reaproveitar o exposto. Fechar esta pendência é ter
+feito a troca.
+
+### 🟡 Dois lugares menores ainda leem valor com `?? 0`
+`public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
+linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço
+— visto na tela em 13/09, dentro do estado indisponível.
+
+Nenhum dos dois é furo hoje: o da status lê da nossa base, onde o valor
+passou pelo guarda na criação, e o do item aparece numa tela que já está
+indisponível, sem nada para clicar. São o terceiro e o quarto lugar da
+mesma classe dos dois erros de total, e ficam anotados como os próximos
+se uma linha vier incompleta.
+
+### 🟡 Métrica · a janela é de 24 h, não de dia civil
+`GET /api/admin/metricas?dias=N` conta as últimas N×24 h. "Quantos
+ontem?" hoje se responde com "nas últimas 24 horas", que é parecido e não
+é a mesma coisa — em dia de pico a diferença aparece. Fechar exige
+janela por data, com fuso de Brasília fixado no servidor, não no
+navegador. Declarado em `docs/funcional.md` §9.
+
+### 🟡 Direitos · não existe ticket de atendimento com auto-resposta
+O canal do titular e o de suporte são e-mail (`juridico@`, `suporte@`),
+agora visíveis no rodapé das duas telas do comprador. O que não existe é
+protocolo: quem escreve não recebe número nem confirmação automática, e
+não há prazo contado em lugar nenhum. Enquanto o volume for o de hoje,
+caixa de entrada resolve; vira problema no primeiro pedido que se perder.
+Declarado em `docs/funcional.md` §8.
 
 ### 🔴 Lei 5 · cache de 4 horas em JS e CSS
 O `Cache-Control: max-age=0` do `_headers` vale para o HTML e **é

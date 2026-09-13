@@ -4,7 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Checkout Seguro — SAN & CO.</title>
+
+  <!-- A página é a mesma para todo pedido: o conteúdo real chega por
+       `?c=` e `?pedido=`, que não devem entrar em buscador nem em
+       pré-visualização de link. Daí a canônica apontar para a raiz, sem
+       parâmetro, e a descrição falar do checkout, nunca da compra. -->
+  <meta name="description" content="Pagamento seguro por Pix, boleto ou cartão. Processado pelo SAN & CO. Pay Engine." />
+  <link rel="canonical" href="https://checkout.sancocore.com.br/" />
+  <meta name="theme-color" content="#B8912A" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SAN & CO. Pay Engine" />
+  <meta property="og:title" content="Checkout Seguro — SAN & CO." />
+  <meta property="og:description" content="Pagamento seguro por Pix, boleto ou cartão. Processado pelo SAN & CO. Pay Engine." />
+  <meta property="og:url" content="https://checkout.sancocore.com.br/" />
+  <meta property="og:image" content="https://checkout.sancocore.com.br/assets/logo-sanco.png" />
+  <meta property="og:locale" content="pt_BR" />
+
   <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="manifest" href="site.webmanifest" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -358,6 +376,11 @@
         </div>
         <div class="legal-footer">
           SAN & CO. — CNPJ 68.949.029/0001-58
+        </div>
+        <!-- O canal do titular fica na tela, não só dentro da política:
+             quem precisa dele raramente lê a política inteira. -->
+        <div class="legal-footer">
+          Seus dados pessoais: <a href="mailto:juridico@sancocore.com.br">juridico@sancocore.com.br</a>
         </div>
       </footer>
 

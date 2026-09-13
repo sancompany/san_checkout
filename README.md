@@ -59,7 +59,7 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as seis suítes de uma vez (assinatura HMAC do webhook, conversão
+Roda as doze suítes de uma vez (assinatura HMAC do webhook, conversão
 das taxas da Asaas, regra de id imprevisível, hash da senha do admin, a
 redação do log de auditoria — que falha se qualquer dado de pessoa
 sobreviver — e o caminho crítico do webhook de entrada: guarda de
@@ -69,13 +69,25 @@ runner injeta valores falsos só para os módulos carregarem, e nenhum
 teste toca banco, rede ou relógio. Os mesmos testes rodam sozinhos a cada
 push, em `.github/workflows/ci.yml` — push que quebra teste não entra.
 
-Exige **Node 22 ou mais novo** (`engines` no `package.json`):
+Exige **Node 22 ou mais novo** (`engines` no `package.json`, e `.nvmrc`):
 `@supabase/supabase-js` usa WebSocket nativo, que não existe no Node 20 —
 ver `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
 
+## Antes de empurrar
+
+```bash
+npm run check
+```
+
+Analisa a sintaxe de **todo** o JavaScript do projeto — inclusive
+`public/js/`, que as suítes não alcançam porque elas exercitam o
+backend — e depois roda `npm test`. Erro de sintaxe no front não quebra
+teste nenhum: aparece no navegador do comprador. Não instala nada e não
+toca rede.
+
 ## Variáveis de ambiente
 
-Nomes; os valores ficam no `.env` local e no painel do Render.
+Nomes; os valores ficam no `.env` local e no painel do Northflank.
 
 | Variável | Para quê |
 |---|---|
@@ -104,11 +116,11 @@ Nunca por API pública, e nunca inserindo linha à mão no Supabase.
 
 | Camada | Onde |
 |---|---|
-| Backend | Render — `https://san-checkout.onrender.com` |
+| Backend | Northflank (América do Sul – Leste, Osasco) — `https://api.sancocore.com.br` |
 | Front | Cloudflare Pages — `https://checkout.sancocore.com.br` |
 | Banco | Supabase (RLS habilitado; só o backend acessa) |
 | Pagamento | Asaas |
 
 `/api/saude` é consultada por um agendador externo a cada 10 minutos:
-mantém o Render acordado, mantém o Supabase ativo, e expõe alerta de
-chave da Asaas prestes a expirar.
+mantém o Supabase ativo (projeto gratuito pausa com 7 dias de
+inatividade) e expõe alerta de chave da Asaas prestes a expirar.

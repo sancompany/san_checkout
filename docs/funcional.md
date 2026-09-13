@@ -101,6 +101,7 @@ com o payload redigido, e o contador de tentativas recusadas).
 | Painel administrativo | `public/admin.html` → servida em `/admin` | operador | Cloudflare Access **+** usuário e senha no backend |
 | Termos de Uso | `public/termos.html` | qualquer um | nada |
 | Política de Privacidade | `public/privacidade.html` | qualquer um | nada |
+| Página não encontrada | `public/404.html` | quem digitou um caminho que não existe | nada; devolvida com status 404 e sem link para o checkout, que sem `?c=` e `?pedido=` só mostraria "indisponível" |
 
 O painel tem cinco seções: **Contratantes**, **Subcontas**, **Métricas**,
 **Webhook** e **Arquivados**.
@@ -115,16 +116,33 @@ O painel tem cinco seções: **Contratantes**, **Subcontas**, **Métricas**,
 |---|---|---|
 | Carregando | ao abrir, enquanto resolve o pedido | resumo em branco |
 | Pronto | pedido resolvido com valor | resumo, total, métodos habilitados, formulário |
-| **Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor** | total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
+| **Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor cobrável** — ausente, zero, negativa ou acima do teto | total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
 | Pedido encerrado | pedido já pago ou cancelado na origem | mensagem de encerrado; não deixa cobrar de novo |
 | Reserva expirada | `expiraEm` no passado | cronômetro zera e a tela diz "Esta reserva expirou." |
 | Resultado Pix | após gerar | QR, copia-e-cola, link permanente de status |
 | Resultado boleto | após gerar | linha digitável, link do PDF, link permanente |
 
 O estado **Indisponível** é o mais importante e o que já passou
-despercebido uma vez (`docs/erros/2026-09-11-total-ausente-virou-zero-na-tela.md`):
+despercebido duas vezes
+(`docs/erros/2026-09-11-total-ausente-virou-zero-na-tela.md` e
+`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`):
 ausência de total **nunca** vira zero na tela, e método de pagamento só
 aparece quando há valor para cobrar.
+
+**A régua é uma só, e é a do caminho que cobra** (`valorValido`: maior
+que zero e até R$ 100.000). Vale para os três lugares onde um número
+vira preço:
+
+- a rota que a tela consulta (`GET /pedido/…`) **não devolve taxa** —
+  logo, não devolve total — para pedido cuja base não é cobrável. Sem
+  isso ela anunciava R$ 1,49 de taxa sobre um pedido de R$ 0,00, e a
+  tela ficava comprável;
+- a tela do pedido recusa total não finito ou não positivo;
+- a tela da assinatura recusa plano sem valor utilizável, com a mesma
+  régua, em vez de deixar `R$ 0,00` aparecer com o botão de assinar
+  ligado.
+
+Protegido por `tests/total-nao-confiavel-nao-vira-tela-compravel.js`.
 
 ### 4.2 Status (`/status`)
 
@@ -191,6 +209,10 @@ normalizar: nome 2–150, e-mail 254, documento 32, telefone 32, CEP 16.
 Longo demais é recusa, nunca truncamento.
 
 **Valor por cobrança: R$ 0,01 a R$ 100.000,00. Parcelamento: 1 a 12.**
+Pedido de valor zero não vira cobrança nem com a taxa desligada — o que
+seria cobrado é só a taxa, e uma cobrança de R$ 0,00 contaria como
+pagamento na métrica da seção 9. Benefício gratuito se libera no projeto
+que vende, sem passar pelo checkout (`CONSTRAINTS.md` §1.11).
 
 ---
 
@@ -224,7 +246,8 @@ servidor.
 | falha | o que o sistema faz |
 |---|---|
 | API do contratante fora do ar | 504, tela mostra indisponível, nenhuma cobrança criada |
-| API do contratante devolve pedido sem valor | tela indisponível, `R$ —`, botões escondidos |
+| API do contratante devolve pedido sem valor cobrável (ausente, zero ou fora da faixa) | rota do pedido devolve `taxa: null`, tela indisponível, `R$ —`, botões escondidos — nunca um total que é só a taxa |
+| API do contratante devolve plano de assinatura sem valor | tela indisponível com o aviso de pedir link novo ao vendedor; o botão de assinar recusa o clique |
 | Asaas fora do ar | erro genérico ao comprador, nada gravado como pago |
 | webhook com token errado | 401, contado em `webhook_rejeicoes` por hora, sem gravar linha por tentativa |
 | webhook de evento não mapeado | gravado como `nao_mapeado` na aba Webhook, resposta 200 para a Asaas não pausar a fila |
@@ -235,7 +258,96 @@ servidor.
 
 ---
 
-## 8. O que fica fora desta versão
+## 8. Direitos e obrigações que viram tela
+
+Aqui a lista muda de forma por causa de um fato do desenho: **o comprador
+não tem conta neste sistema, e quem vende não somos nós.** O San Checkout
+é infraestrutura de pagamento do lojista (`public/termos.html` §1.4), sem
+cadastro, sem login e sem catálogo. Então cada direito cai em um de três
+lugares, e o que importa é que a tela diga em qual.
+
+| direito ou obrigação | de quem é | onde está, hoje |
+|---|---|---|
+| Confirmação da contratação | nossa | resumo com o total antes de pagar (§4.1) e página de status com link permanente, entregue junto do Pix e do boleto (§4.2) |
+| Termos e política antes de pagar | nossa | caixa de aceite no checkout, com os dois links |
+| Arrependimento em 7 dias (CDC art. 49) | **do lojista** | é ele quem vende (`termos.html` §13.1). Nossa parte é não atrapalhar, executar o estorno que ele autoriza (`POST /checkout/estornar`, `API.md`) e **dizer isso na tela**: rodapé da página de status |
+| Acesso, correção, portabilidade e eliminação (LGPD art. 18) | nossa, **por canal** | `juridico@sancocore.com.br`, agora no rodapé do checkout e da página de status — não mais só dentro da política |
+| Canal do titular / Encarregado | nossa | mesmo endereço, também em `privacidade.html` §24 |
+| Revogação de consentimento | **não se aplica** | o tratamento não se apoia em consentimento, e sim em execução de contrato e obrigação legal (`privacidade.html` §9). Botão de revogar prometeria o que não existe |
+| Excluir conta | **não existe conta** | não há cadastro de comprador para apagar. O que existe é o dado da cobrança, com retenção de 5 anos (`docs/inventario-de-dados.md` §6) — apagar antes disso conflita com obrigação fiscal, e é por isso que o pedido passa por um canal que sabe separar os dois casos |
+| Exportar os próprios dados por botão | **deliberadamente não** | a página de status abre com o par contratante+pedido, que identifica uma cobrança e **não autentica uma pessoa**. Botão de exportar ali entregaria dado pessoal a quem tiver o id do pedido |
+| Ticket de atendimento com auto-resposta | **não existe** | o canal é e-mail (`suporte@`, `juridico@`). Pendência declarada, não bloqueante, em `docs/pendencias.md` |
+
+**Estorno é do lojista, e isso é arquitetura, não omissão.** O checkout
+recebe pagamento; a decisão de devolver é de quem vendeu, e chega aqui
+como autorização autenticada pela `X-Checkout-Key` dele. Um botão de
+desistência nesta tela precisaria decidir, sozinho, se a devolução é
+devida — que é exatamente o que este sistema não sabe.
+
+**O que mudou de tela em 13/09/2026:** o rodapé da página de status
+passou a dizer, em texto, que cancelamento e arrependimento se resolvem
+com a loja e que o estorno volta pelo mesmo meio de pagamento; e o canal
+do titular saiu de dentro da política para o rodapé das duas telas do
+comprador. Antes disso, quem quisesse exercer um direito tinha que ler
+uma política de 28 seções para achar um e-mail.
+
+---
+
+## 9. Métrica de sucesso e eventos
+
+**Sucesso deste motor = cobrança confirmada, contada por contratante.**
+Decidido pelo dono em 13/09/2026 e registrado no spec.
+
+O número que se olha: **quantas cobranças foram confirmadas por dia, por
+contratante**, e quanto elas somam em valor pago.
+
+Por que este e não os outros dois que estavam na mesa:
+
+- **Taxa de pagamento** (confirmadas ÷ checkouts abertos) mede a
+  qualidade da tela, mas o denominador não existe: exigiria gravar uma
+  linha por abertura de página e lidar com bot e recarregamento
+  (`src/controllers/adminController.js`, `obterMetricas`). Ela continua
+  como métrica secundária, calculada sobre o que já **resolveu**
+  (pagas ÷ (pagas + perdidas)), que é o que dá para medir sem inventar
+  evento.
+- **Tempo até o dinheiro cair** é dominado pelo meio de pagamento —
+  boleto leva de um a três dias úteis — e mediria a Asaas e o banco, não
+  o motor.
+
+**Onde se lê, hoje:** aba Métricas do painel, ou
+`GET /api/admin/metricas?dias=N` →
+`porContratante[id].pagas`, `.valorPago`, `.taxaPagamento`.
+
+**Limite conhecido:** `dias=N` conta as últimas N×24 h, não dias civis.
+"Quantos ontem?" hoje se responde com "nas últimas 24 horas". Janela por
+data é pendência declarada, não fingida.
+
+### Os eventos do motor
+
+Nomes reais, os mesmos que o contratante recebe no webhook de saída
+(`API.md` 4.3.4) — não uma taxonomia paralela inventada para o relatório:
+
+| evento | quando acontece | onde fica registrado |
+|---|---|---|
+| `cobranca_criada` | Pix, boleto ou cartão gerado para um pedido | linha em `cobrancas` com status `pendente` (é o denominador de "geradas") |
+| **`cobranca_confirmada`** | a Asaas confirmou o pagamento | status `confirmado` em `cobrancas` — **é este que a métrica conta** |
+| `cobranca_falhou` | ciclo ou cobrança que não entrou: cartão recusado ou vencimento | status `recusado` ou `vencido` |
+| `cobranca_estornada` | devolução autorizada pelo lojista, total ou parcial | status `estornado` |
+| `cobranca_contestada` | chargeback | status `chargeback` |
+| `criada` / `cancelada` (assinatura) | assinatura com a primeira cobrança paga; assinatura encerrada | tabela de assinaturas e webhook de saída |
+| `webhook_rejeitado` | chegou webhook com token errado | contador por hora em `webhook_rejeicoes`, sem uma linha por tentativa (§2.5 do `CONSTRAINTS.md`) |
+| `nao_mapeado` | evento da Asaas que ainda não tem tratamento em código | aba Webhook, com o payload redigido |
+
+**Dois eventos que não existem de propósito:** `checkout_aberto` e
+`pedido_indisponivel`. Ambos são do navegador, exigiriam gravar linha por
+visita e trariam bot junto. Enquanto a pergunta principal for "quantas
+cobranças confirmadas ontem, e de quem", a resposta sai de `cobrancas`
+sem nenhuma instrumentação nova — e é essa a razão de a métrica escolhida
+ser essa.
+
+---
+
+## 10. O que fica fora desta versão
 
 Remete ao `CONSTRAINTS.md` §1, que é o dono da lista: upsell pós-compra,
 troca de cartão de assinatura pela API, prova social sintética, timer de
@@ -264,3 +376,10 @@ Automático, contador de tentativa por credencial.
    regras da seção 5 dizem o que acontece quando são violadas.
 4. **Cada fluxo tem o caminho de quando dá errado?** Sim — seção 7, mais
    os estados de erro das seções 4.1 e 4.2 e os textos da seção 6.
+5. **Cada direito do comprador tem lugar na tela ou uma razão escrita
+   para não ter?** Sim — seção 8, com os três destinos possíveis (nossa
+   tela, tela do lojista, canal) e o motivo de cada "não".
+6. **Dá para responder "quantos ontem?" com número?** Sim — seção 9:
+   cobranças confirmadas por contratante, lidas em
+   `GET /api/admin/metricas`, com a ressalva de que a janela é de 24 h e
+   não de dia civil.
