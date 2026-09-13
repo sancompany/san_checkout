@@ -549,8 +549,23 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
 > (`docs/erros/2026-09-11-noindex-existia-no-arquivo-e-nao-na-web.md`).
 > Conferir no navegador, não no `ls`.
 
-Desde 13/09/2026 o arquivo é nosso (`public/robots.txt`), e ele **não
-lista `/admin` nem `/status`**. Um `Disallow: /admin.html` publicaria
+Desde 13/09/2026 existe um `public/robots.txt` nosso, e ele **não lista
+`/admin` nem `/status`**.
+
+> **O que o navegador recebe não é só o nosso arquivo.** Medido em
+> produção depois do deploy de 13/09: a Cloudflare **prepende um bloco
+> gerenciado** ao nosso conteúdo — `Content-Signal:
+> search=yes,ai-train=no,use=reference` num grupo `User-agent: *`, mais
+> `Disallow: /` para uma lista de rastreadores de IA (GPTBot, ClaudeBot,
+> CCBot, Google-Extended, Bytespider e outros). Só depois vem o nosso
+> grupo. Isso é configuração do painel da Cloudflare, não deste
+> repositório, e vale saber ao ler o arquivo servido: `curl` mostra as
+> duas coisas juntas.
+>
+> Os dois grupos `User-agent: *` se somam pela especificação, e não se
+> contradizem — os dois dizem `Allow: /`. E o nosso `Allow: /` **não
+> afrouxa** os `Disallow` de IA: rastreador que tem grupo próprio ignora
+> o grupo `*`. Um `Disallow: /admin.html` publicaria
 exatamente o caminho que se quer esconder: `robots.txt` é lido por
 qualquer um e vira índice do que interessa. Quem cuida de indexação
 dessas duas áreas é o `X-Robots-Tag` acima, que alcança o mesmo buscador

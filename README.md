@@ -59,7 +59,7 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as doze suítes de uma vez (assinatura HMAC do webhook, conversão
+Roda as treze suítes de uma vez (assinatura HMAC do webhook, conversão
 das taxas da Asaas, regra de id imprevisível, hash da senha do admin, a
 redação do log de auditoria — que falha se qualquer dado de pessoa
 sobreviver — e o caminho crítico do webhook de entrada: guarda de
@@ -108,9 +108,15 @@ Pelo painel: `/admin.html` → **Contratantes** → **Novo contratante**. O
 painel é alcançado pela própria URL (`checkout.sancocore.com.br/admin.html`)
 e protegido na borda — ver `CONSTRAINTS.md` §2.6. Não existe mais atalho
 escondido dentro do checkout público.
-A `api_key` é gerada pelo backend e mostrada uma vez — copie na hora.
+A `api_key` é gerada pelo backend, nunca aceita do formulário, e fica
+visível na linha do contratante para copiar.
 
 Nunca por API pública, e nunca inserindo linha à mão no Supabase.
+
+**Chave vazada?** Aba Contratantes → **Trocar chave** na linha dele. A
+troca é imediata: a chave antiga morre no ato e a integração do
+contratante fica parada até ele colar a nova, então a ordem é trocar,
+copiar, avisar. Não existe janela de convivência entre as duas.
 
 ## Onde roda
 

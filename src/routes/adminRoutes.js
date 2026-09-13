@@ -10,6 +10,7 @@ import {
   atualizarLinkAtivacaoSubconta,
   obterMetricas,
   arquivarContratante,
+  rotacionarChaveContratante,
   arquivarSubconta,
   listarAuditoriaWebhook,
   obterResumoWebhook
@@ -27,6 +28,11 @@ router.get('/contratantes', listarContratantes);
 router.post('/contratantes', criarContratante);
 router.patch('/contratantes/:id', atualizarContratante);
 router.patch('/contratantes/:id/arquivar', arquivarContratante);
+/* POST, não PATCH: trocar a chave não é editar um campo que veio no
+   corpo — é pedir ao servidor que gere um segredo novo. O corpo é
+   vazio de propósito, para não existir caminho em que a chave venha de
+   fora. */
+router.post('/contratantes/:id/rotacionar-chave', rotacionarChaveContratante);
 router.get('/subcontas', listarSubcontas);
 router.post('/subcontas', criarSubconta);
 router.patch('/subcontas/:id', atualizarLinkAtivacaoSubconta);
