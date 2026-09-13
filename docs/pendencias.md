@@ -9,6 +9,13 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
+### 🔴 Estação 6 · o Cloudflare Access não está mais na frente do admin
+Confirmado em 12/09 de fora, sem cookie: `checkout.sancocore.com.br/admin.html`
+e `/admin` devolvem o painel direto. A camada 1 do `CONSTRAINTS.md` §2.6
+caiu; sobrou só usuário e senha. **Ação do dono, no painel do Zero
+Trust** — ver os quatro passos em
+`docs/erros/2026-09-12-o-cloudflare-access-sumiu-da-frente-do-admin.md`.
+
 ### Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank
 O ciclo 1 rodou em 11/09 contra o Render, em Oregon. A produção vai ficar
 no Northflank, em São Paulo, com CDN na frente e outra topologia de
@@ -45,6 +52,30 @@ proxy de saída alternava entre três endereços. A `X-Checkout-Key` não tem
 nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
+
+### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
+Medido em 13/09/2026 **do navegador do operador** (não de container na
+nuvem — o ambiente do teste faz parte do teste):
+
+| o que | tempo |
+|---|---|
+| rota sem banco (`/api/admin/sessao` sem token) | **20-29 ms** |
+| rota 404 | 18-21 ms |
+| rota com uma consulta (`/api/saude`) | 70-295 ms, mediana ~90 |
+
+Rede e aplicação estão rápidas; **cada ida ao Supabase custa 50-270 ms** e
+é barulhenta. Não é geografia: backend em Osasco e o projeto
+`San_Checkout` em `sa-east-1` (São Paulo), confirmado na API do Supabase.
+Não é índice faltando: o linter só acusa 5 índices **não usados** (banco
+vazio), nenhuma consulta lenta. A variação bate com compute compartilhado
+do plano gratuito, e o acesso é por PostgREST sobre HTTPS, não conexão
+direta ao Postgres.
+
+O código parou de **multiplicar** esse número (chamadas em paralelo,
+mutação sem rebuscar a lista — 13/09). Baixar o piso em si é decisão de
+custo: plano pago do Supabase dá compute dedicado. **Não fazer nada é
+aceitável** enquanto o painel é de um operador só; vira problema se o
+volume crescer.
 
 ### Lei 8 · erro em produção visível
 Não existe alerta de serviço fora do ar nem detecção de fila pausada da

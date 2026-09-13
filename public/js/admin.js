@@ -328,15 +328,13 @@ async function alternarArquivoSubconta(id, arquivar) {
  */
 async function carregarArquivados() {
   try {
-    // UMA de cada vez, nunca `Promise.all`. Cada chamada de admin dispara
-    // uma derivação scrypt de ~128 MiB no servidor, e duas simultâneas
-    // estouram os 512 MiB da instância — foi assim que a produção caiu em
-    // 11/09/2026. O servidor passou a enfileirar por conta própria
-    // (`senhaAdmin.js`), mas o cliente não tem por que empurrar a fila:
-    // aqui o paralelismo não economizaria tempo nenhum, só amontoaria
-    // espera do outro lado.
-    const listaContratantes = await admin.get('/contratantes?incluirArquivados=1');
-    const listaSubcontas = await admin.get('/subcontas?incluirArquivados=1');
+    /* Em paralelo desde 13/09/2026, pelo mesmo motivo de `carregarTudo`:
+       a proibição antiga existia por causa dos ~128 MiB por derivação de
+       senha, e o token de sessão acabou com ela. */
+    const [listaContratantes, listaSubcontas] = await Promise.all([
+      admin.get('/contratantes?incluirArquivados=1'),
+      admin.get('/subcontas?incluirArquivados=1')
+    ]);
 
     arquivados = {
       contratantes: listaContratantes.filter((c) => c.arquivado_em),
@@ -412,6 +410,17 @@ document.querySelectorAll('.nav-item').forEach((item) => {
 ------------------------------------------------------------------ */
 async function carregarContratantes() {
   contratantes = await admin.get('/contratantes');
+  desenharContratantes();
+}
+
+/**
+ * Redesenha a tabela a partir do que JÁ está em `contratantes`, sem ir ao
+ * servidor. Separado de `carregarContratantes` porque salvar um
+ * contratante devolve a linha inteira na resposta — buscar a lista de
+ * novo depois disso é uma segunda volta ao banco para saber o que o
+ * servidor acabou de contar.
+ */
+function desenharContratantes() {
   $('contador-contratantes').textContent = String(contratantes.length);
   $('vazio-contratantes').hidden = contratantes.length > 0;
 
@@ -499,15 +508,21 @@ async function salvarContratante() {
   limparErro('msg-contratante');
   botao.disabled = true;
   try {
+    /* As duas rotas devolvem a linha inteira, com os mesmos campos que a
+       listagem usa — então a tela se atualiza com a resposta que já veio,
+       em vez de perguntar de novo. Uma ida ao servidor em vez de duas. */
     if (editandoId) {
-      await admin.patch(`/contratantes/${editandoId}`, corpo);
+      const atualizado = await admin.patch(`/contratantes/${editandoId}`, corpo);
+      const i = contratantes.findIndex((c) => c.id === editandoId);
+      if (i === -1) contratantes.unshift(atualizado); else contratantes[i] = atualizado;
       mostrarToast('Contratante atualizado.');
     } else {
-      await admin.post('/contratantes', { id: $('f-id').value.trim(), ...corpo });
+      const criado = await admin.post('/contratantes', { id: $('f-id').value.trim(), ...corpo });
+      contratantes.unshift(criado);   // a lista é ordenada por criado_em desc
       mostrarToast('Contratante cadastrado.');
     }
     fecharModal('modal-contratante');
-    await carregarContratantes();
+    desenharContratantes();
   } catch (erro) {
     mostrarErro('msg-contratante', erro.message);
   } finally {
@@ -549,6 +564,12 @@ function enderecoCompleto(s) {
 
 async function carregarSubcontas() {
   subcontas = await admin.get('/subcontas');
+  desenharSubcontas();
+}
+
+/** Mesmo motivo de `desenharContratantes`: a resposta da criação já traz
+ *  a subconta inteira. */
+function desenharSubcontas() {
   $('contador-subcontas').textContent = String(subcontas.length);
   $('vazio-subcontas').hidden = subcontas.length > 0;
 
@@ -684,11 +705,12 @@ async function criarSubconta() {
   botao.disabled = true;
   botao.textContent = 'Criando...';
   try {
-    await admin.post('/subcontas', corpo);
+    const criada = await admin.post('/subcontas', corpo);
+    subcontas.unshift(criada);        // idem: a resposta já traz a subconta inteira
     fecharModal('modal-subconta');
     mostrarToast('Subconta criada — cole o link de ativação quando o e-mail chegar.');
     Object.values(CAMPOS_SUBCONTA).forEach((id) => { $(id).value = ''; });
-    await carregarSubcontas();
+    desenharSubcontas();
   } catch (erro) {
     mostrarErro('msg-subconta', erro.message);
   } finally {
@@ -963,8 +985,15 @@ async function carregarWebhook() {
    Login / logout
 ------------------------------------------------------------------ */
 async function carregarTudo() {
-  await carregarContratantes();
-  await carregarSubcontas();
+  /* EM PARALELO, e isto mudou em 13/09/2026. Enquanto cada rota de
+     `/api/admin` conferia a senha com scrypt, duas chamadas simultâneas
+     pediam ~256 MiB e derrubavam a instância — por isso eram uma de cada
+     vez. Com o token de sessão a conferência custa ~25 µs e não aloca
+     nada, então a fila deixou de proteger o servidor e só somava espera:
+     medido do navegador do operador, cada ida ao Supabase custa 60-90 ms
+     (com picos de ~270 ms), e em série isso dobrava na cara de quem
+     entra. */
+  await Promise.all([carregarContratantes(), carregarSubcontas()]);
 
   /* O resumo do webhook é disparado SEM `await` porque ele não faz
      parte da tela que o operador veio ver: é um contador de alerta, e
@@ -1001,7 +1030,13 @@ async function tentarEntrar() {
   if (!usuario || !senha) return;
 
   const botao = $('btn-entrar');
+  const rotulo = botao.textContent;
   botao.disabled = true;
+  /* O login é o ÚNICO lugar caro que sobrou — scrypt a N=2^17, de
+     propósito, porque é a única barreira da API e segurança aqui vale
+     mais que meio segundo. O que não pode é parecer travado: um botão
+     desabilitado sem texto novo lê como bug, e o operador clica de novo. */
+  botao.textContent = 'Entrando...';
   try {
     /* O único lugar do painel inteiro em que a senha trafega. Vai no
        corpo, não em cabeçalho: cabeçalho aparece em log de proxy com
@@ -1021,6 +1056,7 @@ async function tentarEntrar() {
     mostrarErro('msg-login', erro.message);
   } finally {
     botao.disabled = false;
+    botao.textContent = rotulo;
   }
 }
 

@@ -25,7 +25,7 @@ import { compararSeguro, documentoValido, emailValido, cepValido } from '../util
 import { senhaConfere } from '../utils/senhaAdmin.js';
 import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
 import { responderErro } from '../utils/erros.js';
-import { criarSubconta as criarSubcontaNaAsaas } from '../services/asaasService.js';
+import { criarSubconta as criarSubcontaNaAsaas, tipoDaContaMae } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
 import {
   listarEventosWebhook,
@@ -394,6 +394,42 @@ export async function arquivarSubconta(requisicao, resposta) {
   resposta.json({ ...data, contratantesUsando });
 }
 
+/**
+ * Traduz uma recusa da Asaas na criação de subconta para algo que o
+ * operador consiga AGIR, em vez de um número.
+ *
+ * Existe por causa de 12/09/2026: a tela mostrou "Asaas respondeu 403",
+ * que não diz nem o que está errado nem onde consertar. 401 e 403 nessa
+ * rota quase sempre são a mesma coisa — a conta-mãe não pode criar
+ * subconta —, e a causa nº 1 está escrita na documentação da Asaas:
+ * **conta de pessoa física (CPF) não cria subconta, só pessoa jurídica
+ * (CNPJ)**. Vale por ambiente: a conta do sandbox é outra conta, e pode
+ * ser PF mesmo que a de produção seja PJ.
+ *
+ * A consulta extra só roda no caminho do erro, nunca no caminho feliz,
+ * e falhar nela não pode piorar a mensagem original — por isso o catch
+ * devolve string vazia em vez de estourar.
+ */
+async function explicarRecusaDeSubconta(erroAsaas) {
+  if (erroAsaas.status !== 401 && erroAsaas.status !== 403) return '';
+
+  try {
+    const { tipo, companyType } = await tipoDaContaMae();
+    if (tipo === 'fisica') {
+      return 'sua conta-mãe na Asaas (neste ambiente) está cadastrada como PESSOA FÍSICA (CPF), '
+        + 'e a Asaas só deixa conta pessoa jurídica (CNPJ) criar subconta. '
+        + 'Troque o cadastro da conta para CNPJ no painel da Asaas deste ambiente, ou peça a liberação ao suporte.';
+    }
+    if (tipo === 'juridica') {
+      return `a conta-mãe é pessoa jurídica${companyType ? ` (${companyType})` : ''}, então o problema NÃO é o tipo de conta — `
+        + 'restam permissão de subcontas não liberada nesta conta ou CNAE incompatível. Isso se resolve com o suporte da Asaas.';
+    }
+    return 'não consegui ler o tipo da conta-mãe para dizer o porquê — confira no painel da Asaas deste ambiente se ela é CNPJ.';
+  } catch {
+    return '';
+  }
+}
+
 export async function criarSubconta(requisicao, resposta) {
   const corpo = requisicao.body ?? {};
   const documentoDigitos = String(corpo.documento ?? '').replace(/\D/g, '');
@@ -430,7 +466,10 @@ export async function criarSubconta(requisicao, resposta) {
       dataNascimento: corpo.dataNascimento
     });
   } catch (erroAsaas) {
-    return resposta.status(erroAsaas.status && erroAsaas.status < 500 ? 400 : 502).json({ erro: `Asaas recusou a criação da subconta: ${erroAsaas.message}` });
+    const detalhe = await explicarRecusaDeSubconta(erroAsaas);
+    return resposta
+      .status(erroAsaas.status && erroAsaas.status < 500 ? 400 : 502)
+      .json({ erro: `Asaas recusou a criação da subconta: ${erroAsaas.message}${detalhe ? ` — ${detalhe}` : ''}` });
   }
 
   const { data, error } = await supabase

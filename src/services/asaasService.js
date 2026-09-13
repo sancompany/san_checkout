@@ -11,6 +11,40 @@
 
 import { getConfigAsaas, montarCallbackPadrao } from '../config/asaas.js';
 
+/**
+ * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
+ *
+ * Existe porque `Asaas respondeu 403` não é diagnóstico: foi exatamente
+ * o que a tela mostrou quando a criação de subconta falhou em
+ * 12/09/2026, e a razão real ficou dentro de um corpo que ninguém via.
+ * O formato `{errors:[{code, description}]}` é o comum, mas nem todo
+ * erro da Asaas vem assim — 401 e 403, em particular, costumam vir com
+ * outra forma, e é justamente aí que a mensagem some.
+ *
+ * Redigido pela Lei 10: a resposta pode ecoar o que foi enviado
+ * (documento, e-mail, telefone). Sequência de 8+ dígitos e endereço de
+ * e-mail saem; texto longo é cortado.
+ */
+function resumirRespostaAsaas(corpo) {
+  const limpar = (texto) => String(texto)
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]')
+    .replace(/\d[\d.\-/\s]{7,}\d/g, '[numero]')
+    .slice(0, 300);
+
+  const erros = Array.isArray(corpo?.errors) ? corpo.errors : null;
+  if (erros?.length) {
+    return erros
+      .map((e) => limpar([e?.code, e?.description].filter(Boolean).join(': ') || JSON.stringify(e)))
+      .join(' | ');
+  }
+
+  // Sem o formato conhecido: entrega o que der, ainda redigido. Chaves
+  // vazias viram '(corpo vazio)' — que também é informação: quer dizer
+  // que a recusa veio sem explicação nenhuma.
+  const texto = limpar(JSON.stringify(corpo ?? {}));
+  return texto === '{}' || texto === 'null' ? '(corpo vazio)' : texto;
+}
+
 async function chamarAsaas(caminho, opcoes = {}) {
   const { baseUrl, headers } = getConfigAsaas();
   const resposta = await fetch(`${baseUrl}${caminho}`, {
@@ -21,14 +55,42 @@ async function chamarAsaas(caminho, opcoes = {}) {
   const corpo = await resposta.json().catch(() => ({}));
 
   if (!resposta.ok) {
-    const descricao = corpo.errors?.[0]?.description || `Asaas respondeu ${resposta.status}`;
+    const resumo = resumirRespostaAsaas(corpo);
+    const descricao = corpo.errors?.[0]?.description || `${resposta.status} — ${resumo}`;
+
+    // No log SEMPRE, mesmo quando a descrição chega bonita na tela: é o
+    // único lugar que guarda a rota e o status juntos.
+    console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminho} → ${resposta.status}: ${resumo}`);
+
     const erro = new Error(descricao);
     erro.status = resposta.status;
     erro.corpoAsaas = corpo;
+    erro.resumoAsaas = resumo;
     throw erro;
   }
 
   return corpo;
+}
+
+/**
+ * Dados comerciais da conta-mãe. Só é chamado para explicar uma recusa
+ * — não entra em nenhum caminho de cobrança.
+ *
+ * A leitura é DEFENSIVA de propósito: a documentação da Asaas não
+ * publica o schema desta resposta, então depender do nome exato de um
+ * campo aqui seria inventar contrato. O que interessa é uma coisa só, e
+ * dá para descobrir de dois jeitos independentes: `personType`, se vier,
+ * e a contagem de dígitos do documento (11 = CPF, 14 = CNPJ).
+ */
+export async function tipoDaContaMae() {
+  const conta = await chamarAsaas('/v3/myAccount/commercialInfo', { method: 'GET' });
+  const digitos = String(conta?.cpfCnpj ?? '').replace(/\D/g, '');
+
+  let tipo = 'desconhecido';
+  if (conta?.personType === 'FISICA' || digitos.length === 11) tipo = 'fisica';
+  else if (conta?.personType === 'JURIDICA' || digitos.length === 14) tipo = 'juridica';
+
+  return { tipo, companyType: conta?.companyType ?? null };
 }
 
 /** Busca cliente por CPF/CNPJ; cria se não existir. */

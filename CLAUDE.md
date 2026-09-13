@@ -49,6 +49,7 @@ registrada no `CONSTRAINTS.md`.
 
 ## Pendências que bloqueiam a esteira
 
+- **Estação 6 · o Cloudflare Access caiu da frente do `/admin`** (confirmado de fora em 12/09). Só o dono recria, no Zero Trust.
 - **Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank**, que é onde a produção vai ficar. O ciclo 1 rodou contra o Render.
 - **Estação 6 · o teste de ponta a ponta de seis passos** (`API.md`), no sandbox, antes do ciclo de segurança. Depende de contratante de teste cadastrado pelo dono.
 
