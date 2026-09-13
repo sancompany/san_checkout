@@ -71,10 +71,10 @@ acontece aqui (`docs/funcional.md` §8).
 
 **Passo 1 feito em 13/09**, e ele já pagou o próprio custo: os três links
 resolvem pelo modelo pull, e o `ped_sem_valor` revelou dois furos de
-tela comprável sem valor cobrável — corrigidos no mesmo dia
+tela comprável sem valor cobrável — corrigidos, mergeados e **conferidos
+em produção no mesmo dia**: `GET /pedido/testemaster/ped_sem_valor`
+devolve `taxa: null`
 (`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
-**A correção só vale em produção depois do deploy**; até lá, o que está
-no ar ainda mostra R$ 1,49 de total para o pedido sem preço.
 
 Passos 2 a 6 pendentes: pagar o Pix no sandbox (é o dono quem paga),
 conferir o webhook, reabrir o status, conciliar e estornar.
@@ -88,10 +88,13 @@ Em 13/09 a `X-Checkout-Key` do `testemaster` foi colada numa conversa
 para pedir ajuda com a configuração do Worker. Não está em arquivo nenhum
 deste repositório, e é chave de contratante **de teste em sandbox** — o
 alcance é o pedido de mentira. Ainda assim, o caminho declarado aqui é
-revogar, não esquecer (é a mesma regra do `seguranca.yml`): gerar valor
-novo, trocar nos dois lados (painel do checkout e secret `CHECKOUT_KEY`
-do Worker) e nunca reaproveitar o exposto. Fechar esta pendência é ter
-feito a troca.
+revogar, não esquecer (é a mesma regra do `seguranca.yml`).
+
+**O caminho passou a existir no mesmo dia:** aba Contratantes → "Trocar
+chave" (`docs/funcional.md` §2.8). Antes disso não havia como trocar sem
+SQL na mão. Fechar esta pendência é: trocar pelo painel, copiar a chave
+nova e colar na secret `CHECKOUT_KEY` do Worker — nessa ordem, porque
+entre um passo e outro o contratante de teste fica sem resolver pedido.
 
 ### 🟡 Dois lugares menores ainda leem valor com `?? 0`
 `public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a

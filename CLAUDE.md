@@ -27,8 +27,8 @@ de segurança ficou verde pela primeira vez). Pede Opus com esforço alto.
 | 2 Fronteiras | **fechada**, reaberta e refechada 12/09 | seção "Classificação de fronteira" do spec: Access registrado ali, e hospedagem escolhida por número medido (23 ms × 220 ms) |
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09 | `API.md` e migrations OK; `docs/funcional.md` com as dez seções — as 8 e 9 escritas hoje |
-| 5 Construção | no ar, com ressalva | `5f3adf3` no ar, `testes #22` verde; pagamento ainda em **sandbox**, e a troca só acontece **depois** de a Estação 6 fechar (decisão do dono, 13/09) |
-| 6 Prontidão | **em curso** | contratante de teste `testemaster` cadastrado em 13/09; ciclo 1 rodou contra o Render, não contra o que está no ar; falta refazer no Northflank |
+| 5 Construção | no ar, com ressalva | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404); pagamento ainda em **sandbox**, e a troca só acontece **depois** de a Estação 6 fechar (decisão do dono, 13/09) |
+| 6 Prontidão | **em curso** | contratante de teste `testemaster` cadastrado em 13/09 e **passo 1 dos seis feito** — achou dois furos de total, corrigidos e no ar; ciclo 1 rodou contra o Render, não contra o que está no ar; falta refazer no Northflank |
 
 Falta para fechar a 6: o teste de ponta a ponta de seis passos e o ciclo
 de segurança refeito sobre o Northflank. A troca da Asaas para o
@@ -39,7 +39,7 @@ ambiente real vem **depois** dela, e é o que fecha a 5 sem ressalva.
 - Dados: `supabase/migrations/` · variáveis `.env.example`
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
-- Testes: `tests/` — `npm test` roda as 12 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 13 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

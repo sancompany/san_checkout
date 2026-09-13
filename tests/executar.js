@@ -21,6 +21,7 @@ const SUITES = [
   'src/utils/assinaturaWebhook.js',  // assinatura HMAC do webhook de saída
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
+  'src/utils/chaveContratante.js',   // a api_key: tamanho, formato, e não repetir
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
   'src/utils/sessaoAdmin.js',        // token de sessão do admin: forja, adulteração, validade
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive

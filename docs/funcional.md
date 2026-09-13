@@ -84,7 +84,25 @@ métodos habilitados.
 Aba Subcontas: dados da empresa ou pessoa, endereço, documento. A Asaas
 devolve `walletId`, que é o que faz o split pagar o contratante.
 
-### 2.8 Operador confere o que aconteceu
+### 2.8 Operador troca a chave de um contratante
+
+Aba Contratantes → **Trocar chave** na linha dele. A tela avisa, com o
+nome escrito, que a chave atual para de valer **na hora** e que a
+integração do contratante fica parada até o outro lado colar a nova; só
+depois de confirmar a troca acontece. A chave nova aparece na própria
+linha, para copiar.
+
+Existe porque "nunca trocar" não é política de segredo. Chave vaza — vai
+para um print, um chat, um log do parceiro —, e antes disso o único
+caminho era editar a linha no SQL Editor (que o `README.md` proíbe) ou
+recriar o contratante (que o `CONSTRAINTS.md` §1.10 veta quando há
+cobrança paga). A chave exposta valia para sempre.
+
+Não há janela de convivência entre chave velha e nova: é troca seca, e é
+o que se quer de uma chave queimada. A ordem certa é trocar, copiar,
+atualizar do outro lado.
+
+### 2.9 Operador confere o que aconteceu
 
 Aba Métricas (volume, conversão) e aba Webhook (todo evento recebido,
 com o payload redigido, e o contador de tentativas recusadas).
@@ -369,7 +387,7 @@ Automático, contador de tentativa por credencial.
    e os estados do checkout e do status estão enumerados com o texto que
    aparece em cada um.
 2. **Cada papel tem jornada completa, e cada tela pertence a alguma
-   jornada?** Sim — comprador (2.1 a 2.5), operador (2.6 a 2.8), e o
+   jornada?** Sim — comprador (2.1 a 2.5), operador (2.6 a 2.9), e o
    contratante não tem tela por desenho, integra por API. As seis telas
    aparecem em alguma jornada.
 3. **Cada regra de negócio tem consequência escrita?** Sim — as dez

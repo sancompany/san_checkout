@@ -245,6 +245,46 @@ function confirmar({ titulo, corpo, rotuloAcao, perigo = false }) {
   });
 }
 
+/**
+ * Troca a api_key do contratante. Imediata: a antiga morre no ato.
+ *
+ * O aviso não é formalidade — é a informação que decide o clique. Quem
+ * troca a chave de um contratante em produção derruba a integração dele
+ * até alguém do outro lado colar a nova, e o texto diz isso com o nome
+ * do contratante na frente. Confirmação sem consequência escrita é só
+ * um obstáculo a mais para clicar no automático.
+ */
+async function rotacionarChaveContratante(id) {
+  const alvo = contratantes.find((c) => c.id === id);
+  const nome = alvo?.nome ?? id;
+
+  const ok = await confirmar({
+    titulo: `Trocar a chave de ${escapar(nome)}?`,
+    corpo: `
+      <p>A chave atual <strong>para de valer na hora</strong>. Enquanto
+      o outro lado não colar a nova, este contratante não resolve pedido
+      nem autentica estorno.</p>
+      <p>Faça na ordem: trocar aqui, copiar a chave nova, atualizar no
+      sistema do contratante.</p>
+      <p class="confirmar-nota">Não dá para desfazer — a chave antiga não
+      volta. Trocar de novo gera outra.</p>`,
+    rotuloAcao: 'Trocar chave',
+    perigo: true
+  });
+  if (!ok) return;
+
+  try {
+    const atualizado = await admin.post(`/contratantes/${id}/rotacionar-chave`, {});
+    // A resposta traz a chave nova: atualiza a linha em memória em vez
+    // de recarregar a lista, que custaria outra derivação de senha.
+    if (alvo) alvo.api_key = atualizado.api_key;
+    desenharContratantes();
+    mostrarToast(`Chave de ${nome} trocada. Copie a nova e atualize o contratante.`);
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
 async function alternarArquivoContratante(id, arquivar) {
   const alvo = contratantes.find((c) => c.id === id);
   const nome = alvo?.nome ?? id;
@@ -443,6 +483,7 @@ function desenharContratantes() {
         <td>
           <div class="acoes-linha">
             <button class="btn btn-secundario btn-mini" type="button" data-editar-contratante="${escapar(c.id)}">Editar</button>
+            <button class="btn btn-secundario btn-mini" type="button" data-rotacionar-contratante="${escapar(c.id)}">Trocar chave</button>
             <button class="btn btn-secundario btn-mini" type="button" data-arquivar-contratante="${escapar(c.id)}">Arquivar</button>
           </div>
         </td>
@@ -453,6 +494,9 @@ function desenharContratantes() {
   document.querySelectorAll('[data-editar-contratante]').forEach((botao) => {
     botao.addEventListener('click', () => abrirModalContratante(botao.dataset.editarContratante));
   });
+  document.querySelectorAll('[data-rotacionar-contratante]').forEach((botao) => {
+    botao.addEventListener('click', () => rotacionarChaveContratante(botao.dataset.rotacionarContratante));
+  });
   document.querySelectorAll('[data-arquivar-contratante]').forEach((botao) => {
     botao.addEventListener('click', () => alternarArquivoContratante(botao.dataset.arquivarContratante, true));
   });
@@ -461,13 +505,14 @@ function desenharContratantes() {
   });
 }
 
-/** Sem `id` = criar; com `id` = editar (id e api_key nunca mudam). */
+/** Sem `id` = criar; com `id` = editar (id e api_key não mudam aqui — a
+ *  chave tem ação própria, `rotacionarChaveContratante`). */
 function abrirModalContratante(id = null) {
   const alvo = id ? contratantes.find((c) => c.id === id) : null;
 
   $('modal-contratante-titulo').textContent = alvo ? `Editar ${alvo.nome}` : 'Novo contratante';
   $('modal-contratante-descricao').textContent = alvo
-    ? 'O id e a api_key não mudam — trocar a chave quebraria a integração já em uso.'
+    ? 'O id não muda, e a api_key não muda por aqui — para trocá-la, use "Trocar chave" na linha do contratante, que avisa o que a troca derruba.'
     : 'A api_key é gerada automaticamente no cadastro.';
   $('btn-salvar-contratante').textContent = alvo ? 'Salvar alterações' : 'Cadastrar';
   $('btn-salvar-contratante').dataset.editando = alvo ? alvo.id : '';

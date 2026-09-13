@@ -21,6 +21,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
+import { gerarApiKey } from '../utils/chaveContratante.js';
 import { compararSeguro, documentoValido, emailValido, cepValido } from '../utils/validadores.js';
 import { senhaConfere } from '../utils/senhaAdmin.js';
 import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
@@ -152,6 +153,44 @@ export async function arquivarContratante(requisicao, resposta) {
   resposta.json(data);
 }
 
+/**
+ * POST /api/admin/contratantes/:id/rotacionar-chave — troca a `api_key`.
+ *
+ * POR QUE ISTO EXISTE, se o `PATCH` recusa mexer na chave de propósito
+ * Porque "nunca trocar" não é política de segredo, é ausência de uma.
+ * Chave vaza — vai para um print, um chat, um log do parceiro — e até
+ * 13/09/2026 o único caminho para trocar era editar a linha no SQL
+ * Editor, que o `README.md` proíbe, ou recriar o contratante, que o
+ * §1.10 do `CONSTRAINTS.md` veta quando existe cobrança paga. Ficava
+ * assim: a chave exposta continuava valendo para sempre.
+ *
+ * TROCA IMEDIATA, E É O PONTO DELA. A chave antiga para de autenticar
+ * no mesmo instante — é o que se quer de uma chave queimada. A
+ * integração do contratante fica fora do ar até ele colar a nova, e por
+ * isso a tela avisa antes de confirmar, com o nome dele escrito.
+ * Convivência de duas chaves (janela de graça) seria mais gentil e é
+ * outra funcionalidade: precisa de coluna nova e de prazo, e enquanto
+ * não existir, gentileza aqui significaria deixar a chave vazada viva
+ * mais um tempo.
+ *
+ * A chave nova é gerada aqui, nunca aceita do corpo — mesma regra do
+ * cadastro, mesma função (`gerarApiKey`).
+ */
+export async function rotacionarChaveContratante(requisicao, resposta) {
+  const { id } = requisicao.params;
+
+  const { data, error } = await supabase
+    .from('contratantes')
+    .update({ api_key: gerarApiKey() })
+    .eq('id', id)
+    .select('id, nome, api_key')
+    .maybeSingle();
+
+  if (error) return responderErro(resposta, error, 'admin.rotacionarChaveContratante');
+  if (!data) return resposta.status(404).json({ erro: 'Contratante não encontrado.' });
+  resposta.json(data);
+}
+
 function slugValido(valor) {
   return /^[a-z0-9][a-z0-9-]{1,49}$/.test(String(valor ?? ''));
 }
@@ -187,7 +226,7 @@ export async function criarContratante(requisicao, resposta) {
 
   // Sempre gerada aqui, nunca aceita do body — evita chave fraca ou
   // reaproveitada entre projetos.
-  const apiKey = randomBytes(24).toString('hex');
+  const apiKey = gerarApiKey();
 
   const { data, error } = await supabase
     .from('contratantes')
