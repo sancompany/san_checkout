@@ -83,19 +83,6 @@ conferir o webhook, reabrir o status, conciliar e estornar.
 
 ## Abertas, não bloqueiam
 
-### 🟠 A chave do contratante de teste saiu do cofre
-Em 13/09 a `X-Checkout-Key` do `testemaster` foi colada numa conversa
-para pedir ajuda com a configuração do Worker. Não está em arquivo nenhum
-deste repositório, e é chave de contratante **de teste em sandbox** — o
-alcance é o pedido de mentira. Ainda assim, o caminho declarado aqui é
-revogar, não esquecer (é a mesma regra do `seguranca.yml`).
-
-**O caminho passou a existir no mesmo dia:** aba Contratantes → "Trocar
-chave" (`docs/funcional.md` §2.8). Antes disso não havia como trocar sem
-SQL na mão. Fechar esta pendência é: trocar pelo painel, copiar a chave
-nova e colar na secret `CHECKOUT_KEY` do Worker — nessa ordem, porque
-entre um passo e outro o contratante de teste fica sem resolver pedido.
-
 ### 🟡 Dois lugares menores ainda leem valor com `?? 0`
 `public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
 linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço
@@ -125,12 +112,42 @@ Declarado em `docs/funcional.md` §8.
 ### 🔴 Lei 5 · cache de 4 horas em JS e CSS
 O `Cache-Control: max-age=0` do `_headers` vale para o HTML e **é
 sobreposto pelo Cloudflare Pages nos assets** — medido ao vivo em
-11/09/2026. Depois de todo deploy que mexa em JS ou CSS, o navegador pode
+11/09/2026.
+
+> **Medido no cabeçalho em 13/09/2026**, que é o que faltava para parar
+> de ser inferência:
+>
+> ```
+> GET /js/admin.js
+> cache-control: public, max-age=14400, must-revalidate
+> cf-cache-status: REVALIDATED
+> ```
+>
+> 14400 s são as 4 horas, exatas, vindas de cima do nosso `max-age=0`.
+> **Custou uma confusão real no mesmo dia:** o botão "Trocar chave"
+> estava no ar (o arquivo servido continha o código) e o dono, no
+> celular, não via — fechar e reabrir o navegador não resolve, porque o
+> que está velho é o arquivo em cache, não a aba.
+>
+> A causa provável é o **Browser Cache TTL da zona** estar fixo em 4
+> horas em vez de "Respect Existing Headers" (Cloudflare → Caching →
+> Configuration). Se for isso, mudar aquele seletor resolve o site
+> inteiro de uma vez, e é mais simples que a Cache Rule descrita abaixo
+> — conferir esse valor antes de criar regra.
+>
+> **Contorno de celular, enquanto não muda:** abrir o painel numa aba
+> anônima (Chrome: ⋮ → Nova guia anônima; Safari: abas → Privada), que
+> nasce sem cache. Exige refazer o login do Access e do painel. Depois de todo deploy que mexa em JS ou CSS, o navegador pode
 rodar HTML novo com script velho por até 4h. Já fez correção certa
 parecer errada três vezes no mesmo dia.
 
-**Correção:** Cache Rule na zona (Regras → Cache Rules) com *Browser TTL*
-zero em `/js/*` e `/css/*`. Configuração de painel, plano gratuito.
+**Correção — só o dono, e só do computador** (o painel da Cloudflare não
+se navega bem no celular; combinado em 13/09 de ficar esperando acesso
+ao PC): conferir primeiro **Caching → Configuration → Browser Cache
+TTL** e pôr em *Respect Existing Headers*, que resolve o site inteiro de
+uma vez. Se o seletor já estiver assim, aí sim criar a Cache Rule
+(Regras → Cache Rules) com *Browser TTL* zero em `/js/*` e `/css/*`.
+Configuração de painel, plano gratuito.
 **Contorno hoje:** Ctrl+Shift+R depois do deploy.
 **Deliberadamente NÃO feito:** o paliativo de `?v=` nas tags — exige
 lembrar de incrementar a cada mudança, e ritual que se esquece é proteção

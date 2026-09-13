@@ -158,8 +158,13 @@ async function copiar(texto, rotulo) {
 
 /** Segredo mascarado até alguém clicar no olho — padrão de console de
  *  pagamento (Stripe/Asaas): chave nenhuma fica impressa na tela por
- *  padrão, pra não vazar em print, gravação de tela ou ombro alheio. */
-function blocoSegredo(valor, rotulo) {
+ *  padrão, pra não vazar em print, gravação de tela ou ombro alheio.
+ *
+ *  `rotacionarId` acrescenta o terceiro ícone, o de trocar. Ele é opcional
+ *  porque só a chave de CONTRATANTE se troca por aqui: a da subconta é
+ *  emitida pela Asaas e quem a rotaciona é o painel deles, então mostrar
+ *  o ícone ali prometeria o que esta tela não faz. */
+function blocoSegredo(valor, rotulo, { rotacionarId } = {}) {
   if (!valor) return '<span class="celula-fraca">—</span>';
   return `
     <span class="segredo">
@@ -170,6 +175,12 @@ function blocoSegredo(valor, rotulo) {
       <button class="segredo-btn" type="button" data-copiar="${escapar(rotulo)}" title="Copiar ${escapar(rotulo)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       </button>
+      ${rotacionarId ? `
+      <button class="segredo-btn segredo-btn--trocar" type="button" data-rotacionar="${escapar(rotacionarId)}"
+              title="Trocar ${escapar(rotulo)} — a atual para de valer na hora"
+              aria-label="Trocar ${escapar(rotulo)} de ${escapar(rotacionarId)}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11A8 8 0 0 0 6.3 6.3L3 9"/><path d="M3 4v5h5"/><path d="M4 13a8 8 0 0 0 13.7 4.7L21 15"/><path d="M21 20v-5h-5"/></svg>
+      </button>` : ''}
     </span>
   `;
 }
@@ -177,8 +188,12 @@ function blocoSegredo(valor, rotulo) {
 /** Delegação única pros botões de revelar/copiar de qualquer segredo na
  *  tela — em vez de religar listener a cada redesenho de tabela. */
 document.addEventListener('click', (evento) => {
-  const botao = evento.target.closest('[data-revelar], [data-copiar]');
+  const botao = evento.target.closest('[data-revelar], [data-copiar], [data-rotacionar]');
   if (!botao) return;
+
+  // Antes de ler o valor: trocar a chave não depende dela estar revelada
+  // nem de existir na tela — o segredo novo vem do servidor.
+  if (botao.hasAttribute('data-rotacionar')) return rotacionarChaveContratante(botao.dataset.rotacionar);
 
   const campo = botao.closest('.segredo')?.querySelector('.segredo-valor');
   const valor = campo?.dataset.segredo;
@@ -479,11 +494,10 @@ function desenharContratantes() {
             ${metodos.map((m) => `<span class="pill pill-metodo">${escapar(NOME_METODO[m] ?? m)}</span>`).join('')}
           </span>
         </td>
-        <td>${blocoSegredo(c.api_key, 'api_key')}</td>
+        <td>${blocoSegredo(c.api_key, 'api_key', { rotacionarId: c.id })}</td>
         <td>
           <div class="acoes-linha">
             <button class="btn btn-secundario btn-mini" type="button" data-editar-contratante="${escapar(c.id)}">Editar</button>
-            <button class="btn btn-secundario btn-mini" type="button" data-rotacionar-contratante="${escapar(c.id)}">Trocar chave</button>
             <button class="btn btn-secundario btn-mini" type="button" data-arquivar-contratante="${escapar(c.id)}">Arquivar</button>
           </div>
         </td>
@@ -494,9 +508,6 @@ function desenharContratantes() {
   document.querySelectorAll('[data-editar-contratante]').forEach((botao) => {
     botao.addEventListener('click', () => abrirModalContratante(botao.dataset.editarContratante));
   });
-  document.querySelectorAll('[data-rotacionar-contratante]').forEach((botao) => {
-    botao.addEventListener('click', () => rotacionarChaveContratante(botao.dataset.rotacionarContratante));
-  });
   document.querySelectorAll('[data-arquivar-contratante]').forEach((botao) => {
     botao.addEventListener('click', () => alternarArquivoContratante(botao.dataset.arquivarContratante, true));
   });
@@ -505,14 +516,14 @@ function desenharContratantes() {
   });
 }
 
-/** Sem `id` = criar; com `id` = editar (id e api_key não mudam aqui — a
- *  chave tem ação própria, `rotacionarChaveContratante`). */
+/** Sem `id` = criar; com `id` = editar. A chave se troca pelo ícone ao
+ *  lado dela, na linha (`rotacionarChaveContratante`). */
 function abrirModalContratante(id = null) {
   const alvo = id ? contratantes.find((c) => c.id === id) : null;
 
   $('modal-contratante-titulo').textContent = alvo ? `Editar ${alvo.nome}` : 'Novo contratante';
   $('modal-contratante-descricao').textContent = alvo
-    ? 'O id não muda, e a api_key não muda por aqui — para trocá-la, use "Trocar chave" na linha do contratante, que avisa o que a troca derruba.'
+    ? 'Para trocar a api_key, use o ícone de setas em círculo ao lado dela, na linha do contratante — ele avisa o que a troca derruba antes de confirmar. O id não muda.'
     : 'A api_key é gerada automaticamente no cadastro.';
   $('btn-salvar-contratante').textContent = alvo ? 'Salvar alterações' : 'Cadastrar';
   $('btn-salvar-contratante').dataset.editando = alvo ? alvo.id : '';
