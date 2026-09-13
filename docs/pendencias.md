@@ -9,12 +9,55 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
-### 🔴 Estação 6 · o Cloudflare Access não está mais na frente do admin
-Confirmado em 12/09 de fora, sem cookie: `checkout.sancocore.com.br/admin.html`
-e `/admin` devolvem o painel direto. A camada 1 do `CONSTRAINTS.md` §2.6
-caiu; sobrou só usuário e senha. **Ação do dono, no painel do Zero
-Trust** — ver os quatro passos em
-`docs/erros/2026-09-12-o-cloudflare-access-sumiu-da-frente-do-admin.md`.
+### 🔴 Estação 3 · a CI `Segurança` está vermelha desde o primeiro push
+Descoberto em 13/09 na auditoria retrógrada: as quatro execuções do
+workflow `Segurança` falharam (runs #1 a #4). O job `estatica` sai com
+código 1 — **6 achados do semgrep, todos da mesma regra e todos nos dois
+arquivos de workflow**: `actions/checkout@v4` e `actions/setup-node@v4`
+são tags móveis e precisam de SHA de 40 caracteres. Nada em `src/`, nada
+no caminho do dinheiro. Os jobs `dependencias` e `segredos` passam.
+
+**Só o dono aplica** — a ferramenta recusa escrita em
+`.github/workflows/`. Conteúdo pronto entregue com os SHAs conferidos na
+API do GitHub em 13/09. Enquanto não passar, a Estação 3 não fecha, e é
+o que trava a esteira.
+Causa raiz e lição em
+`docs/erros/2026-09-13-a-ci-de-seguranca-estava-vermelha-desde-o-primeiro-push.md`.
+
+### 🔴 Estação 1 · o spec não tem métrica de sucesso
+A lei nova fecha a Estação 1 com "a métrica de sucesso" escrita, e a
+Estação 4 depende dela para nomear de cinco a dez eventos. O
+`docs/specs/2026-09-11-san-checkout.md` não tem nenhuma das duas coisas.
+**Pergunta para o dono, não para a sessão:** o que conta como sucesso
+deste motor — cobrança confirmada por contratante? taxa de pagamento?
+tempo até o dinheiro cair?
+
+### 🔴 Estação 4 · faltam duas seções em `docs/funcional.md`
+O modelo novo pede dez seções. Existem 1 a 7 e a última ("o que fica
+fora"). Faltam:
+- **"Direitos e obrigações que viram tela"** — exportar dados, excluir
+  conta, revogar consentimento, canal do titular; e, por haver venda a
+  consumidor, confirmação da contratação, ticket de atendimento com
+  auto-resposta e **botão de arrependimento com estorno no mesmo fluxo**.
+  Nada disso existe hoje, nem na tela nem no documento.
+- **"Métrica de sucesso e eventos"** — depende da pendência da Estação 1.
+Sem elas a Estação 6 não fecha: ela exige responder "quantos ontem?" com
+número.
+
+### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
+A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
+ensaio — apontando para o ambiente real dos provedores, inclusive
+pagamento", porque identificador, formato de webhook, assinatura e erro
+mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`. **Decisão do
+dono**, com trade-off real: trocar agora testa o que vai ser lançado;
+trocar depois repete a Estação 6 inteira contra outro ambiente.
+
+### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
+`seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
+1 s por hash **medido no servidor real**. Os ~830 ms conhecidos são do
+Render. Refazer no Northflank (0,5 vCPU) e ajustar N se sair da faixa.
+Exceção registrada em `CONSTRAINTS.md` (Lei 3 · scrypt no lugar de
+Argon2id) já aponta esta lacuna.
 
 ### Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank
 O ciclo 1 rodou em 11/09 contra o Render, em Oregon. A produção vai ficar

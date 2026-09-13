@@ -86,7 +86,20 @@ function umaDerivacaoPorVez(tarefa) {
   return resultado;
 }
 
-/** Mínimo recomendado (OWASP): N=2^17, r=8, p=1. */
+/**
+ * Piso recomendado: **N=2^17, r=8, p=1**.
+ *
+ * Fonte: OWASP Password Storage Cheat Sheet, e o piso repetido em
+ * `seguranca-san/references/senha-e-kdf.md` ("e abaixo dele nunca").
+ * Conferido em 13/09/2026. O parâmetro fica explícito aqui, com data e
+ * fonte, porque padrão implícito de biblioteca é como se chega a N=2^14
+ * sem ninguém decidir.
+ *
+ * PENDENTE: o piso é piso, não alvo. A calibração pede o maior custo
+ * que a máquina de produção absorve, mirando 0,5 a 1 s por hash MEDIDO
+ * NO SERVIDOR REAL. Os ~830 ms conhecidos foram medidos no Render;
+ * refazer no Northflank (0,5 vCPU) e ajustar N se sair da faixa.
+ */
 const CUSTO = { N: 131072, r: 8, p: 1 };
 const TAMANHO_CHAVE = 64;
 const TAMANHO_SAL = 16;

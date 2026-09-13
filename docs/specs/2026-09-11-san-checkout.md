@@ -115,8 +115,12 @@ porta das áreas administrativas.
 > viola a regra de aplicação e banco na mesma região. A migração para o
 > **Northflank** (região América do Sul – Leste, Osasco) foi executada em
 > 12/09/2026, com o número medido que a regra exige: **23 ms** contra
-> 220 ms do Render, do navegador do dono, sem VPN. O Render segue no ar
-> até a Estação 6 fechar e a produção ser promovida no Northflank.
+> 220 ms do Render, do navegador do dono, sem VPN.
+>
+> **Concluída em 13/09/2026:** o Northflank **é** a produção —
+> `api.sancocore.com.br` aponta para ele, e a medição refeita do
+> navegador do dono confirma o ganho (rota sem banco 20-29 ms). O Render
+> ficou de pé só enquanto durou a comparação e não é mais usado.
 
 **Banco**: próprio e isolado (Supabase dedicado a este projeto — ver
 `config/supabase.js`), nunca compartilhado com outro projeto ou peça de

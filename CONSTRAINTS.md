@@ -109,18 +109,28 @@ não de parceiro que saiu.
   27 + guarda fiscal). A rotina de expurgo ainda não existe e a validação
   jurídica é da Estação 7 — ver `docs/inventario-de-dados.md` §6.
 - **Gargalos conhecidos, em ordem de probabilidade**:
-  0. **Memória da instância: 512 MiB, e o plano de US$ 7 NÃO aumenta
-     isso** — conferido na página de preços da Render em 11/09/2026: free
-     e Starter têm os mesmos 512 MiB, e o que o pago resolve é a
-     hibernação (gargalo 1), não a memória. Mais memória só a partir do
-     plano seguinte. Isto está aqui porque em 11/09/2026 a instância
-     estourou de verdade, com duas derivações scrypt de ~128 MiB ao mesmo
-     tempo, e a reação natural — "pagar o plano" — não teria resolvido
-     nada. A contenção foi limitar a simultaneidade, não comprar memória.
-  1. **Plano gratuito do Render** — hiberna por inatividade. Mitigado com
-     ping externo (cron-job.org) em `/api/saude` a cada 10 minutos, que
-     de quebra mantém o Supabase ativo. **Quando o tráfego real começar,
-     o plano pago é a ação** — está decidido, só não contratado.
+  0. **Memória e CPU da instância: `nf-compute-50` no Northflank —
+     0,5 vCPU e 1024 MiB.** Atualizado em 13/09/2026: até 12/09 a
+     produção era o Render, com 512 MiB, e o texto anterior aqui
+     descrevia aquela instância.
+     A lição que trouxe este item para a lista continua valendo e não é
+     sobre o tamanho: em 11/09/2026 a instância estourou de verdade, com
+     duas derivações scrypt de ~128 MiB ao mesmo tempo, e a reação
+     natural — "pagar o plano maior" — não teria resolvido. **A
+     contenção foi limitar a simultaneidade no código, não comprar
+     memória** (Lei 7; ver o limite declarado logo abaixo). O dobro de
+     memória de hoje dá folga, não imunidade.
+  1. **Custo por consulta ao banco: 50-270 ms, e é o piso da
+     experiência.** Medido em 13/09/2026 **do navegador do operador**:
+     rota sem banco 20-29 ms, rota com uma consulta 70-295 ms (mediana
+     ~90). Não é geografia (backend em Osasco, Supabase em `sa-east-1`) e
+     não é índice faltando (o linter só acusa índices não usados). É
+     compute compartilhado do plano gratuito do Supabase, e só sai com
+     plano pago. O código foi ajustado para **não multiplicar** esse
+     número — chamadas do painel em paralelo, mutação sem rebuscar a
+     lista. O Northflank não hiberna, então o gargalo de hibernação que
+     existia no Render deixou de existir; o ping de 10 min em
+     `/api/saude` continua, agora só para manter o Supabase ativo.
   2. **Fila de reenvio de webhook em memória** — 3 tentativas
      (1min/5min/15min) via `setTimeout`. Reinício do processo perde a
      notificação pendente. A rede de segurança é a conciliação
@@ -130,6 +140,18 @@ não de parceiro que saiu.
      `ACCESS_TOKEN_*` viram alerta em `/api/saude`.
   4. **Cota gratuita do Supabase** — projeto pausa com 7 dias sem
      consulta; o mesmo ping resolve.
+- **Custo de memória do hash de senha, e o teto de simultaneidade**
+  (declarado em 13/09/2026, exigido pela Lei 7 e por
+  `seguranca-san/references/senha-e-kdf.md`): scrypt a N=2^17, r=8, p=1
+  consome `128 × N × r` bytes por derivação **em andamento**, ou seja
+  **~128 MiB cada**. Numa instância de 1024 MiB, com o Node e o cliente
+  Supabase já ocupando espaço, o teto seguro é **uma derivação por vez** —
+  e é isso que `src/utils/senhaAdmin.js` impõe, com fila no código, não
+  só limite por minuto. Limite de taxa não impede duas ao mesmo tempo;
+  foi assim que a produção caiu em 11/09/2026. Desde o token de sessão
+  (§2.6), a derivação roda **uma vez por login**, não uma por requisição,
+  então a fila quase nunca é exercida — mas ela é o que impede a queda,
+  não a raridade.
 - **Limites de taxa e de tamanho**: ver §2.7 — declarados lá pelo que
   entregam de fato, não pelo número na configuração.
 
@@ -658,6 +680,31 @@ cópia em lugar nenhum. A ação nesse dia é Supabase Pro (backup diário,
 7 dias, com Point-in-Time Recovery disponível), junto do plano pago do
 Render que já está decidido. Backup só conta como feito depois de uma
 restauração testada pelo menos uma vez.
+
+### Lei 3 · scrypt no lugar de Argon2id — 13/09/2026
+
+A Lei 3 pede, nesta ordem, **Argon2id**; **scrypt** "quando Argon2id não
+estiver disponível". Este projeto usa scrypt, e o motivo é o segundo
+item da própria ordem: **o Node não traz Argon2id nativo.** Usá-lo
+exigiria dependência com binário nativo, e
+`seguranca-san/references/senha-e-kdf.md` diz que `crypto.scrypt` é
+scrypt de verdade (RFC 7914), sem dependência nativa e sem superfície de
+supply-chain.
+
+A troca é aceita porque as quatro condições que a referência exige de
+quem usa a primitiva crua estão implementadas **e testadas**
+(`src/utils/senhaAdmin.js`, 22 checagens em `npm test`): salt aleatório
+por senha; salt e parâmetros guardados junto do hash; comparação em
+tempo constante com `timingSafeEqual`, com a entrada ausente tratada
+(vazio não bate com vazio); e parâmetros explícitos, no piso
+recomendado — **N=2^17, r=8, p=1** —, nunca no padrão do Node, que é
+N=2^14 e produz hash fraco sem avisar.
+
+**O que falta para esta exceção ficar completa:** a referência manda
+calibrar mirando **0,5 a 1 segundo por hash medido no servidor real**.
+O número que temos, ~830 ms, foi medido no Render, em outra máquina.
+Refazer a medição no Northflank (0,5 vCPU) e ajustar N se sair fora da
+faixa — pendência aberta em `docs/pendencias.md`.
 
 ### Lei 1 · `infra/` não existe — 11/09/2026
 Não há infraestrutura como código neste projeto, e por isso a pasta não

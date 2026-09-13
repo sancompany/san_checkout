@@ -1,6 +1,13 @@
 # CI — Lei 0: nesta classificação de projeto, teste roda sozinho a cada
 # push, e push que quebra teste não entra. Autoteste que só executa
 # quando alguém digita o comando na mão não é rede de proteção.
+# ⚠️ AÇÃO FIXADA POR SHA, NÃO POR TAG. `@v4` é referência móvel: quem
+# controla a ação repointa a tag em silêncio e o CI passa a rodar outro
+# código com a credencial deste repositório — foi assim no trivy-action e
+# no kics-github-action. O comentário ao lado diz qual versão o SHA é, para
+# a atualização continuar legível. SHAs conferidos na API do GitHub em
+# 13/09/2026.
+
 name: testes
 
 on:
@@ -11,9 +18,9 @@ jobs:
   testes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
