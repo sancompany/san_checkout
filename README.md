@@ -59,7 +59,7 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as seis suítes de uma vez (assinatura HMAC do webhook, conversão
+Roda as onze suítes de uma vez (assinatura HMAC do webhook, conversão
 das taxas da Asaas, regra de id imprevisível, hash da senha do admin, a
 redação do log de auditoria — que falha se qualquer dado de pessoa
 sobreviver — e o caminho crítico do webhook de entrada: guarda de
@@ -69,9 +69,21 @@ runner injeta valores falsos só para os módulos carregarem, e nenhum
 teste toca banco, rede ou relógio. Os mesmos testes rodam sozinhos a cada
 push, em `.github/workflows/ci.yml` — push que quebra teste não entra.
 
-Exige **Node 22 ou mais novo** (`engines` no `package.json`):
+Exige **Node 22 ou mais novo** (`engines` no `package.json`, e `.nvmrc`):
 `@supabase/supabase-js` usa WebSocket nativo, que não existe no Node 20 —
 ver `docs/erros/2026-09-11-ci-preso-em-node-20.md`.
+
+## Antes de empurrar
+
+```bash
+npm run check
+```
+
+Analisa a sintaxe de **todo** o JavaScript do projeto — inclusive
+`public/js/`, que as suítes não alcançam porque elas exercitam o
+backend — e depois roda `npm test`. Erro de sintaxe no front não quebra
+teste nenhum: aparece no navegador do comprador. Não instala nada e não
+toca rede.
 
 ## Variáveis de ambiente
 

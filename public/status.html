@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex, nofollow" />
   <title>Status do pagamento — SAN &amp; CO.</title>
+  <!-- Sem canônica e sem `og:`: a página é `noindex` (o par
+       contratante+pedido é o que a abre) e link de pagamento não deve
+       ganhar pré-visualização em rede social. -->
+  <meta name="description" content="Acompanhe a situação do seu pagamento." />
+  <meta name="theme-color" content="#B8912A" />
   <link rel="icon" type="image/png" href="assets/favicon.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -90,6 +95,33 @@
 
           <p class="status-rodape" id="status-rodape"></p>
         </section>
+
+        <!-- Direitos que viram tela (docs/funcional.md §8). Esta é a
+             única página que o comprador guarda depois de pagar — o
+             link permanente vai junto do Pix e do boleto —, então é
+             aqui que os canais têm que estar, e não só na política.
+             Cancelamento e arrependimento são da LOJA: o checkout é
+             infraestrutura e só executa o estorno que ela autoriza
+             (termos.html §13). Prometer botão de desistência aqui
+             seria prometer o que este sistema não decide. -->
+        <footer class="checkout-footer">
+          <p class="legal-footer">
+            Quer cancelar a compra ou desistir dela? Fale com a loja onde
+            comprou — é ela que autoriza o estorno, que volta pelo mesmo
+            meio de pagamento.
+          </p>
+          <p class="legal-footer">
+            Seus dados pessoais (acesso, correção, exclusão):
+            <a href="mailto:juridico@sancocore.com.br">juridico@sancocore.com.br</a>
+            · Problema nesta página:
+            <a href="mailto:suporte@sancocore.com.br">suporte@sancocore.com.br</a>
+          </p>
+          <p class="legal-footer">
+            <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a>
+            · <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>
+            · SAN &amp; CO. — CNPJ 68.949.029/0001-58
+          </p>
+        </footer>
 
       </div>
     </div>

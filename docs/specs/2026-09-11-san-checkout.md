@@ -72,6 +72,33 @@ metade, não a arquitetura. Essa causa raiz virou regra permanente:
 **onde a Asaas define um conjunto fechado, o checkout conhece o conjunto
 inteiro.**
 
+## Métrica de sucesso (decidida pelo dono em 13/09/2026)
+
+A lei nova fecha a Estação 1 com a métrica escrita, e a Estação 4 depende
+dela para nomear os eventos. Faltava, e não era coisa que a sessão
+pudesse deduzir lendo código: é escolha de dono.
+
+**Sucesso = cobrança confirmada, contada por contratante.** O número que
+se olha é quantas cobranças foram confirmadas por dia, por contratante, e
+quanto elas somam em valor pago.
+
+As duas alternativas consideradas e por que perderam:
+
+- **Taxa de pagamento** (confirmadas ÷ checkouts abertos) mede a
+  qualidade da tela, mas o denominador não existe e custaria uma linha
+  gravada por abertura de página, com bot e recarregamento junto. Fica
+  como métrica secundária, calculada sobre o que já resolveu
+  (pagas ÷ (pagas + perdidas)) — que é o que dá para medir sem
+  instrumentação nova.
+- **Tempo até o dinheiro cair** é dominado pelo meio de pagamento (boleto
+  compensa em um a três dias úteis): mediria a Asaas e o banco, não este
+  motor.
+
+A escolhida tem uma propriedade que as outras não têm: **já é
+respondível hoje**, direto de `cobrancas`, sem tabela nova e sem evento
+novo em página. Os eventos que a acompanham estão em `docs/funcional.md`
+§9.
+
 ## Classificação de fronteira — Estação 2 (registrado em 11/09/2026)
 
 **Estrutura**, não projeto — a skill `classificar` já lista San Checkout

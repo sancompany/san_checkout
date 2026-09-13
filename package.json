@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node tests/executar.js"
+    "test": "node tests/executar.js",
+    "check": "node scripts/checar.mjs && node tests/executar.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

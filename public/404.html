@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#B8912A" />
+  <meta name="description" content="Página não encontrada no San Checkout." />
+  <title>Página não encontrada — SAN &amp; CO.</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+
+  <!-- Sem fonte remota e sem CSS do checkout de propósito: esta página
+       precisa desenhar mesmo quando o que quebrou foi justamente um
+       arquivo do site. -->
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+      background: #f7f7f5;
+      color: #1a1a1a;
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    main { max-width: 420px; width: 100%; }
+    img { width: 48px; height: 48px; }
+    h1 { font-size: 1.25rem; margin: 20px 0 8px; }
+    p { line-height: 1.55; color: #4a4a4a; margin: 0 0 12px; }
+    a { color: #9C7A22; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="assets/favicon.png" alt="SAN &amp; CO." />
+    <h1>Esta página não existe</h1>
+    <!-- Nenhum link para o checkout: aberto sem `?c=` e `?pedido=` ele
+         só mostraria "indisponível", que é pior que não oferecer nada.
+         O caminho de volta é o link da loja. -->
+    <p>
+      Se você chegou por um link de pagamento, volte à loja onde fez a
+      compra e abra o link de novo — ele é sempre gerado por lá.
+    </p>
+    <p>
+      Continua sem funcionar? Fale com
+      <a href="mailto:suporte@sancocore.com.br">suporte@sancocore.com.br</a>.
+    </p>
+  </main>
+</body>
+</html>

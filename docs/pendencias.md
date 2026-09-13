@@ -9,48 +9,20 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
-### 🔴 Estação 3 · a CI `Segurança` está vermelha desde o primeiro push
-Descoberto em 13/09 na auditoria retrógrada: as quatro execuções do
-workflow `Segurança` falharam (runs #1 a #4). O job `estatica` sai com
-código 1 — **6 achados do semgrep, todos da mesma regra e todos nos dois
-arquivos de workflow**: `actions/checkout@v4` e `actions/setup-node@v4`
-são tags móveis e precisam de SHA de 40 caracteres. Nada em `src/`, nada
-no caminho do dinheiro. Os jobs `dependencias` e `segredos` passam.
-
-**Só o dono aplica** — a ferramenta recusa escrita em
-`.github/workflows/`. Conteúdo pronto entregue com os SHAs conferidos na
-API do GitHub em 13/09. Enquanto não passar, a Estação 3 não fecha, e é
-o que trava a esteira.
-Causa raiz e lição em
-`docs/erros/2026-09-13-a-ci-de-seguranca-estava-vermelha-desde-o-primeiro-push.md`.
-
-### 🔴 Estação 1 · o spec não tem métrica de sucesso
-A lei nova fecha a Estação 1 com "a métrica de sucesso" escrita, e a
-Estação 4 depende dela para nomear de cinco a dez eventos. O
-`docs/specs/2026-09-11-san-checkout.md` não tem nenhuma das duas coisas.
-**Pergunta para o dono, não para a sessão:** o que conta como sucesso
-deste motor — cobrança confirmada por contratante? taxa de pagamento?
-tempo até o dinheiro cair?
-
-### 🔴 Estação 4 · faltam duas seções em `docs/funcional.md`
-O modelo novo pede dez seções. Existem 1 a 7 e a última ("o que fica
-fora"). Faltam:
-- **"Direitos e obrigações que viram tela"** — exportar dados, excluir
-  conta, revogar consentimento, canal do titular; e, por haver venda a
-  consumidor, confirmação da contratação, ticket de atendimento com
-  auto-resposta e **botão de arrependimento com estorno no mesmo fluxo**.
-  Nada disso existe hoje, nem na tela nem no documento.
-- **"Métrica de sucesso e eventos"** — depende da pendência da Estação 1.
-Sem elas a Estação 6 não fecha: ela exige responder "quantos ontem?" com
-número.
-
 ### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive
 pagamento", porque identificador, formato de webhook, assinatura e erro
-mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`. **Decisão do
-dono**, com trade-off real: trocar agora testa o que vai ser lançado;
-trocar depois repete a Estação 6 inteira contra outro ambiente.
+mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`.
+
+**Decidido pelo dono em 13/09/2026: troca depois do teste de ponta a
+ponta, e antes da Estação 6.** A ordem é essa e importa — o teste de seis
+passos roda no sandbox, onde errar não custa dinheiro; a troca vem logo
+em seguida, para que a Estação 6 verifique o ambiente que vai ficar no
+ar, e não um ensaio. O que a troca envolve está no fim deste arquivo
+("Ao trocar o Northflank para produção").
+
+Enquanto não trocar, a Estação 5 fica **no ar com ressalva registrada**.
 
 ### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
@@ -65,15 +37,36 @@ no Northflank, em São Paulo, com CDN na frente e outra topologia de
 proxy. A Estação 6 verifica **o que está no ar** — e o que vai ficar no
 ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
 
-### Estação 6 · o teste de ponta a ponta de seis passos
+### 🔴 Estação 6 · o teste de ponta a ponta de seis passos
 Exigido pela skill `checkout`, **antes** do ciclo de segurança: pedido de
 valor baixo, pagar por Pix, conferir webhook, reabrir a página de status,
 conciliar, estornar. Depende de o dono cadastrar um contratante de teste
 no sandbox. Nunca foi feito.
 
+Virou o **próximo item da fila** com a decisão de 13/09: é ele que
+libera a troca para o ambiente real da Asaas. O passo do estorno se faz
+como na vida real — a autorização parte do lojista de teste, com a
+`X-Checkout-Key` dele, porque é assim que estorno acontece aqui
+(`docs/funcional.md` §8).
+
 ---
 
 ## Abertas, não bloqueiam
+
+### 🟡 Métrica · a janela é de 24 h, não de dia civil
+`GET /api/admin/metricas?dias=N` conta as últimas N×24 h. "Quantos
+ontem?" hoje se responde com "nas últimas 24 horas", que é parecido e não
+é a mesma coisa — em dia de pico a diferença aparece. Fechar exige
+janela por data, com fuso de Brasília fixado no servidor, não no
+navegador. Declarado em `docs/funcional.md` §9.
+
+### 🟡 Direitos · não existe ticket de atendimento com auto-resposta
+O canal do titular e o de suporte são e-mail (`juridico@`, `suporte@`),
+agora visíveis no rodapé das duas telas do comprador. O que não existe é
+protocolo: quem escreve não recebe número nem confirmação automática, e
+não há prazo contado em lugar nenhum. Enquanto o volume for o de hoje,
+caixa de entrada resolve; vira problema no primeiro pedido que se perder.
+Declarado em `docs/funcional.md` §8.
 
 ### 🔴 Lei 5 · cache de 4 horas em JS e CSS
 O `Cache-Control: max-age=0` do `_headers` vale para o HTML e **é

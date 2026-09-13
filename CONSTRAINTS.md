@@ -510,11 +510,27 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
    > caminho que o servidor **entrega**.
    > (`docs/erros/2026-09-11-noindex-existia-no-arquivo-e-nao-na-web.md`)
 
-**Por que NÃO existe `robots.txt` neste projeto:** um `robots.txt` com
-`Disallow: /admin.html` publica exatamente o caminho que se quer
-esconder — é lido por qualquer um, e vira índice do que interessa. O
-header alcança o mesmo buscador sem anunciar nada. Se alguém propuser
-criar o arquivo "por padrão", esta é a razão de não criar.
+**O `robots.txt` e o que ele não pode dizer.**
+
+> **Corrigido em 13/09/2026.** Este parágrafo dizia "não existe
+> `robots.txt` neste projeto". Existia: `/robots.txt` respondia — o
+> automático da Cloudflare, não um nosso. A frase estava certa sobre o
+> repositório e errada sobre a web, que é o mesmo formato de engano do
+> `noindex` que existia no arquivo e não existia na web
+> (`docs/erros/2026-09-11-noindex-existia-no-arquivo-e-nao-na-web.md`).
+> Conferir no navegador, não no `ls`.
+
+Desde 13/09/2026 o arquivo é nosso (`public/robots.txt`), e ele **não
+lista `/admin` nem `/status`**. Um `Disallow: /admin.html` publicaria
+exatamente o caminho que se quer esconder: `robots.txt` é lido por
+qualquer um e vira índice do que interessa. Quem cuida de indexação
+dessas duas áreas é o `X-Robots-Tag` acima, que alcança o mesmo buscador
+sem anunciar nada a quem não pediu.
+
+O que o arquivo carrega é só o ponteiro para o `sitemap.xml`, e o
+sitemap lista duas páginas — Termos e Privacidade. O checkout aberto sem
+`?c=` e `?pedido=` não é conteúdo indexável, e as duas áreas `noindex`
+não entram ali pelo mesmo motivo de não entrarem no `robots.txt`.
 
 **Limite assumido, declarado:** a API (`/api/admin/*`) fica em outro
 domínio (`api.sancocore.com.br`, hoje no Northflank) e **não passa pelo
