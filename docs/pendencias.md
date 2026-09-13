@@ -15,20 +15,17 @@ ensaio — apontando para o ambiente real dos provedores, inclusive
 pagamento", porque identificador, formato de webhook, assinatura e erro
 mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`.
 
-**Decidido pelo dono em 13/09/2026: a troca acontece depois de a Estação
-6 fechar.** A prontidão inteira — teste de ponta a ponta e ciclo de
-segurança — roda no sandbox, onde errar não custa dinheiro, e o ambiente
-real entra com o sistema já verificado. O que a troca envolve está no fim
-deste arquivo ("Ao trocar o Northflank para produção").
+**Virou exceção registrada em 13/09/2026**, que é o caminho que a
+própria lei prevê: `CONSTRAINTS.md` §3, "Estação 5 · deploy em produção
+apontando para o sandbox da Asaas". Lá está a leitura do dono (servidor
+e subdomínio no ar cumprem a regra; as variáveis são decisão dele), o
+plano de duas rodadas e o custo assumido.
 
-**O custo assumido, escrito para não virar surpresa:** o que muda entre
-sandbox e produção não terá passado pelo ciclo — identificador de
-cobrança, formato do webhook, assinatura e mensagem de erro. Depois da
-troca, os pontos que dependem desses quatro precisam ser reconferidos um
-a um contra o ambiente real, mesmo com a Estação 6 fechada. Não é repetir
-o ciclo; é conferir a costura.
-
-Enquanto não trocar, a Estação 5 fica **no ar com ressalva registrada**.
+Esta entrada fica aberta até a **segunda rodada**: variáveis em
+produção, e os quatro pontos que mudam entre ambientes — identificador
+de cobrança, formato do webhook, assinatura e mensagem de erro —
+reconferidos um a um. O que a troca envolve está no fim deste arquivo
+("Ao trocar o Northflank para produção").
 
 ### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a

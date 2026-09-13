@@ -766,6 +766,36 @@ O número que temos, ~830 ms, foi medido no Render, em outra máquina.
 Refazer a medição no Northflank (0,5 vCPU) e ajustar N se sair fora da
 faixa — pendência aberta em `docs/pendencias.md`.
 
+### Estação 5 · deploy em produção apontando para o sandbox da Asaas — 13/09/2026
+
+A skill `leis` diz, na seção "A estação 5 fecha no ar, e a 6 começa
+nele": *"Deploy é produção de verdade, não ensaio — apontando para o
+ambiente real dos provedores, inclusive pagamento. Subir em sandbox para
+trocar depois é testar uma coisa e lançar outra: identificador, formato
+de webhook, assinatura e erro mudam entre ambientes."* Hoje
+`ASAAS_AMBIENTE=sandbox`.
+
+**Decisão do dono, 13/09/2026**, com a leitura dele registrada como
+está: o que a regra exige do deploy é o **servidor e o subdomínio no
+ar** — que estão, `api.sancocore.com.br` no Northflank e
+`checkout.sancocore.com.br` no Pages; **as variáveis apontarem para
+sandbox ou produção é decisão dele, não da sessão.**
+
+**O plano combinado, nesta ordem:**
+
+1. a Estação 6 roda inteira no sandbox, com o contratante de teste
+   `testemaster`, exercitando **todos** os meios de pagamento;
+2. depois, as variáveis vão para produção;
+3. a Estação 6 roda de novo, **sem** repetir os testes de pagamento —
+   que é onde o dono avalia que sandbox e produção não se distinguem
+   para o que está sendo verificado.
+
+**O que a exceção custa, escrito para não virar surpresa:** o que muda
+entre ambientes — identificador de cobrança, formato do webhook,
+assinatura e mensagem de erro — não passa pelo ciclo na primeira
+rodada. A segunda rodada precisa reconferir esses quatro pontos um a
+um, e é isso que a torna diferente de "repetir o mesmo ciclo".
+
 ### Lei 1 · `infra/` não existe — 11/09/2026
 Não há infraestrutura como código neste projeto, e por isso a pasta não
 foi criada vazia. As duas configurações de deploy que existem não podem

@@ -1,0 +1,6 @@
+{
+  "extraKnownMarketplaces": {
+    "san-co": { "source": { "source": "github", "repo": "sancompany/Plugin_san-co" } }
+  },
+  "enabledPlugins": { "san-co@san-co": true }
+}
