@@ -15,12 +15,18 @@ ensaio — apontando para o ambiente real dos provedores, inclusive
 pagamento", porque identificador, formato de webhook, assinatura e erro
 mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`.
 
-**Decidido pelo dono em 13/09/2026: troca depois do teste de ponta a
-ponta, e antes da Estação 6.** A ordem é essa e importa — o teste de seis
-passos roda no sandbox, onde errar não custa dinheiro; a troca vem logo
-em seguida, para que a Estação 6 verifique o ambiente que vai ficar no
-ar, e não um ensaio. O que a troca envolve está no fim deste arquivo
-("Ao trocar o Northflank para produção").
+**Decidido pelo dono em 13/09/2026: a troca acontece depois de a Estação
+6 fechar.** A prontidão inteira — teste de ponta a ponta e ciclo de
+segurança — roda no sandbox, onde errar não custa dinheiro, e o ambiente
+real entra com o sistema já verificado. O que a troca envolve está no fim
+deste arquivo ("Ao trocar o Northflank para produção").
+
+**O custo assumido, escrito para não virar surpresa:** o que muda entre
+sandbox e produção não terá passado pelo ciclo — identificador de
+cobrança, formato do webhook, assinatura e mensagem de erro. Depois da
+troca, os pontos que dependem desses quatro precisam ser reconferidos um
+a um contra o ambiente real, mesmo com a Estação 6 fechada. Não é repetir
+o ciclo; é conferir a costura.
 
 Enquanto não trocar, a Estação 5 fica **no ar com ressalva registrada**.
 
@@ -40,14 +46,28 @@ ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
 ### 🔴 Estação 6 · o teste de ponta a ponta de seis passos
 Exigido pela skill `checkout`, **antes** do ciclo de segurança: pedido de
 valor baixo, pagar por Pix, conferir webhook, reabrir a página de status,
-conciliar, estornar. Depende de o dono cadastrar um contratante de teste
-no sandbox. Nunca foi feito.
+conciliar, estornar. Nunca foi feito, e é o **próximo item da fila**.
 
-Virou o **próximo item da fila** com a decisão de 13/09: é ele que
-libera a troca para o ambiente real da Asaas. O passo do estorno se faz
-como na vida real — a autorização parte do lojista de teste, com a
-`X-Checkout-Key` dele, porque é assim que estorno acontece aqui
-(`docs/funcional.md` §8).
+O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
+
+| campo | valor |
+|---|---|
+| id / nome | `testemaster` / TesteMaster |
+| API do pedido | `https://contratante-teste.brunosanches-bhs.workers.dev` |
+| webhook | a mesma URL, em `/webhook` |
+| wallet de split | vazio — sem split, tudo na conta-mãe |
+| métodos | Pix, boleto, cartão e assinatura (assinatura por Pix desmarcada, §2.4) |
+
+Os três links que ele expõe, e o que cada um serve para verificar:
+
+- `…/index.html?c=testemaster&pedido=ped_teste` — o caminho normal
+- `…/index.html?c=testemaster&assinatura=plano_mensal` — recorrência
+- `…/index.html?c=testemaster&pedido=ped_sem_valor` — o estado
+  **indisponível**, que é o que nunca pode virar `R$ 0,00` (§4.1)
+
+O passo do estorno se faz como na vida real — a autorização parte do
+lojista de teste, com a `X-Checkout-Key` dele, porque é assim que estorno
+acontece aqui (`docs/funcional.md` §8).
 
 ---
 
