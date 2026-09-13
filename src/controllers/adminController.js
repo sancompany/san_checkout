@@ -252,10 +252,12 @@ export async function criarContratante(requisicao, resposta) {
 
 /**
  * PATCH /api/admin/contratantes/:id — edita um contratante já
- * cadastrado. Todo campo é opcional (só atualiza o que vier no body);
- * `id` e `api_key` nunca mudam por aqui (api_key é o segredo que o
- * contratante já usa pra chamar /estornar — trocar quebraria a
- * integração dele sem aviso).
+ * cadastrado. Todo campo é opcional (só atualiza o que vier no body).
+ *
+ * `id` não muda. A `api_key` **se troca**, mas não por aqui — tem rota
+ * própria (`rotacionar-chave`, acima), porque trocar segredo é ação
+ * deliberada com consequência imediata para o contratante, e não podia
+ * acontecer de carona num salvamento de formulário.
  */
 export async function atualizarContratante(requisicao, resposta) {
   const { id } = requisicao.params;

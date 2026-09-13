@@ -505,14 +505,14 @@ function desenharContratantes() {
   });
 }
 
-/** Sem `id` = criar; com `id` = editar (id e api_key não mudam aqui — a
- *  chave tem ação própria, `rotacionarChaveContratante`). */
+/** Sem `id` = criar; com `id` = editar. A chave se troca em "Trocar
+ *  chave", na linha do contratante (`rotacionarChaveContratante`). */
 function abrirModalContratante(id = null) {
   const alvo = id ? contratantes.find((c) => c.id === id) : null;
 
   $('modal-contratante-titulo').textContent = alvo ? `Editar ${alvo.nome}` : 'Novo contratante';
   $('modal-contratante-descricao').textContent = alvo
-    ? 'O id não muda, e a api_key não muda por aqui — para trocá-la, use "Trocar chave" na linha do contratante, que avisa o que a troca derruba.'
+    ? 'Para trocar a api_key, use "Trocar chave" na linha do contratante — ela avisa o que a troca derruba antes de confirmar. O id não muda.'
     : 'A api_key é gerada automaticamente no cadastro.';
   $('btn-salvar-contratante').textContent = alvo ? 'Salvar alterações' : 'Cadastrar';
   $('btn-salvar-contratante').dataset.editando = alvo ? alvo.id : '';

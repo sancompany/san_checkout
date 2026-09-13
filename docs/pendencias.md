@@ -125,7 +125,32 @@ Declarado em `docs/funcional.md` §8.
 ### 🔴 Lei 5 · cache de 4 horas em JS e CSS
 O `Cache-Control: max-age=0` do `_headers` vale para o HTML e **é
 sobreposto pelo Cloudflare Pages nos assets** — medido ao vivo em
-11/09/2026. Depois de todo deploy que mexa em JS ou CSS, o navegador pode
+11/09/2026.
+
+> **Medido no cabeçalho em 13/09/2026**, que é o que faltava para parar
+> de ser inferência:
+>
+> ```
+> GET /js/admin.js
+> cache-control: public, max-age=14400, must-revalidate
+> cf-cache-status: REVALIDATED
+> ```
+>
+> 14400 s são as 4 horas, exatas, vindas de cima do nosso `max-age=0`.
+> **Custou uma confusão real no mesmo dia:** o botão "Trocar chave"
+> estava no ar (o arquivo servido continha o código) e o dono, no
+> celular, não via — fechar e reabrir o navegador não resolve, porque o
+> que está velho é o arquivo em cache, não a aba.
+>
+> A causa provável é o **Browser Cache TTL da zona** estar fixo em 4
+> horas em vez de "Respect Existing Headers" (Cloudflare → Caching →
+> Configuration). Se for isso, mudar aquele seletor resolve o site
+> inteiro de uma vez, e é mais simples que a Cache Rule descrita abaixo
+> — conferir esse valor antes de criar regra.
+>
+> **Contorno de celular, enquanto não muda:** abrir o painel numa aba
+> anônima (Chrome: ⋮ → Nova guia anônima; Safari: abas → Privada), que
+> nasce sem cache. Exige refazer o login do Access e do painel. Depois de todo deploy que mexa em JS ou CSS, o navegador pode
 rodar HTML novo com script velho por até 4h. Já fez correção certa
 parecer errada três vezes no mesmo dia.
 
