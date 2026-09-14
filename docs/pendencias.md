@@ -9,6 +9,29 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
+### 🔴 Estação 6 · ativar o X-Origin-Verify no Cloudflare + Northflank — SÓ O DONO
+O código que fecha a origem direta já está no ar, **dormente** (fail-open
+sem a env). Falta ligar, e são dois passos de painel que a sessão de
+nuvem não pode fazer (o classificador barra mudança em zona de DNS, e a
+regra é de infra viva que pode derrubar o checkout se ligada fora de
+ordem). Achado e desenho em
+`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`; passo a
+passo em `RUNBOOK.md` §5.1. **Ordem obrigatória (inverter derruba a
+produção):**
+
+1. Cloudflare → zona `sancocore.com.br` → Rules → Transform Rules →
+   Modify Request Header → regra `Hostname eq api.sancocore.com.br`:
+   **Set static** `X-Origin-Verify` = `<segredo>`. Conferir que o
+   domínio segue 200.
+2. Só então Northflank → serviço `san-checkout` → secret
+   `ORIGIN_VERIFY_SECRET` = `<mesmo segredo>`. No redeploy, liga.
+3. Conferir: `api.sancocore.com.br/api/saude` → 200; o mesmo no
+   `pay--…--….code.run` → 404.
+
+O segredo hex de 64 chars gerado nesta sessão está no scratchpad; o dono
+pode usá-lo ou gerar outro (só precisa ser o mesmo nos dois lugares).
+Reverter: apagar a env no Northflank (volta ao fail-open na hora).
+
 ### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive
@@ -27,12 +50,20 @@ de cobrança, formato do webhook, assinatura e mensagem de erro —
 reconferidos um a um. O que a troca envolve está no fim deste arquivo
 ("Ao trocar o Northflank para produção").
 
-### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
+### 🟡 Lei 3 · custo do scrypt no Northflank — medido em 14/09, no teto
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
-1 s por hash **medido no servidor real**. Os ~830 ms conhecidos são do
-Render. Refazer no Northflank (0,5 vCPU) e ajustar N se sair da faixa.
-Exceção registrada em `CONSTRAINTS.md` (Lei 3 · scrypt no lugar de
-Argon2id) já aponta esta lacuna.
+1 s por hash **medido no servidor real**. Medido em 14/09 por subtração
+de latência (login falho em `/api/admin/sessao`, que roda uma derivação,
+menos a baseline de rede de uma rota sem scrypt): login ~1,8–3,1 s,
+baseline ~0,8 s → **scrypt ≈ 1,0–1,3 s** no Northflank (0,5 vCPU),
+contra os ~830 ms do Render. Medida com ruído de rede (não é
+microbenchmark no servidor), mas é o "no servidor real" que a lei pede.
+
+Fica **no teto ou pouco acima** de 1 s. Não é deficit — é margem: mais
+caro por tentativa é mais forte contra força bruta, o login é assíncrono
+(não trava o event loop, `sessaoAdmin.js`) e é raro. **Recomendação:
+manter N=2^17.** Baixar N para caber em ≤1 s enfraqueceria o hash sem
+ganho real. Decisão do dono se quiser mirar o meio da faixa.
 
 ### Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank
 O ciclo 1 rodou em 11/09 contra o Render, em Oregon. A produção vai ficar
