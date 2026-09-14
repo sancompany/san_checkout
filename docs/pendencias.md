@@ -9,29 +9,6 @@ Fechar uma pendência é removê-la daqui, não riscá-la.
 
 ## Bloqueiam a esteira
 
-### 🔴 Estação 6 · ativar o X-Origin-Verify no Cloudflare + Northflank — SÓ O DONO
-O código que fecha a origem direta já está no ar, **dormente** (fail-open
-sem a env). Falta ligar, e são dois passos de painel que a sessão de
-nuvem não pode fazer (o classificador barra mudança em zona de DNS, e a
-regra é de infra viva que pode derrubar o checkout se ligada fora de
-ordem). Achado e desenho em
-`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`; passo a
-passo em `RUNBOOK.md` §5.1. **Ordem obrigatória (inverter derruba a
-produção):**
-
-1. Cloudflare → zona `sancocore.com.br` → Rules → Transform Rules →
-   Modify Request Header → regra `Hostname eq api.sancocore.com.br`:
-   **Set static** `X-Origin-Verify` = `<segredo>`. Conferir que o
-   domínio segue 200.
-2. Só então Northflank → serviço `san-checkout` → secret
-   `ORIGIN_VERIFY_SECRET` = `<mesmo segredo>`. No redeploy, liga.
-3. Conferir: `api.sancocore.com.br/api/saude` → 200; o mesmo no
-   `pay--…--….code.run` → 404.
-
-O segredo hex de 64 chars gerado nesta sessão está no scratchpad; o dono
-pode usá-lo ou gerar outro (só precisa ser o mesmo nos dois lugares).
-Reverter: apagar a env no Northflank (volta ao fail-open na hora).
-
 ### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive
@@ -155,15 +132,26 @@ Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
 abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
 `API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
 
-### 🟠 Prontidão · o canal do titular/suporte não recebe e-mail (sem MX)
-Medido em 14/09: `sancocore.com.br` **não tem registro MX** (nem SPF nem
-DMARC). O checkout não envia e-mail ao comprador (é design, §1.9), então
-SPF/DKIM/DMARC de envio são N/A — mas o rodapé publica `juridico@` e
-`suporte@` como canal do titular (LGPD) e de suporte, e sem MX o e-mail
-para esses endereços não é entregue. Item 1 da prontidão operacional e
-obrigação da skill `legal`. **Só o dono:** configurar recebimento
-(Cloudflare Email Routing ou provedor) para os dois endereços, ou trocar
-o canal publicado por um que funcione, antes do lançamento (Estação 7).
+### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
+Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
+(proxy do sandbox bloqueia UDP 53 e a DoH), então a medição daqui era
+inconclusiva — não "sem MX". **O dono confirmou:** o MX entrega em
+`admin@sancocore.com.br`, e `juridico@` e `suporte@` são alias dele. O
+canal do titular/suporte recebe. O checkout não envia e-mail ao
+comprador (§1.9), então SPF/DKIM/DMARC de envio seguem N/A. Nada a
+fazer; fica a lição de não afirmar DNS a partir do resolver do sandbox.
+
+### ⚪ Opção (não bloqueia) · pôr a API atrás do proxy do Cloudflare
+`api.sancocore.com.br` é DNS-only (nuvem cinza): resolve direto para o
+Northflank, sem o Cloudflare no caminho (resposta sem `cf-ray`). Logo, o
+`…code.run` e o domínio são a mesma porta pública, e a API é protegida
+só pela auth de aplicação — que está sólida. **Se** um dia se quiser
+WAF, limite de borda e fechar o endereço direto, o caminho é ligar o
+proxy laranja em `api.sancocore.com.br` (com SSL Full (strict) e o
+certificado da origem conferido) e então um segredo injetado por
+Transform Rule volta a fazer sentido. Não feito, é decisão de infra do
+dono. O middleware que dependia disso foi revertido em 14/09
+(`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
 
 ### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
 O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
