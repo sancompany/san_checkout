@@ -39,14 +39,29 @@ Resposta boa: `200` com `{"status":"ok",…,"supabaseRespondendo":true,`
   apagada. Gerar nova no painel da Asaas e trocar `ASAAS_API_KEY` **no
   Northflank**.
 
-**Alerta de queda (Lei 8) — a metade que falta é de painel, uma vez.**
-O código já entrega o sinal: `/api/saude` devolve `503` na queda. Ligar o
-alerta no monitor externo que já bate nesta rota (cron-job.org /
-UptimeRobot, grátis): "notificar quando o HTTP não for 2xx", destino
-e-mail/push do dono. Sem essa ligação, o `503` acende e ninguém vê. A
-detecção de "fila do webhook pausada" fica para quando houver tráfego
-real — hoje, com volume zero, qualquer limiar de silêncio dá alarme
-falso (`docs/proximas-versoes.md`).
+**Alerta de queda (Lei 8) — pelo próprio Northflank, decisão do dono 14/09.**
+Três peças, na página de notificações da conta
+(`app.northflank.com/s/account/integrations/notifications`):
+
+1. **Integração de notificação** (destino, 1 vez): Slack ou Discord (push
+   no celular), ou Teams/webhook. É a única parte inerentemente do dono
+   (autoriza o app no workspace / cola o webhook).
+2. **Infrastructure alerts** (toggle): container caiu / CPU-memória alta /
+   volume cheio → vai para a integração. Cobre app caído / OOM / deploy
+   ruim, sem job, e é gerado pelo control plane (mais robusto que um
+   checker no próprio serviço).
+3. **Cron Job (aba Jobs) para o banco fora:** os infra alerts olham o
+   container, não o `/api/saude`. Container de pé + Supabase fora (o
+   `503`) não dispara infra alert. Um job que dá `curl` no `/api/saude` a
+   cada poucos minutos e sai com erro no não-2xx → evento "job run
+   falhou" → mesma integração.
+
+**Ponto cego:** é o Northflank vigiando o Northflank — queda total da
+plataforma/região não se auto-avisa. Só um monitor de fora (UptimeRobot
+etc.) pega isso; vale somar um na produção. A detecção de "fila do
+webhook pausada" fica para quando houver tráfego real — hoje, volume
+zero, qualquer limiar de silêncio dá alarme falso
+(`docs/proximas-versoes.md`).
 
 ## 3. Publicar
 

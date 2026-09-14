@@ -233,10 +233,13 @@ volume crescer.
 Log de produção legível por conector desde 12/09. **A metade de código do
 alerta de queda entrou em 14/09:** `/api/saude` devolve `503`/`degradado`
 quando o banco não responde (antes era `200 ok` mesmo caído), então um
-monitor de uptime consegue alertar por HTTP. **Falta a ligação de painel
-(uma vez):** apontar o monitor externo que já bate na rota para notificar
-no não-2xx, com destino no celular do dono (`RUNBOOK.md §2`) — some da
-lista quando essa ligação existir e for conferida. A **detecção de fila
+monitor de uptime consegue alertar por HTTP. **Falta a ligação (decisão do dono
+14/09: pelo próprio Northflank):** integração de notificação
+Slack/Discord + infrastructure alerts (container caído) + um Cron Job
+que dá curl no `/api/saude` para o caso de banco fora (o 503). Passo a
+passo e o ponto cego (Northflank vigiando o Northflank; queda total da
+plataforma não se auto-avisa) em `RUNBOOK.md §2`. Some da lista quando a
+integração existir e um alerta de teste chegar no celular. A **detecção de fila
 do webhook pausada** continua adiada por decisão anterior: com tráfego
 zero, qualquer limiar de silêncio é alarme falso (`docs/proximas-versoes.md`);
 revisar quando houver volume real.
