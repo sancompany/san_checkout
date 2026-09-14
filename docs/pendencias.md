@@ -48,10 +48,23 @@ no Northflank, em São Paulo, com CDN na frente e outra topologia de
 proxy. A Estação 6 verifica **o que está no ar** — e o que vai ficar no
 ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
 
-### 🔴 Estação 6 · o teste de ponta a ponta de seis passos
-Exigido pela skill `checkout`, **antes** do ciclo de segurança: pedido de
-valor baixo, pagar por Pix, conferir webhook, reabrir a página de status,
-conciliar, estornar. Nunca foi feito, e é o **próximo item da fila**.
+### 🟢 Estação 6 · ponta a ponta de seis passos (Pix) — FEITO 14/09
+Os seis passos rodaram ao vivo no sandbox contra o `testemaster`, com
+`ped_completo` (R$9,50; `ped_teste` de R$1 é recusado pelo piso de R$5
+da Asaas — ver a entrada própria):
+
+1. resolve pelo pull (`taxa` calculada);
+2. Pix pago pelo dono → `RECEIVED`;
+3. webhook processado (auditoria 9→10; cobrança → `confirmado`);
+4. status público reaberto → `confirmado`, R$11,08;
+5. conciliação autenticada (`X-Checkout-Key`) → `confirmado`, taxas batem;
+6. estorno → `estornado`, 200 (primeira vez ao vivo; `refundController.js`).
+
+Negativos conferidos ao vivo: chave inválida → 401; chave certa +
+contratante trocado na URL → 403 (IDOR). **Falta o ciclo de assinatura**
+(assinar/pausar/retomar/cancelar): precisa de um plano ≥ R$5 e do fluxo
+de cartão por pop-up, assistido pelo dono. O ramo assíncrono do estorno
+de boleto também não foi exercitado.
 
 O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
 
@@ -74,15 +87,9 @@ O passo do estorno se faz como na vida real — a autorização parte do
 lojista de teste, com a `X-Checkout-Key` dele, porque é assim que estorno
 acontece aqui (`docs/funcional.md` §8).
 
-**Passo 1 feito em 13/09**, e ele já pagou o próprio custo: os três links
-resolvem pelo modelo pull, e o `ped_sem_valor` revelou dois furos de
-tela comprável sem valor cobrável — corrigidos, mergeados e **conferidos
-em produção no mesmo dia**: `GET /pedido/testemaster/ped_sem_valor`
-devolve `taxa: null`
+O `ped_sem_valor` revelou, em 13/09, dois furos de tela comprável sem
+valor cobrável — corrigidos e conferidos
 (`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
-
-Passos 2 a 6 pendentes: pagar o Pix no sandbox (é o dono quem paga),
-conferir o webhook, reabrir o status, conciliar e estornar.
 
 ---
 
