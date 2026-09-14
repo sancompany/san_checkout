@@ -45,14 +45,26 @@ com esforço alto, e é da sessão por inteiro.
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
 | 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas: main = `acbce0b` servido no Northflank (deploy `6431907099` state success), migrations 0001-0003 aplicadas, árvore limpa |
 
-**Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4): ponta a ponta de
-seis passos + ciclo de assinatura; ciclo de segurança local **e** sobre
-o Northflank; os seis testes de segurança extra; os sete itens de
-prontidão. Terminado o sandbox, o dono troca para produção e repete o
-que muda entre ambientes.
+**Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
+- **Segurança de fora:** limpo (Supabase RLS default-deny, admin
+  fail-closed, IDOR 401/403 ao vivo, erro genérico, webhook fail-closed).
+  Dois furos corrigidos e no ar: `alvoDeRede` (https+host público em
+  apiBaseUrl/webhookUrl) e `search_path` (migration 0004). A hipótese da
+  origem-bypass caiu — a API é DNS-only, pública por desenho
+  (`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
+- **Ponta a ponta Pix:** completo (pago→webhook→status→conciliação→estorno,
+  negativos 401/403). Assinatura: criação + ciclo auth/404; **falta a
+  metade paga** (cartão no pop-up).
+- **Prontidão:** scrypt medido (~1–1,3 s, manter N=2^17); métrica
+  respondível; e-mail confirmado; alerta de queda com metade de código
+  feita (`/api/saude` 503 na queda).
 
-Falta para fechar a 6: tudo acima com evidência medida. A troca da Asaas
-para produção vem **depois** dela, e é o que fecha a 5 sem ressalva.
+Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
+ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
+backup+restauração (amarrado ao 1º pagamento real, §3); e os demais itens
+de prontidão adiados (`docs/pendencias.md`). A troca da Asaas para
+produção vem depois e fecha a 5 sem ressalva. O MostrAí retesta o lado
+dele em paralelo.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
