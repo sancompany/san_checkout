@@ -200,8 +200,18 @@ app.get('/api/saude', async (_req, resposta) => {
   // lido por ninguém, e a integração cairia sem aviso.
   const alertasChaveAsaas = obterAlertasChaveApi();
 
-  resposta.json({
-    status: 'ok',
+  // O status reflete a saúde de verdade, e o HTTP acompanha: banco fora
+  // do ar é o serviço fora do ar (nada cobra, nada concilia). Sem isso a
+  // rota devolvia `200 ok` com o Supabase caído, e um monitor externo de
+  // uptime — que alerta por código HTTP — não via a queda. Agora um
+  // monitor gratuito batendo aqui (a cada poucos minutos) alerta sozinho
+  // quando cai: é a metade de código do "alguém descobre antes do
+  // cliente" (Lei 8). A outra metade é ligar o alerta no painel do
+  // monitor — RUNBOOK §2. Expiração de chave da Asaas é aviso, não
+  // queda: fica no corpo (`alertasChaveAsaas`), sem derrubar o HTTP.
+  const saudavel = supabaseAtivo;
+  resposta.status(saudavel ? 200 : 503).json({
+    status: saudavel ? 'ok' : 'degradado',
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
     supabaseConfigurado: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
     supabaseRespondendo: supabaseAtivo,

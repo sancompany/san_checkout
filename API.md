@@ -974,9 +974,13 @@ GET {BASE}/api/saude
 }
 ```
 
-Sem autenticação. Útil para um monitor externo. `alertasChaveAsaas` não
+Sem autenticação. Útil para um monitor externo. **Código HTTP:** `200`
+quando saudável; `503` com `"status": "degradado"` quando o banco não
+responde (o serviço está no ar mas não cobra nem concilia) — aponte o
+monitor de uptime para alertar no HTTP não-2xx. `alertasChaveAsaas` não
 vazio significa que a chave de API da Asaas está para expirar ou já
-expirou — nesse estado, cobranças param de funcionar.
+expirou (cobranças param de funcionar) — é aviso no corpo, não derruba o
+HTTP; monitore-o lendo o corpo.
 
 ---
 

@@ -30,14 +30,23 @@ operador: rota sem banco 20-29 ms, rota com uma consulta 70-295 ms.
 curl -sS https://api.sancocore.com.br/api/saude
 ```
 
-Resposta boa: `{"status":"ok","chaveAsaasConfigurada":true,`
-`"supabaseConfigurado":true,"supabaseRespondendo":true,`
-`"alertasChaveAsaas":[]}`
+Resposta boa: `200` com `{"status":"ok",…,"supabaseRespondendo":true,`
+`"alertasChaveAsaas":[]}`. Banco fora → `503` com `"status":"degradado"`.
 
-- `supabaseRespondendo: false` → banco fora ou pausado por inatividade.
+- `503`/`supabaseRespondendo: false` → banco fora ou pausado por
+  inatividade. O serviço está no ar mas não cobra nem concilia.
 - `alertasChaveAsaas` não vazio → a chave da Asaas está expirando ou foi
   apagada. Gerar nova no painel da Asaas e trocar `ASAAS_API_KEY` **no
   Northflank**.
+
+**Alerta de queda (Lei 8) — a metade que falta é de painel, uma vez.**
+O código já entrega o sinal: `/api/saude` devolve `503` na queda. Ligar o
+alerta no monitor externo que já bate nesta rota (cron-job.org /
+UptimeRobot, grátis): "notificar quando o HTTP não for 2xx", destino
+e-mail/push do dono. Sem essa ligação, o `503` acende e ninguém vê. A
+detecção de "fila do webhook pausada" fica para quando houver tráfego
+real — hoje, com volume zero, qualquer limiar de silêncio dá alarme
+falso (`docs/proximas-versoes.md`).
 
 ## 3. Publicar
 

@@ -229,11 +229,17 @@ custo: plano pago do Supabase dá compute dedicado. **Não fazer nada é
 aceitável** enquanto o painel é de um operador só; vira problema se o
 volume crescer.
 
-### Lei 8 · erro em produção visível
-Não existe alerta de serviço fora do ar nem detecção de fila pausada da
-Asaas. **Parcialmente resolvido em 12/09:** o log de produção do Render e
-do Northflank passou a ser legível por conector, o que era metade do
-problema. Falta o alerta ativo.
+### Lei 8 · erro em produção visível — metade de código feita 14/09
+Log de produção legível por conector desde 12/09. **A metade de código do
+alerta de queda entrou em 14/09:** `/api/saude` devolve `503`/`degradado`
+quando o banco não responde (antes era `200 ok` mesmo caído), então um
+monitor de uptime consegue alertar por HTTP. **Falta a ligação de painel
+(uma vez):** apontar o monitor externo que já bate na rota para notificar
+no não-2xx, com destino no celular do dono (`RUNBOOK.md §2`) — some da
+lista quando essa ligação existir e for conferida. A **detecção de fila
+do webhook pausada** continua adiada por decisão anterior: com tráfego
+zero, qualquer limiar de silêncio é alarme falso (`docs/proximas-versoes.md`);
+revisar quando houver volume real.
 
 ### Lei 8 · eventos que chegam e só entram no log
 `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e os
