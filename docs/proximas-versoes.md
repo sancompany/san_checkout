@@ -154,3 +154,37 @@ para um problema que talvez nem exista mais.
 - **Quando vale a pena** — junto da liberação do Pix Automático na
   conta, que é quando o fluxo passa a poder rodar. Nem antes (não há
   como testar) nem depois (aí já teria rodado errado uma vez).
+
+## Modo de teste por contratante — sandbox e produção convivendo
+
+- **O quê** — cada contratante ter o próprio ambiente (teste ou real),
+  em vez de um interruptor único para a instalação inteira. Um
+  contratante em teste enquanto outro fatura de verdade, e cada um com
+  as próprias credenciais e os próprios links.
+- **Por que** — o checkout cobra **em nome de terceiros**, e quem integra
+  precisa exercitar o lado dele antes de receber dinheiro de gente real.
+  Hoje `obterAmbiente()` lê `ASAAS_AMBIENTE` do processo
+  (`src/config/asaas.js`), e `ASAAS_API_KEY` também é uma só: o
+  ambiente é global. A consequência é uma porta que se fecha — no dia em
+  que o primeiro projeto entrar em produção, não existe mais como testar
+  a integração de um projeto novo sem derrubar o ambiente de quem já
+  está faturando. Sobram duas saídas ruins: confiar cegamente que o
+  integrador acertou de primeira, ou testar com dinheiro real. A
+  primeira gera cobrança errada em cliente de terceiro; a segunda custa,
+  e mascara erro de split quando o dinheiro cai na própria conta.
+- **De onde veio** — percepção do dono em 14/09/2026, ao notar que a
+  Asaas separa sandbox e produção exatamente pelo mesmo motivo, e que um
+  motor de pagamento whitelabel herda essa necessidade dos dois lados do
+  contrato, não só do nosso.
+- **O que toca** — `src/config/asaas.js` (hoje o único que sabe URL e
+  ambiente, e o único lugar onde a decisão é global), a chave da Asaas
+  em variável de processo, a tabela `contratantes` e sua migration, o
+  painel administrativo, e o `API.md`, que precisaria dizer ao
+  integrador em qual ambiente ele está e como pedir a troca. Caminho de
+  dinheiro e contrato de estrutura: os dois na lista curta que exige
+  autorização.
+- **Quando vale a pena** — **antes de o segundo contratante existir**, e
+  não depois. Enquanto só há um projeto, trocar a variável ainda resolve;
+  a partir do segundo, a janela fecha e a migração passa a ter de ser
+  feita com um contratante em produção no ar. É a entrada deste arquivo
+  com prazo de validade mais curto.
