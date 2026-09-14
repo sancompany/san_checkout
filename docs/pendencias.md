@@ -176,10 +176,18 @@ Retenção de 5 anos está declarada (`docs/inventario-de-dados.md` §6), o
 caminho de exclusão foi conferido contra a modelagem (§6.2), e a rotina
 não foi escrita. Validação jurídica é da Estação 7.
 
-### Migration 0004, desenhada e não escrita
-`desativado_em` em contratantes, `e_teste` (de mão única: só vai de teste
-para real), `ambiente` em cobranças, e a correção de `search_path` nas
-duas funções da 0002 que o linter do Supabase acusou.
+### Migration 0004 — search_path feito; colunas ainda não
+A **correção de `search_path`** das duas funções da 0002 que o linter
+acusava foi aplicada em 14/09 (`supabase/migrations/0004_search_path_funcoes.sql`,
+`alter function ... set search_path = public`) — o advisor de segurança
+não acusa mais o WARN, só o INFO de RLS-sem-policy, que é o default-deny
+intencional (backend usa service_key; anon/publishable leem zero linha,
+conferido).
+
+Ainda desenhadas e não escritas: `desativado_em` em contratantes,
+`e_teste` (de mão única: só vai de teste para real) e `ambiente` em
+cobranças. Entram quando o modo de teste por contratante
+(`docs/proximas-versoes.md`) ou a troca para produção pedirem.
 
 ### Quando ligar o proxy laranja do Cloudflare ou outro salto
 O `app.set('trust proxy', 1)` confia em **um** proxy. Verificado em
