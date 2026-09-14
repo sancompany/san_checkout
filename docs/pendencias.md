@@ -113,6 +113,18 @@ nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
 
+### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
+O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
+e `webhookUrl` agora exigem https e host público (RN-14, `utils/alvoDeRede.js`).
+Fica o residual: `resolverPedido`/`resolverPlano` (`pedidoService.js`) fazem
+`fetch` seguindo redirect e leem o corpo inteiro sem teto. Um contratante
+cujo servidor seja malicioso ou comprometido poderia redirecionar para
+host interno (contornando a checagem estática de host) ou devolver um
+corpo enorme (OOM na instância de 512 MiB). Baixo risco hoje: o alvo é
+cadastrado pelo admin e semi-confiável. Fechar de verdade pede `redirect`
+controlado (sem quebrar redirect legítimo de contratante) e leitura com
+teto — quando houver mais de um contratante real.
+
 ### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
 Medido em 13/09/2026 **do navegador do operador** (não de container na
 nuvem — o ambiente do teste faz parte do teste):

@@ -28,6 +28,7 @@ import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoA
 import { responderErro } from '../utils/erros.js';
 import { criarSubconta as criarSubcontaNaAsaas, tipoDaContaMae } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
+import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
 import {
   listarEventosWebhook,
   contarEventosNaoTratados,
@@ -195,13 +196,14 @@ function slugValido(valor) {
   return /^[a-z0-9][a-z0-9-]{1,49}$/.test(String(valor ?? ''));
 }
 
+/**
+ * Alvo de requisição de saída do checkout (`api_base_url`, `webhook_url`):
+ * precisa ser https e de host público, não só uma URL que parseia. O
+ * porquê está em `utils/alvoDeRede.js` — a chave do contratante viaja
+ * nesse endereço, e http vazaria o segredo; host interno vira SSRF.
+ */
 function urlValida(valor) {
-  try {
-    new URL(valor);
-    return true;
-  } catch {
-    return false;
-  }
+  return alvoDeRedeSeguro(valor);
 }
 
 /** undefined = não mexe (usado no PATCH); lista inválida = null (rejeita). */
@@ -218,8 +220,8 @@ export async function criarContratante(requisicao, resposta) {
     return resposta.status(400).json({ erro: 'id inválido — use um slug (letras minúsculas, números, hífen), ex.: "trimundi9".' });
   }
   if (!nome) return resposta.status(400).json({ erro: 'nome é obrigatório.' });
-  if (!urlValida(apiBaseUrl)) return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser uma URL válida.' });
-  if (webhookUrl && !urlValida(webhookUrl)) return resposta.status(400).json({ erro: 'webhookUrl precisa ser uma URL válida.' });
+  if (!urlValida(apiBaseUrl)) return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser https e de host público (a chave do contratante viaja nesse endereço).' });
+  if (webhookUrl && !urlValida(webhookUrl)) return resposta.status(400).json({ erro: 'webhookUrl precisa ser https e de host público.' });
 
   const metodos = metodosHabilitados === undefined ? METODOS_VALIDOS : metodosHabilitadosValidos(metodosHabilitados);
   if (metodos === null) return resposta.status(400).json({ erro: `metodosHabilitados precisa ser uma lista não-vazia com valores entre: ${METODOS_VALIDOS.join(', ')}.` });
@@ -264,9 +266,9 @@ export async function atualizarContratante(requisicao, resposta) {
   const { nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados } = requisicao.body ?? {};
 
   if (apiBaseUrl !== undefined && !urlValida(apiBaseUrl)) {
-    return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser uma URL válida.' });
+    return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser https e de host público (a chave do contratante viaja nesse endereço).' });
   }
-  if (webhookUrl && !urlValida(webhookUrl)) return resposta.status(400).json({ erro: 'webhookUrl precisa ser uma URL válida.' });
+  if (webhookUrl && !urlValida(webhookUrl)) return resposta.status(400).json({ erro: 'webhookUrl precisa ser https e de host público.' });
 
   const metodos = metodosHabilitadosValidos(metodosHabilitados);
   if (metodos === null) return resposta.status(400).json({ erro: `metodosHabilitados precisa ser uma lista não-vazia com valores entre: ${METODOS_VALIDOS.join(', ')}.` });

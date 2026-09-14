@@ -345,6 +345,15 @@ infraestrutura entregue a quem tentar. *Quem vê:* quem estiver
 sondando — e é exatamente quem não deve ver. O detalhe vai para o log
 do servidor.
 
+**RN-14 · `apiBaseUrl` e `webhookUrl` do contratante precisam ser https
+e de host público.** O backend manda a `api_key` do contratante nesses
+endereços e busca o pedido por eles; `http://` vazaria a chave em claro,
+e host interno (`localhost`, `169.254.169.254`, faixa privada) faria o
+checkout buscar recurso interno da nuvem (SSRF). *Violada:* o cadastro
+ou a edição recusa com "precisa ser https e de host público". *Quem vê:*
+o operador, no painel. Introduzida no ciclo de segurança da Estação 6
+(14/09/2026).
+
 ---
 
 ## 6. Textos que o sistema diz
