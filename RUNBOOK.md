@@ -104,30 +104,29 @@ Valor com `$`, crase, contrabarra ou aspas vai **codificado em base64**;
 o painel trata `$` como substituição de shell e trunca o resto
 (`docs/erros/2026-09-11-cifrao-em-variavel-de-ambiente.md`).
 
-## 5.1 Fechar a origem direta (X-Origin-Verify)
+## 5.1 A API é DNS-only, não passa pelo Cloudflare
 
-O backend responde no domínio (`api.sancocore.com.br`, atrás do
-Cloudflare) e no endereço direto da hospedagem
-(`pay--…--….code.run`). O direto contorna o Cloudflare. A defesa é um
-segredo que só o Cloudflare injeta; o backend recusa quem não o traz
-(`server.js`, middleware `X-Origin-Verify`; fail-open sem a env).
+`api.sancocore.com.br` é **registro DNS sem proxy** (nuvem cinza):
+resolve direto para o Northflank, sem o Cloudflare no caminho. Conferido
+14/09/2026 — a resposta traz `server: istio-envoy` e **não** traz
+`cf-ray` (só `checkout.sancocore.com.br`, o front no Pages, é proxied).
+`api.sancocore.com.br` e o endereço direto `pay--…--….code.run` são,
+portanto, **a mesma porta pública** do backend: não existe borda do
+Cloudflare na API para contornar.
 
-**Ligar — nesta ordem, e ela importa (inverter derruba a produção):**
+Consequência prática: **uma Transform Rule do Cloudflare não se aplica à
+API** (o Cloudflare não a proxia — o próprio painel avisa isso ao criar
+a regra). Um esquema de "segredo injetado pelo Cloudflare" só
+funcionaria se a API fosse posta atrás do proxy laranja primeiro. Ver
+`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`.
 
-1. O código que checa já está no ar (subiu dormente, sem a env).
-2. Cloudflare → zona `sancocore.com.br` → Rules → Transform Rules →
-   **Modify Request Header** → regra em `Hostname eq api.sancocore.com.br`:
-   **Set static** `X-Origin-Verify` = `<segredo>`. Salvar e conferir que
-   o domínio segue respondendo 200.
-3. Só então gravar `ORIGIN_VERIFY_SECRET=<mesmo segredo>` no Northflank
-   (secret do serviço). No redeploy, a checagem liga.
-
-**Conferir:** `curl https://api.sancocore.com.br/api/saude` → 200; o
-mesmo GET no `…code.run` → 404. Segredo com caractere de shell vai em
-base64 (§5).
-
-**Desligar (reverter):** apagar `ORIGIN_VERIFY_SECRET` no Northflank
-volta ao fail-open na hora; depois, apagar a Transform Rule.
+Quem protege a API é a **auth de aplicação** (token de sessão do admin,
+`X-Checkout-Key` do contratante, HMAC do webhook de saída, token do
+webhook de entrada) — não uma camada de borda. Fechar a API atrás do
+Cloudflare para ganhar WAF/limite de borda é decisão de infra do dono,
+não feita: exigiria ligar o proxy em `api.sancocore.com.br` com SSL
+Full (strict) e conferir o certificado da origem. Está em
+`docs/pendencias.md` como opção, não como pendência bloqueante.
 
 ## 6. Restaurar o banco
 

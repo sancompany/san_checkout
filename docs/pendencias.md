@@ -27,12 +27,20 @@ de cobrança, formato do webhook, assinatura e mensagem de erro —
 reconferidos um a um. O que a troca envolve está no fim deste arquivo
 ("Ao trocar o Northflank para produção").
 
-### 🟡 Lei 3 · o custo do scrypt nunca foi medido no servidor de hoje
+### 🟡 Lei 3 · custo do scrypt no Northflank — medido em 14/09, no teto
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
-1 s por hash **medido no servidor real**. Os ~830 ms conhecidos são do
-Render. Refazer no Northflank (0,5 vCPU) e ajustar N se sair da faixa.
-Exceção registrada em `CONSTRAINTS.md` (Lei 3 · scrypt no lugar de
-Argon2id) já aponta esta lacuna.
+1 s por hash **medido no servidor real**. Medido em 14/09 por subtração
+de latência (login falho em `/api/admin/sessao`, que roda uma derivação,
+menos a baseline de rede de uma rota sem scrypt): login ~1,8–3,1 s,
+baseline ~0,8 s → **scrypt ≈ 1,0–1,3 s** no Northflank (0,5 vCPU),
+contra os ~830 ms do Render. Medida com ruído de rede (não é
+microbenchmark no servidor), mas é o "no servidor real" que a lei pede.
+
+Fica **no teto ou pouco acima** de 1 s. Não é deficit — é margem: mais
+caro por tentativa é mais forte contra força bruta, o login é assíncrono
+(não trava o event loop, `sessaoAdmin.js`) e é raro. **Recomendação:
+manter N=2^17.** Baixar N para caber em ≤1 s enfraqueceria o hash sem
+ganho real. Decisão do dono se quiser mirar o meio da faixa.
 
 ### Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank
 O ciclo 1 rodou em 11/09 contra o Render, em Oregon. A produção vai ficar
@@ -112,6 +120,38 @@ proxy de saída alternava entre três endereços. A `X-Checkout-Key` não tem
 nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
+
+### 🟠 Piso de R$5 da Asaas vs. o R$0,01 que o checkout aceita
+Medido em 14/09 no ponta a ponta: gerar Pix para um pedido de R$1
+(`ped_teste`, → R$2,50 com taxa) é recusado pela Asaas com "O valor da
+cobrança (R$ 2,50) ... não pode ser menor que R$ 5,00". O `valorValido`
+aceita de R$0,01 a R$100.000, mas a Asaas chão em **R$5,00 no valor
+cobrado**. Hoje o comprador só descobre depois de preencher tudo e
+clicar — mesma classe do bug de total que a RN-03 tratou, mas vindo da
+Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
+abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
+`API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
+
+### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
+Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
+(proxy do sandbox bloqueia UDP 53 e a DoH), então a medição daqui era
+inconclusiva — não "sem MX". **O dono confirmou:** o MX entrega em
+`admin@sancocore.com.br`, e `juridico@` e `suporte@` são alias dele. O
+canal do titular/suporte recebe. O checkout não envia e-mail ao
+comprador (§1.9), então SPF/DKIM/DMARC de envio seguem N/A. Nada a
+fazer; fica a lição de não afirmar DNS a partir do resolver do sandbox.
+
+### ⚪ Opção (não bloqueia) · pôr a API atrás do proxy do Cloudflare
+`api.sancocore.com.br` é DNS-only (nuvem cinza): resolve direto para o
+Northflank, sem o Cloudflare no caminho (resposta sem `cf-ray`). Logo, o
+`…code.run` e o domínio são a mesma porta pública, e a API é protegida
+só pela auth de aplicação — que está sólida. **Se** um dia se quiser
+WAF, limite de borda e fechar o endereço direto, o caminho é ligar o
+proxy laranja em `api.sancocore.com.br` (com SSL Full (strict) e o
+certificado da origem conferido) e então um segredo injetado por
+Transform Rule volta a fazer sentido. Não feito, é decisão de infra do
+dono. O middleware que dependia disso foi revertido em 14/09
+(`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
 
 ### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
 O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
