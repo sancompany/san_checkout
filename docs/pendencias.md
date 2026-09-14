@@ -106,56 +106,30 @@ não há prazo contado em lugar nenhum. Enquanto o volume for o de hoje,
 caixa de entrada resolve; vira problema no primeiro pedido que se perder.
 Declarado em `docs/funcional.md` §8.
 
-### 🔴 Lei 5 · cache de 4 horas em JS e CSS
-O `Cache-Control: max-age=0` do `_headers` vale para o HTML e **é
-sobreposto pelo Cloudflare Pages nos assets** — medido ao vivo em
-11/09/2026.
-
-> **Medido no cabeçalho em 13/09/2026**, que é o que faltava para parar
-> de ser inferência:
->
-> ```
-> GET /js/admin.js
-> cache-control: public, max-age=14400, must-revalidate
-> cf-cache-status: REVALIDATED
-> ```
->
-> 14400 s são as 4 horas, exatas, vindas de cima do nosso `max-age=0`.
-> **Custou uma confusão real no mesmo dia:** o botão "Trocar chave"
-> estava no ar (o arquivo servido continha o código) e o dono, no
-> celular, não via — fechar e reabrir o navegador não resolve, porque o
-> que está velho é o arquivo em cache, não a aba.
->
-> A causa provável é o **Browser Cache TTL da zona** estar fixo em 4
-> horas em vez de "Respect Existing Headers" (Cloudflare → Caching →
-> Configuration). Se for isso, mudar aquele seletor resolve o site
-> inteiro de uma vez, e é mais simples que a Cache Rule descrita abaixo
-> — conferir esse valor antes de criar regra.
->
-> **Contorno de celular, enquanto não muda:** abrir o painel numa aba
-> anônima (Chrome: ⋮ → Nova guia anônima; Safari: abas → Privada), que
-> nasce sem cache. Exige refazer o login do Access e do painel. Depois de todo deploy que mexa em JS ou CSS, o navegador pode
-rodar HTML novo com script velho por até 4h. Já fez correção certa
-parecer errada três vezes no mesmo dia.
-
-**Correção — só o dono, e só do computador** (o painel da Cloudflare não
-se navega bem no celular; combinado em 13/09 de ficar esperando acesso
-ao PC): conferir primeiro **Caching → Configuration → Browser Cache
-TTL** e pôr em *Respect Existing Headers*, que resolve o site inteiro de
-uma vez. Se o seletor já estiver assim, aí sim criar a Cache Rule
-(Regras → Cache Rules) com *Browser TTL* zero em `/js/*` e `/css/*`.
-Configuração de painel, plano gratuito.
-**Contorno hoje:** Ctrl+Shift+R depois do deploy.
-**Deliberadamente NÃO feito:** o paliativo de `?v=` nas tags — exige
-lembrar de incrementar a cada mudança, e ritual que se esquece é proteção
-de mentira.
-
 ### 🟠 Estação 6 · o limite por IP não é guarda de força bruta
 Medido em 11/09: doze requisições passaram por um teto de 10/min porque o
 proxy de saída alternava entre três endereços. A `X-Checkout-Key` não tem
 nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
+
+### 🟠 Credencial do Cloudflare é a conta inteira, não a zona do projeto
+Testada em 14/09/2026 (`curl` direto com `CLOUDFLARE_EMAIL` +
+`CLOUDFLARE_API_KEY`, fora de qualquer conector): é a **Global API Key**,
+com papel "Super Administrator — All Privileges" sobre
+`brunosanches.bhs@gmail.com's Account` inteira — todas as zonas, Workers,
+billing, R2, tudo, não só `checkout.sancocore.com.br`.
+
+Nenhuma tarefa deste projeto até hoje precisou de mais do que ler cabeçalho,
+certificado e configuração de cache da zona do checkout. A Lei 3 pede
+segredo mínimo; isto é o oposto.
+
+**Só o dono faz:** trocar por um API Token escopado (Cloudflare → My
+Profile → API Tokens → Create Token), com permissão de leitura em
+Zone/DNS e Zone/Cache Purge só na zona `sancocore.com.br`, e revogar a
+Global API Key depois. Enquanto não troca, qualquer sessão com esta
+variável no ambiente tem alcance sobre toda a conta, não só este projeto —
+registrado em `docs/erros/2026-09-14-listconnectors-vazio-nao-e-ausencia-de-acesso.md`.
 
 ### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
 Medido em 13/09/2026 **do navegador do operador** (não de container na
