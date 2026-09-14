@@ -1,7 +1,7 @@
 # San Checkout — Documentação da API
 
 **SAN & CO. Pay Engine** — referência completa de integração.
-Versão do contrato: **1** · Atualizado em 11/09/2026
+Versão do contrato: **1** · Atualizado em 14/09/2026
 
 > Este é o documento **de fronteira**: tudo que atravessa a linha entre o
 > San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
@@ -9,6 +9,23 @@ Versão do contrato: **1** · Atualizado em 11/09/2026
 >
 > Não descreve a arquitetura interna do checkout (banco, serviços,
 > controllers) — nada disso é contrato e pode mudar sem aviso.
+
+> ### ⚠️ Este arquivo é a fonte única. Não integre a partir de cópia.
+> Integre lendo **este `API.md`, na versão do repositório do San
+> Checkout** — nunca um resumo herdado de outro projeto nem uma cópia
+> local. Contrato paráfraseado envelhece calado: em 14/09/2026 um
+> integrador construiu contra um resumo herdado e implementou coisas que
+> este contrato nunca descreveu. Todo payload carrega `versao` (hoje
+> `1`); se a sua cópia não fala de `versao`, ela não é este contrato.
+>
+> ### Implementação de referência — leia o código, não só a prosa
+> Existe um **contratante de teste** completo, versionado e no ar, que
+> exercita este contrato inteiro: repositório
+> [`sancompany/contratante-teste`](https://github.com/sancompany/contratante-teste).
+> Ele mostra a ordem real das chamadas, o formato do corpo e **como a
+> assinatura do webhook é conferida na prática** (a seção 4.3.1 abaixo).
+> Quando a prosa e o código divergirem na sua cabeça, o código dele é o
+> desempate.
 
 ---
 
@@ -391,6 +408,11 @@ POST dizendo `"status": "confirmado"` e o seu sistema libera o pedido
 assinatura.
 
 Todo webhook é assinado com a **mesma `X-Checkout-Key`** que você já usa.
+Essa é a **única** autenticação do webhook: não existe `X-Webhook-Secret`
+nem nenhum header de segredo compartilhado. Se você viu no código-fonte
+do checkout uma checagem de token em header (`asaas-access-token`), aquilo
+é como **o checkout recebe da Asaas**, não como você verifica o webhook
+que vem do checkout — não copie esse padrão para cá.
 
 1. Recuse se `X-Checkout-Timestamp` estiver a mais de **300 segundos** de
    agora — impede que alguém capture uma requisição legítima e a reenvie
@@ -1270,6 +1292,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Rodar a conciliação diária sobre o que ainda está pendente — seção 5.2 para pedido avulso, **seção 5.3 para assinatura**
 - [ ] Mandar `pagador.documento` e `pagador.telefone` para poupar digitação
 - [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
+- [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
 - [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar=1`
 
 **Combinado com quem administra o checkout:**

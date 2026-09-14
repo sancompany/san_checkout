@@ -61,10 +61,17 @@ da Asaas — ver a entrada própria):
 6. estorno → `estornado`, 200 (primeira vez ao vivo; `refundController.js`).
 
 Negativos conferidos ao vivo: chave inválida → 401; chave certa +
-contratante trocado na URL → 403 (IDOR). **Falta o ciclo de assinatura**
-(assinar/pausar/retomar/cancelar): precisa de um plano ≥ R$5 e do fluxo
-de cartão por pop-up, assistido pelo dono. O ramo assíncrono do estorno
-de boleto também não foi exercitado.
+contratante trocado na URL → 403 (IDOR).
+
+**Assinatura, 14/09:** a criação da sessão funciona ponta a ponta —
+`POST /assinatura/testemaster/plano_anual` (R$10) devolve o `checkoutUrl`
+do pop-up. Os endpoints de ciclo (`consultar/cancelar/pausar/retomar-assinatura`)
+respondem certo na auth (401 sem chave) e no 404 (sem assinatura ativa).
+**Falta a metade paga:** completar o cartão no pop-up para nascer a linha
+em `assinaturas` e então exercitar pausar/retomar/cancelar contra uma
+assinatura viva — precisa de navegador + cartão de teste, assistido pelo
+dono, e será retestado pela própria MostrAí na Estação 6 dela. O ramo
+assíncrono do estorno de boleto também não foi exercitado.
 
 O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
 
@@ -138,6 +145,12 @@ clicar — mesma classe do bug de total que a RN-03 tratou, mas vindo da
 Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
 abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
 `API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
+
+Mesma classe, achado no ciclo de assinatura (14/09): `telefoneValido`
+aceita número de dígito repetido (`11999999999`), e a Asaas recusa no
+cartão/assinatura com "phoneNumber inválido" (número realista passa). O
+checkout aceita entrada que a Asaas depois rejeita — recusar cedo, com
+mensagem própria, fecha os dois casos.
 
 ### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
 Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
