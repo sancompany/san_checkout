@@ -16,6 +16,7 @@ Versão do contrato: **1** · Atualizado em 11/09/2026
 
 1. [Como funciona — o modelo pull](#1-como-funciona--o-modelo-pull)
 2. [Antes de começar — o que é combinado manualmente](#2-antes-de-começar--o-que-é-combinado-manualmente)
+   - 2.1 [Os dois endereços do checkout](#21-os-dois-endereços-do-checkout)
 3. [Links de checkout](#3-links-de-checkout)
 4. [O que o SEU projeto precisa expor](#4-o-que-o-seu-projeto-precisa-expor)
    - 4.1 [`GET /pedido/{pedidoId}`](#41-get-pedidopedidoid)
@@ -31,6 +32,11 @@ Versão do contrato: **1** · Atualizado em 11/09/2026
    - 5.7 [Saúde do serviço](#57-saúde-do-serviço)
 6. [Métodos de pagamento](#6-métodos-de-pagamento)
 7. [Assinaturas em detalhe](#7-assinaturas-em-detalhe)
+   - 7.1 [Ciclos aceitos](#71-ciclos-aceitos)
+   - 7.2 [Assinatura por Pix Automático](#72-assinatura-por-pix-automático)
+   - 7.3 [Renovação — cartão vencido ou troca de cartão](#73-renovação--cartão-vencido-ou-troca-de-cartão)
+   - 7.4 [Ciclo de vida completo](#74-ciclo-de-vida-completo)
+   - 7.5 [O que a assinatura NÃO faz — leia antes de prometer benefício](#75-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
 8. [Taxas, split e o valor cobrado](#8-taxas-split-e-o-valor-cobrado)
 9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
 10. [Compatibilidade e versionamento](#10-compatibilidade-e-versionamento)
@@ -104,6 +110,25 @@ Para trocar qualquer um desses dados, fale com quem administra o
 checkout. A URL base da sua API e o `webhook_url` podem ser alterados
 sem quebrar nada; o `contratante_id` e a chave, não — os links já
 distribuídos param de funcionar.
+
+### 2.1 Os dois endereços do checkout
+
+O checkout mora em dois endereços, e eles fazem coisas diferentes. Onde
+este documento escreve `{CHECKOUT}`, leia o primeiro.
+
+| Papel | Endereço | Quem acessa |
+|---|---|---|
+| **Tela de pagamento** (`{CHECKOUT}`) | `checkout.sancocore.com.br` | O seu comprador, pelo navegador — é o domínio dos links da seção 3 |
+| **API** | `api.sancocore.com.br` | O seu servidor, pelas rotas da seção 5 |
+
+Os dois são HTTPS e não têm versão no caminho (o versionamento é por
+campo `versao` no payload, seção 10).
+
+> **Nunca monte esses endereços na mão dentro do seu código.** Guarde
+> cada um em variável de ambiente. Se um dia o checkout mudar de
+> endereço, você troca uma variável em vez de caçar string em arquivo —
+> e foi exatamente uma troca dessas que deixou este documento apontando
+> para um host desativado até 14/09/2026.
 
 ---
 
@@ -606,8 +631,12 @@ processamento como **idempotente**: a chave natural é `chargeId` +
 **Base:**
 
 ```
-https://san-checkout.onrender.com
+https://api.sancocore.com.br
 ```
+
+É o endereço de API da seção 2.1 — não é o mesmo domínio da tela de
+pagamento, e não é o endereço da hospedagem por baixo. Chame sempre o
+domínio; o endereço interno do provedor muda sem aviso.
 
 **Autenticação:** header `X-Checkout-Key` com a sua chave. Sem ela, `401`.
 
@@ -1075,6 +1104,47 @@ Use isso ao receber `cobranca_falhou`.
                                           (definitivo)
 ```
 
+### 7.5 O que a assinatura NÃO faz — leia antes de prometer benefício
+
+Esta seção existe porque promessa feita ao assinante e não cumprida pelo
+motor vira cobrança indevida, e cobrança indevida não volta com redeploy.
+**Nada abaixo está no mapa de versões futuras — é o estado de hoje.**
+
+| Não existe | O que isso significa na prática |
+|---|---|
+| **Carência / teste grátis / primeiro mês grátis** | A primeira cobrança sai **no ato da assinatura**, sempre. Não há campo para adiar a data de início |
+| **Pular ou adiar um ciclo** | Os ciclos seguintes caem exatamente a cada `ciclo`, contados da primeira cobrança. Não há "este mês não cobra" |
+| **Desconto, cupom ou promoção no plano** | O campo `desconto` existe **só no pedido avulso** (seção 4.1). A assinatura cobra `valor` exatamente como veio do seu `GET /plano/{id}` |
+| **Ciclo de 4, 5 ou 8 meses** | Só os sete da seção 7.1. Não há quadrimestral |
+| **Mudar valor, ciclo ou data de um assinante existente** | `valor` e `ciclo` são congelados na criação (seção 4.2). Para mudar, cancele e crie outra |
+
+#### Como modelar "pague 3, leve 4" mesmo assim
+
+O benefício recorrente — a cada trimestre pago, um mês de brinde — **é
+incompatível com ciclo fixo por construção**, não por limitação nossa: o
+serviço avançaria 4 meses por ciclo enquanto a cobrança volta a cada 3, e
+os dois calendários se afastam um mês por trimestre até o assinante estar
+pagando por tempo que já usou.
+
+O equivalente exato é **embutir o benefício no preço, não no tempo**:
+
+```
+mensalidade                      M
+trimestral sem benefício         3 × M   (4 cobranças/ano = 12M)
+com "a cada 3 pagos, 1 grátis"   9M por ano ÷ 4 cobranças = 2,25 × M
+```
+
+Ou seja: **desconto de 25% no valor do ciclo trimestral**. O assinante
+paga por 9 meses a cada 12, que é exatamente a promessa, e você não
+depende de nenhuma data especial — é só o `valor` que o seu
+`GET /plano/{id}` devolve. Não exige nada do checkout.
+
+Se o benefício for **só na primeira compra** (e não a cada trimestre),
+esse cálculo não fecha, e hoje não há caminho limpo: pausar e retomar na
+data certa é operação manual sobre o caminho de dinheiro — se ninguém
+executar no dia, o assinante é cobrado e a correção é estorno. Fale com
+quem administra o checkout antes de vender isso.
+
 ---
 
 ## 8. Taxas, split e o valor cobrado
@@ -1141,6 +1211,18 @@ direto não contorna nada.
 | `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
 | Timeout da sua API | 45 segundos | `504` |
 | Requisições | 10/min (dinheiro) · 60/min (consulta) | `429` |
+| `GET /api/saude` | 30/min | `429` |
+
+**Os limites são por IP e por rota**, em janela de 60 segundos. "Dinheiro"
+são as rotas que criam ou movem cobrança (`/pix`, `/cartao`, `/boleto`,
+`/assinatura`, `/assinatura-pix`, `/estornar`, `/cancelar-`, `/pausar-` e
+`/retomar-assinatura`); "consulta" são as de leitura (`/pedido`, `/plano`,
+`/cobranca`, `/status`, `/consultar-assinatura`).
+
+Toda resposta traz os cabeçalhos `RateLimit-Limit`, `RateLimit-Remaining`
+e `RateLimit-Reset` — leia-os em vez de contar do seu lado. Se você
+monitora a saúde do checkout, **espace a chamada em 2 segundos ou mais**:
+o teto de 30/min existe porque essa rota toca o banco.
 
 CPF e CNPJ dividem o mesmo campo `documento` — o checkout detecta qual é
 pelo tamanho.
