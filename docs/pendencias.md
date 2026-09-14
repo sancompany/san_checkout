@@ -113,24 +113,6 @@ nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
 
-### 🟠 Credencial do Cloudflare é a conta inteira, não a zona do projeto
-Testada em 14/09/2026 (`curl` direto com `CLOUDFLARE_EMAIL` +
-`CLOUDFLARE_API_KEY`, fora de qualquer conector): é a **Global API Key**,
-com papel "Super Administrator — All Privileges" sobre
-`brunosanches.bhs@gmail.com's Account` inteira — todas as zonas, Workers,
-billing, R2, tudo, não só `checkout.sancocore.com.br`.
-
-Nenhuma tarefa deste projeto até hoje precisou de mais do que ler cabeçalho,
-certificado e configuração de cache da zona do checkout. A Lei 3 pede
-segredo mínimo; isto é o oposto.
-
-**Só o dono faz:** trocar por um API Token escopado (Cloudflare → My
-Profile → API Tokens → Create Token), com permissão de leitura em
-Zone/DNS e Zone/Cache Purge só na zona `sancocore.com.br`, e revogar a
-Global API Key depois. Enquanto não troca, qualquer sessão com esta
-variável no ambiente tem alcance sobre toda a conta, não só este projeto —
-registrado em `docs/erros/2026-09-14-listconnectors-vazio-nao-e-ausencia-de-acesso.md`.
-
 ### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
 Medido em 13/09/2026 **do navegador do operador** (não de container na
 nuvem — o ambiente do teste faz parte do teste):
