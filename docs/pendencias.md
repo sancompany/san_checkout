@@ -152,6 +152,26 @@ cartão/assinatura com "phoneNumber inválido" (número realista passa). O
 checkout aceita entrada que a Asaas depois rejeita — recusar cedo, com
 mensagem própria, fecha os dois casos.
 
+### Prontidão operacional · decisão de 14/09 — adiar, com dois gates
+O dono decidiu tratar os itens de prontidão que exigem correção/criação
+como atualizações futuras, enquanto o checkout fica em sandbox. Aceito
+para o estado atual (um operador, sem dinheiro real). **Mas dois não são
+"quando der" — travam a troca para produção:**
+
+- **Alerta externo de queda + fila de webhook pausada (Lei 8, item 2) —
+  PRIORIDADE.** O motor move dinheiro de terceiro; a Asaas pausa a fila
+  após 15 falhas seguidas (§2.3) e isso só aparece por ausência. Sem um
+  alerta que chega no celular, uma queda ou fila pausada em produção só
+  é descoberta quando um contratante reclama = dinheiro não capturado.
+  Deve existir **antes** do primeiro dinheiro real.
+- **Backup com restauração testada (Lei 6) — já é gate.** Exceção §3 do
+  `CONSTRAINTS.md` amarra isto exatamente ao primeiro pagamento real.
+
+Barato e vale fazer junto na troca: **alerta de orçamento** em cada conta
+paga (10 min, evita fatura surpresa). Genuinamente adiáveis enquanto for
+um operador: desempenho p75 no celular e o teste da segunda pessoa com o
+RUNBOOK.
+
 ### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
 Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
 (proxy do sandbox bloqueia UDP 53 e a DoH), então a medição daqui era
