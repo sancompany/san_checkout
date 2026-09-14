@@ -144,6 +144,27 @@ nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
 
+### 🟠 Piso de R$5 da Asaas vs. o R$0,01 que o checkout aceita
+Medido em 14/09 no ponta a ponta: gerar Pix para um pedido de R$1
+(`ped_teste`, → R$2,50 com taxa) é recusado pela Asaas com "O valor da
+cobrança (R$ 2,50) ... não pode ser menor que R$ 5,00". O `valorValido`
+aceita de R$0,01 a R$100.000, mas a Asaas chão em **R$5,00 no valor
+cobrado**. Hoje o comprador só descobre depois de preencher tudo e
+clicar — mesma classe do bug de total que a RN-03 tratou, mas vindo da
+Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
+abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
+`API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
+
+### 🟠 Prontidão · o canal do titular/suporte não recebe e-mail (sem MX)
+Medido em 14/09: `sancocore.com.br` **não tem registro MX** (nem SPF nem
+DMARC). O checkout não envia e-mail ao comprador (é design, §1.9), então
+SPF/DKIM/DMARC de envio são N/A — mas o rodapé publica `juridico@` e
+`suporte@` como canal do titular (LGPD) e de suporte, e sem MX o e-mail
+para esses endereços não é entregue. Item 1 da prontidão operacional e
+obrigação da skill `legal`. **Só o dono:** configurar recebimento
+(Cloudflare Email Routing ou provedor) para os dois endereços, ou trocar
+o canal publicado por um que funcione, antes do lançamento (Estação 7).
+
 ### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
 O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
 e `webhookUrl` agora exigem https e host público (RN-14, `utils/alvoDeRede.js`).
