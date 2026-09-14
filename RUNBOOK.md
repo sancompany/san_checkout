@@ -39,29 +39,42 @@ Resposta boa: `200` com `{"status":"ok",…,"supabaseRespondendo":true,`
   apagada. Gerar nova no painel da Asaas e trocar `ASAAS_API_KEY` **no
   Northflank**.
 
-**Alerta de queda (Lei 8) — pelo próprio Northflank, decisão do dono 14/09.**
-Três peças, na página de notificações da conta
-(`app.northflank.com/s/account/integrations/notifications`):
+**Alerta de queda (Lei 8) — dois monitores, um cobre o cego do outro.**
+Decisão do dono 14/09: um externo (pega queda total da plataforma) e um
+interno no Northflank (pega o resto, mais barato e robusto). O sinal já
+existe: `/api/saude` → `200 ok` / `503 degradado` / sem resposta.
 
-1. **Integração de notificação** (destino, 1 vez): Slack ou Discord (push
-   no celular), ou Teams/webhook. É a única parte inerentemente do dono
-   (autoriza o app no workspace / cola o webhook).
-2. **Infrastructure alerts** (toggle): container caiu / CPU-memória alta /
-   volume cheio → vai para a integração. Cobre app caído / OOM / deploy
-   ruim, sem job, e é gerado pelo control plane (mais robusto que um
-   checker no próprio serviço).
-3. **Cron Job (aba Jobs) para o banco fora:** os infra alerts olham o
-   container, não o `/api/saude`. Container de pé + Supabase fora (o
-   `503`) não dispara infra alert. Um job que dá `curl` no `/api/saude` a
-   cada poucos minutos e sai com erro no não-2xx → evento "job run
-   falhou" → mesma integração.
+**INTERNO — Northflank** (`app.northflank.com/s/account/integrations/notifications`):
+1. **Integração:** Create → Slack ou Discord → autorizar → escolher o
+   canal (push no celular). Em "handle events only from specific
+   projects", marcar `san-checkout`.
+2. **Infrastructure alerts:** na página de alertas da conta, ligar
+   container crashed / high CPU / high memory / volume low → roteadas
+   para a integração. Cobre app caído / OOM / deploy ruim, sem job.
+3. **Cron Job para o banco fora** (o `503`, que o infra alert não vê):
+   projeto `san-checkout` → aba Jobs → Create → Cron.
+   - schedule: `*/5 * * * *` · plano `nf-compute-10` · concurrency Forbid
+   - imagem: `curlimages/curl:latest`
+   - secret do job `ALERTA_WEBHOOK` = a URL do webhook do canal (Discord:
+     Server Settings → Integrations → Webhooks → New; Slack: app de
+     Incoming Webhooks)
+   - comando (Discord usa `content`, Slack usa `text`):
+     `sh -c 'curl -fsS -o /dev/null https://api.sancocore.com.br/api/saude || curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"San Checkout: /api/saude nao-2xx\"}" "$ALERTA_WEBHOOK"'`
+   - o `-f` faz o curl sair !=0 em HTTP ≥400 (o 503 dispara o POST). O job
+     sai 0 no caminho feliz, sem ruído.
 
-**Ponto cego:** é o Northflank vigiando o Northflank — queda total da
-plataforma/região não se auto-avisa. Só um monitor de fora (UptimeRobot
-etc.) pega isso; vale somar um na produção. A detecção de "fila do
-webhook pausada" fica para quando houver tráfego real — hoje, volume
-zero, qualquer limiar de silêncio dá alarme falso
-(`docs/proximas-versoes.md`).
+**EXTERNO — UptimeRobot** (trocar o cron-job.org que caiu):
+1. Conta grátis → Add New Monitor → HTTP(s) →
+   `https://api.sancocore.com.br/api/saude` → intervalo 5 min.
+2. Keyword monitor: alertar quando **faltar** `"status":"ok"` no corpo —
+   pega o 503, o degradado e o fora-do-ar de uma vez.
+3. Alert Contacts: e-mail + app UptimeRobot no celular (push), associados
+   ao monitor.
+
+**Ponto cego que sobra:** os dois juntos cobrem app/banco/deploy e queda
+total da plataforma. A detecção de "fila do webhook pausada" fica para
+quando houver tráfego real — hoje, volume zero, qualquer limiar de
+silêncio dá alarme falso (`docs/proximas-versoes.md`).
 
 ## 3. Publicar
 
