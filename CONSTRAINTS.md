@@ -720,6 +720,25 @@ que o comprador não digitou e mandaria isso para a Asaas.
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
 esquecida não é conformidade.
 
+### Lei 3 · a credencial do Cloudflare no ambiente é a conta inteira — 14/09/2026
+
+Testado em 14/09 (`curl` direto com `CLOUDFLARE_EMAIL` +
+`CLOUDFLARE_API_KEY`): é a **Global API Key**, papel "Super Administrator
+— All Privileges" sobre a conta inteira do dono, não um token escopado à
+zona `sancocore.com.br`. A Lei 3 pede segredo mínimo.
+
+**Decisão do dono, 14/09/2026: fica ampla de propósito.** A credencial
+vive só no ambiente da sessão de nuvem, não no código nem em `docs/`, e
+o limite operacional é de conduta, não de escopo da chave: **a sessão só
+toca neste projeto** — não lê, escreve nem apaga em outra zona, Worker ou
+recurso da conta que não seja do San Checkout. Enquanto isso valer, a
+amplitude da chave é aceita.
+
+Revisar no dia em que uma segunda pessoa ou uma automação não-supervisionada
+passar a receber esta variável — aí o limite de conduta deixa de bastar e
+o caminho é o API Token escopado à zona (registrado em
+`docs/erros/2026-09-14-listconnectors-vazio-nao-e-ausencia-de-acesso.md`).
+
 ### Lei 6 · não há backup do banco — exceção COM GATILHO, 11/09/2026
 
 A Lei 6 exige backup automático do que não pode ser perdido, testado ao
@@ -834,3 +853,46 @@ agora.** As leis não estabelecem limite de tamanho, e dividir um
 controller que **nunca recebeu um webhook real em produção** troca um
 risco conhecido por um desconhecido. Revisar depois que assinatura e
 estorno tiverem rodado ao vivo.
+
+## 4. Estação 6 · escopo do ciclo de segurança — 14/09/2026
+
+O dono ampliou a Estação 6 além dos seis passos e do ciclo padrão.
+Autorização de 14/09, com estas condições:
+
+**Roda tudo no sandbox primeiro.** Terminado o sandbox, o dono troca as
+variáveis para produção e o ciclo se repete no que muda entre ambientes
+(identificador de cobrança, formato de webhook, assinatura, mensagem de
+erro), possivelmente repetindo os mesmos testes. É a mesma lógica de duas
+rodadas do §3.
+
+**A invariante central que o ciclo verifica:** nenhuma informação
+sensível — variável de ambiente, token de webhook, chave de contratante,
+dado de pagador — pode ser obtida **de fora do perímetro**. O perímetro é
+os quatro serviços (Supabase, backend no Northflank, Pages no Cloudflare,
+Worker do contratante de teste) e o próprio canal do Checkout. Conseguir
+extrair qualquer coisa privilegiada por fora é furo, e furo se corrige
+até a reverificação passar limpa — não vira exceção.
+
+**Seis testes de segurança extra, além do ciclo padrão da `seguranca-san`:**
+
+1. Isolamento entre contratantes (IDOR): o RLS está ligado, mas o backend
+   usa a service key e passa por cima dele — o isolamento é do código.
+   Testar rota a rota com a chave do `testemaster` contra dado de outro.
+2. SSRF no modelo pull: o backend faz requisição de saída para a
+   `api_base_url` cadastrada. Testar teto de tamanho de resposta,
+   redirecionamento e recusa de endereço interno.
+3. Replay/assinatura de webhook exercitados: mesmo evento assinado duas
+   vezes (idempotência), timestamp fora da janela de 300s, corpo assinado
+   com a chave de outro contratante.
+4. Autorização do estorno com credencial errada (teste negativo próprio
+   da única rota que tira dinheiro).
+5. Força bruta por credencial: o limite é por IP (§2.7); reencontrar e
+   endereçar.
+6. Segundo fator no admin: a `seguranca-san` o exige em área
+   administrativa. Se o Access cumpre esse papel, tem de estar escrito —
+   senão o 2FA depende de configuração externa ao repositório.
+
+Autorização também de: ativar proteção desativada útil nos quatro
+serviços, e corrigir/reforçar código onde faltar o básico de
+cibersegurança. **Não autorizado nesta estação: excluir qualquer coisa**
+(linha de banco, arquivo, serviço, registro de DNS).

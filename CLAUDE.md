@@ -26,10 +26,10 @@ Porte: multi-inquilino · Dado: de terceiro, com dinheiro · Vida útil: longa
 → **topo da escala de rigor** (Lei 0: nada aqui se dispensa por proporcionalidade)
 
 ## Estado na esteira
-Estação atual: **entre estações**. A 5 está no ar com ressalva e a 6
-**espera só a autorização do dono** — a pendência que a segurava (chave
-do `testemaster`) foi resolvida em 13/09. Quando abrir, a 6 pede Opus
-com esforço alto.
+Estação atual: **6 Prontidão, aberta em 14/09/2026** — autorizada pelo
+dono, com as três condições de `varredura-final.md` conferidas no dia
+(commit servido = main, migrations aplicadas, árvore limpa). Pede Opus
+com esforço alto, e é da sessão por inteiro.
 
 > Em 13/09 eu emendei direto no passo 1 da Estação 6 sem pedir. O
 > trabalho achou dois furos reais e mesmo assim estava fora de ordem —
@@ -43,16 +43,16 @@ com esforço alto.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **não iniciada** — falta autorização | contratante de teste `testemaster` cadastrado em 13/09; o passo 1 dos seis foi rodado fora de ordem e achou dois furos de total, corrigidos e no ar; ciclo 1 rodou contra o Render, não contra o que está no ar |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas: main = `acbce0b` servido no Northflank (deploy `6431907099` state success), migrations 0001-0003 aplicadas, árvore limpa |
 
-**Para a 6 poder abrir:** só a autorização. A chave do `testemaster` foi
-rotacionada no painel e colada na secret `CHECKOUT_KEY` do Worker em
-13/09, e o pull voltou a resolver — conferido.
+**Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4): ponta a ponta de
+seis passos + ciclo de assinatura; ciclo de segurança local **e** sobre
+o Northflank; os seis testes de segurança extra; os sete itens de
+prontidão. Terminado o sandbox, o dono troca para produção e repete o
+que muda entre ambientes.
 
-Falta para fechar a 6, quando ela abrir: o teste de ponta a ponta de
-seis passos e o ciclo de segurança refeito sobre o Northflank. A troca
-da Asaas para o ambiente real vem **depois** dela, e é o que fecha a 5
-sem ressalva.
+Falta para fechar a 6: tudo acima com evidência medida. A troca da Asaas
+para produção vem **depois** dela, e é o que fecha a 5 sem ressalva.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`

@@ -113,23 +113,17 @@ nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
 
-### 🟠 Credencial do Cloudflare é a conta inteira, não a zona do projeto
-Testada em 14/09/2026 (`curl` direto com `CLOUDFLARE_EMAIL` +
-`CLOUDFLARE_API_KEY`, fora de qualquer conector): é a **Global API Key**,
-com papel "Super Administrator — All Privileges" sobre
-`brunosanches.bhs@gmail.com's Account` inteira — todas as zonas, Workers,
-billing, R2, tudo, não só `checkout.sancocore.com.br`.
-
-Nenhuma tarefa deste projeto até hoje precisou de mais do que ler cabeçalho,
-certificado e configuração de cache da zona do checkout. A Lei 3 pede
-segredo mínimo; isto é o oposto.
-
-**Só o dono faz:** trocar por um API Token escopado (Cloudflare → My
-Profile → API Tokens → Create Token), com permissão de leitura em
-Zone/DNS e Zone/Cache Purge só na zona `sancocore.com.br`, e revogar a
-Global API Key depois. Enquanto não troca, qualquer sessão com esta
-variável no ambiente tem alcance sobre toda a conta, não só este projeto —
-registrado em `docs/erros/2026-09-14-listconnectors-vazio-nao-e-ausencia-de-acesso.md`.
+### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
+O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
+e `webhookUrl` agora exigem https e host público (RN-14, `utils/alvoDeRede.js`).
+Fica o residual: `resolverPedido`/`resolverPlano` (`pedidoService.js`) fazem
+`fetch` seguindo redirect e leem o corpo inteiro sem teto. Um contratante
+cujo servidor seja malicioso ou comprometido poderia redirecionar para
+host interno (contornando a checagem estática de host) ou devolver um
+corpo enorme (OOM na instância de 512 MiB). Baixo risco hoje: o alvo é
+cadastrado pelo admin e semi-confiável. Fechar de verdade pede `redirect`
+controlado (sem quebrar redirect legítimo de contratante) e leitura com
+teto — quando houver mais de um contratante real.
 
 ### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
 Medido em 13/09/2026 **do navegador do operador** (não de container na
@@ -182,10 +176,18 @@ Retenção de 5 anos está declarada (`docs/inventario-de-dados.md` §6), o
 caminho de exclusão foi conferido contra a modelagem (§6.2), e a rotina
 não foi escrita. Validação jurídica é da Estação 7.
 
-### Migration 0004, desenhada e não escrita
-`desativado_em` em contratantes, `e_teste` (de mão única: só vai de teste
-para real), `ambiente` em cobranças, e a correção de `search_path` nas
-duas funções da 0002 que o linter do Supabase acusou.
+### Migration 0004 — search_path feito; colunas ainda não
+A **correção de `search_path`** das duas funções da 0002 que o linter
+acusava foi aplicada em 14/09 (`supabase/migrations/0004_search_path_funcoes.sql`,
+`alter function ... set search_path = public`) — o advisor de segurança
+não acusa mais o WARN, só o INFO de RLS-sem-policy, que é o default-deny
+intencional (backend usa service_key; anon/publishable leem zero linha,
+conferido).
+
+Ainda desenhadas e não escritas: `desativado_em` em contratantes,
+`e_teste` (de mão única: só vai de teste para real) e `ambiente` em
+cobranças. Entram quando o modo de teste por contratante
+(`docs/proximas-versoes.md`) ou a troca para produção pedirem.
 
 ### Quando ligar o proxy laranja do Cloudflare ou outro salto
 O `app.set('trust proxy', 1)` confia em **um** proxy. Verificado em

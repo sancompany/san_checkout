@@ -27,6 +27,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { supabase } from './config/supabase.js';
+import { compararSeguro } from './utils/validadores.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
 import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
 import { obterAlertasChaveApi } from './controllers/webhookController.js';
@@ -55,6 +56,40 @@ app.use((requisicao, resposta, proximo) => {
     return resposta.redirect(301, `https://${requisicao.get('host')}${requisicao.originalUrl}`);
   }
   proximo();
+});
+
+/**
+ * FECHA A PORTA DOS FUNDOS DA ORIGEM.
+ *
+ * O backend responde no domínio (`api.sancocore.com.br`, atrás do
+ * Cloudflare) E no endereço direto da hospedagem
+ * (`pay--…--….code.run`). O direto contorna o Cloudflare inteiro — WAF,
+ * limite de borda, e qualquer proteção que a borda aplique. Medido em
+ * 14/09/2026 no ciclo de segurança da Estação 6: os dois respondiam
+ * igual (`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
+ *
+ * A defesa é um segredo compartilhado que só o Cloudflare injeta: uma
+ * Transform Rule na zona acrescenta `X-Origin-Verify: <segredo>` a toda
+ * requisição que passa por ele. Quem chega pela origem direta não tem o
+ * header, e é recusado aqui.
+ *
+ * FAIL-OPEN QUANDO NÃO CONFIGURADO, de propósito: sem
+ * `ORIGIN_VERIFY_SECRET` no ambiente, este middleware não faz nada. É o
+ * que permite subir o código ANTES de a Transform Rule existir sem
+ * derrubar nada — a ordem segura é: (1) sobe este código, dormente; (2)
+ * cria a Transform Rule no Cloudflare; (3) só então grava o segredo no
+ * Northflank, que liga a checagem. Inverter a ordem (segredo antes da
+ * regra) recusaria todo o tráfego legítimo. Ver RUNBOOK §origem.
+ *
+ * Comparação em tempo constante pela mesma primitiva das outras
+ * credenciais. O 404 (não 403) é escolha: para quem sonda a origem
+ * direta, "não existe" entrega menos que "existe e é protegido".
+ */
+app.use((requisicao, resposta, proximo) => {
+  const segredo = process.env.ORIGIN_VERIFY_SECRET;
+  if (!segredo) return proximo();
+  if (compararSeguro(requisicao.get('x-origin-verify'), segredo)) return proximo();
+  return resposta.status(404).json({ erro: 'Rota não encontrada.' });
 });
 
 app.use(helmet());

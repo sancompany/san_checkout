@@ -18,6 +18,7 @@ const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SUITES = [
   'src/utils/validadores.js',        // tetos de campo e comparação de credencial
+  'src/utils/alvoDeRede.js',         // https + host público para alvo de saída (anti-SSRF)
   'src/utils/assinaturaWebhook.js',  // assinatura HMAC do webhook de saída
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado

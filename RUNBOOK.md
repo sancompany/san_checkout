@@ -104,6 +104,31 @@ Valor com `$`, crase, contrabarra ou aspas vai **codificado em base64**;
 o painel trata `$` como substituição de shell e trunca o resto
 (`docs/erros/2026-09-11-cifrao-em-variavel-de-ambiente.md`).
 
+## 5.1 Fechar a origem direta (X-Origin-Verify)
+
+O backend responde no domínio (`api.sancocore.com.br`, atrás do
+Cloudflare) e no endereço direto da hospedagem
+(`pay--…--….code.run`). O direto contorna o Cloudflare. A defesa é um
+segredo que só o Cloudflare injeta; o backend recusa quem não o traz
+(`server.js`, middleware `X-Origin-Verify`; fail-open sem a env).
+
+**Ligar — nesta ordem, e ela importa (inverter derruba a produção):**
+
+1. O código que checa já está no ar (subiu dormente, sem a env).
+2. Cloudflare → zona `sancocore.com.br` → Rules → Transform Rules →
+   **Modify Request Header** → regra em `Hostname eq api.sancocore.com.br`:
+   **Set static** `X-Origin-Verify` = `<segredo>`. Salvar e conferir que
+   o domínio segue respondendo 200.
+3. Só então gravar `ORIGIN_VERIFY_SECRET=<mesmo segredo>` no Northflank
+   (secret do serviço). No redeploy, a checagem liga.
+
+**Conferir:** `curl https://api.sancocore.com.br/api/saude` → 200; o
+mesmo GET no `…code.run` → 404. Segredo com caractere de shell vai em
+base64 (§5).
+
+**Desligar (reverter):** apagar `ORIGIN_VERIFY_SECRET` no Northflank
+volta ao fail-open na hora; depois, apagar a Transform Rule.
+
 ## 6. Restaurar o banco
 
 **NÃO HÁ BACKUP AUTOMÁTICO.** O plano gratuito do Supabase não faz, e
