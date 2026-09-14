@@ -17,8 +17,11 @@
  * responsabilidade de cada contratante, que já recebe o evento de
  * estorno no próprio webhook_url (ver webhookController.js).
  *
- * ⚠️ NUNCA TESTADO AO VIVO nesta v2 — nem o estorno simples nem a
- * peça nova.
+ * Estorno de Pix exercitado ao vivo em 14/09/2026 (Estação 6, sandbox,
+ * contratante de teste): cobrança paga → POST /estornar com a
+ * X-Checkout-Key → status local 'estornado', 200. O ramo assíncrono do
+ * boleto (estorno_solicitado → PAYMENT_REFUNDED) ainda não foi exercitado
+ * ao vivo.
  */
 
 import { buscarContratantePorChave } from '../services/pedidoService.js';

@@ -48,10 +48,30 @@ no Northflank, em São Paulo, com CDN na frente e outra topologia de
 proxy. A Estação 6 verifica **o que está no ar** — e o que vai ficar no
 ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
 
-### 🔴 Estação 6 · o teste de ponta a ponta de seis passos
-Exigido pela skill `checkout`, **antes** do ciclo de segurança: pedido de
-valor baixo, pagar por Pix, conferir webhook, reabrir a página de status,
-conciliar, estornar. Nunca foi feito, e é o **próximo item da fila**.
+### 🟢 Estação 6 · ponta a ponta de seis passos (Pix) — FEITO 14/09
+Os seis passos rodaram ao vivo no sandbox contra o `testemaster`, com
+`ped_completo` (R$9,50; `ped_teste` de R$1 é recusado pelo piso de R$5
+da Asaas — ver a entrada própria):
+
+1. resolve pelo pull (`taxa` calculada);
+2. Pix pago pelo dono → `RECEIVED`;
+3. webhook processado (auditoria 9→10; cobrança → `confirmado`);
+4. status público reaberto → `confirmado`, R$11,08;
+5. conciliação autenticada (`X-Checkout-Key`) → `confirmado`, taxas batem;
+6. estorno → `estornado`, 200 (primeira vez ao vivo; `refundController.js`).
+
+Negativos conferidos ao vivo: chave inválida → 401; chave certa +
+contratante trocado na URL → 403 (IDOR).
+
+**Assinatura, 14/09:** a criação da sessão funciona ponta a ponta —
+`POST /assinatura/testemaster/plano_anual` (R$10) devolve o `checkoutUrl`
+do pop-up. Os endpoints de ciclo (`consultar/cancelar/pausar/retomar-assinatura`)
+respondem certo na auth (401 sem chave) e no 404 (sem assinatura ativa).
+**Falta a metade paga:** completar o cartão no pop-up para nascer a linha
+em `assinaturas` e então exercitar pausar/retomar/cancelar contra uma
+assinatura viva — precisa de navegador + cartão de teste, assistido pelo
+dono, e será retestado pela própria MostrAí na Estação 6 dela. O ramo
+assíncrono do estorno de boleto também não foi exercitado.
 
 O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
 
@@ -74,15 +94,9 @@ O passo do estorno se faz como na vida real — a autorização parte do
 lojista de teste, com a `X-Checkout-Key` dele, porque é assim que estorno
 acontece aqui (`docs/funcional.md` §8).
 
-**Passo 1 feito em 13/09**, e ele já pagou o próprio custo: os três links
-resolvem pelo modelo pull, e o `ped_sem_valor` revelou dois furos de
-tela comprável sem valor cobrável — corrigidos, mergeados e **conferidos
-em produção no mesmo dia**: `GET /pedido/testemaster/ped_sem_valor`
-devolve `taxa: null`
+O `ped_sem_valor` revelou, em 13/09, dois furos de tela comprável sem
+valor cobrável — corrigidos e conferidos
 (`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
-
-Passos 2 a 6 pendentes: pagar o Pix no sandbox (é o dono quem paga),
-conferir o webhook, reabrir o status, conciliar e estornar.
 
 ---
 
@@ -131,6 +145,32 @@ clicar — mesma classe do bug de total que a RN-03 tratou, mas vindo da
 Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
 abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
 `API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
+
+Mesma classe, achado no ciclo de assinatura (14/09): `telefoneValido`
+aceita número de dígito repetido (`11999999999`), e a Asaas recusa no
+cartão/assinatura com "phoneNumber inválido" (número realista passa). O
+checkout aceita entrada que a Asaas depois rejeita — recusar cedo, com
+mensagem própria, fecha os dois casos.
+
+### Prontidão operacional · decisão de 14/09 — adiar, com dois gates
+O dono decidiu tratar os itens de prontidão que exigem correção/criação
+como atualizações futuras, enquanto o checkout fica em sandbox. Aceito
+para o estado atual (um operador, sem dinheiro real). **Mas dois não são
+"quando der" — travam a troca para produção:**
+
+- **Alerta externo de queda + fila de webhook pausada (Lei 8, item 2) —
+  PRIORIDADE.** O motor move dinheiro de terceiro; a Asaas pausa a fila
+  após 15 falhas seguidas (§2.3) e isso só aparece por ausência. Sem um
+  alerta que chega no celular, uma queda ou fila pausada em produção só
+  é descoberta quando um contratante reclama = dinheiro não capturado.
+  Deve existir **antes** do primeiro dinheiro real.
+- **Backup com restauração testada (Lei 6) — já é gate.** Exceção §3 do
+  `CONSTRAINTS.md` amarra isto exatamente ao primeiro pagamento real.
+
+Barato e vale fazer junto na troca: **alerta de orçamento** em cada conta
+paga (10 min, evita fatura surpresa). Genuinamente adiáveis enquanto for
+um operador: desempenho p75 no celular e o teste da segunda pessoa com o
+RUNBOOK.
 
 ### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
 Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
@@ -189,11 +229,17 @@ custo: plano pago do Supabase dá compute dedicado. **Não fazer nada é
 aceitável** enquanto o painel é de um operador só; vira problema se o
 volume crescer.
 
-### Lei 8 · erro em produção visível
-Não existe alerta de serviço fora do ar nem detecção de fila pausada da
-Asaas. **Parcialmente resolvido em 12/09:** o log de produção do Render e
-do Northflank passou a ser legível por conector, o que era metade do
-problema. Falta o alerta ativo.
+### Lei 8 · erro em produção visível — metade de código feita 14/09
+Log de produção legível por conector desde 12/09. **A metade de código do
+alerta de queda entrou em 14/09:** `/api/saude` devolve `503`/`degradado`
+quando o banco não responde (antes era `200 ok` mesmo caído), então um
+monitor de uptime consegue alertar por HTTP. **Falta a ligação de painel
+(uma vez):** apontar o monitor externo que já bate na rota para notificar
+no não-2xx, com destino no celular do dono (`RUNBOOK.md §2`) — some da
+lista quando essa ligação existir e for conferida. A **detecção de fila
+do webhook pausada** continua adiada por decisão anterior: com tráfego
+zero, qualquer limiar de silêncio é alarme falso (`docs/proximas-versoes.md`);
+revisar quando houver volume real.
 
 ### Lei 8 · eventos que chegam e só entram no log
 `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e os
