@@ -48,10 +48,24 @@ Resposta boa: `{"status":"ok","chaveAsaasConfigurada":true,`
 `testes` (`npm test`) e `Segurança` (dependências, segredos, análise
 estática).
 
-**Depois de todo deploy que mexa em JS ou CSS: Ctrl+Shift+R.** O
-Cloudflare Pages sobrepõe o `Cache-Control` dos assets com TTL de 4h —
-pendência aberta em `docs/pendencias.md`. Já fez correção certa parecer
-errada três vezes no mesmo dia.
+**O cache de 4h em JS e CSS acabou** — o dono trocou o Browser Cache TTL
+da zona em 14/09/2026. Medido no mesmo dia:
+
+```
+GET /js/admin.js   cache-control: public, max-age=1, must-revalidate
+GET /css/admin.css cache-control: public, max-age=1, must-revalidate
+```
+
+Eram `max-age=14400`. Com 1 segundo, o navegador revalida praticamente
+sempre e recebe `304` pelo ETag — o arquivo novo chega na primeira
+recarga, e o Ctrl+Shift+R deixou de ser obrigatório depois de deploy.
+
+> **O que ainda é sobreposição.** O nosso `_headers` pede `max-age=0` e a
+> zona entrega `1`: quem decide continua sendo o painel, não o
+> repositório. Isso é irrelevante hoje e passa a importar no dia em que
+> algum asset precisar de cache longo (arquivo com hash no nome, por
+> exemplo) — aí o alvo é *Respect Existing Headers*, e a decisão volta
+> para o `_headers`.
 
 ## 4. Reverter
 
