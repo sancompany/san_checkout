@@ -185,10 +185,17 @@ function formatarDataHoraAsaas(data) {
  * `criarAssinaturaPixAutomatico` no fim deste arquivo (a nota antiga
  * aqui dizia que Pix Automático tinha sido descartado — isso mudou).
  *
- * ⚠️ NÃO IMPLEMENTADO NESTA PARTE: o webhook de cobranças de ciclos
- * seguintes (`tipo: "assinatura"`, eventos criada/cobranca_confirmada/
- * cobranca_falhou/cancelada, ver INTEGRACAO.md 6.1) ainda não existe
- * no `webhookController.js` — só a criação da assinatura em si.
+ * O webhook de cobranças de ciclos seguintes (`tipo: "assinatura"`,
+ * eventos criada/cobranca_confirmada/cobranca_falhou/cancelada, ver
+ * API.md 4.3 e 7.4) JÁ EXISTE no `webhookController.js` — é o caminho
+ * `registrarCicloAssinatura`, que usa a cobrança mais recente daquela
+ * subscription como molde. Esta nota dizia o contrário até 14/09/2026,
+ * quando o código já a desmentia havia várias entregas.
+ *
+ * ⚠️ A primeira cobrança sai SEMPRE no ato (`nextDueDate` = agora, mais
+ * abaixo). Não existe carência, mês grátis nem desconto em assinatura —
+ * o que isso impede, e como modelar "pague 3, leve 4" mesmo assim, está
+ * em API.md 7.5. Mexer aqui é caminho de dinheiro: pede autorização.
  */
 export async function criarCheckoutAssinatura(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;

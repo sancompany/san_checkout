@@ -27,7 +27,7 @@
 | 4.6 — Compatibilidade | 10 — Compatibilidade e versionamento |
 | 5 — Moeda | 5.1 — Convenções gerais |
 | 6 — Combinado manualmente | 2 — Antes de começar |
-| 6.1 — Assinatura | 4.2 (plano), 7 (detalhes), 5.5 (cancelar/pausar) |
+| 6.1 — Assinatura | 4.2 (plano), 7 (detalhes), 5.5 (cancelar/pausar), 7.5 (o que ela não faz) |
 | 6.2 — Pix Automático | 7.2 — Assinatura por Pix Automático |
 | 7 — Estorno | 5.4 — Estornar |
 | 8 — Taxas e split | 8 — Taxas, split e o valor cobrado |
@@ -38,3 +38,13 @@ sistema (seção 9), métodos de pagamento lado a lado (6), ciclo de vida
 da assinatura (7.4), quando o webhook **não** chega (4.3.5), limites de
 requisição e códigos de erro padronizados (5.1), a conciliação de
 assinatura (5.3, rota nova) e a referência rápida de todas as rotas (12).
+
+Acrescentado em 14/09/2026: **os dois endereços do checkout** (2.1 — a
+tela de pagamento e a API são domínios diferentes) e **o que a
+assinatura não faz** (7.5 — carência, mês grátis, desconto e mudança de
+plano em assinante existente; leia antes de prometer benefício a
+assinante).
+
+> **Este arquivo não descreve comportamento.** Ele só redireciona. Se
+> uma linha daqui discordar do `API.md`, o `API.md` está certo e esta
+> tabela está velha — corrija-a na mesma tarefa.
