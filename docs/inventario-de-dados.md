@@ -66,6 +66,7 @@ senha em texto puro não é guardada em lugar nenhum — o que fica no Render
 | Render | Logs da aplicação | Ver seção 7 |
 | Cloudflare Pages | Nada — front estático | Não recebe dado pessoal em repouso |
 | Contratante | Payload do webhook e da conciliação | Não inclui endereço; inclui `pedidoId`, valores e, em assinatura, `documento` |
+| Contratante (navegação de volta) | Só o `pedidoId`, na URL de retorno | Desde 15/09/2026. O `returnUrl` leva o comprador de volta à loja depois de pagar e carrega **um** parâmetro, `pedido` — um id que o próprio contratante gerou e já conhece. Nenhum dado pessoal, e nenhum status de pagamento, viaja por aí (`API.md` §3.1). O destino é sempre origem do próprio contratante, conferida no servidor |
 
 ## 6. Retenção e exclusão
 

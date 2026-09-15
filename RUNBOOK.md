@@ -165,6 +165,38 @@ não feita: exigiria ligar o proxy em `api.sancocore.com.br` com SSL
 Full (strict) e conferir o certificado da origem. Está em
 `docs/pendencias.md` como opção, não como pendência bloqueante.
 
+## 5.2 Autorizar um domínio de retorno do contratante
+
+O contratante pede "meu comprador não volta para a minha loja depois de
+pagar". O checkout honra `?returnUrl=` no link, mas **só** para origens
+do próprio contratante — senão qualquer um montaria um link com o nosso
+domínio na frente levando para o site dele (open redirect). Ver
+`API.md` §3.1 e `src/utils/retornoSeguro.js`.
+
+A origem do `apiBaseUrl` dele **já vale**, sem cadastrar nada. Só
+precisa de cadastro quando a vitrine está em outra origem — o caso
+comum: API em `api.loja.com.br`, loja em `www.loja.com.br`.
+
+No painel → Contratantes → editar → campo **retornoDominios**: uma
+origem `https` por linha. O backend normaliza cada uma para origem
+(`https://www.loja.com.br`) e **descarta o caminho** — cadastrar
+`https://www.loja.com.br/obrigado` autoriza a origem inteira, não só
+aquela página. Até 10 entradas.
+
+Recusado com "precisa ser uma lista (até 10) de origens https com host
+público" = alguma linha é `http://`, host interno, ou não é URL.
+
+Conferir sem abrir o navegador — a resposta traz o destino aprovado ou
+`null`:
+
+```
+curl -sS "https://api.sancocore.com.br/api/checkout/pedido/{contratante}/{pedido}?returnUrl=https%3A%2F%2Fwww.loja.com.br%2Fok"
+```
+
+**Nunca cadastrar um domínio que não seja do contratante.** É a única
+forma de este mecanismo virar open redirect, e a fronteira de confiança
+aqui é exatamente a mesma do `webhook_url`.
+
 ## 6. Restaurar o banco
 
 **NÃO HÁ BACKUP AUTOMÁTICO.** O plano gratuito do Supabase não faz, e

@@ -59,6 +59,22 @@ com esforço alto, e é da sessão por inteiro.
   respondível; e-mail confirmado; alerta de queda com metade de código
   feita (`/api/saude` 503 na queda).
 
+Feito em 15/09:
+- **`returnUrl` honrado, e fechado no nascimento** (`retornoSeguro.js`,
+  migration 0005, `API.md` §3.1, RN-15/16). O checkout ignorava o
+  parâmetro: quem pagava ficava parado na tela de sucesso sem caminho de
+  volta. Honrá-lo sem allowlist teria aberto *open redirect* — por isso
+  o destino só vale se a **origem** dele pertencer ao contratante, a
+  comparação é por `URL.origin` (nunca por texto) e quem decide é o
+  servidor, que nunca manda a lista para o navegador.
+  Atacado ao vivo por HTTP: 22 cargas, **com dois controles positivos**
+  — a primeira rodada deu "recusou" em tudo, inclusive no que devia
+  passar, porque a chave estava falsa e toda resposta era 502. Sem os
+  controles, teria passado por prova.
+  A suíte de regressão (`tests/retorno-nao-vira-open-redirect.js`) foi
+  verificada por **sabotagem deliberada**: pega tanto o front decidindo
+  sozinho quanto o controller ecoando o parâmetro cru.
+
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
 backup+restauração (amarrado ao 1º pagamento real, §3); e os demais itens
@@ -71,7 +87,8 @@ dele em paralelo.
 - Dados: `supabase/migrations/` · variáveis `.env.example`
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
-- Testes: `tests/` — `npm test` roda as 13 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
+- Testes: `tests/` — `npm test` roda as 16 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade
