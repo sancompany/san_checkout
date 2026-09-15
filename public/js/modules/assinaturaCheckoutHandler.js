@@ -13,6 +13,7 @@
  */
 
 import { post, get } from '../utils/api.js';
+import { ativarRetorno } from './retorno.js';
 
 const INTERVALO_POLLING_MS = 3000;
 const INTERVALO_VERIFICA_POPUP_MS = 500;
@@ -81,6 +82,7 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
         botao.textContent = 'Assinatura Ativa ✓';
         botao.classList.add('btn-success');
         mostrarToast('Assinatura criada com sucesso!', 'sucesso');
+        ativarRetorno();
       },
       aoFalhar: (status) => {
         mostrarToast(`Não foi possível concluir a assinatura (${status}).`, 'erro');

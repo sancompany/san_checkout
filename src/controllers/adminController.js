@@ -29,6 +29,7 @@ import { responderErro } from '../utils/erros.js';
 import { criarSubconta as criarSubcontaNaAsaas, tipoDaContaMae } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
 import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
+import { origemPermitida } from '../utils/retornoSeguro.js';
 import {
   listarEventosWebhook,
   contarEventosNaoTratados,
@@ -112,7 +113,7 @@ export async function listarContratantes(requisicao, resposta) {
 
   let consulta = supabase
     .from('contratantes')
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, criado_em, arquivado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, criado_em, arquivado_em')
     .order('criado_em', { ascending: false });
 
   if (!incluirArquivados) consulta = consulta.is('arquivado_em', null);
@@ -206,6 +207,35 @@ function urlValida(valor) {
   return alvoDeRedeSeguro(valor);
 }
 
+/**
+ * Origens autorizadas a receber o comprador de volta depois do
+ * pagamento (`?returnUrl=` no link do checkout).
+ *
+ * Cada entrada passa pelo MESMO guarda dos alvos de saída (https, host
+ * público) e é guardada já normalizada como origem — `URL.origin`, sem
+ * caminho, sem query, sem barra final. Normalizar na escrita é o que
+ * mantém a comparação da hora do pagamento sendo um `Set.has` exato, em
+ * vez de casamento de texto, que é onde mora toda a família de bypasses
+ * de open redirect (ver `utils/retornoSeguro.js`).
+ *
+ * undefined = não mexe (PATCH). Lista inválida = null (rejeita). Lista
+ * vazia é legítima: significa "só a origem da api_base_url".
+ */
+function retornoDominiosValidos(valor) {
+  if (valor === undefined) return undefined;
+  if (valor === null) return [];
+  if (!Array.isArray(valor)) return null;
+  if (valor.length > 10) return null;
+
+  const origens = [];
+  for (const entrada of valor) {
+    const origem = origemPermitida(entrada);
+    if (!origem) return null;
+    if (!origens.includes(origem)) origens.push(origem);
+  }
+  return origens;
+}
+
 /** undefined = não mexe (usado no PATCH); lista inválida = null (rejeita). */
 function metodosHabilitadosValidos(valor) {
   if (valor === undefined) return undefined;
@@ -214,7 +244,7 @@ function metodosHabilitadosValidos(valor) {
 }
 
 export async function criarContratante(requisicao, resposta) {
-  const { id, nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados } = requisicao.body ?? {};
+  const { id, nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados, retornoDominios } = requisicao.body ?? {};
 
   if (!slugValido(id)) {
     return resposta.status(400).json({ erro: 'id inválido — use um slug (letras minúsculas, números, hífen), ex.: "trimundi9".' });
@@ -225,6 +255,9 @@ export async function criarContratante(requisicao, resposta) {
 
   const metodos = metodosHabilitados === undefined ? METODOS_VALIDOS : metodosHabilitadosValidos(metodosHabilitados);
   if (metodos === null) return resposta.status(400).json({ erro: `metodosHabilitados precisa ser uma lista não-vazia com valores entre: ${METODOS_VALIDOS.join(', ')}.` });
+
+  const dominios = retornoDominios === undefined ? [] : retornoDominiosValidos(retornoDominios);
+  if (dominios === null) return resposta.status(400).json({ erro: 'retornoDominios precisa ser uma lista (até 10) de origens https com host público — ex.: "https://www.loja.com.br".' });
 
   // Sempre gerada aqui, nunca aceita do body — evita chave fraca ou
   // reaproveitada entre projetos.
@@ -239,9 +272,10 @@ export async function criarContratante(requisicao, resposta) {
       api_key: apiKey,
       webhook_url: webhookUrl || null,
       wallet_id: walletId || null,
-      metodos_habilitados: metodos
+      metodos_habilitados: metodos,
+      retorno_dominios: dominios
     })
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, criado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, criado_em')
     .single();
 
   if (error) {
@@ -263,7 +297,7 @@ export async function criarContratante(requisicao, resposta) {
  */
 export async function atualizarContratante(requisicao, resposta) {
   const { id } = requisicao.params;
-  const { nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados } = requisicao.body ?? {};
+  const { nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados, retornoDominios } = requisicao.body ?? {};
 
   if (apiBaseUrl !== undefined && !urlValida(apiBaseUrl)) {
     return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser https e de host público (a chave do contratante viaja nesse endereço).' });
@@ -273,12 +307,16 @@ export async function atualizarContratante(requisicao, resposta) {
   const metodos = metodosHabilitadosValidos(metodosHabilitados);
   if (metodos === null) return resposta.status(400).json({ erro: `metodosHabilitados precisa ser uma lista não-vazia com valores entre: ${METODOS_VALIDOS.join(', ')}.` });
 
+  const dominios = retornoDominiosValidos(retornoDominios);
+  if (dominios === null) return resposta.status(400).json({ erro: 'retornoDominios precisa ser uma lista (até 10) de origens https com host público — ex.: "https://www.loja.com.br".' });
+
   const patch = {};
   if (nome !== undefined) patch.nome = nome;
   if (apiBaseUrl !== undefined) patch.api_base_url = apiBaseUrl;
   if (webhookUrl !== undefined) patch.webhook_url = webhookUrl || null;
   if (walletId !== undefined) patch.wallet_id = walletId || null;
   if (metodos !== undefined) patch.metodos_habilitados = metodos;
+  if (dominios !== undefined) patch.retorno_dominios = dominios;
 
   if (Object.keys(patch).length === 0) return resposta.status(400).json({ erro: 'Nenhum campo pra atualizar.' });
 
@@ -286,7 +324,7 @@ export async function atualizarContratante(requisicao, resposta) {
     .from('contratantes')
     .update(patch)
     .eq('id', id)
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, criado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, criado_em')
     .maybeSingle();
 
   if (error) return responderErro(resposta, error, 'admin.atualizarContratante');

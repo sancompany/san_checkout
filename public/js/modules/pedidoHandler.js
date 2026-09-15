@@ -6,6 +6,7 @@
  */
 
 import { get } from '../utils/api.js';
+import { definirRetorno, montarRetornoNaQuery } from './retorno.js';
 
 let contextoResolvido = null;
 
@@ -37,8 +38,16 @@ export async function resolverContexto() {
   if (!ids) return null;
 
   try {
-    const resultado = await get(`/api/checkout/pedido/${ids.contratanteId}/${ids.pedidoId}`);
+    /* `returnUrl` sobe CRU, como veio da barra de endereço, e quem
+       decide é o backend: ele responde `retornoUrl` já aprovada, ou
+       null. O front nunca recebe a lista de origens do contratante —
+       validar aqui seria validar do lado que o atacante controla, e
+       publicaria a lista de quebra (ver src/utils/retornoSeguro.js). */
+    const resultado = await get(
+      `/api/checkout/pedido/${ids.contratanteId}/${ids.pedidoId}${montarRetornoNaQuery()}`
+    );
     contextoResolvido = { ...ids, ...resultado };
+    definirRetorno(resultado.retornoUrl, resultado.contratanteNome);
     aplicarNoResumo(resultado);
     return ids;
   } catch (erro) {

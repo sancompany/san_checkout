@@ -35,6 +35,7 @@ Versão do contrato: **1** · Atualizado em 14/09/2026
 2. [Antes de começar — o que é combinado manualmente](#2-antes-de-começar--o-que-é-combinado-manualmente)
    - 2.1 [Os dois endereços do checkout](#21-os-dois-endereços-do-checkout)
 3. [Links de checkout](#3-links-de-checkout)
+   - 3.1 [`returnUrl` — o caminho de volta para a sua loja](#31-returnurl--o-caminho-de-volta-para-a-sua-loja)
 4. [O que o SEU projeto precisa expor](#4-o-que-o-seu-projeto-precisa-expor)
    - 4.1 [`GET /pedido/{pedidoId}`](#41-get-pedidopedidoid)
    - 4.2 [`GET /plano/{planoId}`](#42-get-planoplanoid)
@@ -179,8 +180,73 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
 | `renovar` | não | `1` = o assinante está trocando o cartão de uma assinatura existente (seção 7.3) |
+| `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
+
+### 3.1 `returnUrl` — o caminho de volta para a sua loja
+
+Sem ele, quem paga fica parado na tela do checkout: a mensagem vira
+"Pagamento confirmado! Obrigado.", e acabou. Não há botão nem link de
+volta, e a pessoa fecha a aba na mão. Com ele, assim que o pagamento
+**confirma**, aparece um botão "Voltar para {sua loja}" e uma contagem
+de 10 s que leva sozinha — cancelável com qualquer clique, tecla ou
+rolagem, para não arrancar da tela quem ainda está lendo.
+
+```
+https://{CHECKOUT}/index.html?c=minha-loja&pedido=a1b2c3&returnUrl=https%3A%2F%2Fwww.minhaloja.com.br%2Fobrigado
+```
+
+**Codifique o valor** (`encodeURIComponent`), senão a query dele se
+mistura com a do checkout.
+
+#### O destino precisa ser seu — e isso é conferido
+
+O checkout só honra `returnUrl` se a **origem** (`esquema + host +
+porta`) estiver autorizada para o seu `contratante_id`:
+
+- a origem do seu `apiBaseUrl` vale **sempre**, sem cadastrar nada;
+- outras origens — o caso comum é a API em `api.sualoja.com.br` e a
+  vitrine em `www.sualoja.com.br` — entram em `retornoDominios`, que o
+  operador cadastra no painel (peça, informando as origens).
+
+Fora disso, o `returnUrl` é **ignorado em silêncio**: o pagamento
+acontece normalmente, só não aparece o botão de voltar. Nenhum erro é
+devolvido, e nenhuma cobrança deixa de funcionar por causa disso.
+
+> **Por que tanto rigor num parâmetro de navegação.** `returnUrl` vem
+> da barra de endereço — de quem montou o link, que não é
+> necessariamente você. Um checkout que redireciona para qualquer
+> endereço vira *open redirect*: o golpista manda
+> `…checkout.sancocore.com.br/?c=…&returnUrl=https://golpe.tld`, a
+> vítima (e o filtro de spam dela) lê o domínio confiável na frente, e
+> quem recebe é outro site. A comparação é por origem exata, com o
+> caminho ignorado — cadastrar `https://sualoja.com.br/obrigado`
+> autoriza a origem `https://sualoja.com.br` inteira.
+
+#### O que vem junto na volta — e o que NUNCA vem
+
+O checkout acrescenta **um** parâmetro ao seu destino:
+
+| Parâmetro | Valor |
+|---|---|
+| `pedido` | o mesmo `pedidoId` que você pôs no link |
+
+Se a sua `returnUrl` já usar um parâmetro chamado `pedido`, ele é
+sobrescrito. Assinatura não recebe nada (não há `pedidoId`).
+
+> ### ⛔ A volta NÃO prova que foi pago
+>
+> O checkout **nunca** manda status na URL de retorno, de propósito, e
+> você não deve inventar um. Query string é escrita por qualquer um:
+> quem digitar `?pedido=X&status=pago` na barra de endereço receberia o
+> produto sem pagar.
+>
+> Quem diz que foi pago continua sendo, e só: o **webhook assinado**
+> (seção 4.3) ou a **consulta autenticada** (seção 5.2). Trate a volta
+> como "o comprador voltou", nunca como "o comprador pagou" — a página
+> de destino deve consultar o seu próprio banco, alimentado pelo
+> webhook.
 
 ### ⚠️ O id precisa ser imprevisível — isto é obrigatório
 
@@ -1296,6 +1362,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Rodar a conciliação diária sobre o que ainda está pendente — seção 5.2 para pedido avulso, **seção 5.3 para assinatura**
 - [ ] Mandar `pagador.documento` e `pagador.telefone` para poupar digitação
 - [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
+- [ ] (Opcional) mandar `returnUrl` no link e combinar as origens com quem administra o checkout — e **nunca** tratar a volta como prova de pagamento (seção 3.1)
 - [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
 - [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar=1`
 
@@ -1305,6 +1372,7 @@ melhoria nossa derrube a sua integração:
 - [ ] URL base da sua API
 - [ ] `X-Checkout-Key`
 - [ ] `webhook_url`
+- [ ] Origens de retorno (`retornoDominios`), se a sua vitrine não estiver na mesma origem da sua API
 - [ ] `wallet_id` (se for usar split)
 - [ ] Métodos habilitados (e liberação do Pix Automático na Asaas, se for usar)
 
@@ -1316,6 +1384,7 @@ melhoria nossa derrube a sua integração:
 4. Chamar `/api/checkout/cobranca/...` — o status confere?
 5. Estornar — o webhook de estorno chega?
 6. (Recorrência) assinar, e depois pausar, retomar e cancelar.
+7. (Se usa `returnUrl`) pagar e conferir que o botão de volta aparece e leva para a sua página — e que a sua página de destino **não** dá o pedido por pago sem consultar o próprio banco.
 
 ---
 

@@ -62,6 +62,10 @@ desenho: não há papéis, não há permissões, não há multiusuário.
    permanente de status**.
 7. Paga no app do banco. A página de status atualiza sozinha quando a
    Asaas confirma.
+8. **Volta para a loja.** Se o contratante mandou `returnUrl` no link,
+   a confirmação traz um botão "Voltar para {loja}" e uma contagem de
+   10 s que leva sozinha. Sem `returnUrl`, a pessoa fica na tela de
+   sucesso — que é onde ela ficava sempre, antes de 15/09/2026.
 
 *Isso é tudo que essa pessoa precisa fazer?* Sim, para o caminho
 principal. O resto são jornadas secundárias.
@@ -198,6 +202,8 @@ escrito, nunca omitido.
 | Reserva expirada | `expiraEm` no passado: o cronômetro zera e a tela diz "Esta reserva expirou." |
 | Resultado Pix | QR, copia-e-cola e link permanente de status |
 | Resultado boleto | linha digitável, link do PDF e link permanente |
+| **Pago, com volta** | só depois de CONFIRMADO, e só se o `returnUrl` do link tiver sido aprovado: botão "Voltar para {loja}" + contagem de 10 s, cancelável por qualquer clique, tecla ou rolagem |
+| Pago, sem volta | `returnUrl` ausente ou de origem não autorizada: a tela fica na confirmação, sem botão — o `returnUrl` é ignorado em silêncio, e nada da cobrança muda |
 | Sem permissão | **não se aplica** — a tela é pública por natureza; quem não deveria estar ali não tem o par contratante+pedido |
 | Lista longa demais | **não se aplica** — o resumo mostra os itens do pedido, e pedido com muitos itens rola na própria lista, sem paginação |
 
@@ -353,6 +359,27 @@ checkout buscar recurso interno da nuvem (SSRF). *Violada:* o cadastro
 ou a edição recusa com "precisa ser https e de host público". *Quem vê:*
 o operador, no painel. Introduzida no ciclo de segurança da Estação 6
 (14/09/2026).
+
+**RN-15 · O `returnUrl` só é honrado se a origem dele pertencer ao
+contratante daquele checkout.** A origem do `apiBaseUrl` vale sempre; as
+demais entram em `retornoDominios`, cadastradas no painel. A comparação
+é por origem exata (`esquema + host + porta`), feita **no servidor** —
+o navegador recebe o destino já aprovado e nunca a lista. *Violada:* o
+checkout viraria *open redirect* — um link com o nosso domínio na
+frente levando a vítima para o site do golpista, com o cadeado certo e a
+reputação do domínio que cobra dinheiro por trás. *Quem vê:* ninguém,
+no caminho normal: destino fora da lista é ignorado em silêncio e o
+pagamento segue igual. Protegida por
+`tests/retorno-nao-vira-open-redirect.js`, que falha se alguém voltar a
+decidir o destino no front ou ecoar o parâmetro cru. Introduzida em
+15/09/2026, na Estação 6.
+
+**RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
+URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
+proibidos por construção. *Violada:* o integrador leria `?status=pago`
+da barra de endereço e entregaria o produto para quem digitasse isso à
+mão. *Quem vê:* ninguém — quem confirma pagamento é o webhook assinado
+ou a consulta autenticada, e o `API.md` §3.1 diz isso em destaque.
 
 ---
 

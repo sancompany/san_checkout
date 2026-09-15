@@ -87,6 +87,21 @@ select:focus { border-color: var(--border-focus); box-shadow: var(--shadow-input
 }
 .link-permanente a:hover { text-decoration: underline; }
 
+/* Caminho de volta para a loja, depois do pagamento confirmado. Só
+   aparece quando o contratante mandou um `returnUrl` que o backend
+   aprovou (src/utils/retornoSeguro.js) — sem ele, quem pagava ficava
+   parado na tela de sucesso sem próximo passo. */
+.retorno-bloco {
+  margin-top: 24px; padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.retorno-bloco .btn-primary { width: 100%; text-align: center; text-decoration: none; }
+.retorno-aviso {
+  font-size: 0.75rem; color: var(--text-muted);
+  min-height: 1em; /* reserva a linha: cancelar a contagem não pode fazer a tela pular */
+}
+
 /* Saída alternativa quando o cartão é recusado — troca "sem saída" por
    "pague de outro jeito agora". */
 .saida-alternativa {

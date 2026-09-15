@@ -18,6 +18,7 @@
  */
 
 import { post, get } from '../utils/api.js';
+import { ativarRetorno } from './retorno.js';
 
 const INTERVALO_POLLING_MS = 4000;
 let idIntervalo = null;
@@ -62,6 +63,7 @@ export async function assinarComPix({ contratanteId, planoId, dadosPagador, most
           mostrarToast('Assinatura autorizada! A primeira cobrança foi paga.', 'sucesso');
           document.querySelector('#assinatura-pix-resultado .status-text').textContent =
             'Assinatura ativa — os próximos pagamentos serão automáticos.';
+          ativarRetorno();
         }
       } catch {
         // falha pontual de rede não derruba o polling

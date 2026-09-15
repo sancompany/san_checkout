@@ -359,6 +359,22 @@
         </div>
       </form>
 
+      <!--
+        Caminho de volta para a loja. Fica escondido até o pagamento
+        CONFIRMAR — quem preenche o href é public/js/modules/retorno.js,
+        com o destino que o BACKEND aprovou (nunca um valor lido da
+        barra de endereço; ver src/utils/retornoSeguro.js).
+
+        `rel="noopener noreferrer"`: o destino é o site do contratante,
+        que já sabe o id do pedido — mas não há motivo para entregar a
+        URL do checkout no Referer, nem para dar `window.opener` a uma
+        página de fora.
+      -->
+      <div class="retorno-bloco hidden" id="retorno-bloco">
+        <a class="btn-primary" id="retorno-link" href="#" rel="noopener noreferrer">Voltar para a loja</a>
+        <span class="retorno-aviso" id="retorno-aviso"></span>
+      </div>
+
       <label class="checkbox-row checkbox-row--termos" for="accept-terms-checkbox">
         <input type="checkbox" id="accept-terms-checkbox" />
         <span>Li e concordo com os <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>.</span>
