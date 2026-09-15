@@ -759,6 +759,7 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     cidade: modelo.cidade,
     uf: modelo.uf,
     cidadeIbge: modelo.cidade_ibge,
+    ciclo: modelo.ciclo,
     valorCheio: payment.value ?? modelo.valor_cheio,
     valorComDesconto: payment.value ?? modelo.valor_com_desconto,
     valorCobrado: payment.value ?? modelo.valor_cobrado

@@ -397,6 +397,18 @@ cegas. *Quem vê:* o contratante. **Assinatura não entra nesta regra:** o
 evento `criada` não carrega `chargeId` por contrato, a chave dele é
 `planoId` + `documento`.
 
+**RN-19 · Assinatura pausada continua cancelável.** O
+`/cancelar-assinatura` aceita `ativa` e `pausada`; `cancelada` fica de
+fora (a busca devolve a mais recente, e numa renovação aceitar
+`cancelada` poderia mascarar uma ativa mais nova). *Violada:* pausar
+vira porta de mão única — quem pausa nunca mais cancela, e a assinatura
+fica `INACTIVE` na Asaas sem saída pela API, só pelo painel na mão.
+*Quem vê:* o contratante, que recebe 404 ao tentar cancelar o que ele
+mesmo pausou. Medido ao vivo em 15/09/2026 — a mesma linha respondia 200
+no pausar e 404 no cancelar. Protegida por
+`tests/assinatura-pausada-continua-cancelavel.js`, que cobra a regra
+("tudo que pausar alcança, cancelar alcança"), não o literal.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

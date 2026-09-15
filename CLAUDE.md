@@ -119,6 +119,21 @@ Feito em 15/09:
   Revisão em 3 ciclos; `proximaCobranca` continua `null`, declarado
   (`docs/pendencias.md`) — sem fonte confiável hoje.
   `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`.
+- **Auditoria do caminho da assinatura inteiro**, exercitado ao vivo
+  contra o sandbox (criação, conciliação, cancelar/pausar/retomar, auth
+  e validação nas 4 rotas, polling do pop-up). Achou **mais um furo
+  real, provado ao vivo**: `/cancelar-assinatura` buscava só `ativa`,
+  então uma assinatura **pausada não podia mais ser cancelada** — a
+  MESMA linha respondia 200 no `/pausar-assinatura` e 404 no
+  `/cancelar-assinatura`. Pausar era porta de mão única: a assinatura
+  ficava INACTIVE na Asaas sem saída pela API. Corrigido, com
+  `tests/assinatura-pausada-continua-cancelavel.js` travando a regra
+  ("tudo que pausar alcança, cancelar alcança") em vez do literal.
+  Também: o ciclo 2+ nascia sem `ciclo`, perdendo o dado na
+  cobrança-modelo a partir do 3º — agora copiado.
+  Declarado, não corrigido: o grupo de eventos de assinatura da Asaas
+  não é tratado nem documentado no §2.2, então assinatura encerrada
+  fora do nosso fluxo nunca chega até nós (`docs/pendencias.md`).
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
@@ -133,7 +148,7 @@ dele em paralelo.
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
-- Testes: `tests/` — `npm test` roda as 17 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 18 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

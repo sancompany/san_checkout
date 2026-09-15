@@ -131,6 +131,12 @@ export async function registrarCicloAssinatura(dados) {
     valor_cobrado: dados.valorCobrado,
     metodo_pagamento: 'assinatura',
     parcelas: 1,
+    // Copiado da cobrança-modelo junto com o resto. Sem isto, a linha do
+    // 2º ciclo nasce com `ciclo` nulo e — como `buscarCobrancaPorSubscriptionId`
+    // devolve sempre a MAIS RECENTE como modelo — o dado se perde a
+    // partir do 3º. Ninguém lê `modelo.ciclo` hoje; a coluna é que
+    // deixaria de valer para conferência e para quem ler depois.
+    ciclo: dados.ciclo ?? null,
     status: 'pendente'
   });
 

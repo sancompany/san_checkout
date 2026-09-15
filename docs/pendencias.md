@@ -102,6 +102,25 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟠 Assinatura encerrada pela Asaas nunca chega até nós
+Achado em 15/09/2026, auditando o caminho da assinatura. O
+`CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos
+marcados no painel da Asaas — e **não menciona o grupo de assinaturas em
+lugar nenhum**, nem como marcado nem como desmarcado de propósito. O
+`classificarEvento` também não tem ramo para ele.
+
+Consequência: se uma assinatura for encerrada fora do nosso fluxo —
+cancelada direto no painel da Asaas, ou encerrada por ela depois de
+falhas seguidas de cobrança — a nossa tabela `assinaturas` continua
+dizendo `ativa` para sempre, e o `consultar-assinatura` segue
+respondendo `ativa` ao contratante, que segue liberando acesso para
+quem não paga mais.
+
+**Fechar exige medir primeiro**, não adivinhar: conferir no painel quais
+eventos de assinatura a Asaas oferece, marcar, e ler o payload real de
+um antes de escrever tratamento — foi escrever contra payload imaginado
+que causou os dois bugs de 15/09.
+
 ### 🟡 `assinaturas.proxima_cobranca` não tem fonte confiável
 Achado em 15/09/2026, no mesmo ciclo que corrigiu `ciclo` (ver
 `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).

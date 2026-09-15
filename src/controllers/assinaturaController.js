@@ -40,9 +40,27 @@ export async function cancelarAssinatura(requisicao, resposta) {
     const contratante = await buscarContratantePorChave(chave);
     if (!contratante) return resposta.status(401).json({ erro: 'Chave inválida.' });
 
-    const assinatura = await buscarAssinaturaAtiva(contratante.id, planoId, documento);
+    /* `pausada` entra aqui, e a falta dela era um beco sem saída.
+
+       Até 15/09/2026 esta busca usava o default `['ativa']`, e o efeito
+       foi medido ao vivo: uma assinatura pausada respondia 200 no
+       `/pausar-assinatura` (que aceita `pausada`) e 404 no
+       `/cancelar-assinatura` — a MESMA linha, o mesmo plano, o mesmo
+       documento. Quem pausasse não conseguia mais cancelar por lugar
+       nenhum: a assinatura ficava INACTIVE na Asaas para sempre, e o
+       único caminho era mexer no painel na mão.
+
+       `cancelada` fica de FORA de propósito. Seria simpático responder
+       `jaEstava: true` como pausar/retomar fazem, mas esta busca ordena
+       por `criado_em` desc e pega uma só: numa renovação (duas linhas
+       para o mesmo plano+documento), aceitar `cancelada` faria a antiga
+       recém-encerrada mascarar uma ativa mais nova em algum caso de
+       ordem. 404 aqui é honesto — não há assinatura cancelável. */
+    const assinatura = await buscarAssinaturaAtiva(
+      contratante.id, planoId, documento, ['ativa', 'pausada']
+    );
     if (!assinatura) {
-      return resposta.status(404).json({ erro: 'Nenhuma assinatura ativa encontrada pra esse plano/documento.' });
+      return resposta.status(404).json({ erro: 'Nenhuma assinatura ativa ou pausada encontrada pra esse plano/documento.' });
     }
 
     await cancelarAssinaturaNaAsaas(assinatura.id);
