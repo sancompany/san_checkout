@@ -127,6 +127,55 @@ curl.exe http://localhost:3001/api/saude
 ```
 Esperado: `supabaseRespondendo: true`, `chaveAsaasConfigurada: true`.
 
+## 8. `returnUrl` — o caminho de volta, e o open redirect
+
+O checkout honra `?returnUrl=` **só** se a origem do destino pertencer
+ao contratante (`API.md` §3.1). Quem decide é o backend, então dá para
+conferir a regra inteira sem abrir o navegador: a resposta de
+`GET /api/checkout/pedido/…` traz `retornoUrl` com o destino aprovado,
+ou `null`.
+
+**Comece pelos dois controles positivos.** Sem eles o teste não vale
+nada — se a requisição estiver falhando por outro motivo (chave errada,
+pedido inexistente), TODA carga volta `null` e o resultado parece
+defesa perfeita quando é só erro. Aconteceu em 15/09/2026.
+
+```powershell
+# DEVE aceitar — a origem do apiBaseUrl vale sempre, sem cadastrar nada
+curl.exe "http://localhost:3001/api/checkout/pedido/teste1/ped_completo?returnUrl=http%3A%2F%2Flocalhost%3A4000%2Fobrigado"
+```
+
+> Em ambiente local a origem `http://localhost` é recusada de propósito
+> (`alvoDeRedeSeguro` exige https e host público), então este controle
+> só devolve destino contra um contratante de `apiBaseUrl` https real —
+> use o `testemaster`, cujo worker é público.
+
+Com o contratante certo, o esperado é `retornoUrl` terminando em
+`?pedido=<id>` — **e nada além disso**. Se aparecer `status`, `pago` ou
+equivalente, é furo: a barra de endereço passaria a "provar" pagamento.
+
+**Agora as cargas hostis.** Todas devem devolver `retornoUrl: null`:
+
+| carga | o que ela fura se passar |
+|---|---|
+| `https://golpe.tld` | nada — é o caso óbvio |
+| `https://SEU-DOMINIO.com.br.golpe.tld` | comparação com `endsWith` |
+| `https://golpe.tld/?v=https://SEU-DOMINIO.com.br` | comparação com `includes` |
+| `https://golpe.tld#https://SEU-DOMINIO.com.br` | comparação com `includes` |
+| `https://SEU-DOMINIO.com.br@golpe.tld` | leitura humana da barra de endereço |
+| `https:/\golpe.tld` | `split('/')[2]` |
+| `javascript:alert(1)` | qualquer coisa que não cheque o esquema |
+| `http://SEU-DOMINIO.com.br` | a chave viajando em claro |
+| `https://169.254.169.254/` | metadata da nuvem (SSRF) |
+
+Codifique o valor antes de pôr na query (`encodeURIComponent`).
+
+**O que NÃO é furo:** CR/LF no meio do valor voltar aceito, desde que
+saneado. O parser do WHATWG remove esses bytes e devolvemos o objeto
+re-serializado — confira que a saída não tem CR, LF nem TAB e que a
+origem continua sendo a autorizada. Isso está coberto por
+`npm test` (`retornoSeguro` e `retorno-nao-vira-open-redirect`).
+
 ---
 
 **Erros que você PODE ignorar nesses testes:** qualquer aviso de

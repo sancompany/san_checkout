@@ -1433,6 +1433,10 @@ diretamente:
 | **Assinatura** | Um assinante específico ligado a um plano |
 | **Cobrança** (`chargeId`) | Uma cobrança individual na Asaas. Uma assinatura gera várias ao longo do tempo |
 | **Split** | Divisão automática do dinheiro, via `wallet_id` |
+| **Origem** | `esquema + host + porta` de uma URL (`https://loja.com.br`) — a unidade em que o `returnUrl` é autorizado (seção 3.1) |
+
+**Parâmetros do link de checkout:** `c` · `pedido` · `assinatura` ·
+`renovar` · `returnUrl` (seções 3 e 3.1). Qualquer outro é ignorado.
 | **Pull** | O modelo em que o checkout liga de volta para você em vez de guardar seus dados |
 
 ---

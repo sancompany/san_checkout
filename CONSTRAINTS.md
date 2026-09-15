@@ -715,6 +715,50 @@ que o comprador não digitou e mandaria isso para a Asaas.
 
 ---
 
+## 2.8 `returnUrl`: o destino é do contratante, e não há exceção (Lei 4)
+
+Escrito em 15/09/2026, quando o `returnUrl` passou a ser honrado.
+
+O checkout leva o comprador de volta à loja depois do pagamento. O
+destino vem de `?returnUrl=` na barra de endereço — ou seja, **de quem
+montou o link**, que não é necessariamente o contratante. Um checkout
+que obedece esse parâmetro sem conferir vira *open redirect*: link com
+o nosso domínio e o nosso cadeado na frente, destino escolhido pelo
+atacante. O prejuízo não seria o servidor; seria a reputação do domínio
+que cobra dinheiro, e ela não se recupera com um deploy.
+
+**O que fica proibido, permanentemente:**
+
+- **Decidir o destino no navegador.** O front manda o valor cru e
+  obedece o que o servidor aprovar. Validar do lado que o atacante
+  controla não é validar.
+- **Mandar a lista de origens para o front.** Publicaria os domínios
+  cadastrados de um contratante para qualquer um que abrisse um link de
+  checkout. O servidor responde sobre a URL que o chamador já tem — não
+  entrega o catálogo.
+- **Comparar destino por texto.** `startsWith`, `endsWith`, `includes` e
+  `split('/')` têm bypass conhecido para cada um
+  (`src/utils/retornoSeguro.js` lista os cinco). A comparação é por
+  `URL.origin` do WHATWG, e o valor devolvido é re-serializado a partir
+  do objeto parseado — nunca o texto de entrada.
+- **Mandar status de pagamento na URL de volta.** Query string é escrita
+  por qualquer um; `?status=pago` faria um integrador desavisado
+  entregar produto sem pagamento. Só o `pedidoId` viaja.
+- **Cadastrar em `retorno_dominios` um domínio que não seja do
+  contratante.** É a única forma de o mecanismo virar open redirect, e
+  é decisão de operador, não de código. Mesma fronteira de confiança do
+  `webhook_url` (`RUNBOOK.md` §5.2).
+
+As três primeiras são cobradas por
+`tests/retorno-nao-vira-open-redirect.js`, que lê o texto-fonte — a
+forma de esta defesa morrer não é um bypass novo de parser, é alguém
+"simplificando" daqui a três meses.
+
+**O que isto NÃO protege, e é aceito:** contratante que cadastre um
+domínio hostil redireciona para lá. Não é open redirect — é parte
+confiável abusando do próprio cadastro, feito pelo dono no painel, de
+alguém que já recebe dinheiro e já tem `api_key`.
+
 ## 3. Exceções de conformidade registradas
 
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
