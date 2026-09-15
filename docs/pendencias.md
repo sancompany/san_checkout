@@ -102,6 +102,20 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟢 `returnUrl` não chega à página de status
+O caminho de volta foi construído em 15/09/2026 e vale na tela do
+checkout: quem paga ali ganha o botão "Voltar para {loja}" e a contagem
+de 10 s (RN-15, `API.md` §3.1). A página `status.html` — onde aterrissa
+quem fechou a aba e voltou pelo link permanente — **não** carrega o
+`returnUrl`, então quem confirma o pagamento por lá continua sem o botão.
+
+Não é furo de segurança nem regressão: é o mesmo estado de antes, e a
+regra do destino já é do servidor. É trabalho de UX que ficou de fora
+para manter a mudança revisável — fechar exige levar o parâmetro no link
+permanente (`app.js`, `mostrarLinkPermanente`) e repetir a fiação em
+`status.js`, contra a rota `/api/checkout/status`, que hoje nem recebe o
+parâmetro.
+
 ### 🟡 Dois lugares menores ainda leem valor com `?? 0`
 `public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
 linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço

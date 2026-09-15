@@ -248,6 +248,31 @@ if (process.argv[1]?.endsWith('retornoSeguro.js')) {
     'id do pedido é escapado, não injeta parâmetro nem fragmento'
   );
 
+  /* ---------- bytes de controle: normalizar é sanear ----------
+     CR, LF e TAB no meio da URL são a tentativa de contrabandear
+     cabeçalho ou partir o host. O parser do WHATWG os REMOVE ao
+     parsear, e o que devolvemos é o objeto re-serializado — então o
+     valor saneado é o que sai, e nenhum byte de controle sobrevive.
+     É por isso que devolver `url.toString()` e não o texto de entrada
+     é regra, e não estilo. */
+  const CR = String.fromCharCode(13);
+  const LF = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+
+  const semControle = (valor) => {
+    const saida = retornoSeguro(valor, LOJA);
+    if (saida === null) return true; // recusado também serve
+    return ![...saida].some((c) => c === CR || c === LF || c === TAB);
+  };
+
+  assert.ok(semControle(`https://www.loja.com.br/${CR}${LF}Set-Cookie: x=1`), 'CRLF no caminho não sobrevive');
+  assert.ok(semControle(`https://www.loja.com.br/a${CR}b`), 'CR isolado não sobrevive');
+  assert.ok(semControle(`https://www.loja.com.br/a${LF}b`), 'LF isolado não sobrevive');
+
+  // Host partido por CRLF vira outro host — e outro host é outra origem.
+  assert.ok(!ok(`https://www.loja.com.br${CR}${LF}.golpe.tld/`), 'CRLF partindo o host recusa');
+  assert.ok(!ok(`https://www.loja.com.br${TAB}@golpe.tld/`), 'TAB antes de userinfo recusa');
+
   /* ---------- a saída é sempre re-serializada ---------- */
   assert.equal(
     retornoSeguro('https://WWW.LOJA.COM.BR:443/a/../b', LOJA),
@@ -264,5 +289,5 @@ if (process.argv[1]?.endsWith('retornoSeguro.js')) {
     'caminho da api_base_url some, sobra a origem'
   );
 
-  console.log('retornoSeguro: 41 checagens OK');
+  console.log('retornoSeguro: 46 checagens OK');
 }
