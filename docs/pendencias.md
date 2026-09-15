@@ -102,30 +102,6 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟠 `assinatura_pix` tem o mesmo furo de vínculo, e não foi corrigido
-O bug de 15/09 (`docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`)
-foi corrigido para assinatura por **cartão**, ancorando o vínculo em
-`payment.checkoutSession`. O Pix Automático tem a mesma classe de furo,
-por outro caminho: `processarAutorizacaoPixAutomatico` chama
-`upsertAssinatura`, mas **nunca grava `asaas_subscription_id` nem
-`charge_id` na cobrança**. A linha de `assinatura_pix` nasce por
-`registrarCobrancaPendentePopup` com `charge_id` nulo, e a autorização
-faz o papel de sessão.
-
-Consequência esperada, se algum dia rodar: os ciclos seguintes de uma
-assinatura por Pix Automático caem no mesmo `registrarNovoCicloAssinatura`
-sem cobrança-modelo, e são descartados em silêncio.
-
-**Não foi corrigido de propósito.** O Pix Automático está indisponível
-nesta conta (`CONSTRAINTS.md` §2.4) e o método nem entra no default de
-`metodos_habilitados` — não há como exercitar o payload real, e foi
-exatamente "escrever contra o payload que eu imaginei" que causou o bug
-original. Corrigir às cegas repetiria o erro com outro nome.
-
-**Gatilho para fechar:** o dia em que a Asaas liberar Pix Automático na
-conta. Aí se mede o payload real e se ancora o vínculo nele, como foi
-feito no cartão.
-
 ### 🟢 `returnUrl` não chega à página de status
 O caminho de volta foi construído em 15/09/2026 e vale na tela do
 checkout: quem paga ali ganha o botão "Voltar para {loja}" e a contagem

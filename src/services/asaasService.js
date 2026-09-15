@@ -45,12 +45,45 @@ function resumirRespostaAsaas(corpo) {
   return texto === '{}' || texto === 'null' ? '(corpo vazio)' : texto;
 }
 
+/**
+ * Teto para TODA chamada à Asaas.
+ *
+ * Sem ele, `fetch` espera para sempre: a Asaas fora do ar (ou uma
+ * conexão que morre sem RST) pendurava indefinidamente o pedido do
+ * comprador esperando o QR Code, a consulta de status, o estorno e o
+ * cancelamento de assinatura — todos passam por aqui. O navegador
+ * desistia sozinho e o servidor continuava segurando o socket.
+ *
+ * 20 s: acima do pior tempo real observado em sandbox e bem abaixo da
+ * paciência de quem está com o cartão na mão. Falhar rápido e dizer o
+ * que houve é melhor que pendurar — quem chama já trata o erro.
+ */
+const TIMEOUT_ASAAS_MS = 20_000;
+
 async function chamarAsaas(caminho, opcoes = {}) {
   const { baseUrl, headers } = getConfigAsaas();
-  const resposta = await fetch(`${baseUrl}${caminho}`, {
-    ...opcoes,
-    headers: { ...headers, ...(opcoes.headers ?? {}) }
-  });
+
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ASAAS_MS);
+
+  let resposta;
+  try {
+    resposta = await fetch(`${baseUrl}${caminho}`, {
+      ...opcoes,
+      headers: { ...headers, ...(opcoes.headers ?? {}) },
+      signal: controlador.signal
+    });
+  } catch (erroRede) {
+    // `AbortError` vira mensagem de gente, não rastro de biblioteca.
+    if (erroRede.name === 'AbortError') {
+      const erro = new Error('A Asaas não respondeu a tempo. Tente de novo em instantes.');
+      erro.status = 504;
+      throw erro;
+    }
+    throw erroRede;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const corpo = await resposta.json().catch(() => ({}));
 

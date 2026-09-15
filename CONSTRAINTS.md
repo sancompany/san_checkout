@@ -715,6 +715,42 @@ que o comprador não digitou e mandaria isso para a Asaas.
 
 ---
 
+## 2.7.1 Teto de tempo em toda chamada de saída (Lei 7)
+
+Escrito em 15/09/2026, na varredura que se seguiu ao bug do vínculo.
+
+`fetch` **não tem timeout padrão**: sem `AbortController`, ele espera
+para sempre. Dois dos quatro pontos de saída do servidor estavam assim,
+e os dois no caminho do dinheiro:
+
+| onde | teto | por que esse número |
+|---|---|---|
+| `pedidoService` — pull do contratante | 45 s | tolera cold start de hospedagem gratuita, com o comprador esperando a tela |
+| `asaasService.chamarAsaas` | 20 s | acima do pior tempo de sandbox, abaixo da paciência de quem está com o cartão na mão |
+| `webhookController.tentarNotificar` | 10 s | a Asaas espera o nosso `200`, e lentidão conta como falha |
+
+Os números são diferentes de propósito. Igualar os três perderia o
+motivo de cada um.
+
+**O pior dos dois casos era o aviso ao contratante**, e não por ser
+lento: o receptor aguardava o processamento antes de responder à Asaas,
+e a cadeia terminava no endpoint de um terceiro. Um contratante que
+aceita a conexão e não responde segurava a nossa resposta — e resposta
+lenta conta como falha para a Asaas, que **pausa a fila da conta inteira
+depois de 15 seguidas** (§2.3). Um parceiro quebrado derrubaria a
+confirmação de pagamento de **todos os outros**.
+
+Por isso o aviso ao contratante hoje **não é aguardado** pelo fluxo que
+responde à Asaas, pelo mesmo motivo que a auditoria nunca foi — e ali o
+risco era menor, porque auditoria é escrita no nosso banco, não chamada
+de rede a terceiro. A garantia de entrega não mudou: a fila de retry
+sempre foi em memória e o `API.md` §4.3.6 documenta isso.
+
+Cobrado por `tests/nenhuma-chamada-de-saida-sem-teto.js`, que varre o
+`src/` inteiro — a regra já era conhecida (o `pedidoService` fazia
+certo desde o começo) e mesmo assim não foi aplicada nos outros dois.
+Memória não escala.
+
 ## 2.8 `returnUrl`: o destino é do contratante, e não há exceção (Lei 4)
 
 Escrito em 15/09/2026, quando o `returnUrl` passou a ser honrado.

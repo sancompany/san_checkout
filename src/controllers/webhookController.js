@@ -27,14 +27,26 @@
  * de errar: `CHECKOUT_CANCELED` com um L e
  * `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` com dois.
  *
- * ⚠️ O que continua NÃO confirmado é o FORMATO do payload em tráfego
- * real, não os nomes — esta v2 nunca recebeu um webhook de verdade. O
- * formato de PAYMENT_* já foi confirmado numa versão anterior deste
- * projeto; o de CHECKOUT_* não: onde exatamente vem o `payment.id`
- * criado (dentro de `checkout.payment` ou solto em `payment`? o código
- * tenta os dois caminhos), e se `payment.cycle` e `payment.nextDueDate`
- * chegam junto. É por isso que o console.log lá embaixo existe: para
- * ler o primeiro evento real de cada tipo e corrigir se precisar.
+ * ✅ O FORMATO foi medido em tráfego real, e o que estava escrito aqui
+ * estava errado. Até 15/09/2026 este cabeçalho dizia que o `payment.id`
+ * criado viria "dentro de `checkout.payment` ou solto em `payment`" e
+ * que o código "tenta os dois caminhos". Não vem em nenhum dos dois: o
+ * `CHECKOUT_PAID` **não carrega pagamento**. O id chega no
+ * `PAYMENT_CONFIRMED` seguinte (279 ms depois, na medição), com
+ * `payment.checkoutSession` apontando de volta para a sessão — e é por
+ * ele que o vínculo é fechado hoje
+ * (`vincularPrimeiraCobrancaDoCheckout`).
+ *
+ * Custou caro descobrir por medição em vez de por leitura:
+ * `docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`.
+ * Toda cobrança de pop-up ficava `confirmado` com `charge_id` nulo, e
+ * com ela morriam o cancelamento de assinatura e todos os ciclos
+ * seguintes, sem erro em lugar nenhum.
+ *
+ * O que SEGUE não confirmado, e por isso continua opcional no código:
+ * se `payment.cycle` e `payment.nextDueDate` vêm no `PAYMENT_CONFIRMED`
+ * de uma assinatura. Os dois entram como `?? null` — a assinatura
+ * existe sem eles, e inventar valor seria pior que deixar nulo.
  *
  * ⚠️ Nome certo no código não basta: o evento só chega se estiver
  * MARCADO no painel da Asaas. A seleção é individual, não existe
@@ -93,7 +105,26 @@ const dependenciasPadrao = {
   upsertAssinatura,
   atualizarStatusAssinatura,
   cancelarAssinaturaNaAsaas,
-  notificar: (url, dados, segredo) => notificarContratante(url, dados, segredo),
+  /* SEM `await`, pelo MESMO motivo que a auditoria em
+     `criarReceptorWebhook` não é aguardada — e aqui o risco é maior, não
+     menor: aquilo é uma escrita no nosso banco, isto é uma chamada de
+     rede ao endereço de um TERCEIRO.
+
+     O receptor faz `await processarWebhook(...)` antes de responder, e
+     esta cadeia termina no endpoint do contratante. Aguardando, um
+     parceiro lento (ou pendurado) atrasa a nossa resposta à Asaas — que
+     conta resposta lenta como falha e PAUSA A FILA da conta depois de 15
+     seguidas (CONSTRAINTS.md §2.3). Ou seja: um contratante mal-
+     comportado derrubaria a confirmação de pagamento de TODOS os outros.
+
+     A durabilidade não muda com isto: a fila de retry já é em memória e
+     o `API.md` §4.3.6 documenta exatamente essa garantia ("se o processo
+     reiniciar entre as tentativas, aquela notificação se perde"). O que
+     muda é de quem é o problema quando o parceiro está fora do ar. */
+  notificar: (url, dados, segredo) => {
+    notificarContratante(url, dados, segredo)
+      .catch((erro) => console.error('[webhook/asaas] notificação falhou fora do fluxo:', erro.message));
+  },
   // A auditoria entra na costura junto com o resto: sem isso, o
   // autoteste não conseguiria afirmar que a linha é gravada — e uma
   // auditoria que ninguém testa é a que descobre estar quebrada no dia
@@ -860,6 +891,19 @@ export function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
 // no Supabase + worker) só quando isso passar a ser um problema real.
 const ATRASOS_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000];
 
+/**
+ * Teto por tentativa. O endereço do outro lado é de terceiro e pode
+ * simplesmente não responder nunca — sem `AbortController` este `fetch`
+ * fica pendurado para sempre, segurando um socket e a cadeia inteira que
+ * o aguarda. O `pedidoService` já trata o alvo do contratante assim (45 s
+ * no pull); aqui faltava, e o caminho é ainda mais sensível.
+ *
+ * 10 s, e não 45: o pull acontece com o comprador esperando a tela e
+ * tolera cold start; isto acontece com a Asaas esperando um `200`, e
+ * lentidão aqui é contada como falha por ela.
+ */
+const TIMEOUT_NOTIFICACAO_MS = 10_000;
+
 async function tentarNotificar(url, dados, segredo) {
   // O corpo é serializado UMA vez e a MESMA string é assinada e
   // enviada. Serializar de novo pra mandar poderia gerar bytes
@@ -868,15 +912,25 @@ async function tentarNotificar(url, dados, segredo) {
   const corpoCru = JSON.stringify(dados);
   const timestamp = Math.floor(Date.now() / 1000);
 
-  const resposta = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Checkout-Signature': assinarPayload(corpoCru, segredo, timestamp),
-      'X-Checkout-Timestamp': String(timestamp)
-    },
-    body: corpoCru
-  });
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_NOTIFICACAO_MS);
+
+  let resposta;
+  try {
+    resposta = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Checkout-Signature': assinarPayload(corpoCru, segredo, timestamp),
+        'X-Checkout-Timestamp': String(timestamp)
+      },
+      body: corpoCru,
+      signal: controlador.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!resposta.ok) throw new Error(`contratante respondeu ${resposta.status}`);
 }
 
@@ -898,7 +952,19 @@ async function notificarContratante(url, dados, segredo, tentativa = 0) {
       return;
     }
     console.error(`[webhook/asaas] falha ao notificar ${url} (tentativa ${tentativa + 1}), nova tentativa em ${atraso / 1000}s:`, erro.message);
-    setTimeout(() => notificarContratante(url, dados, segredo, tentativa + 1), atraso);
+    /* `.unref()`: o timer não segura o processo vivo.
+ 
+       Sem ele, uma notificação falhando mantém o event loop ocupado por
+       até ~21 minutos (1 + 5 + 15), e um processo que deveria terminar
+       não termina — foi assim que o autoteste abaixo travou quando foi
+       escrito. Num servidor de verdade o efeito é o mesmo na hora do
+       desligamento: o container demora a morrer por causa de uma
+       tentativa best-effort.
+ 
+       Não se perde garantia nenhuma: o `API.md` §4.3.6 já documenta que
+       a fila de retry é em memória e que reiniciar o processo perde a
+       tentativa pendente. `.unref()` só deixa de fingir o contrário. */
+    setTimeout(() => notificarContratante(url, dados, segredo, tentativa + 1), atraso).unref();
   }
 }
 
@@ -912,6 +978,7 @@ async function notificarContratante(url, dados, segredo, tentativa = 0) {
    próximo passo, precisa de uma costura pra falsear o Supabase.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('webhookController.js')) {
+  const { readFileSync } = await import('node:fs');
   const { strict: assert } = await import('node:assert');
 
   // --- Guarda de token (segurança, regra 3 do checkout) ---
@@ -1400,6 +1467,52 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   }
   assert.ok(a.impresso.includes('PAYMENT_CONFIRMED'), 'mas o evento continua identificável no log');
   assert.ok(a.impresso.includes('customer.cpfCnpj'), 'e o CAMINHO da chave continua visível, sem o valor');
+
+  /* ================================================================
+     CONTRATANTE PENDURADO NÃO PODE PAUSAR A FILA DE TODO MUNDO
+
+     O receptor faz `await processarWebhook(...)` antes de responder
+     `200`, e essa cadeia chega ao endpoint do contratante. Se a
+     notificação for aguardada, um parceiro que aceita a conexão e nunca
+     responde segura a NOSSA resposta à Asaas — que conta lentidão como
+     falha e pausa a fila da conta inteira depois de 15 seguidas
+     (CONSTRAINTS.md §2.3). Um contratante quebrado derrubaria a
+     confirmação de pagamento de todos os outros.
+
+     Este teste sobe um servidor que faz exatamente isso: aceita e cala.
+     ================================================================ */
+  {
+    const http = await import('node:http');
+
+    const conexoesAbertas = [];
+    const servidorMudo = http.createServer((_req, _res) => {
+      // aceita e nunca responde — de propósito
+    });
+    servidorMudo.on('connection', (socket) => conexoesAbertas.push(socket));
+    await new Promise((resolve) => servidorMudo.listen(0, '127.0.0.1', resolve));
+    const enderecoMudo = `http://127.0.0.1:${servidorMudo.address().port}/hook`;
+
+    const comecou = Date.now();
+    await dependenciasPadrao.notificar(enderecoMudo, { versao: 1, teste: true }, 'segredo-de-teste');
+    const gastou = Date.now() - comecou;
+
+    assert.ok(
+      gastou < 500,
+      `a notificação segurou o fluxo por ${gastou}ms — um contratante pendurado atrasaria a resposta à Asaas, e 15 dessas pausam a fila de TODOS os contratantes`
+    );
+
+    // E o teto por tentativa existe: sem ele o socket ficaria pendurado
+    // para sempre, mesmo fora do fluxo.
+    const fonte = readFileSync(new URL(import.meta.url), 'utf8');
+    const corpoTentar = fonte.slice(fonte.indexOf('async function tentarNotificar('));
+    assert.ok(
+      corpoTentar.slice(0, corpoTentar.indexOf('\n}')).includes('signal: controlador.signal'),
+      'tentarNotificar precisa abortar por timeout — fetch sem signal fica pendurado para sempre no endereço de um terceiro'
+    );
+
+    for (const socket of conexoesAbertas) socket.destroy();
+    await new Promise((resolve) => servidorMudo.close(resolve));
+  }
 
   console.log('webhookController: caminho crítico OK');
 }

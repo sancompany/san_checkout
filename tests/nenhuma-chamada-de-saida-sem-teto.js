@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+/**
+ * tests/nenhuma-chamada-de-saida-sem-teto.js
+ *
+ * Toda chamada de rede que sai deste servidor precisa de um teto de
+ * tempo. `fetch` sem `signal` espera **para sempre** — não existe
+ * timeout padrão.
+ *
+ * ── Por que isto virou teste, em 15/09/2026 ─────────────────────────
+ *
+ * A varredura daquele dia achou dois `fetch` sem teto, os dois no
+ * caminho do dinheiro, os dois invisíveis até o dia em que o outro lado
+ * pendurar:
+ *
+ *   1. `webhookController.tentarNotificar` — a notificação para o
+ *      endpoint do CONTRATANTE. O receptor aguarda o processamento antes
+ *      de responder `200` à Asaas, e a Asaas conta resposta lenta como
+ *      falha: 15 seguidas e ela PAUSA A FILA da conta inteira
+ *      (`CONSTRAINTS.md` §2.3). Um contratante que aceita a conexão e
+ *      cala derrubaria a confirmação de pagamento de todos os outros.
+ *      Medido: com `await` e sem teto, o fluxo ficava preso
+ *      indefinidamente; com teto, 10 s; sem aguardar, ~0.
+ *
+ *   2. `asaasService.chamarAsaas` — por onde passa TODA chamada à
+ *      Asaas: gerar Pix, consultar status, estornar, cancelar
+ *      assinatura. A Asaas fora do ar pendurava o comprador esperando o
+ *      QR Code, com o navegador desistindo sozinho e o servidor
+ *      continuando a segurar o socket.
+ *
+ * `pedidoService` já fazia certo desde o começo (45 s no pull do
+ * contratante) — o que prova que a regra era conhecida e simplesmente
+ * não foi aplicada nos outros dois. Por isso a checagem é automática e
+ * varre o diretório inteiro: memória não escala, `grep` sim.
+ *
+ * A checagem é no TEXTO-FONTE, e grosseira de propósito — grosseira e
+ * presente vale mais que elegante e inexistente, mesmo argumento do
+ * guarda de `arquivado_em` em `pedidoService.js`.
+ */
+
+import { strict as assert } from 'node:assert';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, relative } from 'node:path';
+
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ORIGEM = join(RAIZ, 'src');
+
+/** Quantas linhas depois do `fetch(` ainda contam como "a mesma chamada". */
+const JANELA_DA_CHAMADA = 14;
+
+function arquivosJs(diretorio) {
+  const achados = [];
+  for (const nome of readdirSync(diretorio)) {
+    const caminho = join(diretorio, nome);
+    if (statSync(caminho).isDirectory()) achados.push(...arquivosJs(caminho));
+    else if (nome.endsWith('.js')) achados.push(caminho);
+  }
+  return achados;
+}
+
+let chamadas = 0;
+const semTeto = [];
+
+for (const caminho of arquivosJs(ORIGEM)) {
+  const linhas = readFileSync(caminho, 'utf8').split('\n');
+
+  linhas.forEach((linha, i) => {
+    // Só a CHAMADA de fetch, não a palavra em comentário ou em texto.
+    if (!/(?:await |= |return )fetch\(/.test(linha)) return;
+    if (/^\s*(\*|\/\/)/.test(linha)) return;
+
+    chamadas += 1;
+    const janela = linhas.slice(i, i + JANELA_DA_CHAMADA).join('\n');
+    if (!/signal\s*:/.test(janela)) {
+      semTeto.push(`${relative(RAIZ, caminho)}:${i + 1} — ${linha.trim()}`);
+    }
+  });
+}
+
+assert.ok(chamadas > 0, 'nenhuma chamada de saída encontrada — o teste está procurando no lugar errado');
+
+assert.deepEqual(
+  semTeto, [],
+  'chamada de saída sem teto de tempo (fetch sem `signal`): ela espera para sempre se o outro lado pendurar.\n' +
+  '        Use AbortController + setTimeout, como em pedidoService.js.\n' +
+  `        Sem teto:\n        - ${semTeto.join('\n        - ')}`
+);
+
+/* Os três tetos conhecidos continuam existindo e continuam diferentes —
+   cada um responde a uma pressão diferente, e igualar todos seria perder
+   o motivo de cada um. */
+const tetos = [
+  ['src/services/pedidoService.js', 'TIMEOUT_MS = 45000', 'pull do contratante: tolera cold start de hospedagem gratuita, com o comprador esperando a tela'],
+  ['src/controllers/webhookController.js', 'TIMEOUT_NOTIFICACAO_MS = 10_000', 'aviso ao contratante: a Asaas espera o nosso 200, e lentidão conta como falha'],
+  ['src/services/asaasService.js', 'TIMEOUT_ASAAS_MS = 20_000', 'chamada à Asaas: acima do pior tempo de sandbox, abaixo da paciência de quem está pagando']
+];
+
+for (const [arquivo, declaracao, porque] of tetos) {
+  const fonte = readFileSync(join(RAIZ, arquivo), 'utf8');
+  assert.ok(
+    fonte.includes(declaracao),
+    `${arquivo} deveria declarar \`${declaracao}\` — ${porque}`
+  );
+}
+
+console.log(`nenhuma-chamada-de-saida-sem-teto: ${chamadas} chamadas de saída, todas com teto — 3 tetos conferidos`);

@@ -235,6 +235,15 @@ sendo pagas e nenhuma confirmação chega.
    As duas rotas reconsultam a Asaas e corrigem o banco — enxergam
    pagamento que o webhook perdeu.
 
+**Contratante fora do ar não é mais problema nosso.** Desde 15/09/2026 o
+aviso ao contratante não segura a resposta à Asaas, e cada tentativa tem
+teto de 10 s. Antes, um parceiro que aceitasse a conexão e não
+respondesse segurava a nossa resposta — e 15 dessas pausariam a fila da
+conta inteira, atingindo todos os contratantes. No log aparece
+`falha ao notificar ... nova tentativa em 60s`; três tentativas e ele
+desiste, registrando. O pagamento segue confirmado do nosso lado: o que
+se perde é o aviso, e a conciliação (`API.md` §5.2) é o caminho de volta.
+
 **Perdi o acesso ao `/admin`:**
 - Barrado pelo Cloudflare Access → painel Zero Trust, com a conta
   Cloudflare. Não há dependência circular entre as duas camadas.

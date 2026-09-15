@@ -32,7 +32,8 @@ const SUITES = [
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
   'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login
   'tests/total-nao-confiavel-nao-vira-tela-compravel.js', // total que não se cobra não vira tela com botão
-  'tests/retorno-nao-vira-open-redirect.js' // returnUrl: quem decide o destino é o servidor, e continua sendo
+  'tests/retorno-nao-vira-open-redirect.js', // returnUrl: quem decide o destino é o servidor, e continua sendo
+  'tests/nenhuma-chamada-de-saida-sem-teto.js' // fetch sem signal espera para sempre: varre src/ inteiro
 ];
 
 /**
