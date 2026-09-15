@@ -134,6 +134,16 @@ Feito em 15/09:
   Declarado, não corrigido: o grupo de eventos de assinatura da Asaas
   não é tratado nem documentado no §2.2, então assinatura encerrada
   fora do nosso fluxo nunca chega até nós (`docs/pendencias.md`).
+- **Renovação abandonada mentia "cancelada" pro contratante.** Fechar o
+  pop-up de troca de cartão (`&renovar=1`) sem pagar deixa a assinatura
+  ANTIGA intocada e ativa — mas o código mandava `evento: 'cancelada'`
+  do mesmo jeito, e o payload só identifica por `planoId`+`documento`
+  (API.md §4.3.4): o contratante não tinha como diferenciar isso de um
+  cancelamento de verdade, e um contratante que confia nisso revogaria
+  acesso de quem ainda está pagando. Corrigido: renovação abandonada
+  não notifica nada (a antiga segue como está); assinatura NOVA
+  abandonada continua mandando `cancelada`, como já era documentado.
+  RN-20 (`docs/funcional.md`).
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;

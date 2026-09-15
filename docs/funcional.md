@@ -409,6 +409,20 @@ no pausar e 404 no cancelar. Protegida por
 `tests/assinatura-pausada-continua-cancelavel.js`, que cobra a regra
 ("tudo que pausar alcança, cancelar alcança"), não o literal.
 
+**RN-20 · Renovação abandonada nunca notifica `cancelada`.** Fechar o
+pop-up de troca de cartão (`&renovar=1`) sem pagar deixa a assinatura
+ANTIGA intocada, ainda ativa e sendo cobrada — `encerrarAssinaturaSubstituida`
+só roda depois que o pagamento novo confirma. *Violada:* o payload de
+assinatura é identificado só por `planoId`+`documento` (API.md §4.3.4),
+então o contratante não tem como distinguir "renovação abandonada" de
+"o cliente cancelou de verdade" — as duas produzem o mesmo evento, pro
+mesmo assinante. Um contratante que confia nisso pra liberar/revogar
+acesso revogaria de quem ainda está pagando. *Quem vê:* o cliente que
+tentou trocar o cartão e desistiu, barrado sem nunca ter cancelado nada.
+Achado em 15/09/2026, na auditoria do caminho da assinatura; assinatura
+NOVA (não-renovação) abandonada continua mandando `cancelada`, como
+documentado (API.md §4.3.5) — só a renovação muda.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

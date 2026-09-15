@@ -837,6 +837,20 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
 
   if (evento === 'CHECKOUT_CANCELED') {
     await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'cancelado');
+
+    /* RENOVAÇÃO abandonada não é a assinatura sendo cancelada — é o
+       CONTRÁRIO: a antiga (`substitui_assinatura_id`) continua ativa e
+       intocada, porque `encerrarAssinaturaSubstituida` só roda depois
+       de o pagamento novo confirmar (ver `amarrarAssinaturaACobranca`).
+       Mandar `cancelada` aqui mentiria pro contratante — o payload de
+       assinatura é identificado só por `planoId`+`documento` (API.md
+       §4.3.4), então ele não tem como distinguir "tentativa de
+       renovação abandonada" de "o cliente cancelou de verdade": as
+       duas produzem o MESMO evento, pro MESMO assinante. Um contratante
+       que confia nisso pra liberar/revogar acesso revogaria de quem
+       ainda está pagando. */
+    if (cobranca.substitui_assinatura_id) return;
+
     return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' }, deps);
   }
 
@@ -1412,6 +1426,42 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(
     deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY',
     'o ciclo certo, mesmo com o pagamento chegando ANTES do checkout — porque não depende da ordem dos dois'
+  );
+
+  /* ================================================================
+     RENOVAÇÃO ABANDONADA NÃO É A ASSINATURA SENDO CANCELADA
+
+     Achado em 15/09/2026, auditando o caminho inteiro: abandonar o
+     pop-up de troca de cartão (`&renovar=1`) mandava `evento: 'cancelada'`
+     pro contratante — mas a assinatura ANTIGA está intocada, ativa,
+     ainda sendo cobrada. O payload é identificado só por
+     planoId+documento (API.md §4.3.4): o contratante não tem como
+     distinguir isso de "o cliente cancelou de verdade", e revogaria
+     acesso de quem ainda paga.
+     ================================================================ */
+
+  // Caso 1: assinatura NOVA (não é renovação) abandonada no pop-up —
+  // continua mandando `cancelada`, como sempre (API.md §4.3.5).
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: null }
+  });
+  await processarWebhook({ event: 'CHECKOUT_CANCELED', checkout: { id: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('notificar').length, 1, 'assinatura nova abandonada: continua avisando cancelada');
+  assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cancelada');
+
+  // Caso 2: RENOVAÇÃO abandonada — a antiga continua ativa. NÃO avisa.
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga_intocada' }
+  });
+  await processarWebhook({ event: 'CHECKOUT_CANCELED', checkout: { id: 'chk_real' } }, deps);
+  assert.equal(
+    deps.chamou('notificar').length, 0,
+    'ESTE É O BUG: renovação abandonada não pode mandar cancelada — a assinatura antiga (sub_antiga_intocada) ' +
+    'continua ativa, e o contratante não tem como diferenciar isso de um cancelamento de verdade'
+  );
+  assert.deepEqual(
+    deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_real', 'cancelado'],
+    'mas o NOSSO registro da tentativa de renovação continua sendo marcado cancelado — só o aviso é que não sai'
   );
 
   /* --- Pix/boleto direto não passa por aqui ------------------------- */
