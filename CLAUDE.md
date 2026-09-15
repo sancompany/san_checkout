@@ -74,6 +74,20 @@ Feito em 15/09:
   A suíte de regressão (`tests/retorno-nao-vira-open-redirect.js`) foi
   verificada por **sabotagem deliberada**: pega tanto o front decidindo
   sozinho quanto o controller ecoando o parâmetro cru.
+- **Vínculo da assinatura corrigido** — o furo mais caro achado até
+  agora, e quem achou foi o MostrAí, com dinheiro real no sandbox. O
+  `CHECKOUT_PAID` não traz o id do pagamento: a cobrança ficava
+  `confirmado` com `charge_id` nulo, e com ela morriam o cancelamento e
+  **todo ciclo seguinte da assinatura**, em silêncio. Agora quem vincula
+  é o `PAYMENT_CONFIRMED`, por `payment.checkoutSession`, com guarda que
+  impede o ciclo 2 de sobrescrever a primeira cobrança —
+  `docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`.
+  `API.md` §4.3.6 também estava errado: dizia que a idempotência é
+  sempre por `chargeId`, sem ressalvar que o payload de assinatura não
+  tem esse campo. O integrador leu certo; o texto é que estava
+  incompleto. Revisão em 5 ciclos (`revisar` + `seguranca-san`); o furo
+  gêmeo do `assinatura_pix` foi **declarado, não corrigido às cegas**
+  (`docs/pendencias.md`).
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;

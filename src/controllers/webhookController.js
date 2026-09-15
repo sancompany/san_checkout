@@ -504,6 +504,27 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
 
   let cobranca = await deps.buscarCobranca(chargeId);
 
+  /* Primeira cobrança de um pop-up: o `charge_id` só existe AQUI.
+
+     A Asaas não manda o id do pagamento no `CHECKOUT_PAID` — medido em
+     15/09/2026 sobre os payloads crus de `webhook_eventos`, numa
+     assinatura real paga no sandbox. O evento de checkout traz
+     `checkout.*` e nada de `payment`. O id chega 279 ms depois, no
+     `PAYMENT_CONFIRMED`, junto de `payment.checkoutSession`, que aponta
+     de volta para a sessão.
+
+     Sem este trecho a cobrança ficava `confirmado` com `charge_id`
+     nulo para sempre, e a partir daí tudo que depende dele falhava em
+     silêncio: o vínculo da assinatura nunca era gravado, o
+     `/cancelar-assinatura` não achava o que cancelar, e cada ciclo
+     seguinte caía no `registrarNovoCicloAssinatura` sem cobrança-modelo
+     — o contratante nunca recebia `cobranca_confirmada`. */
+  let primeiraDoCheckout = false;
+  if (!cobranca) {
+    cobranca = await vincularPrimeiraCobrancaDoCheckout(payment, deps);
+    primeiraDoCheckout = Boolean(cobranca);
+  }
+
   if (!cobranca) {
     // Charge_id desconhecido: só vale a pena investigar se for um
     // ciclo novo de assinatura (a Asaas manda o id da assinatura de
@@ -514,11 +535,30 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
     if (!cobranca) return;
   }
 
-  if (cobranca.status === novoStatus) return; // já processado — evita duplicar notificação/e-mail
+  /* `primeiraDoCheckout` fura a guarda de idempotência de propósito: o
+     `CHECKOUT_PAID` já marcou esta linha como `confirmado` pelo
+     `asaas_checkout_id`, então o status daqui SEMPRE bate e a guarda
+     descartaria justamente o evento que traz o id que faltava. */
+  if (!primeiraDoCheckout && cobranca.status === novoStatus) return; // já processado — evita duplicar notificação/e-mail
 
   await deps.atualizarStatusCobranca(chargeId, novoStatus);
 
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
+    /* Aqui o trabalho ACABOU, e notificar seria um erro caro.
+
+       Quem anuncia a primeira cobrança de uma assinatura é o
+       `CHECKOUT_PAID`, com o evento `criada` (API.md §4.3.4) — que não
+       carrega `chargeId` por contrato, então nada ficou faltando nele.
+       Mandar `cobranca_confirmada` agora descreveria o MESMO ciclo com
+       um segundo evento, e o checklist do API.md §11 manda o contratante
+       creditar nos dois. Seria crédito em dobro, no caminho do dinheiro.
+
+       Só a CONFIRMAÇÃO é engolida, e a diferença importa: se um dia o
+       primeiro evento mapeado desta cobrança for outro (um estorno, um
+       vencimento), ele não tem par no `CHECKOUT_PAID` para duplicar —
+       e um `return` cego faria o contratante nunca saber. */
+    if (primeiraDoCheckout && novoStatus === 'confirmado') return;
+
     return notificarConformeMetodo(cobranca, {
       confirmado: novoStatus === 'confirmado',
       chargeId,
@@ -538,6 +578,101 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
       cobranca.contratantes?.api_key
     );
   }
+}
+
+/**
+ * Amarra a assinatura da Asaas à cobrança que a originou: grava o
+ * `asaas_subscription_id` na linha (é ela que vira a "cobrança-modelo"
+ * dos ciclos seguintes), cria a linha em `assinaturas` — a única coisa
+ * que o `/cancelar-assinatura` sabe procurar — e, se isto for uma
+ * renovação, encerra a assinatura anterior.
+ *
+ * Existe como função porque DOIS eventos podem trazer esses dados, e
+ * ninguém sabe qual virá primeiro no futuro: o `CHECKOUT_PAID` (que
+ * hoje nunca traz) e o `PAYMENT_CONFIRMED` (que traz). Duplicar o bloco
+ * nos dois lugares era o caminho curto — e é assim que duas cópias do
+ * caminho do dinheiro divergem em silêncio na primeira manutenção.
+ *
+ * `payment.cycle` e `payment.nextDueDate` seguem opcionais: a assinatura
+ * existe com ou sem eles, e inventar valor aqui seria pior que nulo.
+ */
+async function amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps = dependenciasPadrao) {
+  await deps.atualizarSubscriptionIdDaCobranca(chargeId, payment.subscription);
+  await deps.upsertAssinatura({
+    id: payment.subscription,
+    contratanteId: cobranca.contratante_id,
+    planoId: cobranca.plano_id,
+    documento: cobranca.documento,
+    valor: cobranca.valor_cobrado,
+    ciclo: payment.cycle ?? null,
+    proximaCobranca: payment.nextDueDate ?? null
+  });
+
+  // Renovação: só AGORA a antiga é cancelada — com o pagamento novo já
+  // confirmado. Se a renovação tivesse falhado, o assinante continuaria
+  // com a assinatura anterior, sem ficar sem nenhuma.
+  await encerrarAssinaturaSubstituida(cobranca, payment.subscription, deps);
+}
+
+/**
+ * Fecha o vínculo que o `CHECKOUT_PAID` não conseguiu fechar: liga o
+ * `charge_id` (e, em assinatura, o `asaas_subscription_id`) à linha que
+ * nasceu da pop-up.
+ *
+ * @returns {object|null} a cobrança já com o vínculo, ou null quando
+ * este pagamento não é a primeira cobrança de um pop-up.
+ *
+ * ── A guarda que faz isto ser seguro ────────────────────────────────
+ *
+ * `if (cobranca.charge_id)` sai fora. Ela existe porque NÃO está
+ * confirmado que `payment.checkoutSession` apareça só na primeira
+ * cobrança — se a Asaas mandar o mesmo ponteiro nos ciclos seguintes de
+ * uma assinatura, sem esta guarda cada mês sobrescreveria o `charge_id`
+ * da primeira cobrança com o do ciclo novo. A linha-modelo viraria uma
+ * linha mutante, o histórico sumiria, e `registrarNovoCicloAssinatura`
+ * nunca mais seria chamado.
+ *
+ * Com a guarda, o segundo pagamento que citar esta sessão encontra o
+ * `charge_id` já preenchido, devolve null, e cai no caminho de ciclo
+ * novo — que é o certo. Por isso esta correção não depende de descobrir
+ * como a Asaas trata `checkoutSession` na recorrência: funciona dos
+ * dois jeitos.
+ */
+async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPadrao) {
+  const asaasCheckoutId = payment?.checkoutSession;
+  if (!asaasCheckoutId) return null;
+
+  const cobranca = await deps.buscarCobrancaPorCheckoutId(asaasCheckoutId);
+  if (!cobranca) {
+    /* Este é o único dos três "desisto" desta função que NÃO é rotina.
+       Só nós criamos sessão de checkout nesta conta da Asaas — então um
+       `checkoutSession` que existe e não tem linha aqui significa que
+       perdemos o registro de uma sessão que cobrou dinheiro. Nunca deve
+       aparecer; se aparecer, é a pista. Os outros dois casos (sem
+       `checkoutSession`, ou já vinculada) são caminho normal e saem
+       calados, para o log não virar ruído. */
+    console.error(
+      `[webhook/pagamento] payment ${payment.id} cita a sessão ${asaasCheckoutId}, que não existe em cobrancas — ` +
+      'sessão perdida ou pagamento de outra integração nesta conta Asaas.'
+    );
+    return null;
+  }
+  if (cobranca.charge_id) return null; // já vinculada — este é um ciclo, não a primeira
+
+  await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
+
+  // O vínculo da assinatura, ancorado no evento que de fato tem os dados.
+  if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment.subscription) {
+    await amarrarAssinaturaACobranca(cobranca, payment, payment.id, deps);
+  }
+
+  // Devolve o estado PÓS-vínculo: quem chamou segue com a linha que
+  // existe agora no banco, não com a que foi lida antes do update.
+  return {
+    ...cobranca,
+    charge_id: payment.id,
+    asaas_subscription_id: payment.subscription ?? cobranca.asaas_subscription_id ?? null
+  };
 }
 
 /**
@@ -592,8 +727,11 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
   if (!cobranca) return;
 
   if (evento === 'CHECKOUT_PAID') {
-    // o payment recém-criado pode vir em dois lugares, dependendo de
-    // como a Asaas realmente estrutura isso — tenta os dois.
+    /* O `payment` pode vir em dois lugares — e, medido em 15/09/2026
+       contra os payloads crus, NÃO VEM EM NENHUM DOS DOIS. Os dois
+       caminhos ficam porque são baratos e cobrem o dia em que a Asaas
+       passar a mandar; quem realmente fecha o vínculo hoje é o
+       `PAYMENT_CONFIRMED` (ver `vincularPrimeiraCobrancaDoCheckout`). */
     const payment = corpo?.checkout?.payment ?? corpo?.payment ?? null;
     const chargeId = payment?.id ?? null;
     if (chargeId) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
@@ -605,22 +743,34 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
     // (`payment.subscription`) — grava ele na cobrança (vira a
     // "cobrança-modelo" dos ciclos seguintes) e cria a linha em
     // `assinaturas` (usada só pro /cancelar-assinatura achar o id).
-    if (cobranca.metodo_pagamento === 'assinatura' && payment?.subscription && chargeIdFinal) {
-      await deps.atualizarSubscriptionIdDaCobranca(chargeIdFinal, payment.subscription);
-      await deps.upsertAssinatura({
-        id: payment.subscription,
-        contratanteId: cobranca.contratante_id,
-        planoId: cobranca.plano_id,
-        documento: cobranca.documento,
-        valor: cobranca.valor_cobrado,
-        ciclo: payment.cycle ?? null, // ⚠️ não confirmado se a Asaas manda isso aqui
-        proximaCobranca: payment.nextDueDate ?? null // ⚠️ idem
-      });
+    if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment?.subscription && chargeIdFinal) {
+      await amarrarAssinaturaACobranca(cobranca, payment, chargeIdFinal, deps);
+    }
 
-      // Renovação: só AGORA a antiga é cancelada — com o pagamento novo
-      // já confirmado. Se a renovação tivesse falhado, o assinante
-      // continuaria com a assinatura anterior, sem ficar sem nenhuma.
-      await encerrarAssinaturaSubstituida(cobranca, payment.subscription, deps);
+    /* Pedido avulso sem `chargeId` não vira aviso.
+
+       O payload de pedido (§4.3.2) carrega `chargeId`, e a chave de
+       idempotência que o §4.3.6 manda o contratante usar é
+       `chargeId` + `status`. Mandar `chargeId: null` é entregar um aviso
+       que o contratante não consegue deduplicar nem conferir — o
+       MostrAí recusou creditar exatamente por isso, e estava certo.
+
+       Quem avisa neste caso é o `PAYMENT_CONFIRMED`, 279 ms depois, já
+       com o id verdadeiro. Não se perde notificação: o que se perde é
+       uma notificação inútil.
+
+       Assinatura NÃO entra aqui: o evento `criada` (§4.3.4) não carrega
+       `chargeId` por contrato — a chave dele é `planoId` + `documento`.
+       Nada falta nele, então ele sai agora, como sempre saiu. */
+    if (!METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && !chargeIdFinal) {
+      // `log`, e não `error`: com a Asaas de hoje isto acontece em TODO
+      // pagamento de pop-up. Carimbar de erro um caminho normal ensina
+      // o operador a ignorar o log — e aí o erro de verdade passa.
+      console.log(
+        `[webhook/checkout] ${asaasCheckoutId}: CHECKOUT_PAID sem id de pagamento (esperado); ` +
+        'o aviso sai no PAYMENT_CONFIRMED, que traz o chargeId.'
+      );
+      return;
     }
 
     return notificarConformeMetodo(cobranca, {
@@ -971,6 +1121,163 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     deps
   );
   assert.equal(deps.chamou('notificar').length, 1, 'falha ao cancelar a antiga não impede de avisar quem pagou');
+
+  /* ================================================================
+     A SEQUÊNCIA REAL DA ASAAS — medida em 15/09/2026, sandbox
+
+     O `CHECKOUT_PAID` NÃO traz o id do pagamento. Ele chega 279 ms
+     depois, no `PAYMENT_CONFIRMED`, com `checkoutSession` apontando de
+     volta para a sessão. Até esta correção, a cobrança ficava
+     `confirmado` com `charge_id` nulo para sempre — e com ela morriam o
+     cancelamento e TODOS os ciclos seguintes da assinatura.
+     ================================================================ */
+
+  const CHECKOUT_PAID_REAL = { event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } };
+  const cobrancaAssinaturaCrua = {
+    ...cobrancaPix, metodo_pagamento: 'assinatura', charge_id: null,
+    asaas_checkout_id: 'chk_real', plano_id: 'plano_x', documento: '52998224725',
+    contratante_id: 'mostrai', substitui_assinatura_id: null
+  };
+
+  // Passo 1 — o evento de checkout sozinho: confirma e manda 'criada'.
+  deps = depsFalsas({ buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua });
+  await processarWebhook(CHECKOUT_PAID_REAL, deps);
+  assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 0, 'sem payment no corpo: não há charge para vincular');
+  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_real', 'confirmado']);
+  assert.equal(deps.chamou('notificar').length, 1, 'assinatura avisa mesmo sem chargeId — o evento criada não carrega esse campo (API.md §4.3.4)');
+  assert.equal(deps.chamou('notificar')[0].args[1].evento, 'criada');
+
+  // Passo 2 — o evento de pagamento fecha o vínculo que faltava.
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' }
+  });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real', cycle: 'QUARTERLY' }
+  }, deps);
+
+  assert.equal(
+    deps.chamou('vincularChargeIdAoCheckout').length, 1,
+    'ESTE É O BUG DE 15/09: sem vincular aqui, a cobrança fica confirmado com charge_id nulo para sempre — e com ela morrem o /cancelar-assinatura e todos os ciclos seguintes'
+  );
+  assert.deepEqual(
+    deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_real', 'pay_real'],
+    'o charge_id que o CHECKOUT_PAID não tinha é gravado aqui'
+  );
+  assert.equal(
+    deps.chamou('atualizarSubscriptionIdDaCobranca').length, 1,
+    'o vínculo da assinatura precisa ser gravado aqui — sem ele, todo ciclo seguinte fica órfão'
+  );
+  assert.deepEqual(
+    deps.chamou('atualizarSubscriptionIdDaCobranca')[0].args, ['pay_real', 'sub_real']
+  );
+  assert.equal(deps.chamou('upsertAssinatura').length, 1, 'a linha em assinaturas nasce aqui (é o que o /cancelar-assinatura procura)');
+  assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_real');
+  assert.equal(deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY');
+
+  // E o mais caro: NÃO notifica de novo.
+  assert.equal(
+    deps.chamou('notificar').length, 0,
+    'o criada já saiu no CHECKOUT_PAID; um cobranca_confirmada aqui descreveria o MESMO ciclo duas vezes, e o API.md §11 manda creditar nos dois'
+  );
+
+  /* --- A guarda que impede o ciclo 2 de sobrescrever a 1ª cobrança ---
+     Não está confirmado que `checkoutSession` só apareça na primeira
+     cobrança. Se a Asaas mandar o mesmo ponteiro todo mês, sem esta
+     guarda o charge_id da linha-modelo seria trocado a cada ciclo. */
+  /* `buscarCobranca` devolve null na 1ª chamada (o ciclo ainda não
+     existe) e a linha nova na 2ª — que é a releitura que
+     `registrarNovoCicloAssinatura` faz depois de inserir. Um dublê que
+     devolvesse null sempre esconderia a notificação do ciclo. */
+  const cicloNovo = { ...cobrancaAssinaturaCrua, charge_id: 'pay_ciclo2', status: 'pendente' };
+  let leiturasDoCiclo = 0;
+  deps = depsFalsas({
+    buscarCobranca: () => (leiturasDoCiclo++ === 0 ? null : cicloNovo),
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado' },
+    buscarCobrancaPorSubscriptionId: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real' }
+  });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_ciclo2', subscription: 'sub_real', checkoutSession: 'chk_real' }
+  }, deps);
+  assert.equal(
+    deps.chamou('vincularChargeIdAoCheckout').length, 0,
+    'cobrança já vinculada: o ciclo novo NÃO sobrescreve o charge_id da primeira'
+  );
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 1, 'ele vira um ciclo novo, que é o caminho certo');
+  assert.equal(
+    deps.chamou('notificar')[0].args[1].evento, 'cobranca_confirmada',
+    'e o ciclo novo SIM anuncia cobranca_confirmada'
+  );
+
+  /* --- Pedido avulso pela pop-up: mesmo furo, e ele notifica ---------
+     Cartão avulso sofria do mesmo problema, com um agravante: o payload
+     de pedido CARREGA chargeId, e a chave de idempotência do §4.3.6 é
+     chargeId+status. O aviso saía com chargeId nulo — impossível de
+     deduplicar. */
+  const cobrancaCartaoCrua = {
+    ...cobrancaPix, metodo_pagamento: 'cartao', charge_id: null, asaas_checkout_id: 'chk_cart'
+  };
+
+  deps = depsFalsas({ buscarCobrancaPorCheckoutId: cobrancaCartaoCrua });
+  await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_cart' } }, deps);
+  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_cart', 'confirmado'], 'o dinheiro entrou: o status é gravado de qualquer jeito');
+  assert.equal(
+    deps.chamou('notificar').length, 0,
+    'pedido sem chargeId não vira aviso: o contratante não conseguiria deduplicar (§4.3.6)'
+  );
+
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaCartaoCrua, status: 'confirmado' } });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_cart', checkoutSession: 'chk_cart' }
+  }, deps);
+  assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 1, 'cartão avulso pela pop-up sofria do mesmo furo');
+  assert.deepEqual(deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_cart', 'pay_cart']);
+  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'cartão avulso não cria assinatura');
+  assert.equal(deps.chamou('notificar').length, 1, 'aqui SIM o aviso sai — agora com o chargeId de verdade');
+  assert.equal(deps.chamou('notificar')[0].args[1].chargeId, 'pay_cart');
+
+  /* --- A supressão vale SÓ para a confirmação ----------------------
+     Engolir qualquer evento seria pior que o bug: um estorno que chega
+     antes de a cobrança estar vinculada não tem par no CHECKOUT_PAID
+     para duplicar, e o contratante nunca ficaria sabendo. */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua
+  });
+  await processarWebhook({
+    event: 'PAYMENT_REFUNDED',
+    payment: { id: 'pay_estorno', subscription: 'sub_real', checkoutSession: 'chk_real' }
+  }, deps);
+  assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 1, 'vincula igual');
+  assert.equal(
+    deps.chamou('notificar').length, 1,
+    'mas o estorno SAI — só a confirmação é engolida, porque só ela tem par no criada'
+  );
+  assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cobranca_estornada');
+
+  /* --- Ordem invertida: o pagamento antes do checkout --------------- */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua // status 'pendente'
+  });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_antes', subscription: 'sub_antes', checkoutSession: 'chk_real' }
+  }, deps);
+  assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 1, 'vincula mesmo se o pagamento chegar primeiro');
+  assert.equal(deps.chamou('notificar').length, 0, 'e continua sem duplicar o criada, que virá no CHECKOUT_PAID');
+
+  /* --- Pix/boleto direto não passa por aqui ------------------------- */
+  deps = depsFalsas({ buscarCobranca: cobrancaPix });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps);
+  assert.equal(
+    deps.chamou('buscarCobrancaPorCheckoutId').length, 0,
+    'cobrança achada pelo charge_id: o caminho da pop-up nem é tocado'
+  );
+  assert.equal(deps.chamou('notificar').length, 1, 'e o Pix direto segue notificando como sempre');
 
   // Sempre 200: se a Asaas recebe erro repetido, ela para de reenviar —
   // então nem exceção no processamento pode virar resposta de erro.
