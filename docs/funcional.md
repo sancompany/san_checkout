@@ -374,6 +374,29 @@ pagamento segue igual. Protegida por
 decidir o destino no front ou ecoar o parâmetro cru. Introduzida em
 15/09/2026, na Estação 6.
 
+**RN-17 · Quem vincula a cobrança do pop-up é o evento de pagamento,
+não o de checkout.** A Asaas não manda o id do pagamento no
+`CHECKOUT_PAID` (medido em 15/09/2026 nos payloads crus); ele chega no
+`PAYMENT_CONFIRMED`, com `payment.checkoutSession` apontando de volta.
+É lá que `charge_id` e `asaas_subscription_id` são gravados. *Violada:*
+a cobrança fica `confirmado` com `charge_id` nulo, o
+`/cancelar-assinatura` não acha o que cancelar, e **todo ciclo seguinte
+da assinatura é descartado em silêncio** — foi o que aconteceu até
+15/09. *Quem vê:* o contratante, que nunca recebe `cobranca_confirmada`;
+e o assinante, cuja conta nunca ativa. Protegida pelo autoteste do
+`webhookController`, que reproduz a sequência real dos dois eventos.
+
+**RN-18 · Aviso de pedido sem `chargeId` não é enviado.** O payload de
+pedido carrega `chargeId`, e é por `chargeId` + `status` que o
+contratante deduplica (`API.md` §4.3.6): um aviso sem esse campo não é
+verificável nem deduplicável. Quando o `CHECKOUT_PAID` não tem o id, o
+aviso sai no `PAYMENT_CONFIRMED`, com o id verdadeiro. *Violada:* o
+contratante recebe uma confirmação que não consegue conferir — e ou
+recusa creditar (correto, e foi o que o MostrAí fez) ou credita às
+cegas. *Quem vê:* o contratante. **Assinatura não entra nesta regra:** o
+evento `criada` não carrega `chargeId` por contrato, a chave dele é
+`planoId` + `documento`.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

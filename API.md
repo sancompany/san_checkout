@@ -707,8 +707,25 @@ dinheiro a sério: rode uma vez por dia sobre tudo que ainda está
 
 Webhook pode chegar **mais de uma vez** para o mesmo fato (uma tentativa
 que na verdade chegou, mas cuja resposta se perdeu). Trate o
-processamento como **idempotente**: a chave natural é `chargeId` +
-`status`.
+processamento como **idempotente** — e a chave natural **depende do
+payload**:
+
+| payload | chave de idempotência |
+|---|---|
+| **Pedido** (§4.3.2) | `chargeId` + `status` |
+| **Assinatura** (§4.3.4) | `planoId` + `documento` + `evento` |
+
+> ⚠️ **O payload de assinatura não tem `chargeId`, e isso é de
+> propósito** (§4.3.4): a assinatura é identificada pelo par
+> `planoId` + `documento`, e um ciclo, pelo `evento`. Até 15/09/2026
+> esta seção dizia só "a chave é `chargeId` + `status`", sem ressalva —
+> e um integrador que leu isto ao pé da letra recusou creditar uma
+> assinatura paga, esperando um campo que nunca existiu naquele
+> payload. Ele estava certo em recusar; o texto é que estava incompleto.
+>
+> **Não invente um `chargeId` para assinatura, e não espere um.** Se o
+> seu código precisa de um identificador de cobrança individual para
+> conciliar, ele está na seção 5.3.
 
 ---
 

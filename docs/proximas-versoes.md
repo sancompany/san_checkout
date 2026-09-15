@@ -155,6 +155,35 @@ para um problema que talvez nem exista mais.
   conta, que é quando o fluxo passa a poder rodar. Nem antes (não há
   como testar) nem depois (aí já teria rodado errado uma vez).
 
+## Vínculo da cobrança na assinatura por Pix Automático
+
+- **O quê** — `processarAutorizacaoPixAutomatico`, em
+  `src/controllers/webhookController.js`, chama `upsertAssinatura` mas
+  **nunca grava `asaas_subscription_id` nem `charge_id` na cobrança**. A
+  linha nasce por `registrarCobrancaPendentePopup` com `charge_id` nulo,
+  e a autorização faz o papel de sessão.
+- **Por que** — é a MESMA classe de furo que quebrou a assinatura por
+  cartão em 15/09/2026
+  (`docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`),
+  por outro caminho. Consequência esperada, se rodar: os ciclos seguintes
+  caem em `registrarNovoCicloAssinatura` sem cobrança-modelo e são
+  descartados em silêncio — o contratante nunca recebe
+  `cobranca_confirmada`, e o assinante paga sem que a conta ative.
+- **De onde veio** — achado em 15/09/2026, na varredura que se seguiu à
+  correção do cartão. O dono decidiu no mesmo dia deixar como
+  atualização futura.
+- **O que toca** — só essa função. Mas **antes de tocar é preciso medir
+  o payload real**, exatamente como foi feito no cartão: onde vem o id
+  do pagamento da primeira cobrança do Pix Automático, e se existe um
+  ponteiro de volta para a autorização (o equivalente ao
+  `payment.checkoutSession`). Escrever contra o payload imaginado foi a
+  causa do bug do cartão — repetir isso aqui seria repetir o erro com
+  outro nome.
+- **Quando vale a pena** — junto da liberação do Pix Automático na conta
+  (`CONSTRAINTS.md` §2.4), que é quando o fluxo passa a poder rodar e o
+  payload passa a poder ser medido. Nem antes nem depois, pelo mesmo
+  motivo do split acima.
+
 ## Modo de teste por contratante — sandbox e produção convivendo
 
 - **O quê** — cada contratante ter o próprio ambiente (teste ou real),

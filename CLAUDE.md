@@ -74,6 +74,37 @@ Feito em 15/09:
   A suíte de regressão (`tests/retorno-nao-vira-open-redirect.js`) foi
   verificada por **sabotagem deliberada**: pega tanto o front decidindo
   sozinho quanto o controller ecoando o parâmetro cru.
+- **Vínculo da assinatura corrigido** — o furo mais caro achado até
+  agora, e quem achou foi o MostrAí, com dinheiro real no sandbox. O
+  `CHECKOUT_PAID` não traz o id do pagamento: a cobrança ficava
+  `confirmado` com `charge_id` nulo, e com ela morriam o cancelamento e
+  **todo ciclo seguinte da assinatura**, em silêncio. Agora quem vincula
+  é o `PAYMENT_CONFIRMED`, por `payment.checkoutSession`, com guarda que
+  impede o ciclo 2 de sobrescrever a primeira cobrança —
+  `docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`.
+  `API.md` §4.3.6 também estava errado: dizia que a idempotência é
+  sempre por `chargeId`, sem ressalvar que o payload de assinatura não
+  tem esse campo. O integrador leu certo; o texto é que estava
+  incompleto. Revisão em 5 ciclos (`revisar` + `seguranca-san`); o furo
+  gêmeo do `assinatura_pix` foi **declarado, não corrigido às cegas** —
+  por decisão do dono, virou atualização futura
+  (`docs/proximas-versoes.md`).
+- **Varredura depois da correção, e ela achou mais dois** — os dois da
+  mesma família ("efeito real dependendo de coisa não verificada"), os
+  dois no caminho do dinheiro:
+  - **o aviso ao contratante segurava a resposta à Asaas.** O receptor
+    aguardava o processamento antes do `200`, e a cadeia terminava num
+    `fetch` **sem timeout** para o endpoint de um terceiro. Um
+    contratante pendurado pausaria a fila da conta inteira (15 falhas,
+    §2.3) — derrubando a confirmação de pagamento de TODOS os outros.
+    Medido ao vivo contra um servidor mudo: preso indefinidamente →
+    10 s com teto → ~0 sem aguardar.
+  - **`chamarAsaas` também não tinha teto**, e por ela passa toda
+    cobrança, consulta, estorno e cancelamento.
+  Cobertos por `tests/nenhuma-chamada-de-saida-sem-teto.js`, que varre o
+  `src/` inteiro em vez de confiar em memória — a regra já era conhecida
+  (`pedidoService` fazia certo) e mesmo assim não foi aplicada nos
+  outros dois. `CONSTRAINTS.md` §2.7.1.
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
@@ -88,7 +119,7 @@ dele em paralelo.
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
-- Testes: `tests/` — `npm test` roda as 16 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 17 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

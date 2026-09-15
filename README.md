@@ -59,7 +59,7 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as dezesseis suítes de uma vez (assinatura HMAC do webhook,
+Roda as dezessete suítes de uma vez (assinatura HMAC do webhook,
 conversão das taxas da Asaas, regra de id imprevisível, hash da senha do
 admin, a allowlist de origem do `returnUrl` — que carrega uma suíte de
 bypasses reais de open redirect —, a redação do log de auditoria, que
