@@ -14,8 +14,10 @@
 import { supabase } from '../config/supabase.js';
 
 /** Cria ou atualiza a linha da assinatura — chamado pelo
- *  webhookController assim que a 1ª cobrança confirma (CHECKOUT_PAID)
- *  e a Asaas revela o id da assinatura (`payment.subscription`). */
+ *  webhookController (`amarrarAssinaturaACobranca`) assim que o
+ *  `payment.subscription` da Asaas é conhecido. Hoje isso acontece no
+ *  `PAYMENT_CONFIRMED` (não no `CHECKOUT_PAID`, que não traz esse
+ *  campo — ver `docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`). */
 export async function upsertAssinatura({ id, contratanteId, planoId, documento, valor, ciclo, proximaCobranca }) {
   const { error } = await supabase.from('assinaturas').upsert({
     id,

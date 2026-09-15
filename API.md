@@ -863,7 +863,7 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
   "status": "ativa",
   "valor": 349.90,
   "ciclo": "MONTHLY",
-  "proximaCobranca": "2026-10-11T00:00:00.000Z",
+  "proximaCobranca": null,
   "ultimaCobranca": {
     "chargeId": "pay_8392017465",
     "status": "confirmado",
@@ -873,6 +873,14 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
   }
 }
 ```
+
+> ⚠️ **`proximaCobranca` é sempre `null`, hoje.** Não há fonte confiável
+> pra essa data em nenhum payload da Asaas que este checkout já mediu —
+> nem no webhook, nem na criação da assinatura (a data que o checkout
+> manda pra Asaas na criação é a de HOJE, porque a 1ª cobrança é
+> imediata; não é uma projeção da próxima). Não construa lógica em cima
+> deste campo assumindo que ele vem preenchido. `ciclo`, por outro lado,
+> é confiável: reflete o plano de verdade (`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
 
 | Campo | Descrição |
 |---|---|

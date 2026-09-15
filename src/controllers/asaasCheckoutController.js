@@ -311,7 +311,15 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       valorCobrado: valor,
       metodoPagamento: 'assinatura',
       substituiAssinaturaId: assinaturaSubstituida?.id ?? null,
-      parcelas: 1
+      parcelas: 1,
+      // O MESMO `ciclo` já validado acima e já mandado pra Asaas em
+      // `subscription.cycle` — gravado agora, não esperando o webhook
+      // ecoar de volta. Achado em 15/09/2026: nem CHECKOUT_PAID nem
+      // PAYMENT_CONFIRMED confiavelmente trazem esse campo de volta, e
+      // essa cobrança já sabe o valor certo antes de existir qualquer
+      // webhook — é o que `webhookController.amarrarAssinaturaACobranca`
+      // lê na hora de criar a linha em `assinaturas`.
+      ciclo
     });
 
     resposta.json({

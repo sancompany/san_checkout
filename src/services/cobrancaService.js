@@ -80,6 +80,15 @@ export async function registrarCobrancaPendentePopup(dados) {
     // depende de intenção declarada, nunca de heurística.
     substitui_assinatura_id: dados.substituiAssinaturaId ?? null,
     parcelas: dados.parcelas ?? 1,
+    // Só assinatura preenche isto (`criarCheckoutAssinatura` já validou
+    // contra `CICLOS_VALIDOS` antes de chegar aqui). É o mesmo valor
+    // que mandamos pra Asaas em `subscription.cycle` — capturado NA
+    // CRIAÇÃO, antes de qualquer webhook, porque é aqui que ele é
+    // conhecido com certeza. Achado em 15/09/2026: nem CHECKOUT_PAID
+    // nem PAYMENT_CONFIRMED confiavelmente ecoam esse campo de volta —
+    // `webhookController.amarrarAssinaturaACobranca` lê daqui, não do
+    // webhook, na hora de criar a linha em `assinaturas`.
+    ciclo: dados.ciclo ?? null,
     status: 'pendente'
   });
 

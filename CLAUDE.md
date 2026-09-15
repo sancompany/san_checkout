@@ -105,6 +105,20 @@ Feito em 15/09:
   `src/` inteiro em vez de confiar em memória — a regra já era conhecida
   (`pedidoService` fazia certo) e mesmo assim não foi aplicada nos
   outros dois. `CONSTRAINTS.md` §2.7.1.
+- **Ciclo de assinatura vinha errado, e a 1ª correção repetiu o mesmo
+  bug.** Verificando o reparo do mostrai ao vivo: a assinatura ficou
+  `MONTHLY` quando o plano é `QUARTERLY` — `amarrarAssinaturaACobranca`
+  lia `payment.cycle`, que não existe em payload nenhum. Primeira
+  tentativa: um relay via webhook (capturar no `CHECKOUT_PAID`, ler no
+  `PAYMENT_CONFIRMED`) — funcionava, mas era o mesmo erro com um passo a
+  menos (dependia de webhook pra um dado que não é dado de webhook), e
+  tinha residual de ordem. Corrigido de verdade gravando `ciclo` na
+  **criação** do checkout (`criarCheckoutAssinatura` já valida e conhece
+  o valor antes de existir qualquer sessão na Asaas) — elimina o relay
+  inteiro e o residual de ordem junto, migration 0006 mais enxuta.
+  Revisão em 3 ciclos; `proximaCobranca` continua `null`, declarado
+  (`docs/pendencias.md`) — sem fonte confiável hoje.
+  `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`.
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;

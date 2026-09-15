@@ -102,6 +102,19 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟡 `assinaturas.proxima_cobranca` não tem fonte confiável
+Achado em 15/09/2026, no mesmo ciclo que corrigiu `ciclo` (ver
+`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+Nenhum payload da Asaas medido traz `payment.nextDueDate`, e o
+"nextDueDate" que o próprio checkout manda na criação é a data de HOJE
+(a cobrança é imediata), não uma projeção da próxima — usá-lo pareceria
+preciso sem ser, então fica `null` de propósito.
+
+Fechar exige achar de onde a data real da próxima cobrança pode vir
+(possivelmente só depois de confirmado o formato de um `PAYMENT_CREATED`
+futuro da assinatura, hoje sem ramo em `classificarEvento`) — não é
+um `?? algumCampo` a mais, é medir um payload que ainda não foi visto.
+
 ### 🟢 `returnUrl` não chega à página de status
 O caminho de volta foi construído em 15/09/2026 e vale na tela do
 checkout: quem paga ali ganha o botão "Voltar para {loja}" e a contagem
