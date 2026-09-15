@@ -19,6 +19,7 @@ const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SUITES = [
   'src/utils/validadores.js',        // tetos de campo e comparação de credencial
   'src/utils/alvoDeRede.js',         // https + host público para alvo de saída (anti-SSRF)
+  'src/utils/retornoSeguro.js',      // returnUrl: allowlist por origem (anti open redirect)
   'src/utils/assinaturaWebhook.js',  // assinatura HMAC do webhook de saída
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
@@ -30,7 +31,8 @@ const SUITES = [
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
   'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login
-  'tests/total-nao-confiavel-nao-vira-tela-compravel.js' // total que não se cobra não vira tela com botão
+  'tests/total-nao-confiavel-nao-vira-tela-compravel.js', // total que não se cobra não vira tela com botão
+  'tests/retorno-nao-vira-open-redirect.js' // returnUrl: quem decide o destino é o servidor, e continua sendo
 ];
 
 /**

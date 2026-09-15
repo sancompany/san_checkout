@@ -5,6 +5,7 @@
  */
 
 import { get } from '../utils/api.js';
+import { definirRetorno, montarRetornoNaQuery } from './retorno.js';
 
 let contextoResolvido = null;
 
@@ -45,7 +46,11 @@ export async function resolverAssinatura() {
   if (!ids) return null;
 
   try {
-    const plano = await get(`/api/checkout/plano/${ids.contratanteId}/${ids.planoId}`);
+    // Mesmo repasse do modo pedido: o `returnUrl` cru sobe e o backend
+    // devolve o destino aprovado em `_checkout.retornoUrl`.
+    const plano = await get(
+      `/api/checkout/plano/${ids.contratanteId}/${ids.planoId}${montarRetornoNaQuery()}`
+    );
 
     /* Plano sem valor utilizável não vira tela de assinar.
 
@@ -66,6 +71,7 @@ export async function resolverAssinatura() {
     }
 
     contextoResolvido = { ...ids, plano };
+    definirRetorno(plano?._checkout?.retornoUrl, plano?._checkout?.contratanteNome);
     return { ids, plano };
   } catch (erro) {
     return { ids, erro: erro.message || 'Não foi possível carregar o plano.' };

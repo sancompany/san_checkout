@@ -429,6 +429,12 @@
       </div>
 
       <div class="campo">
+        <label class="campo-label" for="f-retorno-dominios">retornoDominios <span class="celula-fraca">(opcional)</span></label>
+        <textarea class="campo-input" id="f-retorno-dominios" rows="3" placeholder="https://www.loja.com.br&#10;https://loja.com.br" autocapitalize="off" spellcheck="false"></textarea>
+        <span class="campo-dica">Uma origem https por linha. São os únicos endereços que podem receber o comprador de volta depois do pagamento (<code>?returnUrl=</code> no link). A origem do apiBaseUrl já vale sem estar aqui. Fora da lista, o retorno é ignorado — é o que impede o checkout de virar redirecionador para qualquer site.</span>
+      </div>
+
+      <div class="campo">
         <label class="campo-label" for="f-wallet-id">walletId <span class="celula-fraca">(opcional)</span></label>
         <input class="campo-input" type="text" id="f-wallet-id" placeholder="cole aqui o wallet_id de uma subconta" autocapitalize="off" spellcheck="false" />
         <span class="campo-dica">Só se for usar split da Asaas. Sem isso, tudo cai na conta-mãe.</span>

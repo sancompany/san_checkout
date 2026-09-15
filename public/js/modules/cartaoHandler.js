@@ -15,6 +15,7 @@
  */
 
 import { post, get } from '../utils/api.js';
+import { ativarRetorno } from './retorno.js';
 
 const INTERVALO_POLLING_MS = 3000;
 const INTERVALO_VERIFICA_POPUP_MS = 500;
@@ -83,6 +84,7 @@ export async function continuarComCartao({ contratanteId, pedidoId, parcelas, da
         botao.textContent = 'Pagamento Aprovado ✓';
         botao.classList.add('btn-success');
         mostrarToast('Pagamento aprovado!', 'sucesso');
+        ativarRetorno();
       },
       aoFalhar: (status) => {
         mostrarToast(`O pagamento não foi concluído (${status}).`, 'erro');

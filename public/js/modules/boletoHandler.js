@@ -8,6 +8,7 @@
  */
 
 import { post, get } from '../utils/api.js';
+import { ativarRetorno } from './retorno.js';
 
 const INTERVALO_POLLING_MS = 3000;
 const STATUS_CONFIRMADOS = ['CONFIRMED', 'RECEIVED'];
@@ -83,6 +84,7 @@ export async function gerarBoleto({ contratanteId, pedidoId, dadosPagador, mostr
         mensagemStatus.closest('.pix-status-tracker')?.querySelector('.status-pulse')
           ?.style.setProperty('background-color', 'var(--status-success)');
         mostrarToast('Pagamento confirmado com sucesso.', 'sucesso');
+        ativarRetorno();
       },
       aoFalhar: (status) => {
         mensagemStatus.textContent = 'Este boleto não foi mais processado — gere um novo.';

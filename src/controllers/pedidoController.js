@@ -8,6 +8,7 @@
 import { resolverPedido } from '../services/pedidoService.js';
 import { calcularTaxa } from '../services/taxaService.js';
 import { valorValido } from '../utils/validadores.js';
+import { retornoSeguro } from '../utils/retornoSeguro.js';
 import { responderErro } from '../utils/erros.js';
 
 export async function obterPedido(requisicao, resposta) {
@@ -36,11 +37,26 @@ export async function obterPedido(requisicao, resposta) {
       ? calcularTaxa(valorBase, 'pix', 1, Boolean(pedido.isentarTaxa))
       : null;
 
+    /* Quem decide o destino de volta é AQUI, não o navegador.
+
+       O front manda o `returnUrl` cru que veio na barra de endereço e
+       recebe de volta o destino aprovado, ou `null`. A lista de origens
+       do contratante nunca sai do servidor: mandá-la para o front
+       publicaria os domínios cadastrados dele para qualquer um que
+       abrisse um link de checkout, e o front não precisa dela para
+       nada — precisa só da resposta.
+
+       `null` não é erro: link sem `returnUrl`, ou com destino de fora
+       da lista, continua sendo um checkout que cobra normalmente. Só
+       não ganha o botão de voltar. Ver `utils/retornoSeguro.js`. */
+    const retornoUrl = retornoSeguro(requisicao.query?.returnUrl, contratante, { pedidoId });
+
     resposta.json({
       contratanteNome: contratante.nome,
       metodosHabilitados: contratante.metodos_habilitados ?? null,
       pedido,
-      taxa
+      taxa,
+      retornoUrl
     });
   } catch (erro) {
     responderErro(resposta, erro, 'pedidoController.obterPedido', 500);

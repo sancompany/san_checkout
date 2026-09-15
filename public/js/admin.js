@@ -534,6 +534,11 @@ function abrirModalContratante(id = null) {
   $('f-api-base-url').value = alvo?.api_base_url ?? '';
   $('f-webhook-url').value = alvo?.webhook_url ?? '';
   $('f-wallet-id').value = alvo?.wallet_id ?? '';
+  // Uma origem por linha — é o formato que o operador consegue conferir
+  // de bate-pronto, e o backend normaliza cada uma para `URL.origin`.
+  $('f-retorno-dominios').value = Array.isArray(alvo?.retorno_dominios)
+    ? alvo.retorno_dominios.join('\n')
+    : '';
 
   // Contratante existente: espelha o que está salvo. Novo: o padrão, que
   // NÃO inclui assinatura_pix — ver METODOS_PADRAO acima.
@@ -558,7 +563,11 @@ async function salvarContratante() {
     apiBaseUrl: $('f-api-base-url').value.trim(),
     webhookUrl: $('f-webhook-url').value.trim(),
     walletId: $('f-wallet-id').value.trim(),
-    metodosHabilitados
+    metodosHabilitados,
+    retornoDominios: $('f-retorno-dominios').value
+      .split('\n')
+      .map((linha) => linha.trim())
+      .filter(Boolean)
   };
 
   limparErro('msg-contratante');
