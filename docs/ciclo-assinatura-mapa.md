@@ -148,7 +148,8 @@ link `&renovar=1` pro assinante.
 |---|---|
 | `ultimaCobranca` confundia tentativa de renovação abandonada (`cancelado`/`expirado`) com o ciclo real, mais recente | **[CORRIGIDO]** RN-22, rodada 1 |
 | Correção acima, na 1ª versão, também escondia uma renovação que confirmou e **depois foi estornada** (exigia `status='confirmado'` exato) | **[CORRIGIDO]** RN-22 revisado, rodada 2 |
-| `status` da própria assinatura (`ativa`/`pausada`/`cancelada`) nunca é reconferido contra a Asaas — só `ultimaCobranca` é. Se cancelar/pausar/retomar perder a confirmação por timeout depois de a Asaas já ter processado, o banco local fica desatualizado pra sempre, sem detecção | **[DECLARADO]** — exige medir o formato real de `GET /v3/subscriptions/{id}` antes de codificar |
+| `status` da própria assinatura (`ativa`/`pausada`/`cancelada`) nunca era reconferido contra a Asaas — só `ultimaCobranca` era. Se cancelar/pausar/retomar perdesse a confirmação por timeout depois de a Asaas já ter processado, o banco local ficava desatualizado pra sempre, sem detecção | **[CORRIGIDO]** RN-26 — `consultarAssinaturaNaAsaas` trata os dois formatos que a doc não esclarece (`deleted: true` ou `404`), então não depende de adivinhar; `404` não vira `cancelada` automática |
+| `proximaCobranca` sempre `null` — nenhum payload de webhook traz `nextDueDate` | **[CORRIGIDO]** RN-26 — a fonte não era webhook: `nextDueDate` vem no `GET /v3/subscriptions/{id}`, que a conciliação agora lê |
 
 ## T11 — Assinatura encerrada FORA do nosso fluxo
 
@@ -182,9 +183,9 @@ não tem o furo de T1).
 
 ## O que ainda está aberto, resumido
 
-1. **[DECLARADO]** T10 — sem reconciliação de `status` da assinatura contra a Asaas quando uma chamada nossa perde a confirmação.
-2. **[DECLARADO]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós.
-3. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
+1. **[DECLARADO]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook. **Mitigado em parte**: a conciliação (T10, RN-26) agora reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
+2. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
+3. **Falta confirmar ao vivo** (não muda comportamento): qual dos dois formatos a Asaas usa pra uma assinatura deletada — objeto com `deleted: true` ou `404`. O código trata os dois; medir só permitiria simplificar.
 
 O achado grave de T1/T4 (renovação sem autenticação permitindo
 cancelar a assinatura de outra pessoa) **foi corrigido** — `renovar`

@@ -897,13 +897,20 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 }
 ```
 
-> ⚠️ **`proximaCobranca` é sempre `null`, hoje.** Não há fonte confiável
-> pra essa data em nenhum payload da Asaas que este checkout já mediu —
-> nem no webhook, nem na criação da assinatura (a data que o checkout
-> manda pra Asaas na criação é a de HOJE, porque a 1ª cobrança é
-> imediata; não é uma projeção da próxima). Não construa lógica em cima
-> deste campo assumindo que ele vem preenchido. `ciclo`, por outro lado,
-> é confiável: reflete o plano de verdade (`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+> **`proximaCobranca` deixou de ser sempre `null` em 16/09/2026.** Ele
+> nasceu nulo porque nenhum *webhook* da Asaas carrega essa data (e a
+> data que o checkout manda na criação é a de HOJE, já que a 1ª cobrança
+> é imediata — não é projeção da próxima). A fonte certa não era webhook
+> nenhum: é a consulta direta da assinatura na Asaas, que esta rota
+> agora faz. Ainda pode vir `null` — quando a assinatura já encerrou, ou
+> quando a Asaas não responde a tempo (a conciliação não falha por isso,
+> cai pro que o banco sabe).
+>
+> **O `status` também é reconferido aqui, não só lido do banco.** Se uma
+> chamada nossa de cancelar/pausar/retomar foi processada pela Asaas mas
+> a confirmação se perdeu no caminho, é esta rota que percebe e corrige
+> o registro — antes, a divergência ficava invisível para sempre. `ciclo`
+> e `valor` continuam vindo do registro local, congelados na criação.
 
 | Campo | Descrição |
 |---|---|

@@ -405,6 +405,52 @@ export async function cancelarAssinatura(subscriptionId) {
 }
 
 /**
+ * Estado ATUAL da assinatura na Asaas — `GET /v3/subscriptions/{id}`.
+ *
+ * Existe pra reconciliação (`consultarAssinatura`, API.md §5.3): o nosso
+ * banco só sabe o que uma chamada nossa conseguiu confirmar, e se o
+ * `DELETE`/`PUT` foi processado lá mas a resposta se perdeu no caminho
+ * (timeout, ver `TIMEOUT_ASAAS_MS`), `assinaturas.status` fica
+ * desatualizado pra sempre, sem nada que detecte.
+ *
+ * ⚠️ Deliberadamente defensivo num ponto que a doc da Asaas NÃO
+ * esclarece: ela documenta o campo `deleted` (boolean) e o `status`
+ * (`ACTIVE` | `EXPIRED` | `INACTIVE`) no corpo, mas não diz o que
+ * acontece ao consultar uma assinatura já removida por `DELETE` — se
+ * volta o objeto com `deleted: true` ou um `404`. Os DOIS são tratados
+ * aqui, então isto funciona sem depender de eu ter adivinhado certo:
+ *
+ *   - objeto com `deleted: true`  → `{ encerrada: true }`
+ *   - `404`                       → `null` (quem chama decide; 404 também
+ *                                   pode ser id de outra conta, então
+ *                                   não vira "cancelada" automática)
+ *   - qualquer outro erro         → propaga (rede, 401, 5xx)
+ *
+ * @returns {Promise<{status: string, deleted: boolean, encerrada: boolean, proximaCobranca: string|null}|null>}
+ */
+export async function consultarAssinaturaNaAsaas(subscriptionId) {
+  let corpo;
+  try {
+    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+
+  const status = corpo?.status ?? null;
+  const deleted = corpo?.deleted === true;
+
+  return {
+    status,
+    deleted,
+    // `EXPIRED` é a assinatura que chegou ao fim (endDate/maxPayments) —
+    // pro nosso vocabulário, encerrada do mesmo jeito que a deletada.
+    encerrada: deleted || status === 'EXPIRED',
+    proximaCobranca: corpo?.nextDueDate ?? null
+  };
+}
+
+/**
  * Pausa ou retoma uma assinatura — `PUT /v3/subscriptions/{id}` com
  * `status: INACTIVE | ACTIVE` (enum confirmado na definição OpenAPI da
  * Asaas: `SubscriptionUpdateRequestSubscriptionStatus`).

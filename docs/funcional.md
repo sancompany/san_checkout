@@ -502,6 +502,21 @@ assinatura nova comum — nunca amarra nem cancela nada. **Mudança
 incompatível**: `&renovar=1` (o formato antigo) para de funcionar como
 renovação. Achado e corrigido em 16/09/2026, testado com sabotagem.
 
+**RN-26 · A conciliação reconfere a assinatura na Asaas, não só a
+cobrança.** `POST /consultar-assinatura` (§5.3) consulta
+`GET /v3/subscriptions/{id}` e corrige o registro local quando diverge;
+também é de lá que sai `proximaCobranca` (`nextDueDate`), que era `null`
+desde sempre. *Violada:* se uma chamada nossa de cancelar/pausar/retomar
+estourar o timeout DEPOIS de a Asaas ter processado (só a resposta
+perdida), `atualizarStatusAssinatura` nunca roda e o banco fica dizendo
+`ativa` pra sempre enquanto a Asaas já cancelou — divergência sem
+nenhum caminho de detecção. *Quem vê:* o contratante, que segue
+liberando acesso pra quem não paga mais. O `404` da Asaas **não** vira
+`cancelada` automática (também é o que responde id de outra conta), e
+falha de rede não derruba a conciliação — cai pro dado local. Corrigido
+em 16/09/2026, com tratamento defensivo dos dois formatos que a doc da
+Asaas não esclarece (objeto com `deleted: true`, ou `404`).
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

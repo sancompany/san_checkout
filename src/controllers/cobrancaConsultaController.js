@@ -40,7 +40,13 @@ import {
   atualizarStatusCobranca
 } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
-import { recuperarCobrancaPix, recuperarCobrancaBoleto, consultarStatus } from '../services/asaasService.js';
+import {
+  recuperarCobrancaPix,
+  recuperarCobrancaBoleto,
+  consultarStatus,
+  consultarAssinaturaNaAsaas
+} from '../services/asaasService.js';
+import { atualizarStatusAssinatura } from '../services/assinaturaService.js';
 import { documentoValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -71,6 +77,58 @@ async function statusAtualizado(cobranca) {
   } catch (erro) {
     console.error(`[consulta] falha ao reconsultar ${cobranca.charge_id} na Asaas:`, erro.message);
     return cobranca.status;
+  }
+}
+
+/**
+ * O ESTADO DA ASSINATURA também vem da Asaas, não só o da cobrança.
+ *
+ * Até 16/09/2026 esta rota reconciliava só a última cobrança
+ * (`statusAtualizado`) — o `status` da própria assinatura vinha 100% do
+ * banco local. Isso deixava um buraco sem detecção: se
+ * `cancelar/pausar/retomar-assinatura` estourasse o timeout DEPOIS de a
+ * Asaas já ter processado o `DELETE`/`PUT` (só a resposta perdida), o
+ * controller devolvia erro e nunca gravava o status novo — o nosso banco
+ * dizia `ativa` pra sempre enquanto a Asaas já tinha cancelado.
+ *
+ * Por que aqui e não num job: é esta a rota que o contratante já roda
+ * pra conciliar (§5.3, "rode uma vez por dia"). Um lugar a mais pra
+ * manter não ganharia nada.
+ *
+ * Silencioso ao falhar, igual `statusAtualizado`: a Asaas fora do ar não
+ * pode derrubar a conciliação inteira — cai pro que o banco sabe, que é
+ * pior mas serve.
+ */
+const STATUS_ASAAS_PARA_LOCAL = { ACTIVE: 'ativa', INACTIVE: 'pausada' };
+
+async function assinaturaAtualizada(assinatura) {
+  if (!assinatura?.id) return { status: assinatura?.status ?? null, proximaCobranca: assinatura?.proxima_cobranca ?? null };
+
+  try {
+    const viva = await consultarAssinaturaNaAsaas(assinatura.id);
+
+    // `null` = 404 na Asaas. NÃO vira "cancelada" automaticamente: 404
+    // também é o que responde um id de outra conta ou digitado errado, e
+    // marcar cancelada por engano é pior que ficar com o dado velho.
+    if (!viva) {
+      console.error(`[consulta] assinatura ${assinatura.id} não existe na Asaas (404) — mantendo o status local "${assinatura.status}".`);
+      return { status: assinatura.status, proximaCobranca: assinatura.proxima_cobranca ?? null };
+    }
+
+    const statusReal = viva.encerrada ? 'cancelada' : (STATUS_ASAAS_PARA_LOCAL[viva.status] ?? assinatura.status);
+
+    if (statusReal !== assinatura.status) {
+      console.error(`[consulta] divergência corrigida: assinatura ${assinatura.id} estava "${assinatura.status}" aqui e "${viva.status}${viva.deleted ? '/deleted' : ''}" na Asaas.`);
+      await atualizarStatusAssinatura(assinatura.id, statusReal);
+    }
+
+    // `proximaCobranca` sai do `null` eterno: `nextDueDate` existe nesta
+    // resposta (o que nenhum payload de webhook trazia, que é por que o
+    // campo nasceu nulo — ver docs/pendencias.md).
+    return { status: statusReal, proximaCobranca: viva.proximaCobranca ?? assinatura.proxima_cobranca ?? null };
+  } catch (erro) {
+    console.error(`[consulta] falha ao reconsultar a assinatura ${assinatura.id} na Asaas:`, erro.message);
+    return { status: assinatura.status, proximaCobranca: assinatura.proxima_cobranca ?? null };
   }
 }
 
@@ -230,16 +288,19 @@ export async function consultarAssinatura(requisicao, resposta) {
     // mesma correção que a consulta de pedido faz, mesmo motivo.
     const statusUltima = ultima ? await statusAtualizado(ultima) : null;
 
+    // E o estado da própria assinatura, que antes só vinha do banco.
+    const assinaturaViva = await assinaturaAtualizada(assinatura);
+
     resposta.json({
       versao: 1,
       tipo: 'assinatura',
       planoId,
       documento,
       assinaturaId: assinatura?.id ?? null,
-      status: assinatura?.status ?? null,
+      status: assinaturaViva.status,
       valor: assinatura?.valor ?? null,
       ciclo: assinatura?.ciclo ?? null,
-      proximaCobranca: assinatura?.proxima_cobranca ?? null,
+      proximaCobranca: assinaturaViva.proximaCobranca,
       ultimaCobranca: ultima
         ? {
             chargeId: ultima.charge_id,

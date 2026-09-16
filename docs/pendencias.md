@@ -142,7 +142,23 @@ eventos de assinatura a Asaas oferece, marcar, e ler o payload real de
 um antes de escrever tratamento — foi escrever contra payload imaginado
 que causou os dois bugs de 15/09.
 
-### 🟠 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação
+### 🟢 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação — CORRIGIDO 16/09
+**Corrigido no mesmo dia em que foi declarado.** A razão de ter ficado
+declarado era não saber o formato de `GET /v3/subscriptions/{id}` pra
+uma assinatura deletada — e a saída não foi adivinhar: a doc da Asaas
+confirma os campos `deleted` (boolean), `status`
+(`ACTIVE`/`EXPIRED`/`INACTIVE`) e `nextDueDate`, e **não** esclarece se
+uma assinatura removida volta como objeto com `deleted: true` ou como
+`404`. `consultarAssinaturaNaAsaas` (asaasService.js) trata os DOIS
+casos, então funciona sem depender de eu ter acertado qual é — e o
+`404` de propósito NÃO vira "cancelada" automática (404 também é id de
+outra conta). `consultarAssinatura` chama isso e corrige o banco quando
+diverge. Falta só confirmar ao vivo qual dos dois formatos a Asaas usa
+(não muda o comportamento, só permitiria simplificar). O texto original
+fica abaixo, pro histórico.
+
+<details>
+<summary>como estava declarado</summary>
 Achado em 16/09/2026, numa varredura focada em achados graves. `chamarAsaas`
 tem teto (`CONSTRAINTS.md` §2.7.1) — mas se o timeout estourar DEPOIS de a
 Asaas já ter processado o `DELETE`/`PUT` (só a resposta que não voltou a
@@ -171,8 +187,20 @@ escrever contra o formato imaginado. Fechar exige chamar
 `GET /v3/subscriptions/{id}` de verdade contra uma assinatura cancelada
 no sandbox (já existe uma: `sub_qut6521d50496vkn`, testemaster) e ler a
 resposta antes de codificar o tratamento.
+</details>
 
-### 🟡 `assinaturas.proxima_cobranca` não tem fonte confiável
+### 🟢 `assinaturas.proxima_cobranca` não tinha fonte confiável — CORRIGIDO 16/09
+**A pergunta estava certa e a busca estava no lugar errado.** Procurei
+`nextDueDate` em payload de webhook, onde ele de fato nunca aparece —
+mas ele existe na consulta direta, `GET /v3/subscriptions/{id}`
+(documentado pela Asaas junto de `deleted` e `status`). A rota de
+conciliação (§5.3) passou a ler de lá e devolver em `proximaCobranca`,
+no mesmo ciclo em que ganhou a reconciliação de status. Continua podendo
+vir `null` (assinatura encerrada, ou Asaas fora do ar — a conciliação
+não falha por isso). O texto original fica abaixo, pro histórico.
+
+<details>
+<summary>como estava declarado</summary>
 Achado em 15/09/2026, no mesmo ciclo que corrigiu `ciclo` (ver
 `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
 Nenhum payload da Asaas medido traz `payment.nextDueDate`, e o
@@ -184,6 +212,7 @@ Fechar exige achar de onde a data real da próxima cobrança pode vir
 (possivelmente só depois de confirmado o formato de um `PAYMENT_CREATED`
 futuro da assinatura, hoje sem ramo em `classificarEvento`) — não é
 um `?? algumCampo` a mais, é medir um payload que ainda não foi visto.
+</details>
 
 ### 🟢 `returnUrl` não chega à página de status
 O caminho de volta foi construído em 15/09/2026 e vale na tela do
