@@ -21,6 +21,7 @@ const SUITES = [
   'src/utils/alvoDeRede.js',         // https + host público para alvo de saída (anti-SSRF)
   'src/utils/retornoSeguro.js',      // returnUrl: allowlist por origem (anti open redirect)
   'src/utils/assinaturaWebhook.js',  // assinatura HMAC do webhook de saída
+  'src/utils/tokenRenovacao.js',     // token de renovação: só quem tem a api_key forja
   'src/services/taxaService.js',     // conversão das taxas da Asaas
   'src/services/pedidoService.js',   // id imprevisível e método habilitado
   'src/utils/chaveContratante.js',   // a api_key: tamanho, formato, e não repetir
@@ -34,7 +35,8 @@ const SUITES = [
   'tests/total-nao-confiavel-nao-vira-tela-compravel.js', // total que não se cobra não vira tela com botão
   'tests/retorno-nao-vira-open-redirect.js', // returnUrl: quem decide o destino é o servidor, e continua sendo
   'tests/nenhuma-chamada-de-saida-sem-teto.js', // fetch sem signal espera para sempre: varre src/ inteiro
-  'tests/assinatura-pausada-continua-cancelavel.js' // pausar não pode ser porta de mão única
+  'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
+  'tests/renovacao-exige-token-nao-so-documento.js' // renovar não pode confiar só no documento do body
 ];
 
 /**

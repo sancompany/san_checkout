@@ -483,6 +483,25 @@ bloqueador de pop-up ativo, ou no Safari. Corrigido em
 `cartaoHandler.js` e `assinaturaCheckoutHandler.js`: toast pedindo pra
 liberar pop-ups e o botão reabilitado. Achado em 16/09/2026.
 
+**RN-25 · Renovação exige token — `documento` sozinho nunca basta.**
+`POST /api/checkout/assinatura/:contratanteId/:planoId` é pública (sem
+`X-Checkout-Key`); até 16/09/2026, `renovar: true` bastava sozinho pra
+achar a assinatura antiga só pelo `documento` do formulário — não
+autenticado. *Violada:* CPF/CNPJ não é segredo; qualquer pessoa que
+soubesse o documento de um assinante ativo criava uma assinatura nova
+com o PRÓPRIO cartão e, ao confirmar o pagamento, o checkout cancelava
+a assinatura de VERDADE da vítima na Asaas — um cancelamento de
+terceiro pelo caminho de dinheiro, contrariando o `API.md` §5.5
+("cancelamento: só o projeto aciona"). *Quem vê:* o assinante vítima,
+que perde a assinatura sem ter feito nada; o contratante, que vê uma
+cobrança de estranho na conta de outro cliente. Corrigido: `renovar`
+agora precisa ser um token HMAC-SHA256 que só quem tem a `api_key` do
+contratante consegue gerar (`utils/tokenRenovacao.js`, `API.md §7.3`,
+com receita em Node/PHP/Python). Sem token válido, degrada pra
+assinatura nova comum — nunca amarra nem cancela nada. **Mudança
+incompatível**: `&renovar=1` (o formato antigo) para de funcionar como
+renovação. Achado e corrigido em 16/09/2026, testado com sabotagem.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

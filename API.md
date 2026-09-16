@@ -1,7 +1,7 @@
 # San Checkout — Documentação da API
 
 **SAN & CO. Pay Engine** — referência completa de integração.
-Versão do contrato: **1** · Atualizado em 16/09/2026
+Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança em `&renovar=`, ver seção 7.3)
 
 > Este é o documento **de fronteira**: tudo que atravessa a linha entre o
 > San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
@@ -171,15 +171,17 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}
 ### Renovação de assinatura (trocar o cartão)
 
 ```
-https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={token}
 ```
+
+`{token}` é gerado por você — nunca o literal `1`. Ver seção 7.3.
 
 | Parâmetro | Obrigatório | Descrição |
 |---|---|---|
 | `c` | sim | Seu `contratante_id` |
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
-| `renovar` | não | `1` = o assinante está trocando o cartão de uma assinatura existente (seção 7.3) |
+| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra |
 | `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
@@ -684,7 +686,7 @@ Nem todo desfecho gera webhook. Não espere um:
 - **Pop-up cancelada** em pagamento avulso: nada é enviado. (Em
   assinatura NOVA, chega `cancelada` — mas não numa renovação, ver
   abaixo.)
-- **Pop-up de renovação (`&renovar=1`) fechada sem pagar**: nada é
+- **Pop-up de renovação (`&renovar={token}`) fechada sem pagar**: nada é
   enviado. A assinatura ANTIGA continua intocada, ativa e sendo cobrada —
   ela só é cancelada depois que a NOVA confirmar (seção 7.3). Antes de
   16/09/2026 o checkout mandava `cancelada` mesmo sem a renovação ter
@@ -1212,10 +1214,12 @@ autorizado enquanto ele não ler.
 
 ### 7.3 Renovação — cartão vencido ou troca de cartão
 
-Mande o assinante para o link de assinatura com **`&renovar=1`**:
+Mande o assinante para o link de assinatura com **`&renovar={token}`**,
+onde `{token}` é gerado por VOCÊ (nunca pelo checkout, e nunca o
+literal `1`):
 
 ```
-https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={token}
 ```
 
 Ele preenche o cartão novo na pop-up de sempre, e **a assinatura antiga é
@@ -1223,6 +1227,79 @@ cancelada automaticamente assim que a nova for paga** — nessa ordem, para
 que ele nunca fique sem assinatura nenhuma se o pagamento falhar.
 
 Use isso ao receber `cobranca_falhou`.
+
+#### ⚠️ O token é obrigatório — sem ele, é só uma assinatura nova
+
+Até 16/09/2026 bastava mandar `&renovar=1`: o checkout confiava no
+`documento` que o próprio formulário coletava, sem confirmar que quem
+estava pagando era o mesmo assinante. **CPF/CNPJ não é segredo** —
+qualquer pessoa que soubesse (ou adivinhasse, ou obtivesse de um
+vazamento qualquer) o documento de um assinante ativo seu podia montar
+esse link, pagar com o **próprio** cartão, e — ao confirmar — fazia o
+checkout cancelar a assinatura de VERDADE da vítima na Asaas. Um
+cancelamento de terceiro pelo caminho de dinheiro, sem tocar em
+credencial nenhuma sua.
+
+Por isso o `renovar` tem que ser um **token HMAC-SHA256**, calculado por
+você com a sua `X-Checkout-Key` como segredo — a mesma chave que já
+assina o webhook que você recebe (seção 4.3.1). Só quem tem a chave
+consegue gerar um token que o checkout aceita; saber o `documento` da
+vítima não basta mais.
+
+**Fórmula:**
+
+```
+timestamp = agora, em segundos (epoch)
+mensagem  = "{timestamp}.{contratante_id}.{planoId}.{documento}"
+hmac      = HMAC-SHA256(mensagem, sua X-Checkout-Key)
+token     = "{timestamp}.{hmac em hex}"
+```
+
+**Node.js**
+
+```js
+import crypto from 'node:crypto';
+
+function gerarTokenRenovacao(apiKey, { contratanteId, planoId, documento }) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const hmac = crypto.createHmac('sha256', apiKey)
+    .update(`${timestamp}.${contratanteId}.${planoId}.${documento}`)
+    .digest('hex');
+  return `${timestamp}.${hmac}`;
+}
+```
+
+**PHP**
+
+```php
+function gerarTokenRenovacao($apiKey, $contratanteId, $planoId, $documento) {
+    $timestamp = time();
+    $hmac = hash_hmac('sha256', "$timestamp.$contratanteId.$planoId.$documento", $apiKey);
+    return "$timestamp.$hmac";
+}
+```
+
+**Python**
+
+```python
+import hmac, hashlib, time
+
+def gerar_token_renovacao(api_key, contratante_id, plano_id, documento):
+    timestamp = int(time.time())
+    mensagem = f'{timestamp}.{contratante_id}.{plano_id}.{documento}'
+    assinatura = hmac.new(api_key.encode(), mensagem.encode(), hashlib.sha256).hexdigest()
+    return f'{timestamp}.{assinatura}'
+```
+
+O token vale por **7 dias** a partir de quando foi gerado — folgado o
+bastante pra um link de e-mail que ninguém abre na hora, sem ficar
+eterno. Gere um token novo por assinante e por tentativa; não reaproveite
+um token velho.
+
+**O que acontece se o token faltar ou não conferir:** nada de errado —
+o checkout trata como uma assinatura **nova comum**: cria e cobra
+normalmente, só não amarra nem cancela nenhuma outra. É o modo seguro,
+não um erro que trava o pagador.
 
 > **A renovação gera um id de assinatura NOVO na Asaas.** Do seu lado é a
 > continuação do mesmo assinante (mesmo `planoId`, mesmo `documento`).
@@ -1249,7 +1326,7 @@ Use isso ao receber `cobranca_falhou`.
         │
         ├──► ciclo falhou ─────► webhook  evento: cobranca_falhou
         │         │
-        │         └──► você manda o link &renovar=1
+        │         └──► você manda o link &renovar={token}
         │
         ├──► POST /pausar-assinatura ──► para de cobrar, vínculo vivo
         │         │
@@ -1430,7 +1507,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
 - [ ] (Opcional) mandar `returnUrl` no link e combinar as origens com quem administra o checkout — e **nunca** tratar a volta como prova de pagamento (seção 3.1)
 - [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
-- [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar=1`
+- [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar={token}` — gerando o token você mesmo (seção 7.3), nunca `&renovar=1`
 
 **Combinado com quem administra o checkout:**
 

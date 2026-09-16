@@ -200,6 +200,34 @@ Feito em 16/09:
   próprio teste do achado da corrida, cuja primeira versão passava
   mesmo sabotada — corrigida antes de confiar nela) e `npm run check`
   verde em cada commit.
+- **Terceira rodada de varredura**, com o mesmo escopo grave-só, achou
+  mais dois: `criarLimitadorConsulta` já tinha virado fábrica antes
+  desta sessão, mas `limitadorCriacao` continuou sendo uma única
+  instância de `rateLimit()` compartilhada entre 7+2 rotas (cartão,
+  assinatura, assinatura-pix, estornar, cancelar/pausar/retomar-
+  assinatura, e as duas criações de pix/boleto) — corrigido, virou
+  fábrica também. E o mais grave da sessão: **`renovar=1` bastava
+  sozinho pra achar e depois cancelar a assinatura de OUTRA pessoa** —
+  `documento` não é segredo, e a rota de criação é pública. RN-25.
+- **Mapa completo do ciclo de assinatura**, pedido pelo dono depois da
+  3ª rodada: 11 etapas + a variante Pix Automático, todo erro já achado
+  catalogado contra a etapa onde vive (`docs/ciclo-assinatura-mapa.md`).
+  Achou mais duas coisas pequenas relendo o código do zero (um
+  comentário órfão colado na função errada; 3 citações desatualizadas
+  de `INTEGRACAO.md`), e descartou uma suspeita de bug depois de
+  verificar com cuidado (CHECKOUT_PAID duplicado não repete `criada`
+  de um jeito que faça dano — esse evento só existe uma vez na vida da
+  assinatura, a dedup documentada já filtra).
+- **RN-25 corrigido**: `renovar` agora precisa ser um token HMAC-SHA256
+  que só quem tem a `api_key` do contratante consegue gerar
+  (`src/utils/tokenRenovacao.js`, receita em Node/PHP/Python no
+  `API.md §7.3`). Sem token válido (inclusive o formato antigo,
+  `&renovar=1`), degrada pra assinatura nova comum — nunca amarra nem
+  cancela nada; é o modo seguro, não um erro que trava o pagador.
+  **Mudança incompatível**: qualquer integração real usando
+  `&renovar=1` hoje precisa trocar pra gerar o token. Testado com
+  sabotagem nos dois níveis (o algoritmo em si, e a fiação no
+  controller que usa ele em vez de confiar em `renovar` sozinho).
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;

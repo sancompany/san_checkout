@@ -410,12 +410,15 @@ async function iniciarModoAssinatura() {
     return assinarAgora({
       contratanteId: idsResolvidos.contratanteId,
       planoId: idsResolvidos.planoId,
-      // `&renovar=1` na URL = troca de cartão de uma assinatura que já
-      // existe. O backend cancela a antiga só depois que esta confirmar.
+      // `&renovar={token}` na URL = troca de cartão de uma assinatura
+      // que já existe. O token (não um simples "1") é quem prova que o
+      // link veio do contratante — o backend confere antes de amarrar
+      // qualquer coisa (API.md §7.3); sem ele, ou com o formato antigo,
+      // o backend trata como assinatura nova comum, sem cancelar nada.
       dadosPagador: {
         ...coletarDadosPagador(),
         ...coletarEndereco(),
-        renovar: new URLSearchParams(window.location.search).get('renovar') === '1'
+        renovar: new URLSearchParams(window.location.search).get('renovar') ?? undefined
       },
       mostrarToast
     });

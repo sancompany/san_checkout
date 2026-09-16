@@ -40,7 +40,7 @@ apontando pra uma assinatura achada só por `contratanteId+planoId+documento`.
 
 | Erro | Status |
 |---|---|
-| `renovar=1` acha e amarra a assinatura antiga usando `documento` **do body, não autenticado** — base do achado abaixo (T4) | **[GRAVE, ABERTO]** — achado 16/09, rodada 3 |
+| `renovar=1` achava e amarrava a assinatura antiga usando `documento` **do body, não autenticado** — base do achado abaixo (T4) | **[CORRIGIDO]** — `renovar` agora precisa ser um token HMAC-SHA256 gerado pelo contratante com a própria `api_key` (`utils/tokenRenovacao.js`, `API.md §7.3`); sem token válido, degrada pra assinatura nova comum, sem amarrar nada |
 | `limitadorCriacao` era uma única instância de `rateLimit()` compartilhada entre esta e mais 6 rotas (assinatura-pix, estornar, cancelar/pausar/retomar-assinatura, e reaproveitada também em pix/boleto) — um IP consumia o mesmo balde em todas | **[CORRIGIDO]** `73294d2` — virou fábrica (`criarLimitadorCriacao`) |
 | Header do front (`assinaturaCheckoutHandler.js`) dizia "endpoint não existe" — não era verdade, endpoint funciona | **[CORRIGIDO]** |
 
@@ -88,7 +88,7 @@ confirmar, nunca antes.
 |---|---|
 | Vínculo dependia de `payment.checkoutSession`, não confirmado até 15/09 | **[CORRIGIDO]** RN-17 |
 | `ciclo` vinha de `payment.cycle`, que não existe — caía no default `MONTHLY` | **[CORRIGIDO]**, sessão anterior |
-| **É AQUI que o achado de T1 se concretiza**: `encerrarAssinaturaSubstituida` cancela a assinatura antiga com base só no `documento` não autenticado que T1 amarrou — sem checar se quem pagou agora é o mesmo titular | **[GRAVE, ABERTO]** — mesmo achado de T1, consequência final |
+| **Era aqui que o achado de T1 se concretizava**: `encerrarAssinaturaSubstituida` cancelava a assinatura antiga com base só no `documento` não autenticado que T1 amarrava — sem checar se quem pagou agora é o mesmo titular | **[CORRIGIDO]** — junto com T1, o mesmo fix (`assinaturaSubstituida` só existe com token válido, então `substitui_assinatura_id` nunca é gravado sem prova) |
 | Duas entregas concorrentes deste evento (retry) rodam `amarrarAssinaturaACobranca` duas vezes — `upsertAssinatura` é upsert (seguro) e `encerrarAssinaturaSubstituida` chama `DELETE` duas vezes na Asaas, capturado por try/catch (sem dano, só log de erro espúrio) | Verificado, sem correção necessária — upsert já é seguro por natureza |
 
 ## T5 — Ciclos seguintes (2º mês em diante)
@@ -182,10 +182,18 @@ não tem o furo de T1).
 
 ## O que ainda está aberto, resumido
 
-1. **[GRAVE, ABERTO]** T1/T4 — renovação sem autenticação permite cancelar a assinatura de outra pessoa. Precisa de decisão de desenho (token de uso único ou equivalente) antes de eu tocar no código.
-2. **[DECLARADO]** T10 — sem reconciliação de `status` da assinatura contra a Asaas quando uma chamada nossa perde a confirmação.
-3. **[DECLARADO]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós.
-4. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
+1. **[DECLARADO]** T10 — sem reconciliação de `status` da assinatura contra a Asaas quando uma chamada nossa perde a confirmação.
+2. **[DECLARADO]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós.
+3. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
+
+O achado grave de T1/T4 (renovação sem autenticação permitindo
+cancelar a assinatura de outra pessoa) **foi corrigido** — `renovar`
+agora exige um token HMAC assinado com a `api_key` do contratante
+(`src/utils/tokenRenovacao.js`, `API.md §7.3`). **É uma mudança
+incompatível**: qualquer integração usando `&renovar=1` (o formato
+antigo) passa a criar uma assinatura nova comum, sem cancelar a antiga
+— o MostrAí (e qualquer outro contratante usando renovação) precisa
+adotar a nova fórmula de token antes de continuar mandando esses links.
 
 Nada mais foi encontrado nesta passada — o ciclo inteiro, etapa por
 etapa, código lido de novo do zero.

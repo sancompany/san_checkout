@@ -43,6 +43,7 @@ import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import { documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido } from '../utils/validadores.js';
+import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
 import { responderErro } from '../utils/erros.js';
 
 function parcelasValidas(valor) {
@@ -239,18 +240,29 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       });
     }
 
-    // RENOVAÇÃO (link com `&renovar=1`): o assinante está trocando o
-    // cartão de uma assinatura que já existe. Não dá pra trocar o
-    // cartão pela API da Asaas sem receber número e CVV no nosso
-    // servidor — isso colocaria o projeto dentro do escopo PCI, que é
-    // exatamente o que a pop-up hospedada evita. Então o caminho é
-    // criar uma assinatura NOVA pela pop-up e cancelar a antiga quando
-    // a nova confirmar (webhookController).
+    // RENOVAÇÃO (link com `&renovar={token}`): o assinante está
+    // trocando o cartão de uma assinatura que já existe. Não dá pra
+    // trocar o cartão pela API da Asaas sem receber número e CVV no
+    // nosso servidor — isso colocaria o projeto dentro do escopo PCI,
+    // que é exatamente o que a pop-up hospedada evita. Então o caminho
+    // é criar uma assinatura NOVA pela pop-up e cancelar a antiga
+    // quando a nova confirmar (webhookController).
+    //
+    // `renovar` PRECISA ser o token que só o contratante consegue gerar
+    // (com a própria api_key, `utils/tokenRenovacao.js`) — não basta
+    // saber o `documento`, que não é segredo. Até 16/09/2026 bastava
+    // `renovar: true`: qualquer um que soubesse o CPF/CNPJ de um
+    // assinante ativo criava uma assinatura nova com o PRÓPRIO cartão
+    // e, ao pagá-la, cancelava a assinatura de VERDADE da vítima na
+    // Asaas — sequestro/cancelamento cross-pagador, sem credencial
+    // nenhuma. Token ausente ou inválido não é erro: degrada pra
+    // "assinatura nova comum", sem amarrar nem cancelar nada — o modo
+    // seguro, não o que abre a porta.
     //
     // Guarda só a referência aqui; nada é cancelado antes do pagamento
     // entrar — se a renovação não for concluída, a assinatura antiga
     // continua intacta.
-    const assinaturaSubstituida = renovar
+    const assinaturaSubstituida = tokenRenovacaoValido(renovar, contratante?.api_key, { contratanteId, planoId, documento })
       ? await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])
       : null;
 
