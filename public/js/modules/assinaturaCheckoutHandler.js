@@ -80,6 +80,20 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
 
     const popup = window.open(checkoutUrl, '_blank', 'width=480,height=760');
 
+    // Bloqueador de pop-up (ou Safari, que exige o `window.open` no
+    // MESMO tick do clique — o `await post` acima já quebrou isso) faz
+    // `window.open` devolver `null`. Sem esta checagem, `iniciarPollingPopup`
+    // roda pra sempre esperando um `CHECKOUT_PAID` que nunca vem — o
+    // pagador nunca viu a tela — e `observarFechamentoPopup` sai sem
+    // armar nada (`if (!popup) return`), então o botão travava em
+    // "Abrindo pagamento…" sem erro e sem saída além de recarregar.
+    if (!popup) {
+      mostrarToast('Não conseguimos abrir a janela de pagamento. Libere pop-ups para este site e tente de novo.', 'erro');
+      botao.disabled = false;
+      botao.textContent = textoOriginal;
+      return;
+    }
+
     iniciarPollingPopup(asaasCheckoutId, {
       aoConfirmar: () => {
         botao.textContent = 'Assinatura Ativa ✓';

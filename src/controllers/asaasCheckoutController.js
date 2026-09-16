@@ -429,7 +429,14 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
       taxaIsenta: true, // mesma regra da assinatura por cartão nesta leva
       valorCobrado: valor,
       metodoPagamento: 'assinatura_pix',
-      parcelas: 1
+      parcelas: 1,
+      // Mesmo motivo da assinatura por cartão (criarCheckoutAssinatura):
+      // `ciclo` já validado acima, gravado na criação em vez de esperado
+      // de um campo não confirmado do payload da Asaas — sem isso,
+      // `upsertAssinatura` cairia no default 'MONTHLY', reintroduzindo o
+      // mesmo bug do `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`
+      // por outra porta.
+      ciclo
     });
 
     resposta.json({

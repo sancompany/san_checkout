@@ -734,6 +734,19 @@ payload**:
 > **Não invente um `chargeId` para assinatura, e não espere um.** Se o
 > seu código precisa de um identificador de cobrança individual para
 > conciliar, ele está na seção 5.3.
+>
+> ⚠️ **`planoId` + `documento` + `evento` deduplica RETRY, não CICLO.**
+> O `evento` é o mesmo texto (`cobranca_confirmada`, por exemplo) em
+> TODO ciclo recorrente do mesmo assinante — não existe nada no payload
+> que diferencie o pagamento de setembro do de outubro. Se o seu código
+> trata "já processei este `evento` pra este assinante" como motivo pra
+> ignorar a notificação, ele vai descartar o 2º, o 3º… ciclo como
+> "duplicata" do 1º, e o contratante para de creditar cobranças reais em
+> silêncio. A chave da tabela acima só serve pra não processar duas
+> vezes a MESMA tentativa de notificação (o retry de §4.3.6); para saber
+> se já processou um ciclo específico, use a sua própria consulta
+> periódica (seção 5.3, campo `ultimaCobranca.criadoEm`) como fonte de
+> verdade, não a deduplicação do webhook.
 
 ---
 

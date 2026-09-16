@@ -223,6 +223,17 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
  * já usam — `buscarCobrancaPorSubscriptionId` faz algo parecido, mas
  * exige o id da assinatura na Asaas, que o contratante nunca vê.
  *
+ * **Tentativa de renovação abandonada não conta como "última cobrança".**
+ * `&renovar=1` sem pagar cria uma linha NOVA (`substitui_assinatura_id`
+ * apontando pra assinatura antiga, que continua ativa e sendo cobrada) e
+ * essa linha nasce DEPOIS da última cobrança real — sem o filtro abaixo,
+ * `ORDER BY criado_em DESC` pegaria a tentativa abandonada
+ * (`cancelado`/`expirado`) em vez do ciclo real, e `/consultar-assinatura`
+ * mentiria pro contratante que o último ciclo falhou numa assinatura que
+ * está `ativa` e cobrando normalmente — mesma família do RN-20, agora na
+ * conciliação em vez do webhook. Uma renovação que confirma continua
+ * valendo como última cobrança normalmente (`status = 'confirmado'`).
+ *
  * ponytail: sem índice novo — `idx_cobrancas_contratante` já reduz a
  * varredura ao contratante, e o volume por contratante é pequeno.
  * Vira índice composto quando (e se) isso aparecer como lentidão.
@@ -234,6 +245,7 @@ export async function buscarUltimaCobrancaDaAssinatura(contratanteId, planoId, d
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
     .eq('documento', documento)
+    .or('substitui_assinatura_id.is.null,status.eq.confirmado')
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle();

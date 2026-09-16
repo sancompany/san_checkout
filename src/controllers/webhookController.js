@@ -474,7 +474,11 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
       planoId: cobranca.plano_id,
       documento: cobranca.documento,
       valor: cobranca.valor_cobrado,
-      ciclo: corpo?.authorization?.frequency ?? null,
+      // `cobranca.ciclo` já é gravado na CRIAÇÃO (asaasCheckoutController
+      // valida contra CICLOS_VALIDOS antes de existir qualquer webhook) —
+      // mesma lógica da assinatura por cartão. `corpo?.authorization?.frequency`
+      // fica só como fallback: não confirmado byte a byte contra a Asaas.
+      ciclo: cobranca.ciclo ?? corpo?.authorization?.frequency ?? null,
       proximaCobranca: null
     });
     return notificarConformeMetodo(cobranca, { confirmado: true, eventoAssinatura: 'criada' }, deps);
