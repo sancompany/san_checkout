@@ -368,9 +368,6 @@ export function mapearStatusPayment(evento) {
   return null;
 }
 
-/** Só usado pra notificação de Assinatura — traduz o status local pro
- *  vocabulário já documentado no API.md §4.3.4
- *  (criada/cobranca_confirmada/cobranca_falhou/cancelada). */
 /**
  * Fecha a assinatura antiga depois que a renovação foi paga.
  *
@@ -512,6 +509,9 @@ async function processarEventoSubconta(corpo, deps = dependenciasPadrao) {
   });
 }
 
+/** Traduz o status local pro vocabulário de assinatura já documentado
+ *  no API.md §4.3.4 (criada/cobranca_confirmada/cobranca_falhou/
+ *  cobranca_estornada/cobranca_contestada/cancelada). */
 export function mapearEventoAssinatura(status) {
   if (status === 'confirmado') return 'cobranca_confirmada';
   // Recusa de cartão num ciclo é, pro assinante, a mesma coisa que a
@@ -868,15 +868,15 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
 
   if (evento === 'CHECKOUT_EXPIRED') {
     await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'expirado');
-    // Sem notificação: nem o webhook de pedido (INTEGRACAO.md seção 4)
-    // nem o de assinatura (seção 6.1) documentam um status/evento pra
-    // expiração — só atualizamos nosso próprio banco.
+    // Sem notificação: API.md §4.3.5 ("quando NÃO chega notificação")
+    // documenta a pop-up expirada como um dos casos que não gera
+    // webhook — só atualizamos nosso próprio banco.
   }
 }
 
 /**
  * Assinatura usa um FORMATO DE WEBHOOK DIFERENTE do pedido avulso
- * (INTEGRACAO.md seção 6.1 vs seção 4) — por isso ramifica aqui por
+ * (API.md §4.3.2, "Dois formatos no mesmo endpoint") — por isso ramifica aqui por
  * `metodo_pagamento` antes de montar o payload. `eventoAssinatura`
  * explícito (usado pelos ciclos recorrentes, cancelamento) tem
  * prioridade; sem ele, `confirmado: true` cai no default 'criada'
@@ -903,7 +903,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   }
 
   // Cartão/Boleto avulso — só notifica em confirmação (cancelamento
-  // de tentativa não tem status documentado no INTEGRACAO.md seção 4,
+  // de tentativa não tem status no vocabulário do API.md §4.3.3,
   // então não inventamos um aqui).
   if (confirmado) {
     return deps.notificar(
