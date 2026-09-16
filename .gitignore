@@ -6,3 +6,7 @@ npm-debug.log*
 # Capturas de tela de sessão — contêm dado pessoal legível.
 # Ver docs/inventario-de-dados.md seção 6.1.
 Claude outputs/
+
+# Permissão de máquina (quais comandos o Claude Code roda sem perguntar).
+# É de quem opera, não do projeto — não entra no repositório.
+.claude/settings.local.json

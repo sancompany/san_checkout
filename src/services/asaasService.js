@@ -413,17 +413,25 @@ export async function cancelarAssinatura(subscriptionId) {
  * (timeout, ver `TIMEOUT_ASAAS_MS`), `assinaturas.status` fica
  * desatualizado pra sempre, sem nada que detecte.
  *
- * ⚠️ Deliberadamente defensivo num ponto que a doc da Asaas NÃO
- * esclarece: ela documenta o campo `deleted` (boolean) e o `status`
- * (`ACTIVE` | `EXPIRED` | `INACTIVE`) no corpo, mas não diz o que
- * acontece ao consultar uma assinatura já removida por `DELETE` — se
- * volta o objeto com `deleted: true` ou um `404`. Os DOIS são tratados
- * aqui, então isto funciona sem depender de eu ter adivinhado certo:
+ * ⚠️ MEDIDO AO VIVO em 16/09/2026, contra o sandbox, e o resultado
+ * derrubou a leitura ingênua: uma assinatura **cancelada por `DELETE`
+ * responde `200`** (não 404) com `deleted: true` **e
+ * `status: "INACTIVE"` — o MESMO status de uma assinatura pausada.**
+ * Quem distingue cancelada de pausada é só o `deleted`; mapear pelo
+ * `status` sozinho marcaria toda assinatura cancelada como `pausada`.
+ * Por isso `encerrada` olha `deleted` ANTES do status.
+ *
+ * Medição (sub_qut6521d50496vkn, cancelada nesta mesma data):
+ *   `{ deleted: true, status: "INACTIVE", cycle: "YEARLY", nextDueDate: … }`
+ * contra a ativa do MostrAí (sub_xjsad6cpqor5pars):
+ *   `{ deleted: false, status: "ACTIVE", cycle: "QUARTERLY", … }`
+ *
+ * O ramo do `404` fica: não é o que uma assinatura deletada devolve,
+ * mas continua sendo o que um id de OUTRA conta (ou inexistente)
+ * devolve — e esse não pode virar "cancelada" automática.
  *
  *   - objeto com `deleted: true`  → `{ encerrada: true }`
- *   - `404`                       → `null` (quem chama decide; 404 também
- *                                   pode ser id de outra conta, então
- *                                   não vira "cancelada" automática)
+ *   - `404`                       → `null` (quem chama decide)
  *   - qualquer outro erro         → propaga (rede, 401, 5xx)
  *
  * @returns {Promise<{status: string, deleted: boolean, encerrada: boolean, proximaCobranca: string|null}|null>}
@@ -446,7 +454,11 @@ export async function consultarAssinaturaNaAsaas(subscriptionId) {
     // `EXPIRED` é a assinatura que chegou ao fim (endDate/maxPayments) —
     // pro nosso vocabulário, encerrada do mesmo jeito que a deletada.
     encerrada: deleted || status === 'EXPIRED',
-    proximaCobranca: corpo?.nextDueDate ?? null
+    proximaCobranca: corpo?.nextDueDate ?? null,
+    // Quem cobra é a Asaas: se o `ciclo` do nosso registro divergir
+    // deste, o errado é o nosso (foi o caso das assinaturas nascidas
+    // antes da correção de 15/09, gravadas como MONTHLY).
+    ciclo: corpo?.cycle ?? null
   };
 }
 

@@ -39,14 +39,17 @@ import {
   buscarUltimaCobrancaDaAssinatura,
   atualizarStatusCobranca
 } from '../services/cobrancaService.js';
-import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
+import {
+  buscarAssinaturaAtiva,
+  atualizarStatusAssinatura,
+  atualizarCicloAssinatura
+} from '../services/assinaturaService.js';
 import {
   recuperarCobrancaPix,
   recuperarCobrancaBoleto,
   consultarStatus,
   consultarAssinaturaNaAsaas
 } from '../services/asaasService.js';
-import { atualizarStatusAssinatura } from '../services/assinaturaService.js';
 import { documentoValido } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -101,34 +104,79 @@ async function statusAtualizado(cobranca) {
  */
 const STATUS_ASAAS_PARA_LOCAL = { ACTIVE: 'ativa', INACTIVE: 'pausada' };
 
-async function assinaturaAtualizada(assinatura) {
-  if (!assinatura?.id) return { status: assinatura?.status ?? null, proximaCobranca: assinatura?.proxima_cobranca ?? null };
+function comoEstaNoBanco(assinatura) {
+  return {
+    status: assinatura?.status ?? null,
+    ciclo: assinatura?.ciclo ?? null,
+    proximaCobranca: assinatura?.proxima_cobranca ?? null
+  };
+}
+
+/** Injetável só pro autoteste: a reconciliação decide status e ciclo, e
+ *  não dá pra afirmar nada sobre ela sem falsear a resposta da Asaas. */
+const dependenciasDaConciliacao = {
+  consultarAssinaturaNaAsaas,
+  atualizarStatusAssinatura,
+  atualizarCicloAssinatura
+};
+
+export async function assinaturaAtualizada(assinatura, deps = dependenciasDaConciliacao) {
+  if (!assinatura?.id) return comoEstaNoBanco(assinatura);
 
   try {
-    const viva = await consultarAssinaturaNaAsaas(assinatura.id);
+    const viva = await deps.consultarAssinaturaNaAsaas(assinatura.id);
 
     // `null` = 404 na Asaas. NÃO vira "cancelada" automaticamente: 404
     // também é o que responde um id de outra conta ou digitado errado, e
     // marcar cancelada por engano é pior que ficar com o dado velho.
+    // (Medido em 16/09: assinatura DELETADA não devolve 404 — devolve
+    // 200 com `deleted: true`. Então este ramo é id inválido mesmo.)
     if (!viva) {
       console.error(`[consulta] assinatura ${assinatura.id} não existe na Asaas (404) — mantendo o status local "${assinatura.status}".`);
-      return { status: assinatura.status, proximaCobranca: assinatura.proxima_cobranca ?? null };
+      return comoEstaNoBanco(assinatura);
     }
 
+    /* `deleted` ANTES do status, e a ordem é a correção inteira: uma
+       assinatura cancelada responde `status: "INACTIVE"` — o MESMO de
+       uma pausada (medido em 16/09). Olhar só o status marcaria toda
+       cancelada como `pausada`. */
     const statusReal = viva.encerrada ? 'cancelada' : (STATUS_ASAAS_PARA_LOCAL[viva.status] ?? assinatura.status);
 
     if (statusReal !== assinatura.status) {
       console.error(`[consulta] divergência corrigida: assinatura ${assinatura.id} estava "${assinatura.status}" aqui e "${viva.status}${viva.deleted ? '/deleted' : ''}" na Asaas.`);
-      await atualizarStatusAssinatura(assinatura.id, statusReal);
+      await deps.atualizarStatusAssinatura(assinatura.id, statusReal);
     }
 
-    // `proximaCobranca` sai do `null` eterno: `nextDueDate` existe nesta
-    // resposta (o que nenhum payload de webhook trazia, que é por que o
-    // campo nasceu nulo — ver docs/pendencias.md).
-    return { status: statusReal, proximaCobranca: viva.proximaCobranca ?? assinatura.proxima_cobranca ?? null };
+    // Ciclo: quem cobra é a Asaas, então divergência aqui é erro NOSSO —
+    // e é o rastro que as assinaturas criadas antes de 15/09 deixaram no
+    // banco (gravadas `MONTHLY` por ler um campo de webhook inexistente).
+    // A correção na origem só valeu pras novas; esta alcança as velhas.
+    const cicloReal = viva.ciclo ?? assinatura.ciclo ?? null;
+    if (viva.ciclo && viva.ciclo !== assinatura.ciclo) {
+      console.error(`[consulta] ciclo corrigido: assinatura ${assinatura.id} estava "${assinatura.ciclo}" aqui e "${viva.ciclo}" na Asaas.`);
+      await deps.atualizarCicloAssinatura(assinatura.id, viva.ciclo);
+    }
+
+    /* `proximaCobranca` sai do `null` eterno: `nextDueDate` existe nesta
+       resposta (o que nenhum payload de webhook trazia, que é por que o
+       campo nasceu nulo — ver docs/pendencias.md).
+
+       Mas ela é `null` para assinatura encerrada, e não é detalhe: a
+       Asaas CONTINUA devolvendo `nextDueDate` de uma assinatura
+       deletada (medido em 16/09: `sub_qut6521d50496vkn`, cancelada,
+       responde `nextDueDate: "2027-09-16"`). Repassar isso diria ao
+       contratante que existe uma cobrança marcada para uma assinatura
+       que nunca mais vai cobrar. */
+    return {
+      status: statusReal,
+      ciclo: cicloReal,
+      proximaCobranca: statusReal === 'cancelada'
+        ? null
+        : (viva.proximaCobranca ?? assinatura.proxima_cobranca ?? null)
+    };
   } catch (erro) {
     console.error(`[consulta] falha ao reconsultar a assinatura ${assinatura.id} na Asaas:`, erro.message);
-    return { status: assinatura.status, proximaCobranca: assinatura.proxima_cobranca ?? null };
+    return comoEstaNoBanco(assinatura);
   }
 }
 
@@ -299,7 +347,7 @@ export async function consultarAssinatura(requisicao, resposta) {
       assinaturaId: assinatura?.id ?? null,
       status: assinaturaViva.status,
       valor: assinatura?.valor ?? null,
-      ciclo: assinatura?.ciclo ?? null,
+      ciclo: assinaturaViva.ciclo,
       proximaCobranca: assinaturaViva.proximaCobranca,
       ultimaCobranca: ultima
         ? {
@@ -314,4 +362,124 @@ export async function consultarAssinatura(requisicao, resposta) {
   } catch (erro) {
     responderErro(resposta, erro, 'consulta.consultarAssinatura');
   }
+}
+
+/* ------------------------------------------------------------------
+   Autoteste — `node src/controllers/cobrancaConsultaController.js`
+
+   Cobre a reconciliação da assinatura (`assinaturaAtualizada`), que é o
+   único lugar onde a conciliação decide status e ciclo contra a Asaas.
+
+   As duas regras que ele trava vieram de MEDIÇÃO, não de leitura de
+   documentação (16/09/2026, `GET /v3/subscriptions/{id}` rodado dentro
+   do container de produção contra o sandbox):
+
+     1. Assinatura CANCELADA responde HTTP 200 com `deleted: true` e
+        `status: "INACTIVE"` — o MESMO status de uma pausada. Quem olhar
+        o status antes do `deleted` marca toda cancelada como `pausada`.
+     2. A resposta traz `cycle`, e ela é a fonte da verdade: quem cobra é
+        a Asaas. `sub_qut6521d50496vkn` estava `YEARLY` lá e `MONTHLY`
+        aqui — rastro das assinaturas nascidas antes da correção de
+        15/09. Sem esta correção, essas linhas ficam erradas para sempre.
+
+   404 continua NÃO virando cancelada: medido que a deletada não dá 404,
+   então 404 sobrou para id de outra conta ou digitado errado.
+------------------------------------------------------------------ */
+if (process.argv[1]?.endsWith('cobrancaConsultaController.js')) {
+  const { strict: assert } = await import('node:assert');
+
+  let checagens = 0;
+  const conferir = (condicao, mensagem) => { assert.ok(condicao, mensagem); checagens += 1; };
+
+  /** Falseia a Asaas e anota tudo que a reconciliação tentou gravar. */
+  function costura(respostaDaAsaas) {
+    const gravado = { status: [], ciclo: [] };
+    return {
+      gravado,
+      deps: {
+        consultarAssinaturaNaAsaas: async () => respostaDaAsaas,
+        atualizarStatusAssinatura: async (id, status) => { gravado.status.push([id, status]); },
+        atualizarCicloAssinatura: async (id, ciclo) => { gravado.ciclo.push([id, ciclo]); }
+      }
+    };
+  }
+
+  const noBanco = {
+    id: 'sub_qut6521d50496vkn', status: 'ativa', ciclo: 'MONTHLY', proxima_cobranca: null
+  };
+
+  /* --- 1. cancelada: `deleted` manda, apesar do INACTIVE --- */
+  let c = costura({
+    status: 'INACTIVE', deleted: true, encerrada: true,
+    proximaCobranca: null, ciclo: 'YEARLY'
+  });
+  let r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(r.status === 'cancelada', `cancelada na Asaas tem que virar "cancelada" aqui, veio "${r.status}"`);
+  conferir(r.status !== 'pausada', 'cancelada NÃO pode ser confundida com pausada (as duas são INACTIVE)');
+  conferir(
+    c.gravado.status.some(([, s]) => s === 'cancelada'),
+    'a divergência tem que ser GRAVADA, não só devolvida — senão volta na consulta seguinte'
+  );
+
+  /* --- 1b. cancelada NÃO promete próxima cobrança --- */
+  c = costura({
+    status: 'INACTIVE', deleted: true, encerrada: true,
+    proximaCobranca: '2027-09-16', ciclo: 'YEARLY'
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(
+    r.proximaCobranca === null,
+    `cancelada não pode prometer cobrança futura, veio "${r.proximaCobranca}" (a Asaas devolve nextDueDate mesmo para deletada)`
+  );
+
+  /* --- 2. pausada de verdade: mesmo status, sem `deleted` --- */
+  c = costura({
+    status: 'INACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: '2026-10-16', ciclo: 'MONTHLY'
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(r.status === 'pausada', `INACTIVE sem deleted é pausada, veio "${r.status}"`);
+
+  /* --- 3. o ciclo errado no banco é corrigido pelo da Asaas --- */
+  c = costura({
+    status: 'ACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: '2027-09-16', ciclo: 'YEARLY'
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(r.ciclo === 'YEARLY', `o ciclo devolvido tem que ser o da Asaas, veio "${r.ciclo}"`);
+  conferir(
+    c.gravado.ciclo.some(([, ciclo]) => ciclo === 'YEARLY'),
+    'o ciclo divergente tem que ser gravado — a correção de origem só valeu pras assinaturas novas'
+  );
+  conferir(r.proximaCobranca === '2027-09-16', 'proximaCobranca sai do null eterno: vem do nextDueDate');
+
+  /* --- 4. ciclo igual não escreve à toa --- */
+  c = costura({
+    status: 'ACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: null, ciclo: 'MONTHLY'
+  });
+  await assinaturaAtualizada(noBanco, c.deps);
+  conferir(c.gravado.ciclo.length === 0, 'ciclo igual ao do banco não pode virar escrita');
+  conferir(c.gravado.status.length === 0, 'status igual ao do banco não pode virar escrita');
+
+  /* --- 5. 404 NÃO vira cancelada, e não apaga o que o banco sabe --- */
+  c = costura(null);
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(r.status === 'ativa', `404 tem que manter o status local, veio "${r.status}"`);
+  conferir(r.ciclo === 'MONTHLY', '404 não pode zerar o ciclo local');
+  conferir(c.gravado.status.length === 0, '404 não pode gravar nada');
+
+  /* --- 6. Asaas fora do ar cai pro banco, sem derrubar a conciliação --- */
+  r = await assinaturaAtualizada(noBanco, {
+    consultarAssinaturaNaAsaas: async () => { throw new Error('asaas fora do ar'); },
+    atualizarStatusAssinatura: async () => {},
+    atualizarCicloAssinatura: async () => {}
+  });
+  conferir(r.status === 'ativa' && r.ciclo === 'MONTHLY', 'Asaas fora do ar cai pro que o banco sabe');
+
+  /* --- 7. sem assinatura local não explode --- */
+  r = await assinaturaAtualizada(null, costura(null).deps);
+  conferir(r.status === null && r.ciclo === null, 'sem linha local devolve nulos, não estoura');
+
+  console.log(`cobrancaConsultaController: ${checagens} checagens OK`);
 }

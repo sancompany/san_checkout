@@ -29,6 +29,7 @@ const SUITES = [
   'src/utils/sessaoAdmin.js',        // token de sessão do admin: forja, adulteração, validade
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
+  'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
   'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login

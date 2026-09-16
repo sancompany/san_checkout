@@ -228,6 +228,34 @@ Feito em 16/09:
   `&renovar=1` hoje precisa trocar pra gerar o token. Testado com
   sabotagem nos dois níveis (o algoritmo em si, e a fiação no
   controller que usa ele em vez de confiar em `renovar` sozinho).
+- **Três declarações fechadas por MEDIÇÃO, não por leitura de doc.** Eu
+  vinha dizendo "não dá pra medir" segurando as ferramentas — o dono
+  chamou isso ("o que não falta é você ficar cego"), e estava certo. O
+  `GET` rodou **dentro do container de produção** (a `ASAAS_API_KEY`
+  nunca sai de lá; só o corpo da resposta volta):
+  - **assinatura cancelada responde `200` com `deleted: true` e
+    `status: "INACTIVE"`** — o MESMO status de uma pausada. Olhar o
+    status antes do `deleted` marcaria toda cancelada como `pausada`;
+    a ordem é a correção inteira. O `404` sobrou só pra id de outra
+    conta, o que confirma ele NÃO virar "cancelada".
+  - **a resposta traz `cycle`, e ele reparou dado errado de verdade**:
+    `sub_j87cq5u50g6jqv6t` (MostrAí, **ativa**, R$267,30) estava
+    `QUARTERLY` na Asaas e `MONTHLY` aqui. A conciliação agora corrige
+    (RN-26.1) — a correção de 15/09 só valia pras assinaturas novas, e
+    sem isto as antigas ficariam erradas pra sempre. As três linhas do
+    banco foram reparadas com o valor medido.
+  - **zero eventos `SUBSCRIPTION_*` entre os 53 configurados.** Não era
+    ambiguidade de documentação: a Asaas nunca nos avisa de nada de
+    assinatura. `CONSTRAINTS.md` §2.2 ganhou a seção que faltava — o
+    grupo estava desmarcado sem nenhuma decisão registrada, que é
+    exatamente a falha que a declaração de "referência única" existe
+    pra impedir.
+  A medição também achou um furo novo: a Asaas **continua devolvendo
+  `nextDueDate` de uma assinatura deletada**, e repassar isso diria ao
+  contratante que existe cobrança marcada pra uma assinatura que nunca
+  mais vai cobrar. Corrigido. Tudo travado pelo autoteste novo de
+  `cobrancaConsultaController.js` (15 checagens), verificado por
+  sabotagem nas quatro regras.
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;

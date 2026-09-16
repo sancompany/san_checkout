@@ -6,9 +6,11 @@
  * histórico de cobrança de cada ciclo mensal fica em `cobrancas`
  * (ver `cobrancaService.registrarCicloAssinatura`), não aqui.
  *
- * ⚠️ NUNCA TESTADO AO VIVO: precisa de uma assinatura RECURRENT real
- * confirmada em sandbox (CHECKOUT_PAID com `payment.subscription`
- * preenchido) pra `upsertAssinatura` rodar de verdade pela primeira vez.
+ * Testado ao vivo em 16/09/2026: `sub_qut6521d50496vkn` (testemaster,
+ * plano anual, R$10) percorreu criar → pausar → retomar → conciliar →
+ * cancelar com dinheiro de sandbox de verdade, sem fixture. Foi esse
+ * exercício que revelou o `ciclo` gravado errado — ver
+ * `atualizarCicloAssinatura` abaixo.
  */
 
 import { supabase } from '../config/supabase.js';
@@ -31,6 +33,27 @@ export async function upsertAssinatura({ id, contratanteId, planoId, documento, 
   });
 
   if (error) console.error('[assinaturaService.upsertAssinatura]', error.message);
+}
+
+/**
+ * Corrige o `ciclo` do nosso registro pelo que a Asaas reporta.
+ *
+ * Existe porque quem cobra é a Asaas: se o ciclo daqui divergir do dela,
+ * o errado é o nosso. Foi exatamente o caso das assinaturas nascidas
+ * antes da correção de 15/09/2026 — gravadas como `MONTHLY` porque o
+ * código lia um campo de webhook que não existe
+ * (`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+ * Medido em 16/09: `sub_qut6521d50496vkn` está `YEARLY` na Asaas e
+ * estava `MONTHLY` aqui. Sem isto, essas linhas ficariam erradas para
+ * sempre — a correção de origem só vale para assinaturas novas.
+ */
+export async function atualizarCicloAssinatura(id, ciclo) {
+  const { error } = await supabase
+    .from('assinaturas')
+    .update({ ciclo })
+    .eq('id', id);
+
+  if (error) console.error('[assinaturaService.atualizarCicloAssinatura]', error.message);
 }
 
 export async function atualizarStatusAssinatura(id, status) {

@@ -909,14 +909,30 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > **O `status` também é reconferido aqui, não só lido do banco.** Se uma
 > chamada nossa de cancelar/pausar/retomar foi processada pela Asaas mas
 > a confirmação se perdeu no caminho, é esta rota que percebe e corrige
-> o registro — antes, a divergência ficava invisível para sempre. `ciclo`
-> e `valor` continuam vindo do registro local, congelados na criação.
+> o registro — antes, a divergência ficava invisível para sempre. O mesmo
+> vale para uma assinatura cancelada direto no painel da Asaas: como a
+> Asaas não nos manda nenhum evento de assinatura (medido em 16/09:
+> zero `SUBSCRIPTION_*` entre os 53 eventos configurados), **esta rota é
+> o único caminho** pelo qual isso chega até você. É o argumento mais
+> forte para o "rode uma vez por dia" da 5.3.
+>
+> **`ciclo` passou a ser reconferido junto, desde 16/09/2026.** Ele
+> continua congelado na criação — o que mudou é de onde a resposta o lê:
+> quem cobra é a Asaas, então se o nosso registro divergir do dela, o
+> errado é o nosso, e esta rota corrige o registro. Isso existe por causa
+> de um rastro real: as assinaturas criadas antes de 15/09/2026 foram
+> gravadas como `MONTHLY` independentemente do plano (o código lia um
+> campo de webhook que não existe). A correção na origem só valeu para as
+> novas — **para as antigas, é esta rota que repara**. Se você guardou o
+> `ciclo` do seu lado antes desta data, vale reconciliar. `valor`
+> continua vindo do registro local.
 
 | Campo | Descrição |
 |---|---|
 | `assinaturaId` | Id na Asaas. `null` se a primeira cobrança ainda não confirmou |
 | `status` | `ativa`, `pausada` ou `cancelada`. `null` enquanto não existe assinatura |
-| `valor`, `ciclo` | Congelados na criação (seção 4.2) |
+| `valor` | Congelado na criação (seção 4.2) |
+| `ciclo` | Congelado na criação (seção 4.2), mas **reconferido contra a Asaas** a cada consulta — ver a nota acima |
 | `proximaCobranca` | Quando a Asaas vai cobrar de novo. `null` se não houver |
 | `ultimaCobranca` | O ciclo mais recente, com o `status` do vocabulário da seção 4.3.3. `null` se nada foi cobrado |
 

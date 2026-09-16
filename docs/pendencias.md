@@ -123,24 +123,30 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟠 Assinatura encerrada pela Asaas nunca chega até nós
+### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09
 Achado em 15/09/2026, auditando o caminho da assinatura. O
 `CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos
 marcados no painel da Asaas — e **não menciona o grupo de assinaturas em
 lugar nenhum**, nem como marcado nem como desmarcado de propósito. O
 `classificarEvento` também não tem ramo para ele.
 
-Consequência: se uma assinatura for encerrada fora do nosso fluxo —
-cancelada direto no painel da Asaas, ou encerrada por ela depois de
-falhas seguidas de cobrança — a nossa tabela `assinaturas` continua
-dizendo `ativa` para sempre, e o `consultar-assinatura` segue
-respondendo `ativa` ao contratante, que segue liberando acesso para
-quem não paga mais.
+**Medido em 16/09** (`GET /v3/webhooks` rodado de dentro do container de
+produção): dos **53 eventos configurados**, **zero** são `SUBSCRIPTION_*`.
+Não era ambiguidade de documentação — a Asaas realmente nunca nos avisa
+de nada que aconteça com uma assinatura. A suspeita estava certa.
 
-**Fechar exige medir primeiro**, não adivinhar: conferir no painel quais
-eventos de assinatura a Asaas oferece, marcar, e ler o payload real de
-um antes de escrever tratamento — foi escrever contra payload imaginado
-que causou os dois bugs de 15/09.
+O que mudou desde a declaração: a conciliação (§5.3) passou a reconferir
+o estado da própria assinatura contra `GET /v3/subscriptions/{id}` (ver
+a pendência seguinte). Então uma assinatura cancelada direto no painel
+da Asaas, ou encerrada por ela depois de falhas de cobrança, **é**
+detectada e corrigida no nosso banco — só que por **pull**, quando o
+contratante concilia, e não por aviso na hora. O buraco encolheu de
+"nunca chega" para "chega com o atraso da conciliação dele".
+
+**Fechar** é marcar o grupo de assinaturas no painel e tratar os eventos
+— e continua exigindo medir primeiro: ler o payload real de um antes de
+escrever tratamento, que foi escrever contra payload imaginado que
+causou os dois bugs de 15/09.
 
 ### 🟢 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação — CORRIGIDO 16/09
 **Corrigido no mesmo dia em que foi declarado.** A razão de ter ficado
@@ -153,9 +159,27 @@ uma assinatura removida volta como objeto com `deleted: true` ou como
 casos, então funciona sem depender de eu ter acertado qual é — e o
 `404` de propósito NÃO vira "cancelada" automática (404 também é id de
 outra conta). `consultarAssinatura` chama isso e corrige o banco quando
-diverge. Falta só confirmar ao vivo qual dos dois formatos a Asaas usa
-(não muda o comportamento, só permitiria simplificar). O texto original
-fica abaixo, pro histórico.
+diverge.
+
+**Medido ao vivo em 16/09** (o mesmo `GET` rodado de dentro do container
+de produção, contra `sub_qut6521d50496vkn`, cancelada naquele dia): a
+Asaas usa o **primeiro** formato — `HTTP 200` com `deleted: true` e
+`status: "INACTIVE"`. Duas consequências que a documentação não deixava
+ver:
+
+1. `INACTIVE` é o MESMO status de uma assinatura **pausada**. Quem olhar
+   o status antes do `deleted` marca toda cancelada como `pausada` — por
+   isso a ordem em `assinaturaAtualizada` é `deleted` primeiro, e é uma
+   das regras travadas pelo autoteste de `cobrancaConsultaController.js`.
+2. O `404` sobrou só para id de outra conta ou digitado errado — o que
+   confirma a decisão de ele NÃO virar "cancelada" automática.
+
+A mesma medição achou um **terceiro** dado que não estava sendo usado: a
+resposta traz `cycle`, e quem cobra é a Asaas. `sub_qut6521d50496vkn`
+estava `YEARLY` lá e `MONTHLY` aqui — rastro das assinaturas nascidas
+antes da correção de 15/09. A correção na origem só valeu para as novas;
+a conciliação agora corrige as velhas também. O texto original fica
+abaixo, pro histórico.
 
 <details>
 <summary>como estava declarado</summary>
@@ -193,7 +217,9 @@ resposta antes de codificar o tratamento.
 **A pergunta estava certa e a busca estava no lugar errado.** Procurei
 `nextDueDate` em payload de webhook, onde ele de fato nunca aparece —
 mas ele existe na consulta direta, `GET /v3/subscriptions/{id}`
-(documentado pela Asaas junto de `deleted` e `status`). A rota de
+(documentado pela Asaas junto de `deleted` e `status`, e **confirmado ao
+vivo em 16/09**: a assinatura ativa do MostrAí devolveu `nextDueDate`
+preenchido). A rota de
 conciliação (§5.3) passou a ler de lá e devolver em `proximaCobranca`,
 no mesmo ciclo em que ganhou a reconciliação de status. Continua podendo
 vir `null` (assinatura encerrada, ou Asaas fora do ar — a conciliação

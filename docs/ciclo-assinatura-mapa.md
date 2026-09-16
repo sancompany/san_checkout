@@ -149,6 +149,8 @@ link `&renovar=1` pro assinante.
 | `ultimaCobranca` confundia tentativa de renovação abandonada (`cancelado`/`expirado`) com o ciclo real, mais recente | **[CORRIGIDO]** RN-22, rodada 1 |
 | Correção acima, na 1ª versão, também escondia uma renovação que confirmou e **depois foi estornada** (exigia `status='confirmado'` exato) | **[CORRIGIDO]** RN-22 revisado, rodada 2 |
 | `status` da própria assinatura (`ativa`/`pausada`/`cancelada`) nunca era reconferido contra a Asaas — só `ultimaCobranca` era. Se cancelar/pausar/retomar perdesse a confirmação por timeout depois de a Asaas já ter processado, o banco local ficava desatualizado pra sempre, sem detecção | **[CORRIGIDO]** RN-26 — `consultarAssinaturaNaAsaas` trata os dois formatos que a doc não esclarece (`deleted: true` ou `404`), então não depende de adivinhar; `404` não vira `cancelada` automática |
+| Cancelada e pausada respondem o MESMO `status: "INACTIVE"` — olhar o status antes do `deleted` marcaria toda cancelada como `pausada` | **[MEDIDO 16/09 e travado]** a ordem (`deleted` primeiro) é a correção inteira; autoteste de `cobrancaConsultaController.js`, verificado por sabotagem |
+| `ciclo` gravado errado (`MONTHLY`) em toda assinatura criada antes de 15/09 ficaria errado pra sempre — a correção de origem só valeu pras novas | **[CORRIGIDO]** RN-26.1 — a conciliação lê `cycle` do `GET /v3/subscriptions/{id}` e repara o registro. Medido: `sub_qut6521d50496vkn` era `YEARLY` lá e `MONTHLY` aqui |
 | `proximaCobranca` sempre `null` — nenhum payload de webhook traz `nextDueDate` | **[CORRIGIDO]** RN-26 — a fonte não era webhook: `nextDueDate` vem no `GET /v3/subscriptions/{id}`, que a conciliação agora lê |
 
 ## T11 — Assinatura encerrada FORA do nosso fluxo
@@ -158,7 +160,7 @@ seguidas de cobrança.
 
 | Erro | Status |
 |---|---|
-| Grupo de eventos `SUBSCRIPTION_*` não é tratado nem marcado no painel — nunca chega até nós; `consultar-assinatura` continua dizendo `ativa` pra sempre | **[DECLARADO]** — exige medir quais eventos a Asaas oferece antes de tratar |
+| Grupo de eventos `SUBSCRIPTION_*` não é tratado nem marcado no painel — nunca chega por aviso | **[MEDIDO 16/09, ainda aberto]** — `GET /v3/webhooks` de dentro do container: **zero `SUBSCRIPTION_*` entre os 53 eventos configurados**. Não era ambiguidade: a Asaas de fato nunca nos avisa. **Mitigado por T10**: a conciliação detecta e corrige o estado real, então a divergência deixou de ser permanente — mas continua chegando por *pull*, com o atraso de quem concilia |
 
 ## T-PixAuto — variante sem cartão (Pix Automático)
 
@@ -183,7 +185,7 @@ não tem o furo de T1).
 
 ## O que ainda está aberto, resumido
 
-1. **[DECLARADO]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook. **Mitigado em parte**: a conciliação (T10, RN-26) agora reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
+1. **[MEDIDO, ainda aberto]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook, e agora isso é fato medido, não suspeita: **zero eventos `SUBSCRIPTION_*` entre os 53 configurados** (`GET /v3/webhooks`, 16/09). **Mitigado em parte**: a conciliação (T10, RN-26) reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
 2. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
 3. **Falta confirmar ao vivo** (não muda comportamento): qual dos dois formatos a Asaas usa pra uma assinatura deletada — objeto com `deleted: true` ou `404`. O código trata os dois; medir só permitiria simplificar.
 

@@ -517,6 +517,23 @@ falha de rede não derruba a conciliação — cai pro dado local. Corrigido
 em 16/09/2026, com tratamento defensivo dos dois formatos que a doc da
 Asaas não esclarece (objeto com `deleted: true`, ou `404`).
 
+**Medido no mesmo dia**, rodando o `GET` de dentro do container de
+produção contra uma assinatura cancelada de verdade: a Asaas usa o
+primeiro formato — `200` com `deleted: true` e `status: "INACTIVE"`,
+que é **o mesmo status de uma pausada**. Por isso a regra olha `deleted`
+ANTES do status: a ordem inversa marcaria toda cancelada como `pausada`.
+
+**RN-26.1 · O `ciclo` divergente é corrigido pelo da Asaas.** A mesma
+consulta traz `cycle`, e quem cobra é a Asaas: divergência aí é erro
+nosso. *Violada:* toda assinatura criada antes de 15/09/2026 ficou
+gravada como `MONTHLY`, qualquer que fosse o plano — o código lia um
+campo de webhook que não existe
+(`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+A correção de origem só valeu pras novas; sem esta regra as antigas
+ficariam erradas para sempre. Medido em 16/09: `sub_qut6521d50496vkn`
+estava `YEARLY` na Asaas e `MONTHLY` aqui. *Quem vê:* o contratante, que
+lê `ciclo` na conciliação e mostra "mensal" pra quem assinou anual.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`
