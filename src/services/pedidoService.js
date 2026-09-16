@@ -177,7 +177,7 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
 
 /**
  * Equivalente a `resolverPedido`, mas pra Assinatura — ver
- * INTEGRACAO.md seção 6.1. Sem conceito de status/expiraEm (plano não
+ * API.md §4.2. Sem conceito de status/expiraEm (plano não
  * é um pedido com ciclo de vida, é só a definição de um produto
  * recorrente).
  */

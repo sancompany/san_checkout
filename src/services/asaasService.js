@@ -213,7 +213,7 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
   };
 }
 
-const DIAS_VENCIMENTO_BOLETO = 3; // VISAO_COMPLETA.md seção 4.3
+const DIAS_VENCIMENTO_BOLETO = 3; // API.md §6.1 (o que o boleto exige do comprador)
 
 function dataVencimentoBoleto() {
   const data = new Date();
@@ -377,7 +377,7 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * de verdade. Pix/Cartão continuam síncronos, mesmo endpoint de
  * sempre. Ver `refundController.js`, que usa `assincrono` pra decidir
  * entre os status locais `estornado` e `estorno_solicitado`
- * (VISAO_COMPLETA.md seção 7).
+ * (API.md §5.4).
  * @param {string} chargeId
  * @param {{ metodoPagamento?: string }} [opcoes]
  */
@@ -402,6 +402,64 @@ export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
  */
 export async function cancelarAssinatura(subscriptionId) {
   return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+}
+
+/**
+ * Estado ATUAL da assinatura na Asaas — `GET /v3/subscriptions/{id}`.
+ *
+ * Existe pra reconciliação (`consultarAssinatura`, API.md §5.3): o nosso
+ * banco só sabe o que uma chamada nossa conseguiu confirmar, e se o
+ * `DELETE`/`PUT` foi processado lá mas a resposta se perdeu no caminho
+ * (timeout, ver `TIMEOUT_ASAAS_MS`), `assinaturas.status` fica
+ * desatualizado pra sempre, sem nada que detecte.
+ *
+ * ⚠️ MEDIDO AO VIVO em 16/09/2026, contra o sandbox, e o resultado
+ * derrubou a leitura ingênua: uma assinatura **cancelada por `DELETE`
+ * responde `200`** (não 404) com `deleted: true` **e
+ * `status: "INACTIVE"` — o MESMO status de uma assinatura pausada.**
+ * Quem distingue cancelada de pausada é só o `deleted`; mapear pelo
+ * `status` sozinho marcaria toda assinatura cancelada como `pausada`.
+ * Por isso `encerrada` olha `deleted` ANTES do status.
+ *
+ * Medição (sub_qut6521d50496vkn, cancelada nesta mesma data):
+ *   `{ deleted: true, status: "INACTIVE", cycle: "YEARLY", nextDueDate: … }`
+ * contra a ativa do MostrAí (sub_xjsad6cpqor5pars):
+ *   `{ deleted: false, status: "ACTIVE", cycle: "QUARTERLY", … }`
+ *
+ * O ramo do `404` fica: não é o que uma assinatura deletada devolve,
+ * mas continua sendo o que um id de OUTRA conta (ou inexistente)
+ * devolve — e esse não pode virar "cancelada" automática.
+ *
+ *   - objeto com `deleted: true`  → `{ encerrada: true }`
+ *   - `404`                       → `null` (quem chama decide)
+ *   - qualquer outro erro         → propaga (rede, 401, 5xx)
+ *
+ * @returns {Promise<{status: string, deleted: boolean, encerrada: boolean, proximaCobranca: string|null}|null>}
+ */
+export async function consultarAssinaturaNaAsaas(subscriptionId) {
+  let corpo;
+  try {
+    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+
+  const status = corpo?.status ?? null;
+  const deleted = corpo?.deleted === true;
+
+  return {
+    status,
+    deleted,
+    // `EXPIRED` é a assinatura que chegou ao fim (endDate/maxPayments) —
+    // pro nosso vocabulário, encerrada do mesmo jeito que a deletada.
+    encerrada: deleted || status === 'EXPIRED',
+    proximaCobranca: corpo?.nextDueDate ?? null,
+    // Quem cobra é a Asaas: se o `ciclo` do nosso registro divergir
+    // deste, o errado é o nosso (foi o caso das assinaturas nascidas
+    // antes da correção de 15/09, gravadas como MONTHLY).
+    ciclo: corpo?.cycle ?? null
+  };
 }
 
 /**

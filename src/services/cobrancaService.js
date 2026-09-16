@@ -80,6 +80,15 @@ export async function registrarCobrancaPendentePopup(dados) {
     // depende de intenção declarada, nunca de heurística.
     substitui_assinatura_id: dados.substituiAssinaturaId ?? null,
     parcelas: dados.parcelas ?? 1,
+    // Só assinatura preenche isto (`criarCheckoutAssinatura` já validou
+    // contra `CICLOS_VALIDOS` antes de chegar aqui). É o mesmo valor
+    // que mandamos pra Asaas em `subscription.cycle` — capturado NA
+    // CRIAÇÃO, antes de qualquer webhook, porque é aqui que ele é
+    // conhecido com certeza. Achado em 15/09/2026: nem CHECKOUT_PAID
+    // nem PAYMENT_CONFIRMED confiavelmente ecoam esse campo de volta —
+    // `webhookController.amarrarAssinaturaACobranca` lê daqui, não do
+    // webhook, na hora de criar a linha em `assinaturas`.
+    ciclo: dados.ciclo ?? null,
     status: 'pendente'
   });
 
@@ -96,6 +105,19 @@ export async function registrarCobrancaPendentePopup(dados) {
  * partir da cobrança-modelo (a mais recente daquela assinatura, ver
  * `buscarCobrancaPorSubscriptionId`), copiando contratante/plano/CPF/
  * telefone/endereço, só trocando charge_id e valor.
+ */
+/**
+ * Devolve `{ duplicado: true }` quando o `charge_id` já existe (código
+ * Postgres `23505`, violação do `unique` da migration 0001) — a Asaas
+ * reenvia webhook (API.md §4.3.6, "pode chegar mais de uma vez"), e sem
+ * distinguir esse caso, duas entregas quase simultâneas do MESMO
+ * `PAYMENT_CONFIRMED` de um ciclo novo liam a linha como inexistente
+ * ANTES de qualquer uma das duas terminar de inserir — as duas
+ * inseriam (uma vencia, uma batia no `unique` e antes disso só logava
+ * `console.error` sem sinalizar nada), e as duas acabavam mandando
+ * `cobranca_confirmada` pro contratante pro MESMO ciclo. Quem chama
+ * (`registrarNovoCicloAssinatura`, webhookController.js) usa esse sinal
+ * pra pular a notificação na entrega perdedora.
  */
 export async function registrarCicloAssinatura(dados) {
   const { error } = await supabase.from('cobrancas').insert({
@@ -122,10 +144,18 @@ export async function registrarCicloAssinatura(dados) {
     valor_cobrado: dados.valorCobrado,
     metodo_pagamento: 'assinatura',
     parcelas: 1,
+    // Copiado da cobrança-modelo junto com o resto. Sem isto, a linha do
+    // 2º ciclo nasce com `ciclo` nulo e — como `buscarCobrancaPorSubscriptionId`
+    // devolve sempre a MAIS RECENTE como modelo — o dado se perde a
+    // partir do 3º. Ninguém lê `modelo.ciclo` hoje; a coluna é que
+    // deixaria de valer para conferência e para quem ler depois.
+    ciclo: dados.ciclo ?? null,
     status: 'pendente'
   });
 
+  if (error?.code === '23505') return { duplicado: true };
   if (error) console.error('[cobrancaService.registrarCicloAssinatura]', error.message);
+  return { duplicado: false };
 }
 
 /** Busca pelo id da SESSÃO (asaas_checkout_id) — é o que o front tem
@@ -208,6 +238,25 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
  * já usam — `buscarCobrancaPorSubscriptionId` faz algo parecido, mas
  * exige o id da assinatura na Asaas, que o contratante nunca vê.
  *
+ * **Tentativa de renovação abandonada não conta como "última cobrança".**
+ * `&renovar=1` sem pagar cria uma linha NOVA (`substitui_assinatura_id`
+ * apontando pra assinatura antiga, que continua ativa e sendo cobrada) e
+ * essa linha nasce DEPOIS da última cobrança real — sem o filtro abaixo,
+ * `ORDER BY criado_em DESC` pegaria a tentativa abandonada
+ * (`cancelado`/`expirado`) em vez do ciclo real, e `/consultar-assinatura`
+ * mentiria pro contratante que o último ciclo falhou numa assinatura que
+ * está `ativa` e cobrando normalmente — mesma família do RN-20, agora na
+ * conciliação em vez do webhook.
+ *
+ * O filtro exclui só os status que significam "nunca chegou a acontecer"
+ * (`pendente`, `cancelado`, `expirado` — os únicos que
+ * `processarEventoCheckout` grava numa linha de checkout/pop-up antes de
+ * confirmar). Qualquer outro status conta como resultado real: uma
+ * renovação que CONFIRMOU e depois foi estornada continua sendo a
+ * última cobrança de verdade — a primeira versão deste filtro exigia
+ * `status = 'confirmado'` exato, e por isso escondia esse estorno atrás
+ * de um ciclo antigo assim que o status mudava pra `estornado`.
+ *
  * ponytail: sem índice novo — `idx_cobrancas_contratante` já reduz a
  * varredura ao contratante, e o volume por contratante é pequeno.
  * Vira índice composto quando (e se) isso aparecer como lentidão.
@@ -219,6 +268,7 @@ export async function buscarUltimaCobrancaDaAssinatura(contratanteId, planoId, d
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
     .eq('documento', documento)
+    .or('substitui_assinatura_id.is.null,status.not.in.(pendente,cancelado,expirado)')
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle();

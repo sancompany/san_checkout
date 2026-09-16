@@ -1,6 +1,6 @@
 /**
  * SAN CHECKOUT v2 — src/services/taxaService.js
- * Fórmula completa (VISAO_COMPLETA.md seção 6). Nesta leva só o método
+ * Fórmula completa (API.md §8). Nesta leva só o método
  * 'pix' é usado de verdade — a tabela já inclui os outros métodos
  * (cartão por faixa de parcela, boleto) prontos pra quando a pop-up
  * Asaas Checkout entrar na próxima leva.

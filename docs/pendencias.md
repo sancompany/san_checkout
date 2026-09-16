@@ -73,6 +73,27 @@ assinatura viva — precisa de navegador + cartão de teste, assistido pelo
 dono, e será retestado pela própria MostrAí na Estação 6 dela. O ramo
 assíncrono do estorno de boleto também não foi exercitado.
 
+**Assinatura, 16/09 — varredura de fixture (sem tocar a assinatura real
+da MostrAí):** criada uma linha descartável em `assinaturas`
+(`testemaster`/`plano_trimestral`, `QUARTERLY`, `ativa`, id falso) para
+exercitar o que não depende de cartão real:
+
+- **Vínculo da renovação:** `POST /assinatura/testemaster/plano_trimestral`
+  com `renovar: true` gravou `substitui_assinatura_id` apontando pra
+  fixture na cobrança nova — confirma que `buscarAssinaturaAtiva` e o
+  relay do RN-19/20 continuam corretos depois das correções de 15/09.
+- **Erro da Asaas não vira estado local inconsistente:** `pausar-` e
+  `cancelar-assinatura` contra a fixture (id que não existe na Asaas de
+  verdade) devolveram erro da própria Asaas sem crashar — e, mais
+  importante, **sem** atualizar o status local antes de confirmar
+  (`alterarStatusAssinatura` falha primeiro; `atualizarStatusAssinatura`
+  nunca roda). Conferido direto no banco: a fixture ficou `ativa` depois
+  das duas tentativas, sem "cancelada"/"pausada" fantasma.
+- Fixture e a cobrança de teste gerada foram apagadas depois.
+
+Continua faltando o mesmo de sempre: cartão real no pop-up para nascer
+uma linha "de verdade" e cancelar/pausar/retomar contra ela.
+
 O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
 
 | campo | valor |
@@ -101,6 +122,123 @@ valor cobrável — corrigidos e conferidos
 ---
 
 ## Abertas, não bloqueiam
+
+### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09
+Achado em 15/09/2026, auditando o caminho da assinatura. O
+`CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos
+marcados no painel da Asaas — e **não menciona o grupo de assinaturas em
+lugar nenhum**, nem como marcado nem como desmarcado de propósito. O
+`classificarEvento` também não tem ramo para ele.
+
+**Medido em 16/09** (`GET /v3/webhooks` rodado de dentro do container de
+produção): dos **53 eventos configurados**, **zero** são `SUBSCRIPTION_*`.
+Não era ambiguidade de documentação — a Asaas realmente nunca nos avisa
+de nada que aconteça com uma assinatura. A suspeita estava certa.
+
+O que mudou desde a declaração: a conciliação (§5.3) passou a reconferir
+o estado da própria assinatura contra `GET /v3/subscriptions/{id}` (ver
+a pendência seguinte). Então uma assinatura cancelada direto no painel
+da Asaas, ou encerrada por ela depois de falhas de cobrança, **é**
+detectada e corrigida no nosso banco — só que por **pull**, quando o
+contratante concilia, e não por aviso na hora. O buraco encolheu de
+"nunca chega" para "chega com o atraso da conciliação dele".
+
+**Fechar** é marcar o grupo de assinaturas no painel e tratar os eventos
+— e continua exigindo medir primeiro: ler o payload real de um antes de
+escrever tratamento, que foi escrever contra payload imaginado que
+causou os dois bugs de 15/09.
+
+### 🟢 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação — CORRIGIDO 16/09
+**Corrigido no mesmo dia em que foi declarado.** A razão de ter ficado
+declarado era não saber o formato de `GET /v3/subscriptions/{id}` pra
+uma assinatura deletada — e a saída não foi adivinhar: a doc da Asaas
+confirma os campos `deleted` (boolean), `status`
+(`ACTIVE`/`EXPIRED`/`INACTIVE`) e `nextDueDate`, e **não** esclarece se
+uma assinatura removida volta como objeto com `deleted: true` ou como
+`404`. `consultarAssinaturaNaAsaas` (asaasService.js) trata os DOIS
+casos, então funciona sem depender de eu ter acertado qual é — e o
+`404` de propósito NÃO vira "cancelada" automática (404 também é id de
+outra conta). `consultarAssinatura` chama isso e corrige o banco quando
+diverge.
+
+**Medido ao vivo em 16/09** (o mesmo `GET` rodado de dentro do container
+de produção, contra `sub_qut6521d50496vkn`, cancelada naquele dia): a
+Asaas usa o **primeiro** formato — `HTTP 200` com `deleted: true` e
+`status: "INACTIVE"`. Duas consequências que a documentação não deixava
+ver:
+
+1. `INACTIVE` é o MESMO status de uma assinatura **pausada**. Quem olhar
+   o status antes do `deleted` marca toda cancelada como `pausada` — por
+   isso a ordem em `assinaturaAtualizada` é `deleted` primeiro, e é uma
+   das regras travadas pelo autoteste de `cobrancaConsultaController.js`.
+2. O `404` sobrou só para id de outra conta ou digitado errado — o que
+   confirma a decisão de ele NÃO virar "cancelada" automática.
+
+A mesma medição achou um **terceiro** dado que não estava sendo usado: a
+resposta traz `cycle`, e quem cobra é a Asaas. `sub_qut6521d50496vkn`
+estava `YEARLY` lá e `MONTHLY` aqui — rastro das assinaturas nascidas
+antes da correção de 15/09. A correção na origem só valeu para as novas;
+a conciliação agora corrige as velhas também. O texto original fica
+abaixo, pro histórico.
+
+<details>
+<summary>como estava declarado</summary>
+Achado em 16/09/2026, numa varredura focada em achados graves. `chamarAsaas`
+tem teto (`CONSTRAINTS.md` §2.7.1) — mas se o timeout estourar DEPOIS de a
+Asaas já ter processado o `DELETE`/`PUT` (só a resposta que não voltou a
+tempo), `assinaturaController.cancelarAssinatura`/`pausarAssinatura`/
+`retomarAssinatura` devolvem erro pro contratante e a linha seguinte
+(`atualizarStatusAssinatura`) nunca roda: `assinaturas.status` no nosso
+banco fica desatualizado — possivelmente pra sempre — enquanto a Asaas já
+tem o outro estado.
+
+`POST /consultar-assinatura` (§5.3) reconcilia a **última cobrança**
+contra a Asaas (`statusAtualizado`, `cobrancaConsultaController.js`), mas
+o `status` da própria assinatura (`ativa`/`pausada`/`cancelada`) vem
+100% do banco local — nunca é reconferido contra
+`GET /v3/subscriptions/{id}`. Não existe hoje nenhum caminho, nem manual,
+pra detectar essa divergência depois do fato.
+
+**Declarado, não corrigido às cegas**: a solução mais óbvia (consultar
+`GET /v3/subscriptions/{id}` em `consultarAssinatura` e usar o status de
+lá) exige saber exatamente como a Asaas representa uma assinatura
+DELETADA nesse endpoint — campo `deleted: true`, mudança em `status`, ou
+404 — e isso não está confirmado contra o payload real. É a mesma classe
+de erro que já custou caro duas vezes aqui
+(`docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`,
+`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`):
+escrever contra o formato imaginado. Fechar exige chamar
+`GET /v3/subscriptions/{id}` de verdade contra uma assinatura cancelada
+no sandbox (já existe uma: `sub_qut6521d50496vkn`, testemaster) e ler a
+resposta antes de codificar o tratamento.
+</details>
+
+### 🟢 `assinaturas.proxima_cobranca` não tinha fonte confiável — CORRIGIDO 16/09
+**A pergunta estava certa e a busca estava no lugar errado.** Procurei
+`nextDueDate` em payload de webhook, onde ele de fato nunca aparece —
+mas ele existe na consulta direta, `GET /v3/subscriptions/{id}`
+(documentado pela Asaas junto de `deleted` e `status`, e **confirmado ao
+vivo em 16/09**: a assinatura ativa do MostrAí devolveu `nextDueDate`
+preenchido). A rota de
+conciliação (§5.3) passou a ler de lá e devolver em `proximaCobranca`,
+no mesmo ciclo em que ganhou a reconciliação de status. Continua podendo
+vir `null` (assinatura encerrada, ou Asaas fora do ar — a conciliação
+não falha por isso). O texto original fica abaixo, pro histórico.
+
+<details>
+<summary>como estava declarado</summary>
+Achado em 15/09/2026, no mesmo ciclo que corrigiu `ciclo` (ver
+`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+Nenhum payload da Asaas medido traz `payment.nextDueDate`, e o
+"nextDueDate" que o próprio checkout manda na criação é a data de HOJE
+(a cobrança é imediata), não uma projeção da próxima — usá-lo pareceria
+preciso sem ser, então fica `null` de propósito.
+
+Fechar exige achar de onde a data real da próxima cobrança pode vir
+(possivelmente só depois de confirmado o formato de um `PAYMENT_CREATED`
+futuro da assinatura, hoje sem ramo em `classificarEvento`) — não é
+um `?? algumCampo` a mais, é medir um payload que ainda não foi visto.
+</details>
 
 ### 🟢 `returnUrl` não chega à página de status
 O caminho de volta foi construído em 15/09/2026 e vale na tela do

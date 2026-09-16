@@ -157,6 +157,16 @@ para um problema que talvez nem exista mais.
 
 ## Vínculo da cobrança na assinatura por Pix Automático
 
+> **`ciclo` já foi corrigido separadamente, em 16/09/2026** —
+> `criarAssinaturaPixAutomatico` agora grava `ciclo` na criação (igual à
+> assinatura por cartão), e `processarAutorizacaoPixAutomatico` prefere
+> `cobranca.ciclo` sobre o campo não confirmado do payload. Isso fechou
+> a reincidência do bug do `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`,
+> mas **não** o furo abaixo — `charge_id`/`asaas_subscription_id`
+> continuam sem vínculo, e é um furo diferente (o vínculo, não o
+> ciclo). Sem dano ativo hoje pelo mesmo motivo: Pix Automático
+> desligado nesta conta.
+
 - **O quê** — `processarAutorizacaoPixAutomatico`, em
   `src/controllers/webhookController.js`, chama `upsertAssinatura` mas
   **nunca grava `asaas_subscription_id` nem `charge_id` na cobrança**. A

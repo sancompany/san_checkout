@@ -1,15 +1,18 @@
 /**
  * public/js/modules/assinaturaCheckoutHandler.js
  *
- * ⚠️ CHAMA UM ENDPOINT QUE AINDA NÃO EXISTE NO BACKEND
- * (`POST /api/checkout/assinatura/:contratanteId/:planoId`). Pronto
- * pro dia em que existir — até lá, 404 esperado.
+ * Assinatura por CARTÃO — cria a sessão RECURRENT no backend
+ * (`POST /api/checkout/assinatura/:contratanteId/:planoId`,
+ * `asaasCheckoutController.criarCheckoutAssinatura`, API.md §7) e abre
+ * a pop-up hospedada da Asaas, igual ao cartão avulso
+ * (`cartaoHandler.js`). O pagador digita o cartão uma vez; os ciclos
+ * seguintes a Asaas cobra sozinha, sem passar por aqui de novo.
  *
- * O backend, quando construído, cria a sessão com
- * `chargeTypes: ["RECURRENT"]` (ver VISAO_COMPLETA.md seção 4.4) e
- * devolve a URL certa pro ambiente (produção vs sandbox têm domínios
- * de exibição DIFERENTES — `asaas.com` vs `sandbox.asaas.com` — não é
- * só trocar a API base).
+ * Exercitado ao vivo em 15-16/09/2026 contra o sandbox: criação de
+ * sessão (`checkoutUrl`/`asaasCheckoutId` reais, plano QUARTERLY e
+ * YEARLY do testemaster), polling de status, e o pagamento em si —
+ * a metade que só um cartão de teste no pop-up completa — segue no
+ * `docs/pendencias.md`, gated no dono.
  */
 
 import { post, get } from '../utils/api.js';
@@ -76,6 +79,20 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
     );
 
     const popup = window.open(checkoutUrl, '_blank', 'width=480,height=760');
+
+    // Bloqueador de pop-up (ou Safari, que exige o `window.open` no
+    // MESMO tick do clique — o `await post` acima já quebrou isso) faz
+    // `window.open` devolver `null`. Sem esta checagem, `iniciarPollingPopup`
+    // roda pra sempre esperando um `CHECKOUT_PAID` que nunca vem — o
+    // pagador nunca viu a tela — e `observarFechamentoPopup` sai sem
+    // armar nada (`if (!popup) return`), então o botão travava em
+    // "Abrindo pagamento…" sem erro e sem saída além de recarregar.
+    if (!popup) {
+      mostrarToast('Não conseguimos abrir a janela de pagamento. Libere pop-ups para este site e tente de novo.', 'erro');
+      botao.disabled = false;
+      botao.textContent = textoOriginal;
+      return;
+    }
 
     iniciarPollingPopup(asaasCheckoutId, {
       aoConfirmar: () => {

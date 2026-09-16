@@ -397,6 +397,143 @@ cegas. *Quem vê:* o contratante. **Assinatura não entra nesta regra:** o
 evento `criada` não carrega `chargeId` por contrato, a chave dele é
 `planoId` + `documento`.
 
+**RN-19 · Assinatura pausada continua cancelável.** O
+`/cancelar-assinatura` aceita `ativa` e `pausada`; `cancelada` fica de
+fora (a busca devolve a mais recente, e numa renovação aceitar
+`cancelada` poderia mascarar uma ativa mais nova). *Violada:* pausar
+vira porta de mão única — quem pausa nunca mais cancela, e a assinatura
+fica `INACTIVE` na Asaas sem saída pela API, só pelo painel na mão.
+*Quem vê:* o contratante, que recebe 404 ao tentar cancelar o que ele
+mesmo pausou. Medido ao vivo em 15/09/2026 — a mesma linha respondia 200
+no pausar e 404 no cancelar. Protegida por
+`tests/assinatura-pausada-continua-cancelavel.js`, que cobra a regra
+("tudo que pausar alcança, cancelar alcança"), não o literal.
+
+**RN-20 · Renovação abandonada nunca notifica `cancelada`.** Fechar o
+pop-up de troca de cartão (`&renovar=1`) sem pagar deixa a assinatura
+ANTIGA intocada, ainda ativa e sendo cobrada — `encerrarAssinaturaSubstituida`
+só roda depois que o pagamento novo confirma. *Violada:* o payload de
+assinatura é identificado só por `planoId`+`documento` (API.md §4.3.4),
+então o contratante não tem como distinguir "renovação abandonada" de
+"o cliente cancelou de verdade" — as duas produzem o mesmo evento, pro
+mesmo assinante. Um contratante que confia nisso pra liberar/revogar
+acesso revogaria de quem ainda está pagando. *Quem vê:* o cliente que
+tentou trocar o cartão e desistiu, barrado sem nunca ter cancelado nada.
+Achado em 15/09/2026, na auditoria do caminho da assinatura; assinatura
+NOVA (não-renovação) abandonada continua mandando `cancelada`, como
+documentado (API.md §4.3.5) — só a renovação muda.
+
+**RN-21 · `/cancelar-assinatura` notifica o contratante, não só a
+resposta síncrona.** Até 16/09/2026 o cancelamento pedido pelo próprio
+contratante mudava a Asaas e o nosso banco, mas nunca mandava
+`evento: cancelada` pro `webhook_url` — só a resposta HTTP confirmava.
+*Violada:* o `API.md` §7.4 desenha essa seta desde antes de existir de
+verdade; um contratante que dependesse do webhook (em vez de só ler a
+resposta síncrona) nunca saberia que o cancelamento aconteceu. *Quem
+vê:* o contratante. Corrigido com `notificarAssinaturaCancelada`
+(webhookController.js), fire-and-forget, mesmo canal que os outros dois
+desfechos de `cancelada` (pop-up de renovação abandonada, autorização
+de Pix Automático encerrada) já usavam. Protegida por checagem no
+texto-fonte de `assinaturaController.js` (verificado por sabotagem).
+
+**RN-22 · Conciliação não pode confundir tentativa de renovação com o
+ciclo real.** `POST /consultar-assinatura` (§5.3) busca a "última
+cobrança" por `contratanteId+planoId+documento`, ordenando por
+`criado_em`. Uma tentativa de renovação (`&renovar=1`) nasce DEPOIS do
+último ciclo real e tem `substitui_assinatura_id` apontando pra
+assinatura antiga. *Violada:* sem tratamento, uma tentativa abandonada
+(`cancelado`/`expirado`) aparecia como `ultimaCobranca` de uma
+assinatura que continua `ativa` e cobrando normalmente — e a primeira
+correção trocou esse furo por outro: exigir `status = 'confirmado'`
+exato escondia uma renovação que confirmou e **depois foi estornada**.
+*Quem vê:* o contratante que roda a conciliação diária (checklist
+`API.md` §11). Corrigido em `buscarUltimaCobrancaDaAssinatura`
+(cobrancaService.js): só é descartada a linha de renovação cujo status
+significa "nunca chegou a acontecer" (`pendente`, `cancelado`,
+`expirado`); qualquer resultado real (confirmado, estornado, em
+análise…) conta. Achado e corrigido em 16/09/2026, numa varredura
+focada em achados graves.
+
+**RN-23 · Entrega duplicada do mesmo webhook não pode notificar o mesmo
+ciclo duas vezes.** A Asaas pode reenviar o mesmo `PAYMENT_CONFIRMED`
+(`API.md` §4.3.6, "pode chegar mais de uma vez"). Pra um ciclo NOVO (2º
+mês em diante), duas entregas quase simultâneas liam a cobrança como
+inexistente antes de qualquer uma terminar de inserir a linha — a
+`unique` de `charge_id` barrava a segunda inserção no banco, mas nada
+sinalizava isso pra cima, e a entrega perdedora seguia em frente e
+notificava de novo o MESMO ciclo. *Violada:* o payload de assinatura
+não carrega `chargeId` (RN-18), então o contratante não tinha nenhum
+campo pra perceber que a segunda notificação era repetida — creditaria
+o ciclo duas vezes. *Quem vê:* o contratante, em silêncio. Corrigido:
+`registrarCicloAssinatura` detecta a violação do `unique` (código
+Postgres `23505`) e sinaliza `duplicado`; a entrega perdedora não
+notifica nada, confiando que a vencedora já cuidou disso. Achado e
+corrigido em 16/09/2026, verificado por sabotagem.
+
+**RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
+avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com
+`window.open`, chamado DEPOIS de um `await` — o que quebra o "gesto do
+usuário" em vários navegadores/bloqueadores e faz `window.open`
+devolver `null`. *Violada:* sem checar isso, nenhum listener de
+fechamento era armado, o polling ficava rodando pra sempre esperando
+uma confirmação que nunca chegaria (o pagador nunca viu a tela), e o
+botão ficava preso em "Abrindo pagamento…", desabilitado, sem toast e
+sem saída além de recarregar a página. *Quem vê:* o comprador com
+bloqueador de pop-up ativo, ou no Safari. Corrigido em
+`cartaoHandler.js` e `assinaturaCheckoutHandler.js`: toast pedindo pra
+liberar pop-ups e o botão reabilitado. Achado em 16/09/2026.
+
+**RN-25 · Renovação exige token — `documento` sozinho nunca basta.**
+`POST /api/checkout/assinatura/:contratanteId/:planoId` é pública (sem
+`X-Checkout-Key`); até 16/09/2026, `renovar: true` bastava sozinho pra
+achar a assinatura antiga só pelo `documento` do formulário — não
+autenticado. *Violada:* CPF/CNPJ não é segredo; qualquer pessoa que
+soubesse o documento de um assinante ativo criava uma assinatura nova
+com o PRÓPRIO cartão e, ao confirmar o pagamento, o checkout cancelava
+a assinatura de VERDADE da vítima na Asaas — um cancelamento de
+terceiro pelo caminho de dinheiro, contrariando o `API.md` §5.5
+("cancelamento: só o projeto aciona"). *Quem vê:* o assinante vítima,
+que perde a assinatura sem ter feito nada; o contratante, que vê uma
+cobrança de estranho na conta de outro cliente. Corrigido: `renovar`
+agora precisa ser um token HMAC-SHA256 que só quem tem a `api_key` do
+contratante consegue gerar (`utils/tokenRenovacao.js`, `API.md §7.3`,
+com receita em Node/PHP/Python). Sem token válido, degrada pra
+assinatura nova comum — nunca amarra nem cancela nada. **Mudança
+incompatível**: `&renovar=1` (o formato antigo) para de funcionar como
+renovação. Achado e corrigido em 16/09/2026, testado com sabotagem.
+
+**RN-26 · A conciliação reconfere a assinatura na Asaas, não só a
+cobrança.** `POST /consultar-assinatura` (§5.3) consulta
+`GET /v3/subscriptions/{id}` e corrige o registro local quando diverge;
+também é de lá que sai `proximaCobranca` (`nextDueDate`), que era `null`
+desde sempre. *Violada:* se uma chamada nossa de cancelar/pausar/retomar
+estourar o timeout DEPOIS de a Asaas ter processado (só a resposta
+perdida), `atualizarStatusAssinatura` nunca roda e o banco fica dizendo
+`ativa` pra sempre enquanto a Asaas já cancelou — divergência sem
+nenhum caminho de detecção. *Quem vê:* o contratante, que segue
+liberando acesso pra quem não paga mais. O `404` da Asaas **não** vira
+`cancelada` automática (também é o que responde id de outra conta), e
+falha de rede não derruba a conciliação — cai pro dado local. Corrigido
+em 16/09/2026, com tratamento defensivo dos dois formatos que a doc da
+Asaas não esclarece (objeto com `deleted: true`, ou `404`).
+
+**Medido no mesmo dia**, rodando o `GET` de dentro do container de
+produção contra uma assinatura cancelada de verdade: a Asaas usa o
+primeiro formato — `200` com `deleted: true` e `status: "INACTIVE"`,
+que é **o mesmo status de uma pausada**. Por isso a regra olha `deleted`
+ANTES do status: a ordem inversa marcaria toda cancelada como `pausada`.
+
+**RN-26.1 · O `ciclo` divergente é corrigido pelo da Asaas.** A mesma
+consulta traz `cycle`, e quem cobra é a Asaas: divergência aí é erro
+nosso. *Violada:* toda assinatura criada antes de 15/09/2026 ficou
+gravada como `MONTHLY`, qualquer que fosse o plano — o código lia um
+campo de webhook que não existe
+(`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).
+A correção de origem só valeu pras novas; sem esta regra as antigas
+ficariam erradas para sempre. Medido em 16/09: `sub_qut6521d50496vkn`
+estava `YEARLY` na Asaas e `MONTHLY` aqui. *Quem vê:* o contratante, que
+lê `ciclo` na conciliação e mostra "mensal" pra quem assinou anual.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

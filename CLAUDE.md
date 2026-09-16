@@ -105,6 +105,157 @@ Feito em 15/09:
   `src/` inteiro em vez de confiar em memória — a regra já era conhecida
   (`pedidoService` fazia certo) e mesmo assim não foi aplicada nos
   outros dois. `CONSTRAINTS.md` §2.7.1.
+- **Ciclo de assinatura vinha errado, e a 1ª correção repetiu o mesmo
+  bug.** Verificando o reparo do mostrai ao vivo: a assinatura ficou
+  `MONTHLY` quando o plano é `QUARTERLY` — `amarrarAssinaturaACobranca`
+  lia `payment.cycle`, que não existe em payload nenhum. Primeira
+  tentativa: um relay via webhook (capturar no `CHECKOUT_PAID`, ler no
+  `PAYMENT_CONFIRMED`) — funcionava, mas era o mesmo erro com um passo a
+  menos (dependia de webhook pra um dado que não é dado de webhook), e
+  tinha residual de ordem. Corrigido de verdade gravando `ciclo` na
+  **criação** do checkout (`criarCheckoutAssinatura` já valida e conhece
+  o valor antes de existir qualquer sessão na Asaas) — elimina o relay
+  inteiro e o residual de ordem junto, migration 0006 mais enxuta.
+  Revisão em 3 ciclos; `proximaCobranca` continua `null`, declarado
+  (`docs/pendencias.md`) — sem fonte confiável hoje.
+  `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`.
+- **Auditoria do caminho da assinatura inteiro**, exercitado ao vivo
+  contra o sandbox (criação, conciliação, cancelar/pausar/retomar, auth
+  e validação nas 4 rotas, polling do pop-up). Achou **mais um furo
+  real, provado ao vivo**: `/cancelar-assinatura` buscava só `ativa`,
+  então uma assinatura **pausada não podia mais ser cancelada** — a
+  MESMA linha respondia 200 no `/pausar-assinatura` e 404 no
+  `/cancelar-assinatura`. Pausar era porta de mão única: a assinatura
+  ficava INACTIVE na Asaas sem saída pela API. Corrigido, com
+  `tests/assinatura-pausada-continua-cancelavel.js` travando a regra
+  ("tudo que pausar alcança, cancelar alcança") em vez do literal.
+  Também: o ciclo 2+ nascia sem `ciclo`, perdendo o dado na
+  cobrança-modelo a partir do 3º — agora copiado.
+  Declarado, não corrigido: o grupo de eventos de assinatura da Asaas
+  não é tratado nem documentado no §2.2, então assinatura encerrada
+  fora do nosso fluxo nunca chega até nós (`docs/pendencias.md`).
+- **Renovação abandonada mentia "cancelada" pro contratante.** Fechar o
+  pop-up de troca de cartão (`&renovar=1`) sem pagar deixa a assinatura
+  ANTIGA intocada e ativa — mas o código mandava `evento: 'cancelada'`
+  do mesmo jeito, e o payload só identifica por `planoId`+`documento`
+  (API.md §4.3.4): o contratante não tinha como diferenciar isso de um
+  cancelamento de verdade, e um contratante que confia nisso revogaria
+  acesso de quem ainda está pagando. Corrigido: renovação abandonada
+  não notifica nada (a antiga segue como está); assinatura NOVA
+  abandonada continua mandando `cancelada`, como já era documentado.
+  RN-20 (`docs/funcional.md`).
+
+Feito em 16/09:
+- **Primeira assinatura de verdade paga no pop-up** (`sub_qut6521d50496vkn`,
+  testemaster/plano_anual, R$10) — o ciclo completo criar → pausar
+  → (idempotência) → retomar → conciliar → cancelar → (cancelar de novo
+  = 404, não `jaEstava`) exercitado ao vivo, sem fixture. Confirmou o
+  bug já conhecido do `ciclo` (grava `MONTHLY` em vez de `YEARLY`,
+  porque produção ainda não tinha o PR do dia anterior) e revelou um
+  furo novo: **`/cancelar-assinatura` nunca notificava o contratante**
+  — só a resposta síncrona, quebrando a seta que o `API.md` §7.4 já
+  desenhava. RN-21.
+- **Varredura de achados graves, em duas rodadas**, com foco em
+  assinatura e o resto como secundário (agentes em paralelo, cada
+  achado verificado por mim antes de entrar na lista — sem inflar
+  número). Primeira rodada, 6 achados:
+  - conciliação confundia tentativa de renovação abandonada com o
+    ciclo real (RN-22);
+  - assinatura por Pix Automático perdia `ciclo`, reintroduzindo o bug
+    do dia anterior por outra porta (não tem dano ativo — Pix
+    Automático está desligado nesta conta, `CONSTRAINTS.md` §2.4);
+  - `API.md` §4.3.6 prometia uma deduplicação entre CICLOS que nunca
+    existiu (a chave só deduplica *retry*, não ciclo — texto
+    corrigido);
+  - rate limit de criação (10/min) também travava o polling de status
+    de Pix/Boleto — o próprio polling (3s) esgotava a janela em ~30s;
+    limitador migrado de montagem por prefixo pra montagem por rota
+    (`src/middlewares/limitadores.js`, novo);
+  - pop-up bloqueada travava o botão de pagamento pra sempre, sem erro,
+    em cartão avulso E assinatura por cartão (RN-24);
+  - o achado do `/cancelar-assinatura` acima, já corrigido antes da
+    varredura.
+  Segunda rodada (revisão de regressão dos 6 + ângulos de banco/
+  concorrência ainda não cobertos), 2 achados confirmados e 1 declarado:
+  - **regressão no meu próprio fix da rodada 1**: o filtro da
+    conciliação exigia `status = 'confirmado'` exato, escondendo uma
+    renovação que confirmou e **depois foi estornada** — corrigido pra
+    excluir só os status que significam "nunca aconteceu"
+    (`pendente`/`cancelado`/`expirado`), não por uma lista positiva
+    (RN-22, revisado);
+  - **condição de corrida real**: a Asaas reenvia webhook (§4.3.6, "pode
+    chegar mais de uma vez"), e duas entregas quase simultâneas do
+    MESMO `PAYMENT_CONFIRMED` de um ciclo novo notificavam
+    `cobranca_confirmada` DUAS VEZES pro contratante — sem nenhum campo
+    no payload pra ele perceber (RN-18: assinatura não tem `chargeId`).
+    Corrigido detectando a violação do `unique` de `charge_id`
+    (código Postgres `23505`) e sinalizando a entrega perdedora pra não
+    notificar (RN-23);
+  - **declarado, não corrigido às cegas**: sem reconciliação quando
+    cancelar/pausar/retomar perde a confirmação da Asaas por timeout —
+    a correção óbvia exige confirmar o formato real de
+    `GET /v3/subscriptions/{id}` pra uma assinatura deletada antes de
+    codificar, e isso não está medido. `docs/pendencias.md`.
+  Todos os fixes testados com sabotagem (inclusive uma correção no
+  próprio teste do achado da corrida, cuja primeira versão passava
+  mesmo sabotada — corrigida antes de confiar nela) e `npm run check`
+  verde em cada commit.
+- **Terceira rodada de varredura**, com o mesmo escopo grave-só, achou
+  mais dois: `criarLimitadorConsulta` já tinha virado fábrica antes
+  desta sessão, mas `limitadorCriacao` continuou sendo uma única
+  instância de `rateLimit()` compartilhada entre 7+2 rotas (cartão,
+  assinatura, assinatura-pix, estornar, cancelar/pausar/retomar-
+  assinatura, e as duas criações de pix/boleto) — corrigido, virou
+  fábrica também. E o mais grave da sessão: **`renovar=1` bastava
+  sozinho pra achar e depois cancelar a assinatura de OUTRA pessoa** —
+  `documento` não é segredo, e a rota de criação é pública. RN-25.
+- **Mapa completo do ciclo de assinatura**, pedido pelo dono depois da
+  3ª rodada: 11 etapas + a variante Pix Automático, todo erro já achado
+  catalogado contra a etapa onde vive (`docs/ciclo-assinatura-mapa.md`).
+  Achou mais duas coisas pequenas relendo o código do zero (um
+  comentário órfão colado na função errada; 3 citações desatualizadas
+  de `INTEGRACAO.md`), e descartou uma suspeita de bug depois de
+  verificar com cuidado (CHECKOUT_PAID duplicado não repete `criada`
+  de um jeito que faça dano — esse evento só existe uma vez na vida da
+  assinatura, a dedup documentada já filtra).
+- **RN-25 corrigido**: `renovar` agora precisa ser um token HMAC-SHA256
+  que só quem tem a `api_key` do contratante consegue gerar
+  (`src/utils/tokenRenovacao.js`, receita em Node/PHP/Python no
+  `API.md §7.3`). Sem token válido (inclusive o formato antigo,
+  `&renovar=1`), degrada pra assinatura nova comum — nunca amarra nem
+  cancela nada; é o modo seguro, não um erro que trava o pagador.
+  **Mudança incompatível**: qualquer integração real usando
+  `&renovar=1` hoje precisa trocar pra gerar o token. Testado com
+  sabotagem nos dois níveis (o algoritmo em si, e a fiação no
+  controller que usa ele em vez de confiar em `renovar` sozinho).
+- **Três declarações fechadas por MEDIÇÃO, não por leitura de doc.** Eu
+  vinha dizendo "não dá pra medir" segurando as ferramentas — o dono
+  chamou isso ("o que não falta é você ficar cego"), e estava certo. O
+  `GET` rodou **dentro do container de produção** (a `ASAAS_API_KEY`
+  nunca sai de lá; só o corpo da resposta volta):
+  - **assinatura cancelada responde `200` com `deleted: true` e
+    `status: "INACTIVE"`** — o MESMO status de uma pausada. Olhar o
+    status antes do `deleted` marcaria toda cancelada como `pausada`;
+    a ordem é a correção inteira. O `404` sobrou só pra id de outra
+    conta, o que confirma ele NÃO virar "cancelada".
+  - **a resposta traz `cycle`, e ele reparou dado errado de verdade**:
+    `sub_j87cq5u50g6jqv6t` (MostrAí, **ativa**, R$267,30) estava
+    `QUARTERLY` na Asaas e `MONTHLY` aqui. A conciliação agora corrige
+    (RN-26.1) — a correção de 15/09 só valia pras assinaturas novas, e
+    sem isto as antigas ficariam erradas pra sempre. As três linhas do
+    banco foram reparadas com o valor medido.
+  - **zero eventos `SUBSCRIPTION_*` entre os 53 configurados.** Não era
+    ambiguidade de documentação: a Asaas nunca nos avisa de nada de
+    assinatura. `CONSTRAINTS.md` §2.2 ganhou a seção que faltava — o
+    grupo estava desmarcado sem nenhuma decisão registrada, que é
+    exatamente a falha que a declaração de "referência única" existe
+    pra impedir.
+  A medição também achou um furo novo: a Asaas **continua devolvendo
+  `nextDueDate` de uma assinatura deletada**, e repassar isso diria ao
+  contratante que existe cobrança marcada pra uma assinatura que nunca
+  mais vai cobrar. Corrigido. Tudo travado pelo autoteste novo de
+  `cobrancaConsultaController.js` (15 checagens), verificado por
+  sabotagem nas quatro regras.
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
@@ -119,7 +270,7 @@ dele em paralelo.
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
-- Testes: `tests/` — `npm test` roda as 17 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 18 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

@@ -43,6 +43,7 @@ import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import { documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido } from '../utils/validadores.js';
+import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
 import { responderErro } from '../utils/erros.js';
 
 function parcelasValidas(valor) {
@@ -179,7 +180,7 @@ function formatarDataHoraAsaas(data) {
  * POST /api/checkout/assinatura/:contratanteId/:planoId
  * Cria a sessão RECURRENT — o pagador digita o cartão uma única vez na
  * pop-up e a Asaas passa a cobrar sozinha todo ciclo (ver
- * VISAO_COMPLETA.md seção 4.4).
+ * API.md §7).
  *
  * Existe também a assinatura por PIX AUTOMÁTICO, sem cartão, em
  * `criarAssinaturaPixAutomatico` no fim deste arquivo (a nota antiga
@@ -239,24 +240,35 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       });
     }
 
-    // RENOVAÇÃO (link com `&renovar=1`): o assinante está trocando o
-    // cartão de uma assinatura que já existe. Não dá pra trocar o
-    // cartão pela API da Asaas sem receber número e CVV no nosso
-    // servidor — isso colocaria o projeto dentro do escopo PCI, que é
-    // exatamente o que a pop-up hospedada evita. Então o caminho é
-    // criar uma assinatura NOVA pela pop-up e cancelar a antiga quando
-    // a nova confirmar (webhookController).
+    // RENOVAÇÃO (link com `&renovar={token}`): o assinante está
+    // trocando o cartão de uma assinatura que já existe. Não dá pra
+    // trocar o cartão pela API da Asaas sem receber número e CVV no
+    // nosso servidor — isso colocaria o projeto dentro do escopo PCI,
+    // que é exatamente o que a pop-up hospedada evita. Então o caminho
+    // é criar uma assinatura NOVA pela pop-up e cancelar a antiga
+    // quando a nova confirmar (webhookController).
+    //
+    // `renovar` PRECISA ser o token que só o contratante consegue gerar
+    // (com a própria api_key, `utils/tokenRenovacao.js`) — não basta
+    // saber o `documento`, que não é segredo. Até 16/09/2026 bastava
+    // `renovar: true`: qualquer um que soubesse o CPF/CNPJ de um
+    // assinante ativo criava uma assinatura nova com o PRÓPRIO cartão
+    // e, ao pagá-la, cancelava a assinatura de VERDADE da vítima na
+    // Asaas — sequestro/cancelamento cross-pagador, sem credencial
+    // nenhuma. Token ausente ou inválido não é erro: degrada pra
+    // "assinatura nova comum", sem amarrar nem cancelar nada — o modo
+    // seguro, não o que abre a porta.
     //
     // Guarda só a referência aqui; nada é cancelado antes do pagamento
     // entrar — se a renovação não for concluída, a assinatura antiga
     // continua intacta.
-    const assinaturaSubstituida = renovar
+    const assinaturaSubstituida = tokenRenovacaoValido(renovar, contratante?.api_key, { contratanteId, planoId, documento })
       ? await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])
       : null;
 
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
-    // decisão pendente, ainda não tomada (ver VISAO_COMPLETA.md).
+    // decisão pendente, ainda não tomada (ver API.md §8).
     const splits = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valor }]
       : undefined;
@@ -311,7 +323,15 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       valorCobrado: valor,
       metodoPagamento: 'assinatura',
       substituiAssinaturaId: assinaturaSubstituida?.id ?? null,
-      parcelas: 1
+      parcelas: 1,
+      // O MESMO `ciclo` já validado acima e já mandado pra Asaas em
+      // `subscription.cycle` — gravado agora, não esperando o webhook
+      // ecoar de volta. Achado em 15/09/2026: nem CHECKOUT_PAID nem
+      // PAYMENT_CONFIRMED confiavelmente trazem esse campo de volta, e
+      // essa cobrança já sabe o valor certo antes de existir qualquer
+      // webhook — é o que `webhookController.amarrarAssinaturaACobranca`
+      // lê na hora de criar a linha em `assinaturas`.
+      ciclo
     });
 
     resposta.json({
@@ -421,7 +441,14 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
       taxaIsenta: true, // mesma regra da assinatura por cartão nesta leva
       valorCobrado: valor,
       metodoPagamento: 'assinatura_pix',
-      parcelas: 1
+      parcelas: 1,
+      // Mesmo motivo da assinatura por cartão (criarCheckoutAssinatura):
+      // `ciclo` já validado acima, gravado na criação em vez de esperado
+      // de um campo não confirmado do payload da Asaas — sem isso,
+      // `upsertAssinatura` cairia no default 'MONTHLY', reintroduzindo o
+      // mesmo bug do `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`
+      // por outra porta.
+      ciclo
     });
 
     resposta.json({

@@ -226,6 +226,12 @@ Webhook existente **pode ser editado** para acrescentar eventos — não é
 preciso criar outro. O limite é de 10 webhooks por conta, cada um com seu
 próprio conjunto.
 
+> **Conferido contra a conta, não contra a memória (16/09/2026).**
+> `GET /v3/webhooks` rodado de dentro do container de produção: **53
+> eventos configurados**, e entre eles **zero `SUBSCRIPTION_*`**. O que
+> esta seção lista bate com o que está marcado lá — e a única ausência
+> que importa é a das assinaturas, tratada logo abaixo.
+
 **Onde os eventos nascem.** Toda cobrança é criada com a chave da
 conta-mãe (`ASAAS_API_KEY`) levando `split` quando o contratante tem
 `wallet_id` — a cobrança **não** nasce dentro da subconta, que só recebe
@@ -327,6 +333,25 @@ antes, não presumido.
   (`vencido` e `chargeback`).
 - **Pix Automático** — ver §2.4: o grupo está indisponível nesta conta,
   com uma exceção.
+
+### Grupo "Assinaturas" (`SUBSCRIPTION_*`) — desmarcado, e **não** por decisão
+
+Medido em 16/09/2026: nenhum evento desse grupo está entre os 53
+configurados. Isso nunca foi uma escolha registrada — esta seção
+simplesmente não mencionava o grupo, o que é a falha que a própria
+declaração de "referência única" existe para impedir.
+
+Consequência: assinatura encerrada fora do nosso fluxo (cancelada direto
+no painel, ou encerrada pela Asaas após falhas de cobrança) **não chega
+por aviso**. Desde 16/09 ela chega por conciliação — `POST
+/consultar-assinatura` reconfere o estado real contra
+`GET /v3/subscriptions/{id}` (RN-26) —, então a divergência deixou de ser
+permanente, mas continua tendo o atraso de quem concilia.
+
+Marcar o grupo e tratar os eventos é trabalho aberto, e **exige medir
+antes de codificar**: ler o payload real de um evento antes de escrever
+tratamento. Escrever contra payload imaginado é exatamente o que causou
+os dois bugs de 15/09. `docs/pendencias.md`.
 
 **Grafia que engana:** `CHECKOUT_CANCELED` tem **um** L e
 `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` tem **dois**. As duas

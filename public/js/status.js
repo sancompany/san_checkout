@@ -101,7 +101,7 @@ const APRESENTACAO = {
 };
 
 /** Status desconhecido não pode quebrar a tela — mesma regra que
- *  pedimos ao contratante no INTEGRACAO.md seção 4.6. */
+ *  pedimos ao contratante no API.md §10 (compatibilidade). */
 function apresentar(status) {
   return APRESENTACAO[status] ?? {
     selo: 'Em processamento', classe: 'neutro',

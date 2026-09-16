@@ -1,6 +1,6 @@
 /**
  * public/js/modules/assinaturaHandler.js
- * Modelo pull pra assinatura — ver INTEGRACAO.md seção 6.1.
+ * Modelo pull pra assinatura — ver API.md §4.2 (plano) e §7 (detalhes).
  * Link: ?c=CONTRATANTE_ID&assinatura=PLANO_ID (em vez de ?pedido=).
  */
 

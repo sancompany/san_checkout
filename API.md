@@ -1,7 +1,7 @@
 # San Checkout — Documentação da API
 
 **SAN & CO. Pay Engine** — referência completa de integração.
-Versão do contrato: **1** · Atualizado em 14/09/2026
+Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança em `&renovar=`, ver seção 7.3)
 
 > Este é o documento **de fronteira**: tudo que atravessa a linha entre o
 > San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
@@ -171,15 +171,17 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}
 ### Renovação de assinatura (trocar o cartão)
 
 ```
-https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={token}
 ```
+
+`{token}` é gerado por você — nunca o literal `1`. Ver seção 7.3.
 
 | Parâmetro | Obrigatório | Descrição |
 |---|---|---|
 | `c` | sim | Seu `contratante_id` |
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
-| `renovar` | não | `1` = o assinante está trocando o cartão de uma assinatura existente (seção 7.3) |
+| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra |
 | `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
@@ -682,7 +684,15 @@ Nem todo desfecho gera webhook. Não espere um:
 - **Pop-up de cartão fechada sem pagar** (`CHECKOUT_EXPIRED`): nada é
   enviado. O pedido continua pendente do seu lado, corretamente.
 - **Pop-up cancelada** em pagamento avulso: nada é enviado. (Em
-  assinatura, chega `cancelada`.)
+  assinatura NOVA, chega `cancelada` — mas não numa renovação, ver
+  abaixo.)
+- **Pop-up de renovação (`&renovar={token}`) fechada sem pagar**: nada é
+  enviado. A assinatura ANTIGA continua intocada, ativa e sendo cobrada —
+  ela só é cancelada depois que a NOVA confirmar (seção 7.3). Antes de
+  16/09/2026 o checkout mandava `cancelada` mesmo sem a renovação ter
+  sido concluída; como o payload identifica só por `planoId`+`documento`
+  (seção 4.3.4), você não tinha como diferenciar isso de um cancelamento
+  de verdade — corrigido (RN-20, `docs/funcional.md`).
 - **Pix/boleto gerado e nunca pago**: só o `vencido`, quando vencer.
 
 A ausência de notificação nunca significa "pago". Se precisa ter certeza
@@ -726,6 +736,19 @@ payload**:
 > **Não invente um `chargeId` para assinatura, e não espere um.** Se o
 > seu código precisa de um identificador de cobrança individual para
 > conciliar, ele está na seção 5.3.
+>
+> ⚠️ **`planoId` + `documento` + `evento` deduplica RETRY, não CICLO.**
+> O `evento` é o mesmo texto (`cobranca_confirmada`, por exemplo) em
+> TODO ciclo recorrente do mesmo assinante — não existe nada no payload
+> que diferencie o pagamento de setembro do de outubro. Se o seu código
+> trata "já processei este `evento` pra este assinante" como motivo pra
+> ignorar a notificação, ele vai descartar o 2º, o 3º… ciclo como
+> "duplicata" do 1º, e o contratante para de creditar cobranças reais em
+> silêncio. A chave da tabela acima só serve pra não processar duas
+> vezes a MESMA tentativa de notificação (o retry de §4.3.6); para saber
+> se já processou um ciclo específico, use a sua própria consulta
+> periódica (seção 5.3, campo `ultimaCobranca.criadoEm`) como fonte de
+> verdade, não a deduplicação do webhook.
 
 ---
 
@@ -863,7 +886,7 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
   "status": "ativa",
   "valor": 349.90,
   "ciclo": "MONTHLY",
-  "proximaCobranca": "2026-10-11T00:00:00.000Z",
+  "proximaCobranca": null,
   "ultimaCobranca": {
     "chargeId": "pay_8392017465",
     "status": "confirmado",
@@ -874,11 +897,42 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 }
 ```
 
+> **`proximaCobranca` deixou de ser sempre `null` em 16/09/2026.** Ele
+> nasceu nulo porque nenhum *webhook* da Asaas carrega essa data (e a
+> data que o checkout manda na criação é a de HOJE, já que a 1ª cobrança
+> é imediata — não é projeção da próxima). A fonte certa não era webhook
+> nenhum: é a consulta direta da assinatura na Asaas, que esta rota
+> agora faz. Ainda pode vir `null` — quando a assinatura já encerrou, ou
+> quando a Asaas não responde a tempo (a conciliação não falha por isso,
+> cai pro que o banco sabe).
+>
+> **O `status` também é reconferido aqui, não só lido do banco.** Se uma
+> chamada nossa de cancelar/pausar/retomar foi processada pela Asaas mas
+> a confirmação se perdeu no caminho, é esta rota que percebe e corrige
+> o registro — antes, a divergência ficava invisível para sempre. O mesmo
+> vale para uma assinatura cancelada direto no painel da Asaas: como a
+> Asaas não nos manda nenhum evento de assinatura (medido em 16/09:
+> zero `SUBSCRIPTION_*` entre os 53 eventos configurados), **esta rota é
+> o único caminho** pelo qual isso chega até você. É o argumento mais
+> forte para o "rode uma vez por dia" da 5.3.
+>
+> **`ciclo` passou a ser reconferido junto, desde 16/09/2026.** Ele
+> continua congelado na criação — o que mudou é de onde a resposta o lê:
+> quem cobra é a Asaas, então se o nosso registro divergir do dela, o
+> errado é o nosso, e esta rota corrige o registro. Isso existe por causa
+> de um rastro real: as assinaturas criadas antes de 15/09/2026 foram
+> gravadas como `MONTHLY` independentemente do plano (o código lia um
+> campo de webhook que não existe). A correção na origem só valeu para as
+> novas — **para as antigas, é esta rota que repara**. Se você guardou o
+> `ciclo` do seu lado antes desta data, vale reconciliar. `valor`
+> continua vindo do registro local.
+
 | Campo | Descrição |
 |---|---|
 | `assinaturaId` | Id na Asaas. `null` se a primeira cobrança ainda não confirmou |
 | `status` | `ativa`, `pausada` ou `cancelada`. `null` enquanto não existe assinatura |
-| `valor`, `ciclo` | Congelados na criação (seção 4.2) |
+| `valor` | Congelado na criação (seção 4.2) |
+| `ciclo` | Congelado na criação (seção 4.2), mas **reconferido contra a Asaas** a cada consulta — ver a nota acima |
 | `proximaCobranca` | Quando a Asaas vai cobrar de novo. `null` se não houver |
 | `ultimaCobranca` | O ciclo mais recente, com o `status` do vocabulário da seção 4.3.3. `null` se nada foi cobrado |
 
@@ -965,14 +1019,26 @@ Content-Type: application/json
 { "assinaturaId": "sub_000123456789", "status": "cancelada" }
 ```
 
-Se a assinatura já estava no estado pedido, vem `200` com
-`"jaEstava": true` — pedir duas vezes não é erro.
+| Ação | Aceita a assinatura em | O que acontece |
+|---|---|---|
+| **Pausar** | `ativa` ou `pausada` | Para de gerar cobranças. O vínculo continua existindo |
+| **Retomar** | `pausada` ou `ativa` | Volta a cobrar no mesmo valor e ciclo |
+| **Cancelar** | `ativa` **ou `pausada`** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
 
-| Ação | O que acontece |
-|---|---|
-| **Pausar** | Para de gerar cobranças. O vínculo continua existindo |
-| **Retomar** | Volta a cobrar no mesmo valor e ciclo |
-| **Cancelar** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
+**Pausar e retomar são idempotentes: cancelar não.** Pedir para pausar
+uma assinatura já pausada (ou retomar uma já ativa) responde `200` com
+`"jaEstava": true`, sem chamar a Asaas de novo. **Cancelar não tem esse
+caminho** — a busca de `/cancelar-assinatura` deliberadamente não inclui
+`cancelada` entre os estados aceitos (ela pega a linha mais recente por
+`planoId`+`documento`, e aceitar `cancelada` poderia, numa renovação,
+mascarar uma assinatura ativa mais nova). Cancelar uma assinatura que já
+foi cancelada responde `404`, igual a cancelar uma que nunca existiu.
+
+> **Uma assinatura pausada pode ser cancelada.** Até 15/09/2026 isto não
+> era verdade: `/cancelar-assinatura` só buscava `ativa`, e pausar virava
+> porta de mão única — quem pausasse não conseguia mais cancelar por
+> lugar nenhum. Corrigido (RN-19, `docs/funcional.md`); a tabela acima já
+> reflete o estado atual.
 
 > Use **pausar** quando o assinante quer parar por um tempo. Cancelar
 > nesse caso vira churn: quem cancela raramente refaz todo o processo.
@@ -989,7 +1055,7 @@ separadamente.
 | `200` | Executado |
 | `400` | `planoId`/`documento` ausentes ou CPF/CNPJ inválido |
 | `401` | Chave ausente ou inválida |
-| `404` | Nenhuma assinatura nesse estado para esse plano/documento |
+| `404` | Nenhuma assinatura nesse estado para esse plano/documento (cancelar já cancelada também cai aqui) |
 
 ---
 
@@ -1171,10 +1237,12 @@ autorizado enquanto ele não ler.
 
 ### 7.3 Renovação — cartão vencido ou troca de cartão
 
-Mande o assinante para o link de assinatura com **`&renovar=1`**:
+Mande o assinante para o link de assinatura com **`&renovar={token}`**,
+onde `{token}` é gerado por VOCÊ (nunca pelo checkout, e nunca o
+literal `1`):
 
 ```
-https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar=1
+https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={token}
 ```
 
 Ele preenche o cartão novo na pop-up de sempre, e **a assinatura antiga é
@@ -1183,6 +1251,79 @@ que ele nunca fique sem assinatura nenhuma se o pagamento falhar.
 
 Use isso ao receber `cobranca_falhou`.
 
+#### ⚠️ O token é obrigatório — sem ele, é só uma assinatura nova
+
+Até 16/09/2026 bastava mandar `&renovar=1`: o checkout confiava no
+`documento` que o próprio formulário coletava, sem confirmar que quem
+estava pagando era o mesmo assinante. **CPF/CNPJ não é segredo** —
+qualquer pessoa que soubesse (ou adivinhasse, ou obtivesse de um
+vazamento qualquer) o documento de um assinante ativo seu podia montar
+esse link, pagar com o **próprio** cartão, e — ao confirmar — fazia o
+checkout cancelar a assinatura de VERDADE da vítima na Asaas. Um
+cancelamento de terceiro pelo caminho de dinheiro, sem tocar em
+credencial nenhuma sua.
+
+Por isso o `renovar` tem que ser um **token HMAC-SHA256**, calculado por
+você com a sua `X-Checkout-Key` como segredo — a mesma chave que já
+assina o webhook que você recebe (seção 4.3.1). Só quem tem a chave
+consegue gerar um token que o checkout aceita; saber o `documento` da
+vítima não basta mais.
+
+**Fórmula:**
+
+```
+timestamp = agora, em segundos (epoch)
+mensagem  = "{timestamp}.{contratante_id}.{planoId}.{documento}"
+hmac      = HMAC-SHA256(mensagem, sua X-Checkout-Key)
+token     = "{timestamp}.{hmac em hex}"
+```
+
+**Node.js**
+
+```js
+import crypto from 'node:crypto';
+
+function gerarTokenRenovacao(apiKey, { contratanteId, planoId, documento }) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const hmac = crypto.createHmac('sha256', apiKey)
+    .update(`${timestamp}.${contratanteId}.${planoId}.${documento}`)
+    .digest('hex');
+  return `${timestamp}.${hmac}`;
+}
+```
+
+**PHP**
+
+```php
+function gerarTokenRenovacao($apiKey, $contratanteId, $planoId, $documento) {
+    $timestamp = time();
+    $hmac = hash_hmac('sha256', "$timestamp.$contratanteId.$planoId.$documento", $apiKey);
+    return "$timestamp.$hmac";
+}
+```
+
+**Python**
+
+```python
+import hmac, hashlib, time
+
+def gerar_token_renovacao(api_key, contratante_id, plano_id, documento):
+    timestamp = int(time.time())
+    mensagem = f'{timestamp}.{contratante_id}.{plano_id}.{documento}'
+    assinatura = hmac.new(api_key.encode(), mensagem.encode(), hashlib.sha256).hexdigest()
+    return f'{timestamp}.{assinatura}'
+```
+
+O token vale por **7 dias** a partir de quando foi gerado — folgado o
+bastante pra um link de e-mail que ninguém abre na hora, sem ficar
+eterno. Gere um token novo por assinante e por tentativa; não reaproveite
+um token velho.
+
+**O que acontece se o token faltar ou não conferir:** nada de errado —
+o checkout trata como uma assinatura **nova comum**: cria e cobra
+normalmente, só não amarra nem cancela nenhuma outra. É o modo seguro,
+não um erro que trava o pagador.
+
 > **A renovação gera um id de assinatura NOVO na Asaas.** Do seu lado é a
 > continuação do mesmo assinante (mesmo `planoId`, mesmo `documento`).
 > Se você guarda o id da assinatura, atualize-o.
@@ -1190,6 +1331,11 @@ Use isso ao receber `cobranca_falhou`.
 > Por que não trocamos só o cartão: a API da Asaas exige receber número e
 > CVV para isso, o que colocaria o checkout — e por tabela você — dentro
 > do escopo PCI-DSS.
+
+> **Se o assinante fechar a pop-up de renovação sem pagar, nada muda.** A
+> assinatura antiga segue ativa e sendo cobrada normalmente — nenhum
+> webhook é enviado (seção 4.3.5), e ela só é cancelada depois que a nova
+> confirmar. Não force uma nova tentativa assumindo que a antiga parou.
 
 ### 7.4 Ciclo de vida completo
 
@@ -1203,11 +1349,14 @@ Use isso ao receber `cobranca_falhou`.
         │
         ├──► ciclo falhou ─────► webhook  evento: cobranca_falhou
         │         │
-        │         └──► você manda o link &renovar=1
+        │         └──► você manda o link &renovar={token}
         │
         ├──► POST /pausar-assinatura ──► para de cobrar, vínculo vivo
         │         │
-        │         └──► POST /retomar-assinatura ──► volta a cobrar
+        │         ├──► POST /retomar-assinatura ──► volta a cobrar
+        │         │
+        │         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
+        │                                          (pausada TAMBÉM cancela — seção 5.5)
         │
         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
                                           (definitivo)
@@ -1381,7 +1530,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
 - [ ] (Opcional) mandar `returnUrl` no link e combinar as origens com quem administra o checkout — e **nunca** tratar a volta como prova de pagamento (seção 3.1)
 - [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
-- [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar=1`
+- [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar={token}` — gerando o token você mesmo (seção 7.3), nunca `&renovar=1`
 
 **Combinado com quem administra o checkout:**
 

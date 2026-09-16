@@ -1,10 +1,10 @@
 /**
  * public/js/modules/cartaoHandler.js
  *
- * ⚠️ CHAMA UM ENDPOINT QUE AINDA NÃO EXISTE NO BACKEND
- * (`POST /api/checkout/cartao/:contratanteId/:pedidoId`). Este módulo
- * está pronto pro dia em que esse endpoint for construído — até lá,
- * clicar em "Continuar" vai dar erro 404, esperado.
+ * Cartão avulso — cria a sessão DETACHED/INSTALLMENT no backend
+ * (`POST /api/checkout/cartao/:contratanteId/:pedidoId`,
+ * `asaasCheckoutController.criarCheckoutCartao`, API.md §6) e abre a
+ * pop-up hospedada da Asaas.
  *
  * Fluxo: escolhe parcelas (tela nossa, sem dado de cartão) → backend
  * cria a sessão Asaas Checkout com o valor já calculado pra aquela
@@ -78,6 +78,20 @@ export async function continuarComCartao({ contratanteId, pedidoId, parcelas, da
     );
 
     const popup = window.open(checkoutUrl, '_blank', 'width=480,height=760');
+
+    // Bloqueador de pop-up (ou Safari, que exige o `window.open` no
+    // MESMO tick do clique — o `await post` acima já quebrou isso) faz
+    // `window.open` devolver `null`. Sem esta checagem, `iniciarPollingPopup`
+    // roda pra sempre esperando um `CHECKOUT_PAID` que nunca vem — o
+    // pagador nunca viu a tela — e `observarFechamentoPopup` sai sem
+    // armar nada (`if (!popup) return`), então o botão travava em
+    // "Abrindo pagamento…" sem erro e sem saída além de recarregar.
+    if (!popup) {
+      mostrarToast('Não conseguimos abrir a janela de pagamento. Libere pop-ups para este site e tente de novo.', 'erro');
+      botao.disabled = false;
+      botao.textContent = textoOriginal;
+      return;
+    }
 
     iniciarPollingPopup(asaasCheckoutId, {
       aoConfirmar: () => {
