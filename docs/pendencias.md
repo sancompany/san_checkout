@@ -142,6 +142,36 @@ eventos de assinatura a Asaas oferece, marcar, e ler o payload real de
 um antes de escrever tratamento — foi escrever contra payload imaginado
 que causou os dois bugs de 15/09.
 
+### 🟠 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação
+Achado em 16/09/2026, numa varredura focada em achados graves. `chamarAsaas`
+tem teto (`CONSTRAINTS.md` §2.7.1) — mas se o timeout estourar DEPOIS de a
+Asaas já ter processado o `DELETE`/`PUT` (só a resposta que não voltou a
+tempo), `assinaturaController.cancelarAssinatura`/`pausarAssinatura`/
+`retomarAssinatura` devolvem erro pro contratante e a linha seguinte
+(`atualizarStatusAssinatura`) nunca roda: `assinaturas.status` no nosso
+banco fica desatualizado — possivelmente pra sempre — enquanto a Asaas já
+tem o outro estado.
+
+`POST /consultar-assinatura` (§5.3) reconcilia a **última cobrança**
+contra a Asaas (`statusAtualizado`, `cobrancaConsultaController.js`), mas
+o `status` da própria assinatura (`ativa`/`pausada`/`cancelada`) vem
+100% do banco local — nunca é reconferido contra
+`GET /v3/subscriptions/{id}`. Não existe hoje nenhum caminho, nem manual,
+pra detectar essa divergência depois do fato.
+
+**Declarado, não corrigido às cegas**: a solução mais óbvia (consultar
+`GET /v3/subscriptions/{id}` em `consultarAssinatura` e usar o status de
+lá) exige saber exatamente como a Asaas representa uma assinatura
+DELETADA nesse endpoint — campo `deleted: true`, mudança em `status`, ou
+404 — e isso não está confirmado contra o payload real. É a mesma classe
+de erro que já custou caro duas vezes aqui
+(`docs/erros/2026-09-15-confiei-que-o-checkout-paid-traria-o-id-do-pagamento.md`,
+`docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`):
+escrever contra o formato imaginado. Fechar exige chamar
+`GET /v3/subscriptions/{id}` de verdade contra uma assinatura cancelada
+no sandbox (já existe uma: `sub_qut6521d50496vkn`, testemaster) e ler a
+resposta antes de codificar o tratamento.
+
 ### 🟡 `assinaturas.proxima_cobranca` não tem fonte confiável
 Achado em 15/09/2026, no mesmo ciclo que corrigiu `ciclo` (ver
 `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-nenhum.md`).

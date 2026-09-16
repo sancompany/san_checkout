@@ -747,7 +747,7 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     return null;
   }
 
-  await deps.registrarCicloAssinatura({
+  const resultado = await deps.registrarCicloAssinatura({
     chargeId: payment.id,
     asaasSubscriptionId: subscriptionId,
     contratanteId: modelo.contratante_id,
@@ -768,6 +768,14 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     valorComDesconto: payment.value ?? modelo.valor_com_desconto,
     valorCobrado: payment.value ?? modelo.valor_cobrado
   });
+
+  if (resultado?.duplicado) {
+    // Outra entrega concorrente do MESMO webhook (retry da Asaas pro
+    // mesmo PAYMENT_CONFIRMED) já criou esta linha e vai notificar
+    // sozinha — devolver null aqui faz o chamador tratar como "nada a
+    // fazer", igual a uma cobrança que não é nossa.
+    return null;
+  }
 
   return deps.buscarCobranca(payment.id);
 }
@@ -1201,6 +1209,38 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(deps.chamou('registrarCicloAssinatura').length, 1, 'ciclo novo vira registro local');
   assert.equal(deps.chamou('notificar')[0].args[1].tipo, 'assinatura', 'ciclo usa o vocabulário de assinatura, não o de pedido');
   assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cobranca_confirmada');
+
+  /* Ciclo novo, entrega PERDEDORA da corrida: a Asaas reenviou o MESMO
+     PAYMENT_CONFIRMED (retry), e outra chamada concorrente já ganhou a
+     inserção — `registrarCicloAssinatura` devolve `duplicado: true`
+     (é o que a violação do `unique` de `charge_id` vira, ver
+     cobrancaService.js). Sem tratar esse sinal, `buscarCobranca` logo
+     depois acharia a linha (criada pela vencedora, `status: 'pendente'`)
+     e mandaria `cobranca_confirmada` DE NOVO — a mesma cobrança
+     notificada duas vezes, sem nenhum campo no payload de assinatura
+     pro contratante perceber que é repetido (§4.3.6). */
+  let chamadasBuscarCobranca = 0;
+  deps = depsFalsas({
+    buscarCobranca: () => {
+      chamadasBuscarCobranca += 1;
+      // 1ª chamada (checagem inicial de `processarEventoPayment`): esta
+      // entrega ainda não viu o charge — null, como uma cobrança nova.
+      // 2ª chamada só existe no código SABOTADO (sem o guarda de
+      // `duplicado`): aí sim a linha já existe, criada pela entrega
+      // vencedora da corrida — é o que faria notificar de novo.
+      return chamadasBuscarCobranca === 1
+        ? null
+        : { ...modeloAssinatura, charge_id: 'pay_ciclo2_retry', status: 'pendente' };
+    },
+    buscarCobrancaPorSubscriptionId: modeloAssinatura,
+    registrarCicloAssinatura: () => ({ duplicado: true })
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_ciclo2_retry', subscription: 'sub_1', value: 50 } },
+    deps
+  );
+  assert.equal(deps.chamou('notificar').length, 0, 'entrega perdedora da corrida não pode notificar de novo o mesmo ciclo');
+  assert.equal(chamadasBuscarCobranca, 1, 'com o guarda, nem chega a buscar a cobrança de novo');
 
   // Ciclo novo sem molde local: ignora, não adivinha o contratante.
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });
