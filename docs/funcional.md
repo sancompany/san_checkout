@@ -423,6 +423,66 @@ Achado em 15/09/2026, na auditoria do caminho da assinatura; assinatura
 NOVA (não-renovação) abandonada continua mandando `cancelada`, como
 documentado (API.md §4.3.5) — só a renovação muda.
 
+**RN-21 · `/cancelar-assinatura` notifica o contratante, não só a
+resposta síncrona.** Até 16/09/2026 o cancelamento pedido pelo próprio
+contratante mudava a Asaas e o nosso banco, mas nunca mandava
+`evento: cancelada` pro `webhook_url` — só a resposta HTTP confirmava.
+*Violada:* o `API.md` §7.4 desenha essa seta desde antes de existir de
+verdade; um contratante que dependesse do webhook (em vez de só ler a
+resposta síncrona) nunca saberia que o cancelamento aconteceu. *Quem
+vê:* o contratante. Corrigido com `notificarAssinaturaCancelada`
+(webhookController.js), fire-and-forget, mesmo canal que os outros dois
+desfechos de `cancelada` (pop-up de renovação abandonada, autorização
+de Pix Automático encerrada) já usavam. Protegida por checagem no
+texto-fonte de `assinaturaController.js` (verificado por sabotagem).
+
+**RN-22 · Conciliação não pode confundir tentativa de renovação com o
+ciclo real.** `POST /consultar-assinatura` (§5.3) busca a "última
+cobrança" por `contratanteId+planoId+documento`, ordenando por
+`criado_em`. Uma tentativa de renovação (`&renovar=1`) nasce DEPOIS do
+último ciclo real e tem `substitui_assinatura_id` apontando pra
+assinatura antiga. *Violada:* sem tratamento, uma tentativa abandonada
+(`cancelado`/`expirado`) aparecia como `ultimaCobranca` de uma
+assinatura que continua `ativa` e cobrando normalmente — e a primeira
+correção trocou esse furo por outro: exigir `status = 'confirmado'`
+exato escondia uma renovação que confirmou e **depois foi estornada**.
+*Quem vê:* o contratante que roda a conciliação diária (checklist
+`API.md` §11). Corrigido em `buscarUltimaCobrancaDaAssinatura`
+(cobrancaService.js): só é descartada a linha de renovação cujo status
+significa "nunca chegou a acontecer" (`pendente`, `cancelado`,
+`expirado`); qualquer resultado real (confirmado, estornado, em
+análise…) conta. Achado e corrigido em 16/09/2026, numa varredura
+focada em achados graves.
+
+**RN-23 · Entrega duplicada do mesmo webhook não pode notificar o mesmo
+ciclo duas vezes.** A Asaas pode reenviar o mesmo `PAYMENT_CONFIRMED`
+(`API.md` §4.3.6, "pode chegar mais de uma vez"). Pra um ciclo NOVO (2º
+mês em diante), duas entregas quase simultâneas liam a cobrança como
+inexistente antes de qualquer uma terminar de inserir a linha — a
+`unique` de `charge_id` barrava a segunda inserção no banco, mas nada
+sinalizava isso pra cima, e a entrega perdedora seguia em frente e
+notificava de novo o MESMO ciclo. *Violada:* o payload de assinatura
+não carrega `chargeId` (RN-18), então o contratante não tinha nenhum
+campo pra perceber que a segunda notificação era repetida — creditaria
+o ciclo duas vezes. *Quem vê:* o contratante, em silêncio. Corrigido:
+`registrarCicloAssinatura` detecta a violação do `unique` (código
+Postgres `23505`) e sinaliza `duplicado`; a entrega perdedora não
+notifica nada, confiando que a vencedora já cuidou disso. Achado e
+corrigido em 16/09/2026, verificado por sabotagem.
+
+**RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
+avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com
+`window.open`, chamado DEPOIS de um `await` — o que quebra o "gesto do
+usuário" em vários navegadores/bloqueadores e faz `window.open`
+devolver `null`. *Violada:* sem checar isso, nenhum listener de
+fechamento era armado, o polling ficava rodando pra sempre esperando
+uma confirmação que nunca chegaria (o pagador nunca viu a tela), e o
+botão ficava preso em "Abrindo pagamento…", desabilitado, sem toast e
+sem saída além de recarregar a página. *Quem vê:* o comprador com
+bloqueador de pop-up ativo, ou no Safari. Corrigido em
+`cartaoHandler.js` e `assinaturaCheckoutHandler.js`: toast pedindo pra
+liberar pop-ups e o botão reabilitado. Achado em 16/09/2026.
+
 **RN-16 · A volta ao contratante nunca carrega status de pagamento.** A
 URL de retorno leva só o `pedido`; `status`, `pago` e equivalentes são
 proibidos por construção. *Violada:* o integrador leria `?status=pago`

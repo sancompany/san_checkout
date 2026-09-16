@@ -145,6 +145,62 @@ Feito em 15/09:
   abandonada continua mandando `cancelada`, como já era documentado.
   RN-20 (`docs/funcional.md`).
 
+Feito em 16/09:
+- **Primeira assinatura de verdade paga no pop-up** (`sub_qut6521d50496vkn`,
+  testemaster/plano_anual, R$10) — o ciclo completo criar → pausar
+  → (idempotência) → retomar → conciliar → cancelar → (cancelar de novo
+  = 404, não `jaEstava`) exercitado ao vivo, sem fixture. Confirmou o
+  bug já conhecido do `ciclo` (grava `MONTHLY` em vez de `YEARLY`,
+  porque produção ainda não tinha o PR do dia anterior) e revelou um
+  furo novo: **`/cancelar-assinatura` nunca notificava o contratante**
+  — só a resposta síncrona, quebrando a seta que o `API.md` §7.4 já
+  desenhava. RN-21.
+- **Varredura de achados graves, em duas rodadas**, com foco em
+  assinatura e o resto como secundário (agentes em paralelo, cada
+  achado verificado por mim antes de entrar na lista — sem inflar
+  número). Primeira rodada, 6 achados:
+  - conciliação confundia tentativa de renovação abandonada com o
+    ciclo real (RN-22);
+  - assinatura por Pix Automático perdia `ciclo`, reintroduzindo o bug
+    do dia anterior por outra porta (não tem dano ativo — Pix
+    Automático está desligado nesta conta, `CONSTRAINTS.md` §2.4);
+  - `API.md` §4.3.6 prometia uma deduplicação entre CICLOS que nunca
+    existiu (a chave só deduplica *retry*, não ciclo — texto
+    corrigido);
+  - rate limit de criação (10/min) também travava o polling de status
+    de Pix/Boleto — o próprio polling (3s) esgotava a janela em ~30s;
+    limitador migrado de montagem por prefixo pra montagem por rota
+    (`src/middlewares/limitadores.js`, novo);
+  - pop-up bloqueada travava o botão de pagamento pra sempre, sem erro,
+    em cartão avulso E assinatura por cartão (RN-24);
+  - o achado do `/cancelar-assinatura` acima, já corrigido antes da
+    varredura.
+  Segunda rodada (revisão de regressão dos 6 + ângulos de banco/
+  concorrência ainda não cobertos), 2 achados confirmados e 1 declarado:
+  - **regressão no meu próprio fix da rodada 1**: o filtro da
+    conciliação exigia `status = 'confirmado'` exato, escondendo uma
+    renovação que confirmou e **depois foi estornada** — corrigido pra
+    excluir só os status que significam "nunca aconteceu"
+    (`pendente`/`cancelado`/`expirado`), não por uma lista positiva
+    (RN-22, revisado);
+  - **condição de corrida real**: a Asaas reenvia webhook (§4.3.6, "pode
+    chegar mais de uma vez"), e duas entregas quase simultâneas do
+    MESMO `PAYMENT_CONFIRMED` de um ciclo novo notificavam
+    `cobranca_confirmada` DUAS VEZES pro contratante — sem nenhum campo
+    no payload pra ele perceber (RN-18: assinatura não tem `chargeId`).
+    Corrigido detectando a violação do `unique` de `charge_id`
+    (código Postgres `23505`) e sinalizando a entrega perdedora pra não
+    notificar (RN-23);
+  - **declarado, não corrigido às cegas**: sem reconciliação quando
+    cancelar/pausar/retomar perde a confirmação da Asaas por timeout —
+    a correção óbvia exige confirmar o formato real de
+    `GET /v3/subscriptions/{id}` pra uma assinatura deletada antes de
+    codificar, e isso não está medido. `docs/pendencias.md`.
+  Todos os fixes testados com sabotagem (inclusive uma correção no
+  próprio teste do achado da corrida, cuja primeira versão passava
+  mesmo sabotada — corrigida antes de confiar nela) e `npm run check`
+  verde em cada commit.
+
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
 backup+restauração (amarrado ao 1º pagamento real, §3); e os demais itens
