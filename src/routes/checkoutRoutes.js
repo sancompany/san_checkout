@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { gerarPix, statusPix, gerarBoleto, statusBoleto } from '../controllers/checkoutController.js';
 import { statusPublico, consultarCobranca } from '../controllers/cobrancaConsultaController.js';
-import { limitadorCriacao, criarLimitadorConsulta } from '../middlewares/limitadores.js';
+import { criarLimitadorCriacao, criarLimitadorConsulta } from '../middlewares/limitadores.js';
 
 const router = Router();
 
@@ -12,9 +12,13 @@ const router = Router();
 // e o próprio polling esgotava a janela sozinho em ~30s (achado
 // varrendo o caminho de assinatura, mas o mesmo bug existia aqui desde
 // sempre — Pix/Boleto usam o mesmo padrão de polling).
-router.post('/pix/:contratanteId/:pedidoId', limitadorCriacao, gerarPix);
+//
+// Uma instância NOVA por rota, e não uma só reaproveitada nas duas
+// criações — a mesma instância em `/pix` e `/boleto` somaria as duas no
+// mesmo balde de 10/min (ver o comentário de limitadores.js).
+router.post('/pix/:contratanteId/:pedidoId', criarLimitadorCriacao(), gerarPix);
 router.get('/pix/status/:chargeId', criarLimitadorConsulta(), statusPix);
-router.post('/boleto/:contratanteId/:pedidoId', limitadorCriacao, gerarBoleto);
+router.post('/boleto/:contratanteId/:pedidoId', criarLimitadorCriacao(), gerarBoleto);
 router.get('/boleto/status/:chargeId', criarLimitadorConsulta(), statusBoleto);
 
 // Pro COMPRADOR — pública, alimenta public/status.html (segunda via de

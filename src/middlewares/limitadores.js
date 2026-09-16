@@ -5,22 +5,31 @@
  * (checkoutRoutes.js), porque o prefixo `/api/checkout/pix` também casa
  * com `/api/checkout/pix/status/...` (polling do comprador a cada 3s),
  * e não dá pra excluir um sub-caminho de um `app.use()` por prefixo.
+ *
+ * As DUAS são fábrica, nunca uma instância só reaproveitada em vários
+ * `app.use()`/`router.post()` — cada `rateLimit(...)` guarda o contador
+ * na store por IP (não por caminho de montagem); a MESMA instância em
+ * vários lugares diferentes soma TODAS as chamadas no mesmo balde. Foi
+ * assim que `criarLimitadorConsulta` nasceu fábrica (achado testando
+ * Cartão) — e o `limitadorCriacao` caiu no MESMO bug depois, silencioso,
+ * porque ele continuou sendo uma instância só montada em sete rotas
+ * (cartão, assinatura, assinatura-pix, estornar, cancelar/pausar/
+ * retomar-assinatura): um IP que cria alguns checkouts já consumia
+ * crédito do mesmo balde que cancelar/pausar/retomar usam, e vice-versa.
+ * Achado em 16/09/2026, numa varredura de achados graves.
  */
 import rateLimit from 'express-rate-limit';
 
-export const limitadorCriacao = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { erro: 'Muitas tentativas em pouco tempo. Aguarde um minuto.' }
-});
+export function criarLimitadorCriacao() {
+  return rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erro: 'Muitas tentativas em pouco tempo. Aguarde um minuto.' }
+  });
+}
 
-// ponytail: fábrica em vez de uma instância só reaproveitada em várias
-// rotas de consulta — cada `rateLimit(...)` guarda o contador na store
-// por IP+path-de-montagem; a MESMA instância em vários app.use()
-// diferentes soma todas as chamadas no mesmo balde de 60/min (bug real,
-// achado testando Cartão). Uma instância por rota = 60/min CADA uma.
 export function criarLimitadorConsulta() {
   return rateLimit({
     windowMs: 60 * 1000,

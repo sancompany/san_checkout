@@ -22,7 +22,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
-import { limitadorCriacao, criarLimitadorConsulta } from './middlewares/limitadores.js';
+import { criarLimitadorCriacao, criarLimitadorConsulta } from './middlewares/limitadores.js';
 import { supabase } from './config/supabase.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
 import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
@@ -67,16 +67,21 @@ app.use(express.json());
 // pix e boleto NÃO entram aqui por prefixo — ver src/middlewares/limitadores.js
 // (checkoutRoutes.js monta o limitador por rota, pra não pegar o
 // polling de status junto com a criação).
-app.use('/api/checkout/cartao', limitadorCriacao);
-app.use('/api/checkout/assinatura', limitadorCriacao);
-app.use('/api/checkout/assinatura-pix', limitadorCriacao);
-app.use('/api/checkout/estornar', limitadorCriacao);
-app.use('/api/checkout/cancelar-assinatura', limitadorCriacao);
+//
+// Uma instância NOVA por `app.use()` — a mesma instância em vários
+// lugares soma o contador de todos eles no mesmo balde (ver o
+// comentário de limitadores.js). Até 16/09/2026 estas sete rotas
+// compartilhavam uma instância só.
+app.use('/api/checkout/cartao', criarLimitadorCriacao());
+app.use('/api/checkout/assinatura', criarLimitadorCriacao());
+app.use('/api/checkout/assinatura-pix', criarLimitadorCriacao());
+app.use('/api/checkout/estornar', criarLimitadorCriacao());
+app.use('/api/checkout/cancelar-assinatura', criarLimitadorCriacao());
 // Pausar e retomar mexem no mesmo vínculo que o cancelamento e exigem a
 // mesma chave — ficaram sem limite quando entraram. Mesmo teto: o limite
 // aqui não é sobre volume de uso, é sobre força bruta na chave.
-app.use('/api/checkout/pausar-assinatura', limitadorCriacao);
-app.use('/api/checkout/retomar-assinatura', limitadorCriacao);
+app.use('/api/checkout/pausar-assinatura', criarLimitadorCriacao());
+app.use('/api/checkout/retomar-assinatura', criarLimitadorCriacao());
 /* A ROTA DE LOGIN É O ÚNICO LUGAR CARO QUE SOBROU, e por isso tem o
    teto mais apertado do projeto. Cada tentativa custa ~830 ms de CPU no
    scrypt: a 10/min, um atacante consumiria 8,3 s de CPU por minuto numa
