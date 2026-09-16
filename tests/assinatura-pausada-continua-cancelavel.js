@@ -104,4 +104,17 @@ for (const status of aceitosNoCancelar) {
   );
 }
 
+/* ---------- cancelar precisa notificar o contratante ----------
+   Até 16/09/2026, `cancelarAssinatura` só respondia síncrono — nenhum
+   webhook `evento: 'cancelada'` saía, quebrando a seta que o `API.md`
+   §7.4 desenha para este endpoint (achado testando uma assinatura real
+   de ponta a ponta). */
+const corpoDoCancelar = /export async function cancelarAssinatura[\s\S]*?\n\}/.exec(fonte);
+conferir(corpoDoCancelar !== null, 'não achei o corpo de cancelarAssinatura');
+conferir(
+  /notificarAssinaturaCancelada\(/.test(corpoDoCancelar[0]),
+  'cancelarAssinatura precisa chamar notificarAssinaturaCancelada — sem isso, quem chama /cancelar-assinatura ' +
+  'só sabe que funcionou pela resposta síncrona, e o `API.md` §7.4 promete um webhook que nunca sai'
+);
+
 console.log(`assinatura-pausada-continua-cancelavel: ${checagens} checagens OK`);

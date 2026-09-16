@@ -902,6 +902,25 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   }
 }
 
+/**
+ * `POST /cancelar-assinatura` (assinaturaController.js) é o cancelamento
+ * pedido pelo PRÓPRIO contratante — diferente dos outros dois lugares
+ * que mandam `evento: 'cancelada'` (pop-up de cartão abandonada, e
+ * autorização de Pix Automático encerrada), que reagem a algo que
+ * aconteceu do lado do assinante. Mesmo payload, vocabulário único
+ * (API.md §4.3.4) — só muda quem disparou.
+ */
+export async function notificarAssinaturaCancelada(contratante, { planoId, documento }, deps = dependenciasPadrao) {
+  if (!contratante?.webhook_url) return;
+  return deps.notificar(contratante.webhook_url, {
+    versao: VERSAO_WEBHOOK,
+    tipo: 'assinatura',
+    planoId,
+    documento,
+    evento: 'cancelada'
+  }, contratante.api_key);
+}
+
 export function montarPayloadConfirmacaoPedido(cobranca, chargeId, status) {
   return {
     versao: VERSAO_WEBHOOK,
