@@ -179,7 +179,7 @@ function formatarDataHoraAsaas(data) {
  * POST /api/checkout/assinatura/:contratanteId/:planoId
  * Cria a sessão RECURRENT — o pagador digita o cartão uma única vez na
  * pop-up e a Asaas passa a cobrar sozinha todo ciclo (ver
- * VISAO_COMPLETA.md seção 4.4).
+ * API.md §7).
  *
  * Existe também a assinatura por PIX AUTOMÁTICO, sem cartão, em
  * `criarAssinaturaPixAutomatico` no fim deste arquivo (a nota antiga
@@ -256,7 +256,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
 
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
-    // decisão pendente, ainda não tomada (ver VISAO_COMPLETA.md).
+    // decisão pendente, ainda não tomada (ver API.md §8).
     const splits = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valor }]
       : undefined;

@@ -411,8 +411,9 @@ export async function obterMetricas(requisicao, resposta) {
 }
 
 // --- Subcontas Asaas ---------------------------------------------------
-// Tela separada do cadastro de contratante (ver INTEGRACAO.md/status-
-// atual.md): cria a conta na Asaas via API (POST /v3/accounts) em vez
+// Tela separada do cadastro de contratante, operacional (não faz parte
+// do contrato do API.md — quem usa isto é o operador, não o
+// integrador): cria a conta na Asaas via API (POST /v3/accounts) em vez
 // de exigir que o operador crie na mão pelo site da Asaas. O wallet_id
 // gerado aqui ainda precisa ser colado manualmente no contratante
 // certo — nunca ligado automaticamente entre as duas tabelas.

@@ -218,7 +218,7 @@ const EVENTOS_PAYMENT_TRATADOS = [
 ];
 
 /**
- * Versão do contrato do webhook (INTEGRACAO.md seção 4.4). Vai em todo
+ * Versão do contrato do webhook (API.md §10). Vai em todo
  * payload pra que o contratante possa ramificar se um dia existir uma
  * v2 — a regra é só ADICIONAR campo, nunca remover nem renomear, então
  * este número deve mudar raramente ou nunca.
@@ -369,7 +369,7 @@ export function mapearStatusPayment(evento) {
 }
 
 /** Só usado pra notificação de Assinatura — traduz o status local pro
- *  vocabulário já documentado no INTEGRACAO.md seção 6.1
+ *  vocabulário já documentado no API.md §4.3.4
  *  (criada/cobranca_confirmada/cobranca_falhou/cancelada). */
 /**
  * Fecha a assinatura antiga depois que a renovação foi paga.
@@ -876,7 +876,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   const segredo = cobranca.contratantes?.api_key;
 
   // Assinatura por cartão e por Pix Automático usam o MESMO vocabulário
-  // de webhook (INTEGRACAO.md 6.1) — pro contratante é a mesma coisa,
+  // de webhook (API.md §4.3.4) — pro contratante é a mesma coisa,
   // muda só como o assinante pagou.
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     const evento = eventoAssinatura ?? (confirmado ? 'criada' : null);

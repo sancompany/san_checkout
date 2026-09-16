@@ -1,7 +1,7 @@
 # San Checkout — Documentação da API
 
 **SAN & CO. Pay Engine** — referência completa de integração.
-Versão do contrato: **1** · Atualizado em 14/09/2026
+Versão do contrato: **1** · Atualizado em 16/09/2026
 
 > Este é o documento **de fronteira**: tudo que atravessa a linha entre o
 > San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
@@ -682,7 +682,15 @@ Nem todo desfecho gera webhook. Não espere um:
 - **Pop-up de cartão fechada sem pagar** (`CHECKOUT_EXPIRED`): nada é
   enviado. O pedido continua pendente do seu lado, corretamente.
 - **Pop-up cancelada** em pagamento avulso: nada é enviado. (Em
-  assinatura, chega `cancelada`.)
+  assinatura NOVA, chega `cancelada` — mas não numa renovação, ver
+  abaixo.)
+- **Pop-up de renovação (`&renovar=1`) fechada sem pagar**: nada é
+  enviado. A assinatura ANTIGA continua intocada, ativa e sendo cobrada —
+  ela só é cancelada depois que a NOVA confirmar (seção 7.3). Antes de
+  16/09/2026 o checkout mandava `cancelada` mesmo sem a renovação ter
+  sido concluída; como o payload identifica só por `planoId`+`documento`
+  (seção 4.3.4), você não tinha como diferenciar isso de um cancelamento
+  de verdade — corrigido (RN-20, `docs/funcional.md`).
 - **Pix/boleto gerado e nunca pago**: só o `vencido`, quando vencer.
 
 A ausência de notificação nunca significa "pago". Se precisa ter certeza
@@ -973,14 +981,26 @@ Content-Type: application/json
 { "assinaturaId": "sub_000123456789", "status": "cancelada" }
 ```
 
-Se a assinatura já estava no estado pedido, vem `200` com
-`"jaEstava": true` — pedir duas vezes não é erro.
+| Ação | Aceita a assinatura em | O que acontece |
+|---|---|---|
+| **Pausar** | `ativa` ou `pausada` | Para de gerar cobranças. O vínculo continua existindo |
+| **Retomar** | `pausada` ou `ativa` | Volta a cobrar no mesmo valor e ciclo |
+| **Cancelar** | `ativa` **ou `pausada`** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
 
-| Ação | O que acontece |
-|---|---|
-| **Pausar** | Para de gerar cobranças. O vínculo continua existindo |
-| **Retomar** | Volta a cobrar no mesmo valor e ciclo |
-| **Cancelar** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
+**Pausar e retomar são idempotentes: cancelar não.** Pedir para pausar
+uma assinatura já pausada (ou retomar uma já ativa) responde `200` com
+`"jaEstava": true`, sem chamar a Asaas de novo. **Cancelar não tem esse
+caminho** — a busca de `/cancelar-assinatura` deliberadamente não inclui
+`cancelada` entre os estados aceitos (ela pega a linha mais recente por
+`planoId`+`documento`, e aceitar `cancelada` poderia, numa renovação,
+mascarar uma assinatura ativa mais nova). Cancelar uma assinatura que já
+foi cancelada responde `404`, igual a cancelar uma que nunca existiu.
+
+> **Uma assinatura pausada pode ser cancelada.** Até 15/09/2026 isto não
+> era verdade: `/cancelar-assinatura` só buscava `ativa`, e pausar virava
+> porta de mão única — quem pausasse não conseguia mais cancelar por
+> lugar nenhum. Corrigido (RN-19, `docs/funcional.md`); a tabela acima já
+> reflete o estado atual.
 
 > Use **pausar** quando o assinante quer parar por um tempo. Cancelar
 > nesse caso vira churn: quem cancela raramente refaz todo o processo.
@@ -997,7 +1017,7 @@ separadamente.
 | `200` | Executado |
 | `400` | `planoId`/`documento` ausentes ou CPF/CNPJ inválido |
 | `401` | Chave ausente ou inválida |
-| `404` | Nenhuma assinatura nesse estado para esse plano/documento |
+| `404` | Nenhuma assinatura nesse estado para esse plano/documento (cancelar já cancelada também cai aqui) |
 
 ---
 
@@ -1199,6 +1219,11 @@ Use isso ao receber `cobranca_falhou`.
 > CVV para isso, o que colocaria o checkout — e por tabela você — dentro
 > do escopo PCI-DSS.
 
+> **Se o assinante fechar a pop-up de renovação sem pagar, nada muda.** A
+> assinatura antiga segue ativa e sendo cobrada normalmente — nenhum
+> webhook é enviado (seção 4.3.5), e ela só é cancelada depois que a nova
+> confirmar. Não force uma nova tentativa assumindo que a antiga parou.
+
 ### 7.4 Ciclo de vida completo
 
 ```
@@ -1215,7 +1240,10 @@ Use isso ao receber `cobranca_falhou`.
         │
         ├──► POST /pausar-assinatura ──► para de cobrar, vínculo vivo
         │         │
-        │         └──► POST /retomar-assinatura ──► volta a cobrar
+        │         ├──► POST /retomar-assinatura ──► volta a cobrar
+        │         │
+        │         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
+        │                                          (pausada TAMBÉM cancela — seção 5.5)
         │
         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
                                           (definitivo)

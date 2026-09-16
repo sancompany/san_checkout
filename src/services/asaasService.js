@@ -213,7 +213,7 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
   };
 }
 
-const DIAS_VENCIMENTO_BOLETO = 3; // VISAO_COMPLETA.md seção 4.3
+const DIAS_VENCIMENTO_BOLETO = 3; // API.md §6.1 (o que o boleto exige do comprador)
 
 function dataVencimentoBoleto() {
   const data = new Date();
@@ -377,7 +377,7 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * de verdade. Pix/Cartão continuam síncronos, mesmo endpoint de
  * sempre. Ver `refundController.js`, que usa `assincrono` pra decidir
  * entre os status locais `estornado` e `estorno_solicitado`
- * (VISAO_COMPLETA.md seção 7).
+ * (API.md §5.4).
  * @param {string} chargeId
  * @param {{ metodoPagamento?: string }} [opcoes]
  */

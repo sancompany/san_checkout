@@ -73,6 +73,27 @@ assinatura viva — precisa de navegador + cartão de teste, assistido pelo
 dono, e será retestado pela própria MostrAí na Estação 6 dela. O ramo
 assíncrono do estorno de boleto também não foi exercitado.
 
+**Assinatura, 16/09 — varredura de fixture (sem tocar a assinatura real
+da MostrAí):** criada uma linha descartável em `assinaturas`
+(`testemaster`/`plano_trimestral`, `QUARTERLY`, `ativa`, id falso) para
+exercitar o que não depende de cartão real:
+
+- **Vínculo da renovação:** `POST /assinatura/testemaster/plano_trimestral`
+  com `renovar: true` gravou `substitui_assinatura_id` apontando pra
+  fixture na cobrança nova — confirma que `buscarAssinaturaAtiva` e o
+  relay do RN-19/20 continuam corretos depois das correções de 15/09.
+- **Erro da Asaas não vira estado local inconsistente:** `pausar-` e
+  `cancelar-assinatura` contra a fixture (id que não existe na Asaas de
+  verdade) devolveram erro da própria Asaas sem crashar — e, mais
+  importante, **sem** atualizar o status local antes de confirmar
+  (`alterarStatusAssinatura` falha primeiro; `atualizarStatusAssinatura`
+  nunca roda). Conferido direto no banco: a fixture ficou `ativa` depois
+  das duas tentativas, sem "cancelada"/"pausada" fantasma.
+- Fixture e a cobrança de teste gerada foram apagadas depois.
+
+Continua faltando o mesmo de sempre: cartão real no pop-up para nascer
+uma linha "de verdade" e cancelar/pausar/retomar contra ela.
+
 O contratante de teste **já existe**, cadastrado pelo dono em 13/09:
 
 | campo | valor |

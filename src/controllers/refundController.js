@@ -8,7 +8,7 @@
  *
  * Sempre tudo ou nada — sem estorno parcial nesta versão.
  *
- * Peça acrescentada nesta rodada (VISAO_COMPLETA.md seção 7): Boleto é
+ * Boleto é
  * ASSÍNCRONO — o status local vira 'estorno_solicitado' em vez de
  * 'estornado' até o webhook confirmar de verdade
  * (PAYMENT_REFUND_IN_PROGRESS → depois PAYMENT_REFUNDED).

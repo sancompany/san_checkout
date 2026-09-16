@@ -6,7 +6,7 @@
  * Body: { planoId, documento }
  *
  * "Cancelamento: só o projeto aciona — o pagador nunca cancela direto
- * no checkout" (VISAO_COMPLETA.md seção 4.4, INTEGRACAO.md seção 6.1).
+ * no checkout" (API.md §5.5).
  * Por isso a busca é por planoId+documento (o que o projeto contratante
  * tem) e não pelo id da assinatura na Asaas (que o projeto nunca chega
  * a ver — só existe internamente, na tabela `assinaturas`).
@@ -14,9 +14,12 @@
  * Cancelar aqui só PARA a geração de cobranças futuras — não estorna
  * nenhuma cobrança já paga (se for o caso, usar /estornar separado).
  *
- * ⚠️ NUNCA TESTADO AO VIVO: precisa de uma assinatura RECURRENT real e
- * confirmada em sandbox pra existir uma linha em `assinaturas` pra
- * cancelar.
+ * Auth, validação (400/401) e a busca por `ativa`/`pausada` exercitadas
+ * ao vivo em 15-16/09/2026, inclusive com uma linha `pausada` — que foi
+ * como o furo do RN-19 (pausar sem saída) foi provado. O que falta é
+ * cancelar uma assinatura que passou pelo ciclo de pagamento de
+ * verdade (cartão real no pop-up) — precisa de uma linha em
+ * `assinaturas` nascida do jeito real, não inserida à mão pra teste.
  */
 
 import { buscarContratantePorChave } from '../services/pedidoService.js';
