@@ -264,7 +264,7 @@ async function iniciarModoPedido() {
   preencherCamposPagador(obterPagadorPreenchido());
 
   // Boleto só aparece quando o pedido NÃO tem expiraEm (ver
-  // INTEGRACAO.md seção 4.3 / VISAO_COMPLETA.md seção 4.3).
+  // API.md §4.1, o campo expiraEm).
   const pedido = obterPedidoResolvido();
   if (pedido && !pedido.expiraEm) {
     document.getElementById('metodo-boleto-wrapper').classList.remove('hidden');

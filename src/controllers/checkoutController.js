@@ -179,7 +179,7 @@ export async function gerarBoleto(requisicao, resposta) {
     const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'boleto' });
 
     // Reforço de segurança — o front já esconde o Boleto quando o
-    // pedido tem expiraEm (VISAO_COMPLETA.md 4.3), mas o backend NUNCA
+    // pedido tem expiraEm (API.md §4.1), mas o backend NUNCA
     // confia só na validação do front.
     if (pedido.expiraEm) {
       return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });

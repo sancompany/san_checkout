@@ -2,8 +2,7 @@
  * SAN CHECKOUT v2 — src/controllers/planoController.js
  * GET /api/checkout/plano/:contratanteId/:planoId
  * Devolve o plano CRU (sem wrapper) — o front (assinaturaHandler.js)
- * espera receber os campos direto, igual ao formato do INTEGRACAO.md
- * seção 6.1.
+ * espera receber os campos direto, igual ao formato do API.md §4.2.
  */
 
 import { resolverPlano } from '../services/pedidoService.js';
@@ -22,7 +21,7 @@ export async function obterPlano(requisicao, resposta) {
     const retornoUrl = retornoSeguro(requisicao.query?.returnUrl, contratante);
 
     // O plano vai CRU (o front espera os campos direto, ver
-    // INTEGRACAO.md 6.1). O que é nosso entra debaixo de `_checkout`,
+    // API.md §4.2). O que é nosso entra debaixo de `_checkout`,
     // com underscore, pra nunca colidir com um campo do contratante —
     // acrescentar campo é permitido pelo contrato, renomear/roubar
     // nome não seria.

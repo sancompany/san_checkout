@@ -179,7 +179,7 @@ function formatarDataHoraAsaas(data) {
  * POST /api/checkout/assinatura/:contratanteId/:planoId
  * Cria a sessão RECURRENT — o pagador digita o cartão uma única vez na
  * pop-up e a Asaas passa a cobrar sozinha todo ciclo (ver
- * VISAO_COMPLETA.md seção 4.4).
+ * API.md §7).
  *
  * Existe também a assinatura por PIX AUTOMÁTICO, sem cartão, em
  * `criarAssinaturaPixAutomatico` no fim deste arquivo (a nota antiga
@@ -256,7 +256,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
 
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
-    // decisão pendente, ainda não tomada (ver VISAO_COMPLETA.md).
+    // decisão pendente, ainda não tomada (ver API.md §8).
     const splits = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valor }]
       : undefined;
@@ -311,7 +311,15 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       valorCobrado: valor,
       metodoPagamento: 'assinatura',
       substituiAssinaturaId: assinaturaSubstituida?.id ?? null,
-      parcelas: 1
+      parcelas: 1,
+      // O MESMO `ciclo` já validado acima e já mandado pra Asaas em
+      // `subscription.cycle` — gravado agora, não esperando o webhook
+      // ecoar de volta. Achado em 15/09/2026: nem CHECKOUT_PAID nem
+      // PAYMENT_CONFIRMED confiavelmente trazem esse campo de volta, e
+      // essa cobrança já sabe o valor certo antes de existir qualquer
+      // webhook — é o que `webhookController.amarrarAssinaturaACobranca`
+      // lê na hora de criar a linha em `assinaturas`.
+      ciclo
     });
 
     resposta.json({

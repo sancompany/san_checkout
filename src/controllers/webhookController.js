@@ -218,7 +218,7 @@ const EVENTOS_PAYMENT_TRATADOS = [
 ];
 
 /**
- * Versão do contrato do webhook (INTEGRACAO.md seção 4.4). Vai em todo
+ * Versão do contrato do webhook (API.md §10). Vai em todo
  * payload pra que o contratante possa ramificar se um dia existir uma
  * v2 — a regra é só ADICIONAR campo, nunca remover nem renomear, então
  * este número deve mudar raramente ou nunca.
@@ -369,7 +369,7 @@ export function mapearStatusPayment(evento) {
 }
 
 /** Só usado pra notificação de Assinatura — traduz o status local pro
- *  vocabulário já documentado no INTEGRACAO.md seção 6.1
+ *  vocabulário já documentado no API.md §4.3.4
  *  (criada/cobranca_confirmada/cobranca_falhou/cancelada). */
 /**
  * Fecha a assinatura antiga depois que a renovação foi paga.
@@ -624,8 +624,27 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
  * nos dois lugares era o caminho curto — e é assim que duas cópias do
  * caminho do dinheiro divergem em silêncio na primeira manutenção.
  *
- * `payment.cycle` e `payment.nextDueDate` seguem opcionais: a assinatura
- * existe com ou sem eles, e inventar valor aqui seria pior que nulo.
+ * ── `ciclo` NUNCA vem de `payment` ────────────────────────────────────
+ *
+ * Veio até 15/09/2026, e estava errado: `payment.cycle` não existe em
+ * nenhum payload medido — nem no `CHECKOUT_PAID` nem no
+ * `PAYMENT_CONFIRMED`. Sem o `?? null` ter de onde vir, caía direto no
+ * default de `assinaturaService.upsertAssinatura` (`MONTHLY`) —
+ * silenciosamente errado pra qualquer plano que não seja mensal. Foi o
+ * que aconteceu com a assinatura QUARTERLY do mostrai.
+ *
+ * A correção não é ler de outro campo do webhook: é não depender de
+ * webhook nenhum. `ciclo` já é conhecido, validado, na hora em que
+ * `criarCheckoutAssinatura` cria a sessão — e vai gravado na própria
+ * cobrança desde o nascimento dela (`registrarCobrancaPendentePopup`).
+ * `cobranca.ciclo` é sempre essa fonte; `payment.cycle` fica só como
+ * fallback morto, sem custo, pro dia em que a Asaas mudar o formato.
+ *
+ * `proximaCobranca` NÃO tem fonte confiável hoje — `payment.nextDueDate`
+ * também nunca existe, e o "nextDueDate" que MANDAMOS pra Asaas na
+ * criação é a data de HOJE (a cobrança é imediata), não uma projeção da
+ * próxima. Fica `null`, como sempre foi; não corrigido nesta mudança
+ * (`docs/pendencias.md`).
  */
 async function amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps = dependenciasPadrao) {
   await deps.atualizarSubscriptionIdDaCobranca(chargeId, payment.subscription);
@@ -635,7 +654,7 @@ async function amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps = de
     planoId: cobranca.plano_id,
     documento: cobranca.documento,
     valor: cobranca.valor_cobrado,
-    ciclo: payment.cycle ?? null,
+    ciclo: cobranca.ciclo ?? payment.cycle ?? null,
     proximaCobranca: payment.nextDueDate ?? null
   });
 
@@ -692,7 +711,10 @@ async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPa
 
   await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
 
-  // O vínculo da assinatura, ancorado no evento que de fato tem os dados.
+  // O vínculo da assinatura, ancorado no evento que de fato tem os
+  // dados de pagamento. `cobranca.ciclo` já está na linha desde a
+  // criação do checkout — este evento não precisa carregá-lo (ver
+  // `amarrarAssinaturaACobranca`).
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment.subscription) {
     await amarrarAssinaturaACobranca(cobranca, payment, payment.id, deps);
   }
@@ -737,6 +759,7 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     cidade: modelo.cidade,
     uf: modelo.uf,
     cidadeIbge: modelo.cidade_ibge,
+    ciclo: modelo.ciclo,
     valorCheio: payment.value ?? modelo.valor_cheio,
     valorComDesconto: payment.value ?? modelo.valor_com_desconto,
     valorCobrado: payment.value ?? modelo.valor_cobrado
@@ -774,6 +797,8 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
     // (`payment.subscription`) — grava ele na cobrança (vira a
     // "cobrança-modelo" dos ciclos seguintes) e cria a linha em
     // `assinaturas` (usada só pro /cancelar-assinatura achar o id).
+    // `cobranca.ciclo` já está na linha desde a criação do checkout —
+    // ver `amarrarAssinaturaACobranca`.
     if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment?.subscription && chargeIdFinal) {
       await amarrarAssinaturaACobranca(cobranca, payment, chargeIdFinal, deps);
     }
@@ -812,6 +837,20 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao) {
 
   if (evento === 'CHECKOUT_CANCELED') {
     await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'cancelado');
+
+    /* RENOVAÇÃO abandonada não é a assinatura sendo cancelada — é o
+       CONTRÁRIO: a antiga (`substitui_assinatura_id`) continua ativa e
+       intocada, porque `encerrarAssinaturaSubstituida` só roda depois
+       de o pagamento novo confirmar (ver `amarrarAssinaturaACobranca`).
+       Mandar `cancelada` aqui mentiria pro contratante — o payload de
+       assinatura é identificado só por `planoId`+`documento` (API.md
+       §4.3.4), então ele não tem como distinguir "tentativa de
+       renovação abandonada" de "o cliente cancelou de verdade": as
+       duas produzem o MESMO evento, pro MESMO assinante. Um contratante
+       que confia nisso pra liberar/revogar acesso revogaria de quem
+       ainda está pagando. */
+    if (cobranca.substitui_assinatura_id) return;
+
     return notificarConformeMetodo(cobranca, { confirmado: false, eventoAssinatura: 'cancelada' }, deps);
   }
 
@@ -837,7 +876,7 @@ async function notificarConformeMetodo(cobranca, { confirmado, chargeId, eventoA
   const segredo = cobranca.contratantes?.api_key;
 
   // Assinatura por cartão e por Pix Automático usam o MESMO vocabulário
-  // de webhook (INTEGRACAO.md 6.1) — pro contratante é a mesma coisa,
+  // de webhook (API.md §4.3.4) — pro contratante é a mesma coisa,
   // muda só como o assinante pagou.
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     const evento = eventoAssinatura ?? (confirmado ? 'criada' : null);
@@ -1200,10 +1239,18 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
      ================================================================ */
 
   const CHECKOUT_PAID_REAL = { event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } };
+
+  /* `ciclo: 'QUARTERLY'` já está na linha DESDE A CRIAÇÃO —
+     `criarCheckoutAssinatura` valida e grava (`registrarCobrancaPendentePopup`)
+     antes de existir qualquer sessão na Asaas, então antes de qualquer
+     webhook poder chegar. Nenhum dos dois eventos abaixo precisa
+     carregar ciclo — e por isso nenhum dos dois testa `payment.cycle`
+     nem `checkout.subscription.cycle`: essa fonte não existe mais no
+     código, e não devia aparecer nos testes como se existisse. */
   const cobrancaAssinaturaCrua = {
     ...cobrancaPix, metodo_pagamento: 'assinatura', charge_id: null,
     asaas_checkout_id: 'chk_real', plano_id: 'plano_x', documento: '52998224725',
-    contratante_id: 'mostrai', substitui_assinatura_id: null
+    contratante_id: 'mostrai', substitui_assinatura_id: null, ciclo: 'QUARTERLY'
   };
 
   // Passo 1 — o evento de checkout sozinho: confirma e manda 'criada'.
@@ -1221,7 +1268,11 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   });
   await processarWebhook({
     event: 'PAYMENT_CONFIRMED',
-    payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real', cycle: 'QUARTERLY' }
+    // SEM `cycle` no payment — de propósito. É exatamente o payload
+    // real: PAYMENT_CONFIRMED não carrega ciclo nenhum. Se este teste
+    // ainda assim provar o ciclo certo, é `cobranca.ciclo` funcionando,
+    // não um acidente de fallback.
+    payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' }
   }, deps);
 
   assert.equal(
@@ -1241,9 +1292,37 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   );
   assert.equal(deps.chamou('upsertAssinatura').length, 1, 'a linha em assinaturas nasce aqui (é o que o /cancelar-assinatura procura)');
   assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_real');
-  assert.equal(deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY');
+  assert.equal(
+    deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY',
+    'o ciclo vem de cobranca.ciclo (gravado na CRIAÇÃO do checkout, não em nenhum webhook) — achado ao verificar ' +
+    'o reparo da cobrança do mostrai, que tinha ficado MONTHLY quando o plano é QUARTERLY'
+  );
+
+  /* --- Sem ciclo gravado (linha antiga, de antes desta correção),
+     cai no fallback morto de payment.cycle, e por fim em null. Nunca
+     quebra — só fica sem o dado, que é o estado de sempre. --------- */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado', ciclo: null }
+  });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_sem_ciclo', subscription: 'sub_sem_ciclo', checkoutSession: 'chk_real' }
+  }, deps);
+  assert.equal(
+    deps.chamou('upsertAssinatura')[0].args[0].ciclo, null,
+    'sem cobranca.ciclo e sem payment.cycle (que não existe no payload real), o resultado é null — nunca inventa valor'
+  );
 
   // E o mais caro: NÃO notifica de novo.
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' }
+  });
+  await processarWebhook({
+    event: 'PAYMENT_CONFIRMED',
+    payment: { id: 'pay_real2', subscription: 'sub_real2', checkoutSession: 'chk_real' }
+  }, deps);
   assert.equal(
     deps.chamou('notificar').length, 0,
     'o criada já saiu no CHECKOUT_PAID; um cobranca_confirmada aqui descreveria o MESMO ciclo duas vezes, e o API.md §11 manda creditar nos dois'
@@ -1325,10 +1404,18 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   );
   assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cobranca_estornada');
 
-  /* --- Ordem invertida: o pagamento antes do checkout --------------- */
+  /* --- Ordem invertida: o pagamento antes do checkout ---------------
+     NÃO É MAIS UM PROBLEMA, e é o efeito colateral bom de tirar `ciclo`
+     do webhook: `cobrancaAssinaturaCrua.ciclo` já está na linha desde
+     a CRIAÇÃO do checkout, antes de qualquer um dos dois eventos
+     poder chegar — então a ordem entre eles deixou de importar pra
+     esse dado. Isto teria sido um residual real se `ciclo` continuasse
+     vindo de dentro do CHECKOUT_PAID (era o desenho até um commit
+     atrás desta correção); a simplificação eliminou a corrida junto
+     com a complexidade. */
   deps = depsFalsas({
     buscarCobranca: null,
-    buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua // status 'pendente'
+    buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua // status 'pendente' — CHECKOUT_PAID ainda não rodou
   });
   await processarWebhook({
     event: 'PAYMENT_CONFIRMED',
@@ -1336,6 +1423,46 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   }, deps);
   assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 1, 'vincula mesmo se o pagamento chegar primeiro');
   assert.equal(deps.chamou('notificar').length, 0, 'e continua sem duplicar o criada, que virá no CHECKOUT_PAID');
+  assert.equal(
+    deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY',
+    'o ciclo certo, mesmo com o pagamento chegando ANTES do checkout — porque não depende da ordem dos dois'
+  );
+
+  /* ================================================================
+     RENOVAÇÃO ABANDONADA NÃO É A ASSINATURA SENDO CANCELADA
+
+     Achado em 15/09/2026, auditando o caminho inteiro: abandonar o
+     pop-up de troca de cartão (`&renovar=1`) mandava `evento: 'cancelada'`
+     pro contratante — mas a assinatura ANTIGA está intocada, ativa,
+     ainda sendo cobrada. O payload é identificado só por
+     planoId+documento (API.md §4.3.4): o contratante não tem como
+     distinguir isso de "o cliente cancelou de verdade", e revogaria
+     acesso de quem ainda paga.
+     ================================================================ */
+
+  // Caso 1: assinatura NOVA (não é renovação) abandonada no pop-up —
+  // continua mandando `cancelada`, como sempre (API.md §4.3.5).
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: null }
+  });
+  await processarWebhook({ event: 'CHECKOUT_CANCELED', checkout: { id: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('notificar').length, 1, 'assinatura nova abandonada: continua avisando cancelada');
+  assert.equal(deps.chamou('notificar')[0].args[1].evento, 'cancelada');
+
+  // Caso 2: RENOVAÇÃO abandonada — a antiga continua ativa. NÃO avisa.
+  deps = depsFalsas({
+    buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga_intocada' }
+  });
+  await processarWebhook({ event: 'CHECKOUT_CANCELED', checkout: { id: 'chk_real' } }, deps);
+  assert.equal(
+    deps.chamou('notificar').length, 0,
+    'ESTE É O BUG: renovação abandonada não pode mandar cancelada — a assinatura antiga (sub_antiga_intocada) ' +
+    'continua ativa, e o contratante não tem como diferenciar isso de um cancelamento de verdade'
+  );
+  assert.deepEqual(
+    deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_real', 'cancelado'],
+    'mas o NOSSO registro da tentativa de renovação continua sendo marcado cancelado — só o aviso é que não sai'
+  );
 
   /* --- Pix/boleto direto não passa por aqui ------------------------- */
   deps = depsFalsas({ buscarCobranca: cobrancaPix });
