@@ -695,6 +695,14 @@ O par `planoId` + `documento` é a chave: é por ele que você localiza o
 assinante do seu lado, e é ele que você manda ao cancelar, pausar ou
 retomar.
 
+> **O `documento` chega SEMPRE em dígitos**, sem ponto, barra ou traço —
+> `11144477735`, nunca `111.444.777-35`. Vale desde 17/09/2026 e é o
+> mesmo formato nas duas direções: você pode mandar pontuado nas rotas
+> de §5.5 (o checkout normaliza), e o que sai daqui é sempre dígitos.
+> **Se você compara esse campo com um valor guardado do seu lado, tire a
+> pontuação do seu antes de comparar** — é a única coisa que muda para
+> quem já integra, e só muda para quem guarda o CPF pontuado.
+
 > O payload de assinatura **não carrega valores** de propósito: o valor é
 > o do plano que você já tem cadastrado. Se precisar do valor exato de um
 > ciclo específico, ele está no painel da Asaas.
@@ -1530,6 +1538,15 @@ o teto de 30/min existe porque essa rota toca o banco.
 CPF e CNPJ dividem o mesmo campo `documento` — o checkout detecta qual é
 pelo tamanho.
 
+**Você pode mandar `documento` pontuado ou em dígitos: dá no mesmo.** O
+checkout normaliza para dígitos assim que valida, e é essa forma que ele
+guarda e busca. Isso importa nas rotas que localizam uma assinatura por
+`planoId` + `documento` (§5.5): até 17/09/2026 assinar com
+`552.085.198-01` e cancelar com `55208519801` dava `404`, porque as duas
+formas viravam chaves diferentes. Não dá mais, e **você não precisa
+mudar nada** — se sua integração já manda sempre a mesma forma, ela
+continua funcionando igual.
+
 ### 9.0 A resposta da sua API: redirecionamento e tamanho
 
 O checkout resolve pedido e plano ligando de volta para a **sua** API
@@ -1569,6 +1586,27 @@ R$ 5,00 exato (que passa em todos):
 taxa entra por cima (§8), um pedido de R$ 4,00 fecha em R$ 5,53 e passa;
 um de R$ 2,00 fecha em R$ 3,48 e não passa. Em **assinatura** não há taxa
 nossa, então o piso bate direto no `valor` do plano, **por ciclo**.
+
+**E no cartão o piso vale POR PARCELA.** Medido no mesmo dia, e é a parte
+que quase passou:
+
+| chamada | parcela | resultado |
+|---|---|---|
+| `POST /v3/payments` total R$ 10,00 em 12x | R$ 0,83 | `400` |
+| `POST /v3/payments` total R$ 24,00 em 12x | R$ 2,00 | `400` |
+| `POST /v3/payments` total R$ 60,00 em 12x | R$ 5,00 | `200` |
+| `POST /v3/checkouts` (pop-up) total R$ 24,00 em 12x | R$ 2,00 | **`200`** |
+
+A última linha é o problema: a **sessão** da pop-up é aceita, então a
+recusa só apareceria lá dentro, depois de o comprador escolher 12x e
+digitar o cartão.
+
+**O checkout não recusa por isso — ele oferta menos parcelas.** Se você
+manda `parcelas: 12` num pedido cuja parcela ficaria abaixo de R$ 5,00, a
+pop-up abre oferecendo o máximo que cabe (R$ 24,00 → 4x), e **a taxa
+cobrada é a da faixa das parcelas ofertadas, não a da faixa pedida** —
+senão o comprador pagaria a taxa de 7-12x podendo usar só 4x. Recusar a
+venda seria jogar fora um pagamento que a Asaas faz sem reclamar.
 
 **Você descobre isso na hora de abrir a tela, não no clique.** Se o
 total ficar abaixo do piso:

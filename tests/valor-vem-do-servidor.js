@@ -62,8 +62,15 @@ for (const caminho of CONTROLADORES) {
 
   /* Pega toda desestruturação de `requisicao.body`, de uma linha ou de
      várias. O `[^}]*` não atravessa `}`, então cada captura é o miolo
-     de UM destes blocos e nada além dele. */
-  const blocos = [...fonte.matchAll(/const\s*\{([^}]*)\}\s*=\s*requisicao\.body/g)];
+     de UM destes blocos e nada além dele.
+
+     `const|let` porque em 17/09/2026 alguns destes blocos viraram `let`
+     — o `documento` passou a ser normalizado para dígitos logo depois da
+     validação (`normalizarDocumento`), e reatribuir exige `let`. A
+     regex casava só `const`, e o controle positivo logo abaixo é o que
+     acusou: sem ele, esta suíte teria passado calada sobre um
+     controlador que ela deixou de ler. */
+  const blocos = [...fonte.matchAll(/(?:const|let)\s*\{([^}]*)\}\s*=\s*requisicao\.body/g)];
 
   assert.ok(
     blocos.length > 0,

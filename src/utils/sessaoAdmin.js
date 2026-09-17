@@ -135,7 +135,21 @@ export function verificarToken(token, hashDaSenha) {
    AUTOTESTE — `node src/utils/sessaoAdmin.js`
    ==================================================================== */
 if (process.argv[1]?.endsWith('sessaoAdmin.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
   const HASH = 'scrypt$131072$8$1$c2FsdA==$aGFzaA==';
 
   const t = emitirToken('operador', HASH);
@@ -182,5 +196,5 @@ if (process.argv[1]?.endsWith('sessaoAdmin.js')) {
   const msPorVerificacao = Number(process.hrtime.bigint() - inicio) / 1e6 / 1000;
   assert.ok(msPorVerificacao < 1, `verificar precisa custar menos de 1ms (custou ${msPorVerificacao.toFixed(3)}ms)`);
 
-  console.log(`sessaoAdmin: 22 checagens OK — ${(msPorVerificacao * 1000).toFixed(0)}µs por verificação, contra ~830ms do scrypt`);
+  console.log(`sessaoAdmin: ${checagens} checagens OK — ${(msPorVerificacao * 1000).toFixed(0)}µs por verificação, contra ~830ms do scrypt`);
 }

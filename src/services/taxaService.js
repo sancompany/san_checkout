@@ -6,6 +6,8 @@
  * Asaas Checkout entrar na próxima leva.
  */
 
+import { maximoDeParcelas } from '../utils/validadores.js';
+
 const TAXA_PERCENTUAL_PROPRIA = Number(process.env.TAXA_PERCENTUAL ?? 0.9) / 100;
 const TAXA_FIXA_PROPRIA = Number(process.env.TAXA_FIXA ?? 0.5);
 
@@ -159,6 +161,43 @@ export function metodoCartaoPorParcelas(parcelas) {
   return 'cartao_credito_7_12';
 }
 
+/**
+ * A TAXA E O NÚMERO DE PARCELAS SE DETERMINAM UM AO OUTRO — e é por isso
+ * que isto é um ponto fixo e não uma conta.
+ *
+ * A Asaas recusa PARCELA abaixo de R$ 5,00, não só total (medido em
+ * 17/09/2026 — ver `maximoDeParcelas` em `utils/validadores.js`). Então
+ * um pedido de R$ 24,00 pedido em 12x precisa ser ofertado em 4x.
+ *
+ * Mas a taxa depende da FAIXA de parcelas (à vista 2,99%, 2-6x 3,49%,
+ * 7-12x 3,99%), e o valor cobrado depende da taxa. Baixar as parcelas
+ * baixa a faixa, que baixa o valor cobrado, que pode baixar de novo o
+ * quanto cabe. Capar DEPOIS de calcular a taxa seria pior que não capar:
+ * o comprador pagaria a taxa da faixa de 12x e só poderia usar 4x.
+ *
+ * O ponto fixo é decrescente (menos parcelas → faixa menor ou igual) e
+ * o piso de uma parcela o encerra. Três voltas são folga sobre as três
+ * faixas que existem.
+ *
+ * @returns {{ parcelas: number, taxa: object, capado: boolean }}
+ *          `parcelas` é quantas OFERTAR (≤ as pedidas), `taxa` é a da
+ *          faixa dessas parcelas, e `capado` diz se houve corte — quem
+ *          chama pode querer contar isso.
+ */
+export function taxaComParcelasQueCabem(valorBase, parcelasPedidas, isentarTaxa = false) {
+  let parcelas = Math.max(1, Number(parcelasPedidas) || 1);
+  let taxa;
+
+  for (let volta = 0; volta < 3; volta += 1) {
+    taxa = calcularTaxa(valorBase, metodoCartaoPorParcelas(parcelas), parcelas, isentarTaxa);
+    const cabem = maximoDeParcelas(taxa.valorCobrado);
+    if (cabem >= parcelas) break;
+    parcelas = cabem;
+  }
+
+  return { parcelas, taxa, capado: parcelas < Math.max(1, Number(parcelasPedidas) || 1) };
+}
+
 function arredondar(valor) {
   return Math.round(valor * 100) / 100;
 }
@@ -196,7 +235,21 @@ export function calcularTaxa(valorBase, metodo, parcelas = 1, isentarTaxa = fals
    a escala do percentual cobra 100x a mais ou a menos.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('taxaService.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
   const { converterTaxasDaAsaas, comoFracao } = _internos;
 
   // escala: 2.99 é "por cento", 0.0299 já é fração
@@ -237,5 +290,58 @@ if (process.argv[1]?.endsWith('taxaService.js')) {
   assert.equal(t.valorCobrado, 100 + t.taxasTotais);
   assert.deepEqual(calcularTaxa(100, 'pix', 1, true), { taxaAsaas: 0, taxaPropria: 0, taxasTotais: 0, valorCobrado: 100 });
 
-  console.log('taxaService: 13 checagens OK');
+
+  /* ---- O PISO POR PARCELA ----
+     A Asaas recusa PARCELA abaixo de R$ 5,00, não só total (medido em
+     17/09/2026 — `POST /v3/payments` totalValue 24,00 em 12x, parcela de
+     R$ 2,00, deu 400; em 60,00, parcela de R$ 5,00, deu 200). E a
+     `POST /v3/checkouts` ACEITA a sessão assim, então a recusa só
+     apareceria dentro da pop-up, com o cartão já digitado.
+
+     O que se testa aqui é o PONTO FIXO: a taxa depende da faixa de
+     parcelas e as parcelas dependem do valor com taxa. */
+  {
+    const caro = taxaComParcelasQueCabem(1000, 12);
+    assert.equal(caro.parcelas, 12, 'pedido caro mantém as 12 parcelas pedidas');
+    assert.equal(caro.capado, false, 'e não é marcado como capado');
+    assert.ok(caro.taxa.valorCobrado / 12 >= 5, 'cada parcela fica acima do piso');
+
+    const barato = taxaComParcelasQueCabem(24, 12);
+    assert.ok(barato.parcelas < 12, `pedido de R$ 24,00 em 12x é capado (ficou em ${barato.parcelas}x)`);
+    assert.equal(barato.capado, true, 'e é marcado como capado');
+    assert.ok(
+      barato.taxa.valorCobrado / barato.parcelas >= 5,
+      `nenhuma parcela ofertada fica abaixo do piso (ficou R$ ${(barato.taxa.valorCobrado / barato.parcelas).toFixed(2)})`
+    );
+
+    /* A TAXA ACOMPANHA O CORTE. É o ponto inteiro de capar antes: se a
+       taxa continuasse sendo a da faixa de 12x, o comprador pagaria por
+       um parcelamento que não pode usar. */
+    const taxaDe12x = calcularTaxa(24, metodoCartaoPorParcelas(12), 12, false);
+    assert.ok(
+      barato.taxa.valorCobrado < taxaDe12x.valorCobrado,
+      'a taxa cobrada é a da faixa das parcelas OFERTADAS, não a da faixa pedida'
+    );
+    assert.equal(
+      barato.taxa.valorCobrado,
+      calcularTaxa(24, metodoCartaoPorParcelas(barato.parcelas), barato.parcelas, false).valorCobrado,
+      'e bate exatamente com a faixa das parcelas ofertadas'
+    );
+
+    /* Nunca zero, nunca negativo: 0 parcela não existe, e quem recusa
+       valor abaixo do piso é o guarda do total, não esta função. */
+    assert.equal(taxaComParcelasQueCabem(1, 12).parcelas, 1, 'valor mínimo cai para 1 parcela, não para 0');
+    assert.equal(taxaComParcelasQueCabem(100, 1).parcelas, 1, 'quem pede 1 parcela recebe 1');
+    assert.equal(taxaComParcelasQueCabem(100, 0).parcelas, 1, 'pedido de 0 parcelas vira 1');
+
+    /* Isenção de taxa muda o valor cobrado, então muda o quanto cabe —
+       e o ponto fixo tem de ver isso. */
+    const isento = taxaComParcelasQueCabem(60, 12, true);
+    assert.equal(isento.taxa.valorCobrado, 60, 'com isenção, o valor cobrado é o base');
+    assert.equal(isento.parcelas, 12, 'e R$ 60,00 isentos dão 12x de R$ 5,00 cravados');
+    const isentoQuase = taxaComParcelasQueCabem(59.99, 12, true);
+    assert.equal(isentoQuase.parcelas, 11, 'um centavo abaixo, 11x');
+  }
+
+  console.log(`taxaService: ${checagens} checagens OK`);
 }

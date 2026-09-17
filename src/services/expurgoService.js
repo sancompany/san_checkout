@@ -144,8 +144,22 @@ export function dataDeCorte(agora = new Date(), anos = ANOS_DE_RETENCAO) {
   if (!Number.isFinite(anos) || anos < ANOS_DE_RETENCAO) {
     throw new Error(`expurgo: retenção de ${anos} ano(s) é menor que os ${ANOS_DE_RETENCAO} decididos — recusando.`);
   }
+
   const corte = new Date(agora);
+  const diaOriginal = corte.getUTCDate();
   corte.setUTCFullYear(corte.getUTCFullYear() - anos);
+
+  /* 29 DE FEVEREIRO. `setUTCFullYear` não existe em ano não-bissexto, e o
+     JavaScript transborda para 1º de março em vez de recusar: rodar em
+     29/02/2028 daria corte em 2023-03-01, um dia DEPOIS do certo — e
+     corte mais tarde significa apagar dado um dia ANTES de os cinco anos
+     completarem. Errar para o lado de apagar cedo é o lado errado num
+     prazo que existe por guarda fiscal.
+
+     Voltar para o último dia do mês anterior deixa o corte em 28/02, um
+     dia mais cedo: o dado fica retido 24 h a mais, que é o lado seguro. */
+  if (corte.getUTCDate() !== diaOriginal) corte.setUTCDate(0);
+
   return corte;
 }
 
@@ -170,6 +184,54 @@ export function liberaEm(quando, anos = ANOS_DE_RETENCAO) {
  */
 export function dataDaTransacao(cobranca) {
   return cobranca.confirmado_em ?? cobranca.criado_em ?? null;
+}
+
+/* Quantas linhas por ida ao banco.
+
+   `select('*')` sem limite era o desenho anterior e tinha dois problemas
+   que só aparecem em 2031, quando houver o que expurgar: cinco anos de
+   cobranças carregadas de uma vez na instância de 512 MiB é caminho de
+   OOM; e o PostgREST tem teto próprio de linhas por resposta, então uma
+   resposta truncada faria a rotina RELATAR sucesso tendo deixado dado
+   pessoal para trás — que é a pior falha possível aqui, porque é
+   silenciosa e parece certa.
+
+   500 é folgado para a memória e pequeno o bastante para caber em
+   qualquer teto de PostgREST. A paginação é estável porque o filtro é
+   por DATA e o expurgo não mexe em data nenhuma: a linha continua
+   casando o filtro depois de anonimizada, então o deslocamento não
+   escorrega debaixo do laço. */
+const LOTE = 500;
+
+/* Teto absoluto de linhas por rodada. Não é limite de volume — é freio de
+   laço: se o outro lado ignorar o `range` e devolver sempre um lote
+   cheio, sem isto o acumulador cresce até estourar a memória. Duzentas
+   mil cobranças numa rodada de 24 h é ordens de grandeza acima de
+   qualquer cenário deste projeto, e o que passar disso volta na rodada
+   seguinte. */
+const TETO_DE_LINHAS = 200_000;
+
+/** Lê uma consulta inteira em lotes, em vez de confiar num `select` sem
+ *  limite. `montar` recebe o intervalo e devolve a consulta pronta. */
+async function lerEmLotes(montar) {
+  const tudo = [];
+  for (let inicio = 0; inicio < TETO_DE_LINHAS; inicio += LOTE) {
+    const { data, error } = await montar(inicio, inicio + LOTE - 1);
+    if (error) return { data: null, error };
+    tudo.push(...(data ?? []));
+    if (!data || data.length < LOTE) return { data: tudo, error: null };
+  }
+
+  /* Chegar aqui é laço, não volume. Um `range` ignorado pelo outro lado
+     devolveria LOTE linhas para sempre, e o `tudo` cresceria até estourar
+     a memória — o MESMO estouro que a paginação veio evitar, só mais
+     devagar. Então a saída é erro, não lista truncada: lista truncada
+     faria a rotina relatar sucesso tendo deixado dado pessoal para trás,
+     e essa é a falha que não se pode ter aqui. */
+  return {
+    data: null,
+    error: { message: `expurgo: leitura passou de ${TETO_DE_LINHAS} linhas sem terminar — paginação não está avançando.` }
+  };
 }
 
 async function aplicar(tabela, linhas, { simular }) {
@@ -210,10 +272,12 @@ export async function expurgarDadoPessoal({ simular = true } = {}) {
      segunda metade do `or` exige `confirmado_em` nulo para não deixar
      uma cobrança confirmada RECENTEMENTE, mas criada há muito tempo,
      cair no corte pela data de criação. */
-  const { data: cobrancas, error: erroCobrancas } = await supabase
+  const { data: cobrancas, error: erroCobrancas } = await lerEmLotes((de, ate) => supabase
     .from('cobrancas')
     .select('*')
-    .or(`confirmado_em.lt.${corte},and(confirmado_em.is.null,criado_em.lt.${corte})`);
+    .or(`confirmado_em.lt.${corte},and(confirmado_em.is.null,criado_em.lt.${corte})`)
+    .order('id')
+    .range(de, ate));
 
   if (erroCobrancas) {
     console.error('[expurgo.cobrancas]', erroCobrancas.message);
@@ -227,11 +291,13 @@ export async function expurgarDadoPessoal({ simular = true } = {}) {
      documento` (`API.md` §5.5) — anonimizar o documento dela tiraria do
      assinante a capacidade de cancelar a própria assinatura, que é o
      oposto do que a LGPD quer. §6.2 já registrava isso. */
-  const { data: assinaturas, error: erroAssinaturas } = await supabase
+  const { data: assinaturas, error: erroAssinaturas } = await lerEmLotes((de, ate) => supabase
     .from('assinaturas')
     .select('*')
     .eq('status', 'cancelada')
-    .lt('criado_em', corte);
+    .lt('criado_em', corte)
+    .order('id')
+    .range(de, ate));
 
   if (erroAssinaturas) {
     console.error('[expurgo.assinaturas]', erroAssinaturas.message);
@@ -264,19 +330,23 @@ export async function expurgarDadoPessoalDoTitular(documento, { simular = true }
   const corte = dataDeCorte().toISOString();
   const relatorios = [];
 
-  /* O `documento` está gravado como o comprador digitou, e o front usa
-     máscara — então a MESMA pessoa pode estar com e sem pontuação em
-     linhas diferentes. Buscar só por uma forma deixaria linhas de fora,
-     e um expurgo que deixa linha de fora é pior que um que falha: ele
-     responde "feito". */
+  /* DESDE 17/09/2026 o `documento` é normalizado para dígitos em toda
+     fronteira que o aceita (`normalizarDocumento`), então a forma
+     pontuada não entra mais. As duas formas continuam sendo buscadas de
+     propósito: uma linha gravada ANTES dessa correção, ou por qualquer
+     caminho que venha a escapar dela, ainda pode estar pontuada — e um
+     expurgo que deixa linha de fora é pior que um que falha, porque ele
+     responde "feito". Custa uma cláusula `in`. */
   const formas = digitos.length === 11
     ? [digitos, digitos.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')]
     : [digitos, digitos.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')];
 
-  const { data: cobrancas, error } = await supabase
+  const { data: cobrancas, error } = await lerEmLotes((de, ate) => supabase
     .from('cobrancas')
     .select('*')
-    .in('documento', formas);
+    .in('documento', formas)
+    .order('id')
+    .range(de, ate));
 
   if (error) throw error;
 
@@ -307,10 +377,12 @@ export async function expurgarDadoPessoalDoTitular(documento, { simular = true }
      Isto é relatado, não decidido aqui: cancelar assinatura de alguém
      por causa de um pedido de exclusão seria tomar por ele uma decisão
      com consequência financeira. */
-  const { data: assinaturas, error: erroAss } = await supabase
+  const { data: assinaturas, error: erroAss } = await lerEmLotes((de, ate) => supabase
     .from('assinaturas')
     .select('*')
-    .in('documento', formas);
+    .in('documento', formas)
+    .order('id')
+    .range(de, ate));
 
   if (erroAss) throw erroAss;
 
@@ -477,6 +549,68 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
 
   const corte = dataDeCorte(new Date('2026-09-17T00:00:00Z'));
   igual(corte.toISOString(), '2021-09-17T00:00:00.000Z', 'o corte é exatamente cinco anos antes');
+
+  /* 29 DE FEVEREIRO. `setUTCFullYear` transborda para 1º de março em ano
+     não-bissexto, e corte mais TARDE significa apagar dado mais CEDO —
+     antes de os cinco anos completarem. O certo aqui é errar para o lado
+     de reter 24 h a mais. */
+  igual(
+    dataDeCorte(new Date('2028-02-29T00:00:00Z')).toISOString(),
+    '2023-02-28T00:00:00.000Z',
+    '29/02 de ano bissexto não transborda para 1º de março (apagaria um dia cedo)'
+  );
+  igual(
+    dataDeCorte(new Date('2024-02-29T12:00:00Z')).toISOString(),
+    '2019-02-28T12:00:00.000Z',
+    'e o mesmo com hora no meio do dia'
+  );
+  ok(
+    dataDeCorte(new Date('2028-02-29T00:00:00Z')) < new Date('2023-03-01T00:00:00Z'),
+    'o corte de 29/02 fica ANTES do que o transbordo daria — reter a mais é o lado seguro'
+  );
+  igual(
+    dataDeCorte(new Date('2026-03-01T00:00:00Z')).toISOString(),
+    '2021-03-01T00:00:00.000Z',
+    'e 1º de março, que é dia válido em todo ano, não é mexido'
+  );
+  igual(
+    dataDeCorte(new Date('2026-01-31T00:00:00Z')).toISOString(),
+    '2021-01-31T00:00:00.000Z',
+    'dia 31 de mês de 31 dias também passa intocado'
+  );
+
+  /* O TETO DE LOTE. Ele existe porque `select` sem limite tem dois modos
+     de falhar em 2031: OOM na instância de 512 MiB, e resposta truncada
+     pelo PostgREST — esta última faria a rotina RELATAR sucesso tendo
+     deixado dado pessoal para trás. */
+  ok(LOTE > 0 && LOTE <= 1000, `o lote (${LOTE}) cabe em qualquer teto de PostgREST e na memória`);
+
+  const paginas = [];
+  const lidas = await lerEmLotes(async (de, ate) => {
+    paginas.push([de, ate]);
+    const total = 1250;
+    const linhas = [];
+    for (let i = de; i <= Math.min(ate, total - 1); i += 1) linhas.push({ id: `linha-${i}` });
+    return { data: linhas, error: null };
+  });
+  igual(lidas.data.length, 1250, 'a paginação lê TODAS as linhas, não só a primeira página');
+  igual(paginas.length, Math.ceil(1250 / LOTE) + (1250 % LOTE === 0 ? 1 : 0), 'e para assim que uma página vem curta');
+  igual(lidas.error, null, 'sem erro no caminho feliz');
+
+  /* O FREIO DE LAÇO. Um `range` ignorado devolveria lote cheio para
+     sempre, e sem o teto o acumulador cresce até estourar — o mesmo
+     estouro que a paginação veio evitar. */
+  const semFim = await lerEmLotes(async (de, ate) => ({
+    data: Array.from({ length: ate - de + 1 }, (_, i) => ({ id: `x-${de + i}` })),
+    error: null
+  }));
+  igual(semFim.data, null, 'paginação que não avança NÃO devolve lista parcial');
+  ok(/não está avançando/.test(semFim.error.message), 'devolve erro dizendo que o laço não avançou');
+  ok(TETO_DE_LINHAS >= 100_000, `o teto (${TETO_DE_LINHAS}) está ordens de grandeza acima de qualquer volume real`);
+
+  const comErro = await lerEmLotes(async () => ({ data: null, error: { message: 'banco fora do ar' } }));
+  igual(comErro.data, null, 'erro no meio da paginação NÃO devolve lista parcial');
+  ok(comErro.error, 'e devolve o erro — lista parcial silenciosa seria o mesmo bug que a paginação veio consertar');
 
   /* --- 7. QUAL DATA CONTA COMO "A TRANSAÇÃO" ---
      `atualizado_em` é a resposta errada e é a fácil: ele muda por

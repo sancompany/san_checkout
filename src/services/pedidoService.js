@@ -249,7 +249,21 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
    ser construído — nada aqui chega a consultar o banco.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('pedidoService.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const recusa = (id) => {
     try { exigirIdImprevisivel(id, 'pedidoId'); return false; } catch { return true; }
@@ -303,5 +317,5 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
     );
   }
 
-  console.log('pedidoService: 15 checagens OK');
+  console.log(`pedidoService: ${checagens} checagens OK`);
 }

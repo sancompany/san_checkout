@@ -578,6 +578,16 @@ escrito em linguagem de provedor sobre um link que nunca ia funcionar.
 servidor e não é repetido no front de propósito: duplicado, um dia o
 número muda num lugar só e a tela passa a mentir.
 
+**E o piso vale POR PARCELA no cartão** — achado no ciclo 5 da revisão,
+porque a primeira medição tinha sido feita só com uma parcela. R$ 24,00
+em 12x dá R$ 2,00 por parcela e a Asaas recusa a cobrança; mas a
+**sessão** da pop-up é aceita, então sem correção a recusa só apareceria
+lá dentro, com o cartão já digitado. A correção **não recusa a venda:
+oferta menos parcelas** (R$ 24,00 → até 4x), e a taxa cobrada passa a ser
+a da faixa ofertada, não a da pedida — capar depois da taxa seria pior
+que não capar, porque o comprador pagaria a faixa de 7-12x podendo usar
+só 4x. `taxaService.taxaComParcelasQueCabem`, `API.md` §9.1.
+
 **RN-29 · O telefone é recusado pela regra MEDIDA da Asaas, não pela
 suposta.** `docs/pendencias.md` dizia que a Asaas recusa "número de
 dígito repetido"; 24 combinações medidas em 17/09/2026 mostram que não —
@@ -622,6 +632,24 @@ que FICA, e o autoteste a confere contra as colunas reais do banco.
 *Quem vê:* ninguém, no dia a dia — é o tipo de regra cuja evidência é o
 autoteste e a simulação, não a tela. `npm run expurgo` mostra o que ela
 faria sem escrever nada.
+
+**RN-32 · O documento é UMA chave só: dígitos.** Toda fronteira que
+aceita `documento` normaliza para dígitos logo depois de validar, e daí
+para baixo só existe essa forma. *Violada:* `552.085.198-01` e
+`55208519801` são o mesmo CPF e passam os dois na validação — gravados
+como vêm, viram duas chaves diferentes. Como a assinatura é localizada
+por `contratante_id + plano_id + documento` (`API.md` §5.5), quem
+assinasse mandando o CPF pontuado e depois pedisse cancelamento mandando
+só dígitos receberia `404`: assinatura que existe, está cobrando, e não
+pode mais ser cancelada pela API — o mesmo desfecho do furo de "pausar
+era porta de mão única", por outra porta, e valendo nos dois sentidos.
+*Quem vê:* quem tenta cancelar e não consegue; e o operador, no
+suporte, sem pista do motivo. Passava despercebido porque a máscara do
+front tira a pontuação antes de enviar — as 13 linhas em produção eram
+todas só dígitos, medido —, mas a máscara é do navegador e a API é
+pública. Achado em 17/09/2026 pelo ciclo da skill `revisar`, enquanto se
+escrevia a rotina de expurgo, que precisava casar documento para
+atender pedido de titular.
 
 ---
 

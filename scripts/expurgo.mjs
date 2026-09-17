@@ -67,7 +67,16 @@ if (TITULAR) {
   console.log(`\nPedido do titular (LGPD art. 18) — documento informado, retenção de ${ANOS_DE_RETENCAO} anos.`);
   console.log(`Só o que é anterior a ${corte} pode ser anonimizado agora.`);
   console.log(APAGAR ? '\nMODO REAL: vai escrever.' : '\nSIMULAÇÃO: nada será escrito. Use --apagar para valer.');
-  mostrar(await expurgarDadoPessoalDoTitular(TITULAR, { simular: !APAGAR }));
+  /* Documento inválido é erro de quem digitou, não defeito — merece uma
+     linha, não uma pilha. Quem roda isto está atendendo um pedido de
+     titular, possivelmente com prazo correndo, e não precisa decifrar
+     rastro de exceção para descobrir que errou um dígito. */
+  try {
+    mostrar(await expurgarDadoPessoalDoTitular(TITULAR, { simular: !APAGAR }));
+  } catch (erro) {
+    console.error(`\n  ${erro.message}\n`);
+    process.exit(1);
+  }
 } else {
   console.log(`\nExpurgo por PRAZO — ${ANOS_DE_RETENCAO} anos, corte em ${corte}.`);
   console.log(APAGAR ? '\nMODO REAL: vai escrever.' : '\nSIMULAÇÃO: nada será escrito. Use --apagar para valer.');

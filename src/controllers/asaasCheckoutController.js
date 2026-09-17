@@ -32,7 +32,7 @@
  */
 
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
-import { calcularTaxa, metodoCartaoPorParcelas } from '../services/taxaService.js';
+import { taxaComParcelasQueCabem } from '../services/taxaService.js';
 import {
   criarSessaoAsaasCheckout,
   criarAutorizacaoPixAutomatico,
@@ -44,6 +44,7 @@ import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import {
   documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido,
+  normalizarDocumento,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
 } from '../utils/validadores.js';
 import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
@@ -67,7 +68,7 @@ export const CICLOS_VALIDOS = [
 
 export async function criarCheckoutCartao(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
-  const {
+  let {
     nome, email, documento, telefone, parcelas,
     endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge
   } = requisicao.body ?? {};
@@ -77,6 +78,10 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   }
   if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
   if (!parcelasValidas(parcelas)) return resposta.status(400).json({ erro: 'Número de parcelas inválido (1 a 12).' });
@@ -97,17 +102,30 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
     }
 
-    const metodoTaxa = metodoCartaoPorParcelas(numeroParcelas);
-    const { taxaAsaas, taxaPropria, valorCobrado } = calcularTaxa(
+    /* O PISO DA ASAAS É POR PARCELA, não só sobre o total.
+
+       R$ 24,00 em 12x dá R$ 2,00 por parcela, e a Asaas recusa a
+       cobrança. Pior: `POST /v3/checkouts` ACEITA a sessão assim
+       (medido), então sem isto a pop-up abre, o comprador escolhe 12x,
+       digita o cartão, e só aí é recusado — dentro da pop-up, com
+       mensagem de provedor.
+
+       A conta mora em `taxaService.taxaComParcelasQueCabem`, junto da
+       taxa, porque as duas se determinam uma à outra: a taxa depende da
+       faixa de parcelas, e quantas parcelas cabem depende do valor com
+       taxa. Ofertar menos em vez de recusar — um pedido de R$ 24,00 é
+       uma venda que a Asaas faz em 4x sem reclamar. */
+    const { parcelas: parcelasOfertadas, taxa } = taxaComParcelasQueCabem(
       valorBase,
-      metodoTaxa,
       numeroParcelas,
       Boolean(pedido.isentarTaxa)
     );
+    const { taxaAsaas, taxaPropria, valorCobrado } = taxa;
 
     // Ver a nota do piso em `utils/validadores.js`. No cartão isto
     // poupa o comprador de preencher endereço inteiro (exigência
-    // antifraude da Asaas) para receber um 400 no fim.
+    // antifraude da Asaas) para receber um 400 no fim. Vale para o
+    // TOTAL; o piso por parcela é o laço acima.
     if (!valorCobradoAceitavel(valorCobrado)) {
       return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
     }
@@ -118,13 +136,13 @@ export async function criarCheckoutCartao(requisicao, resposta) {
 
     const { asaasCheckoutId } = await criarSessaoAsaasCheckout({
       billingTypes: ['CREDIT_CARD'],
-      chargeTypes: numeroParcelas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
+      chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
       itens: [{
         name: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
         quantity: 1,
         value: valorCobrado
       }],
-      ...(numeroParcelas > 1 ? { installment: { maxInstallmentCount: numeroParcelas } } : {}),
+      ...(parcelasOfertadas > 1 ? { installment: { maxInstallmentCount: parcelasOfertadas } } : {}),
       customerData: {
         name: nome,
         email,
@@ -167,7 +185,10 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       taxaIsenta: Boolean(pedido.isentarTaxa),
       valorCobrado,
       metodoPagamento: 'cartao_credito',
-      parcelas: numeroParcelas
+      /* O que se grava é o que foi OFERTADO, não o que foi pedido: é
+         esse número que limita o que o comprador pode escolher na
+         pop-up, e a conciliação tem de bater com a realidade. */
+      parcelas: parcelasOfertadas
     });
 
     resposta.json({
@@ -210,7 +231,7 @@ function formatarDataHoraAsaas(data) {
  */
 export async function criarCheckoutAssinatura(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
-  const {
+  let {
     nome, email, documento, telefone,
     endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
     renovar
@@ -221,6 +242,10 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   }
   if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
@@ -397,13 +422,17 @@ export async function consultarStatusCheckout(requisicao, resposta) {
  */
 export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
-  const { nome, email, documento, telefone } = requisicao.body ?? {};
+  let { nome, email, documento, telefone } = requisicao.body ?? {};
 
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
   if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {

@@ -125,6 +125,37 @@ export function documentoValido(valor) {
   return false;
 }
 
+/**
+ * O `documento` guardado e o `documento` buscado precisam ser a MESMA
+ * string, e até 17/09/2026 não eram.
+ *
+ * `documentoValido` tira a pontuação para VALIDAR, mas devolve só
+ * `true`/`false` — quem grava gravava o texto cru do corpo da
+ * requisição. Então `552.085.198-01` e `55208519801` são o mesmo CPF,
+ * passam os dois na validação, e viram duas chaves diferentes no banco.
+ *
+ * O dano não é cosmético, e está no caminho do dinheiro: a assinatura é
+ * localizada por `contratante_id + plano_id + documento`
+ * (`API.md` §5.5). Quem assinasse mandando o CPF pontuado e depois
+ * pedisse cancelamento mandando só dígitos receberia `404` — assinatura
+ * incancelável pela API, exatamente o furo de mão única que a RN de
+ * 15/09 corrigiu por outro caminho. E vale nos dois sentidos.
+ *
+ * Passava despercebido porque a máscara do front tira a pontuação antes
+ * de enviar — as 13 linhas em produção em 17/09/2026 são todas só
+ * dígitos, conferido. Mas a máscara é do navegador, e a API é pública:
+ * quem chama direto manda o que quiser. Achado pelo ciclo da skill
+ * `revisar` enquanto se escrevia a rotina de expurgo, que precisava
+ * casar documento para atender pedido de titular.
+ *
+ * A normalização é para DÍGITOS porque é o formato que já está gravado
+ * (nenhuma linha precisa ser convertida) e o que a Asaas espera em
+ * `cpfCnpj`.
+ */
+export function normalizarDocumento(valor) {
+  return String(valor ?? '').replace(/\D/g, '');
+}
+
 export function emailValido(valor) {
   if (!passaNoTeto(valor, TETOS.email)) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor ?? '').trim());
@@ -171,6 +202,36 @@ export function valorCobradoAceitavel(valorCobrado) {
   const numero = Number(valorCobrado);
   if (!Number.isFinite(numero)) return false;
   return Math.round(numero * 100) >= PISO_ASAAS * 100;
+}
+
+/**
+ * QUANTAS PARCELAS CABEM NUM VALOR — o piso da Asaas é POR PARCELA.
+ *
+ * Medido em 17/09/2026, e foi um buraco na primeira medição: eu havia
+ * medido o piso só com UMA parcela. Com `installmentCount`, a Asaas
+ * aplica os R$ 5,00 a cada parcela, não ao total:
+ *
+ *   POST /v3/payments  totalValue 10,00 em 12x (parcela 0,83) → 400
+ *   POST /v3/payments  totalValue 24,00 em 12x (parcela 2,00) → 400
+ *   POST /v3/payments  totalValue 60,00 em 12x (parcela 5,00) → 200
+ *
+ * E o pior detalhe: `POST /v3/checkouts` **aceita** a sessão nos três
+ * casos (medido). Ou seja, a pop-up abre, o comprador escolhe 12x,
+ * digita o cartão — e só então a cobrança é recusada, dentro da pop-up,
+ * com mensagem da Asaas. É o mesmo dano do piso sobre o total, só mais
+ * fundo no caminho, e a checagem do total não o alcança.
+ *
+ * Por isso a correção NÃO é recusar: é ofertar menos parcelas. Recusar
+ * um pedido de R$ 24,00 porque alguém pediu 12x seria perder uma venda
+ * que a Asaas faria em 4x sem reclamar — e recusar o que o provedor
+ * aceita é a falha que este arquivo evita em `nomeValido` e
+ * `telefoneValido` pelo mesmo motivo.
+ */
+export function maximoDeParcelas(valorCobrado) {
+  const numero = Number(valorCobrado);
+  if (!Number.isFinite(numero) || numero <= 0) return 1;
+  // Em centavos, como a Asaas lê — ver `valorCobradoAceitavel`.
+  return Math.max(1, Math.floor(Math.round(numero * 100) / (PISO_ASAAS * 100)));
 }
 
 /** Uma frase só, e ela é mostrada ao COMPRADOR — por isso diz o que
@@ -258,7 +319,21 @@ export { TETOS as TETOS_DE_CAMPO };
    Roda junto com os outros em `npm test` (tests/executar.js).
    ==================================================================== */
 if (process.argv[1]?.endsWith('validadores.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+
+  /* O número de checagens era CHUMBADO no `console.log` do fim — e já
+     estava errado: acrescentar assertivas não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, então
+     ele passou a contar. O proxy existe para não precisar reescrever as
+     dezenas de chamadas `assert.ok(...)` que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
 
   // --- documento ---
   assert.ok(documentoValido('111.444.777-35'), 'CPF válido pontuado');
@@ -269,6 +344,22 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.ok(!documentoValido('11222333000180'), 'CNPJ de dígito errado recusa');
   assert.ok(!documentoValido(''), 'vazio recusa');
   assert.ok(!documentoValido(null), 'nulo recusa');
+
+  /* --- NORMALIZAÇÃO DO DOCUMENTO ---
+     A regra é "o que se grava e o que se busca têm de ser a mesma
+     string". Sem ela, assinatura criada com CPF pontuado não é
+     encontrada por quem manda só dígitos — e a rota de cancelar
+     responde 404 sobre uma assinatura que existe e está cobrando. */
+  assert.equal(normalizarDocumento('552.085.198-01'), '55208519801', 'CPF pontuado vira dígitos');
+  assert.equal(normalizarDocumento('55208519801'), '55208519801', 'CPF já em dígitos não muda');
+  assert.equal(normalizarDocumento('  552 085 198 01 '), '55208519801', 'espaço e separador solto também somem');
+  assert.equal(normalizarDocumento('11.222.333/0001-81'), '11222333000181', 'CNPJ pontuado vira dígitos');
+  assert.equal(
+    normalizarDocumento('552.085.198-01'), normalizarDocumento('55208519801'),
+    'as duas formas do MESMO documento colapsam na mesma chave — é o ponto inteiro'
+  );
+  assert.equal(normalizarDocumento(null), '', 'nulo vira string vazia, não "null"');
+  assert.equal(normalizarDocumento(undefined), '', 'ausente idem');
 
   // --- e-mail ---
   assert.ok(emailValido('a@b.co'), 'e-mail mínimo passa');
@@ -340,6 +431,25 @@ if (process.argv[1]?.endsWith('validadores.js')) {
     'a mensagem cita o valor e não cita o provedor — quem lê é o comprador'
   );
 
+  /* --- O PISO É POR PARCELA ---
+     Cada linha é um ponto medido (ver o comentário de
+     `maximoDeParcelas`). A regra é "nenhuma parcela abaixo de R$ 5,00",
+     e o efeito é ofertar menos parcelas, nunca recusar a venda. */
+  assert.equal(maximoDeParcelas(60), 12, 'R$ 60,00 cabem 12x de R$ 5,00 — foi o caso aceito na medição');
+  assert.equal(maximoDeParcelas(24), 4, 'R$ 24,00 cabem 4x, não as 12 pedidas (12x daria R$ 2,00 e a Asaas recusou)');
+  assert.equal(maximoDeParcelas(10), 2, 'R$ 10,00 cabem 2x');
+  assert.equal(maximoDeParcelas(59.99), 11, 'um centavo abaixo de 60 cai para 11x');
+  assert.equal(maximoDeParcelas(5), 1, 'no piso, só à vista');
+  assert.equal(maximoDeParcelas(4.99), 1, 'abaixo do piso devolve 1 — quem recusa é `valorCobradoAceitavel`, não esta função');
+  assert.equal(maximoDeParcelas(0), 1, 'zero devolve 1, nunca 0 (0 parcela não existe)');
+  assert.equal(maximoDeParcelas(null), 1, 'nulo idem');
+  assert.equal(maximoDeParcelas('abc'), 1, 'texto idem');
+  assert.ok(maximoDeParcelas(1e9) > 12, 'valor alto não é limitado por esta função — o teto de 12 é regra nossa');
+
+  /* A fronteira, em centavos: R$ 15,00 dão 3x exatas; R$ 14,99 não. */
+  assert.equal(maximoDeParcelas(15), 3, 'R$ 15,00 dão 3x de R$ 5,00 cravados');
+  assert.equal(maximoDeParcelas(14.99), 2, 'R$ 14,99 já não dão 3x');
+
   // --- nome ---
   assert.ok(nomeValido('Ana'), 'nome curto passa');
   assert.ok(nomeValido("Maria D'Ávila-Souza Jr."), 'apóstrofo, hífen e sufixo passam');
@@ -380,5 +490,5 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.ok(!compararSeguro(undefined, 'segredo'), 'header ausente não bate com segredo');
   assert.ok(!compararSeguro('segredo', ''), 'segredo não bate com vazio');
 
-  console.log('validadores: 40 checagens OK');
+  console.log(`validadores: ${checagens} checagens OK`);
 }

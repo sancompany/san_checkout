@@ -44,7 +44,8 @@ const SUITES = [
   'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
   'tests/pull-nao-segue-para-onde-quiser.js', // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
-  'tests/rotas-http-respondem-como-prometido.js' // a pilha do Express montada de verdade: login por token, guarda, teto, 404
+  'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
+  'tests/documento-e-uma-chave-so.js' // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
 ];
 
 /**

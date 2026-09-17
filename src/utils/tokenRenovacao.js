@@ -88,7 +88,21 @@ export function tokenRenovacaoValido(token, apiKey, { contratanteId, planoId, do
    Autoteste — `node src/utils/tokenRenovacao.js`
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('tokenRenovacao.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const apiKey = 'chave-do-contratante';
   const escopo = { contratanteId: 'loja1', planoId: 'plano-vip', documento: '11144477735' };
@@ -120,5 +134,5 @@ if (process.argv[1]?.endsWith('tokenRenovacao.js')) {
   const tokenVelho = `${tsVelho}.${hmacDoToken(apiKey, escopo, tsVelho)}`;
   assert.ok(!tokenRenovacaoValido(tokenVelho, apiKey, escopo), 'token expirado é recusado mesmo com hmac certo');
 
-  console.log('tokenRenovacao: 10 checagens OK');
+  console.log(`tokenRenovacao: ${checagens} checagens OK`);
 }

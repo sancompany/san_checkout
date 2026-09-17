@@ -31,9 +31,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { criarObterPedido } from '../src/controllers/pedidoController.js';
+import { criarObterPedido, obterPedido } from '../src/controllers/pedidoController.js';
 import { criarObterPlano, obterPlano } from '../src/controllers/planoController.js';
-import { obterPedido } from '../src/controllers/pedidoController.js';
 import { PISO_ASAAS } from '../src/utils/validadores.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');

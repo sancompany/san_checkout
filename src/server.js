@@ -330,17 +330,13 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      é não depender de alguém lembrar em 2031.
 
      Para ver o que ela faria, `npm run expurgo` (simula por padrão). */
-  expurgarDadoPessoal({ simular: false }).then((relatorios) => {
-    const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
-    if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
-  }).catch((erro) => console.error('[expurgo]', erro.message));
+  const rodarExpurgo = () => expurgarDadoPessoal({ simular: false })
+    .then((relatorios) => {
+      const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
+      if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
+    })
+    .catch((erro) => console.error('[expurgo]', erro.message));
 
-  setInterval(() => {
-    expurgarDadoPessoal({ simular: false })
-      .then((relatorios) => {
-        const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
-        if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
-      })
-      .catch((erro) => console.error('[expurgo]', erro.message));
-  }, UM_DIA_MS).unref();
+  rodarExpurgo();
+  setInterval(rodarExpurgo, UM_DIA_MS).unref();
 });

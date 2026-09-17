@@ -178,7 +178,21 @@ export async function senhaConfere(senha, armazenadoBase64) {
    derivação a N=2^17 custa ~800 ms, e isso é o recurso funcionando.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('senhaAdmin.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const hash = await gerarHashSenha('senha-de-teste-123');
 
@@ -238,5 +252,5 @@ if (process.argv[1]?.endsWith('senhaAdmin.js')) {
     assert.equal(await umaDerivacaoPorVez(async () => 'seguinte'), 'seguinte', 'a fila sobrevive à falha anterior');
   }
 
-  console.log('senhaAdmin: 22 checagens OK');
+  console.log(`senhaAdmin: ${checagens} checagens OK`);
 }

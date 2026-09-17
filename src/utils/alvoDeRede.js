@@ -88,7 +88,21 @@ export function alvoDeRedeSeguro(valor) {
    Roda junto com os outros em `npm test` (tests/executar.js).
    ==================================================================== */
 if (process.argv[1]?.endsWith('alvoDeRede.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   // --- público https passa ---
   assert.ok(alvoDeRedeSeguro('https://contratante-teste.brunosanches-bhs.workers.dev'), 'worker público passa');
@@ -122,5 +136,5 @@ if (process.argv[1]?.endsWith('alvoDeRede.js')) {
   assert.ok(!alvoDeRedeSeguro(null), 'nulo recusa');
   assert.ok(!alvoDeRedeSeguro('não é url'), 'texto solto recusa');
 
-  console.log('alvoDeRede: 22 checagens OK');
+  console.log(`alvoDeRede: ${checagens} checagens OK`);
 }

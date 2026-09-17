@@ -64,7 +64,21 @@ export function assinaturaValida(corpoCru, segredo, timestamp, assinaturaRecebid
    Autoteste — `node src/utils/assinaturaWebhook.js`
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('assinaturaWebhook.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
+     estava errado — acrescentar assertiva não mexia nele. Contador
+     chumbado é documento falso barato de produzir e caro de notar, e em
+     17/09/2026 oito autotestes deste repositório tinham um. O proxy
+     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const corpo = JSON.stringify({ pedidoId: 'abc', status: 'confirmado' });
   const segredo = 'chave-de-teste';
@@ -89,5 +103,5 @@ if (process.argv[1]?.endsWith('assinaturaWebhook.js')) {
   // assinatura de tamanho diferente não pode estourar o timingSafeEqual
   assert.ok(!assinaturaValida(corpo, segredo, agora, 'sha256=curta'), 'tamanho diferente é recusado');
 
-  console.log('assinaturaWebhook: 5 checagens OK');
+  console.log(`assinaturaWebhook: ${checagens} checagens OK`);
 }
