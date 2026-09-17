@@ -141,13 +141,41 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟡 Prontidão item 6 · o RUNBOOK ficou completo na forma, e falta o que só o dono tem — 17/09
+### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09
 As sete seções que a prontidão operacional exige e que **não existiam**
 foram escritas em 17/09: inventário de contas (§1.1), segredos e como
 rotacionar cada um (§1.2), alerta → significado → primeira ação (§6.3),
 incidente com dado pessoal e os prazos da ANPD (§8.1), dependências
 externas e o que cada queda derruba (§9), contatos (§10) e como desligar
 tudo com segurança (§11). Deploy, reversão e restauração já existiam.
+
+**E aí o arquivo foi testado, que é a parte que faltava em toda vez
+anterior.** Como não existe pessoa número dois, o teste rodou com um
+**agente sem nenhum contexto da sessão**, autorizado a ler só o
+`RUNBOOK.md` e proibido de executar escrita. Ele respondeu sozinho "está
+no ar, e onde roda" e achou o vencimento do domínio; **não conseguiu
+publicar**, e travou em oito pontos — os oito viraram correção no mesmo
+dia, com a tabela em `RUNBOOK` §10.
+
+Quatro deles causariam dano se alguém os seguisse: §6 mandava aplicar as
+migrations `0001…0006` quando existem **nove** (restore sem a tabela de
+erros, sem `confirmado_em` e sem `ambiente`/`e_teste`); o comando
+"seguro" do §1.2 listava **10 de 11** variáveis e comia justamente a
+`ASAAS_AMBIENTE`, que é a da troca para produção; a conferência da URL
+do webhook não dizia o método, e **com `GET` o certo e o errado
+respondem 404 igual** (só o `POST` distingue: 401 × 404); e a §4 mandava
+`git revert <sha-ruim>` sem existir, em nenhum lugar do arquivo, como
+saber **qual commit está no ar**.
+
+E dois defeitos que eu tinha escrito horas antes: o comando de listar
+variáveis (acima) e um `northflank logs …` que **não existe** — o CLI
+não tem comando de log. Os dois entraram por eu ter escrito comando sem
+rodar, e é a mesma lição do "evidência sem controle não é evidência",
+aplicada a documentação: **comando não conferido é comando falso.**
+
+A regra nova, no próprio arquivo: depois de qualquer edição grande no
+RUNBOOK, rodar um leitor sem contexto — pessoa quando houver, agente
+enquanto não houver.
 
 O que **só o dono preenche**, e está marcado `⬜` no próprio arquivo:
 e-mail de login de cada conta, onde a senha e o segundo fator moram,
@@ -263,7 +291,7 @@ entrada nenhuma. As páginas legais foram reprovadas por serem rápidas.
 Agora um contador de cliques separa "não interagiu" de "interagiu abaixo
 do piso".
 
-### 🟠 A política de privacidade não menciona o Web Analytics da Cloudflare — ACHADO 17/09
+### 🟢 Web Analytics declarado na política, e a política parou de nomear o Render — FECHADO 17/09
 Achado escrevendo o item 4: a CSP do `public/_headers` libera
 `static.cloudflareinsights.com` (script) e `cloudflareinsights.com`
 (conexão), e o relatório de 09/09 registra o script carregando de
@@ -278,13 +306,38 @@ banner de consentimento — mas exige **o aviso na política**. Então não é
 o caso de tirar o beacon: é o caso de a política dizer que ele existe,
 o que ela não diz.
 
-Duas coisas para o dono decidir, e as duas são da Estação 7 (documentos
-legais):
-1. confirmar no painel da Cloudflare se o Web Analytics está ligado
-   para `checkout.sancocore.com.br` (leitura de painel, e o painel é
-   dele);
-2. estando ligado, incluir o aviso na política e a linha no inventário
-   de dados. Eu não reescrevo documento legal por conta própria.
+**FECHADO no mesmo dia, por ordem do dono de resolver sem ele.** As duas
+coisas que faltavam foram feitas:
+
+1. **Confirmado pela API, não pelo painel** (`GET /accounts/{id}/rum/site_info/list`):
+   o serviço está **ativo** na zona `sancocore.com.br`, com
+   `auto_install: true` e `enabled: true`, criado em **01/09/2026**. É a
+   Cloudflare que injeta o beacon nas páginas que ela serve — e
+   `checkout.sancocore.com.br` é servida por ela (Pages, `proxied`).
+   `api.sancocore.com.br` **não** é: é DNS-only, então ali não há beacon.
+2. **Política de privacidade na versão 3**, com o aviso escrito
+   (§15.5 a 15.9): o que o serviço coleta, que **não usa cookie**, que
+   por isso não há pedido de consentimento — só o aviso, na forma que a
+   orientação da ANPD prevê —, a base legal, e o fato de que **o prazo
+   de guarda é da Cloudflare e a documentação pública não o declara**,
+   então não inventamos prazo. A v2 foi arquivada em
+   `docs/legal-arquivado/`, e o `inventario-de-dados.md` §5 ganhou a
+   linha do Web Analytics e a do Access.
+
+**E a mesma leitura achou coisa pior que a ausência do aviso:** a
+política **nomeava o Render** como infraestrutura de aplicação (§15 e
+§18.2), e o Render deixou de ser usado em 12/09 — documento legal
+apontando o fornecedor errado aponta a transferência internacional
+errada. Também prometia comunicação transacional ao Pagador
+("confirmação de pagamento", "atualização de status") que o sistema
+**não faz**: não há biblioteca de envio no `src/`, e as notificações da
+Asaas ao comprador são desligadas por padrão. As duas coisas foram
+corrigidas na v3, e o inventário parou de dizer Render também.
+
+**Continua do dono, e é da Estação 7:** revisão do texto por advogado,
+que a própria skill `legal` exige para projeto que movimenta dinheiro.
+O que eu fiz foi alinhar o documento ao que o sistema faz — não dar
+parecer.
 
 De brinde, é a resposta para o p75 de **campo** do item 4: ele vai
 aparecer nesse mesmo painel quando houver visitante real.
@@ -302,10 +355,49 @@ assinatura DKIM** (encaminhamento, provedor transacional novo amanhã)
 cai em `p=reject` — rejeição, não caixa de spam. Para um endereço que é
 **canal legal do titular** (`juridico@`), silêncio é descumprimento.
 
-A correção é um registro TXT na zona, e **mudar DNS é da lista curta**
-— é do dono. O valor a publicar sai do painel do Workspace (é o
-`include` do Google); não o escrevo aqui de cabeça para não colar um
-registro errado num domínio que já rejeita.
+**O registro está definido, e não saiu de cabeça:** lido na
+documentação oficial do Google em 17/09/2026 —
+`v=spf1 include:_spf.google.com ~all`, no nome do domínio raiz, com
+`~all` (softfail) que é o qualificador que o próprio Google recomenda.
+Antes de fixar o valor eu confirmei que **não existe outro remetente
+para incluir**: não há biblioteca de envio de e-mail no `src/`, e as
+notificações da Asaas ao comprador nascem desligadas
+(`asaasService.buscarOuCriarCliente` manda `notificationDisabled`).
+
+**Por que não está no ar, e isto mudou de dono para ambiente.** O dono
+autorizou explicitamente a sessão a aplicar, e a credencial da
+Cloudflare está no ambiente — mas o **classificador de permissões do
+harness recusa escrita de DNS** (categoria "DNS / Domain / Cert
+Changes"), e recusa antes de a chamada sair. Não existe caminho
+alternativo: não há MCP da Cloudflare nesta sessão, `wrangler` não está
+instalado, e rotear a mesma escrita por um subagente seria contornar a
+guarda em vez de usá-la — o que eu não faço.
+
+Então a pendência deixou de ser "decidir o valor" e passou a ser
+**uma permissão**: liberar a escrita de DNS para a sessão (regra de
+permissão no `settings`), ou colar o registro no painel.
+
+```bash
+# o id da zona sai na hora — não fica escrito em documento
+ZONA=$(curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
+  "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])")
+
+# CRIA um TXT novo (POST) — não toca nos 12 registros que já existem
+curl -sS -X POST \
+  -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
+  -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/zones/$ZONA/dns_records" \
+  --data '{"type":"TXT","name":"sancocore.com.br","content":"v=spf1 include:_spf.google.com ~all","ttl":1}'
+
+# conferência, em dois resolvedores independentes
+for r in https://dns.google/resolve https://cloudflare-dns.com/dns-query; do
+  curl -s -H "accept: application/dns-json" "$r?name=sancocore.com.br&type=TXT" | grep -o 'v=spf1[^"]*'
+done
+```
+
+Pelo painel, o equivalente é: DNS → Records → Add record → TXT → Name
+`@` → Content `v=spf1 include:_spf.google.com ~all` → Save.
 
 ### 🟡 Rotação do token de webhook não tem janela sem risco — DECLARADO 17/09
 O receptor aceita **um** `ASAAS_WEBHOOK_TOKEN` por vez. Trocando

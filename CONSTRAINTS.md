@@ -1178,7 +1178,11 @@ morar nela:
 
 - **Cloudflare Pages** exige o `_headers` dentro do diretório publicado —
   por isso ele é `public/_headers`, e não `infra/_headers`.
-- **Render** é configurado pelo painel, sem arquivo no repositório.
+- **Northflank** é configurado pelo painel, sem arquivo no repositório
+  (esta linha dizia "Render" até 17/09/2026 — a hospedagem mudou em
+  12/09 e o texto ficou para trás). O provedor tem descrição versionada
+  própria (*templates*), e é ela que fecharia esta exceção; nada disso
+  existe hoje.
 
 Revisar esta exceção no dia em que houver Terraform, Pulumi ou qualquer
 descrição versionada de infraestrutura.

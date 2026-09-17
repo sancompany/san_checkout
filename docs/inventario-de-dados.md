@@ -83,10 +83,12 @@ de titular de terceiro é publicado em lugar nenhum.
 
 | Onde | O quê | Observação |
 |---|---|---|
-| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role` |
-| Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador |
-| Render | Logs da aplicação | Ver seção 7 |
-| Cloudflare Pages | Nada — front estático | Não recebe dado pessoal em repouso |
+| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil** |
+| Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador. Provedor brasileiro |
+| Northflank | Logs da aplicação | Ver seção 7. Região `southamerica-east` — **Brasil**, medido pela API do provedor em 17/09/2026. **Esta linha dizia "Render" até 17/09/2026**, e o Render deixou de ser usado em 12/09: inventário que nomeia o fornecedor errado aponta a transferência internacional errada, que é o pior lugar para estar desatualizado |
+| Cloudflare Pages | Nada em repouso — front estático | Não recebe dado pessoal em repouso. Mas trata **dado técnico de conexão em trânsito** (IP, agente do navegador, metadados), porque é ela que entrega a página |
+| Cloudflare Web Analytics | Métrica de desempenho da página, agregada | **Ativo desde 01/09/2026**, e descoberto em 17/09 só porque a CSP o liberava: a Cloudflare injeta o beacon sozinha (`auto_install`) nas páginas que ela serve, então ele **não aparece no HTML do repositório**. Coleta o mínimo para tempos de carregamento; **sem cookie** e sem perfil, e a Cloudflare declara não rastrear usuário final entre sites de clientes. Base legal: legítimo interesse. Guarda: definida pela Cloudflare — a documentação pública consultada não declara prazo, e não inventamos um. Declarado na política, §15.5 a 15.9 |
+| Cloudflare Access | Identidade do operador no login administrativo | Camada de borda do `/admin`; trata o e-mail do operador para autorizar |
 | Contratante | Payload do webhook e da conciliação | Não inclui endereço; inclui `pedidoId`, valores e, em assinatura, `documento` |
 | Contratante (navegação de volta) | Só o `pedidoId`, na URL de retorno | Desde 15/09/2026. O `returnUrl` leva o comprador de volta à loja depois de pagar e carrega **um** parâmetro, `pedido` — um id que o próprio contratante gerou e já conhece. Nenhum dado pessoal, e nenhum status de pagamento, viaja por aí (`API.md` §3.1). O destino é sempre origem do próprio contratante, conferida no servidor |
 

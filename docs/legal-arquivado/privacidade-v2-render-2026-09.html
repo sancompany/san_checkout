@@ -34,7 +34,7 @@
 
   <h1>POLÍTICA DE PRIVACIDADE DO SAN & CO. PAY</h1>
   <p class="subtitulo">CHECKOUT UNIVERSAL SANCO CORE</p>
-  <p class="atualizado">Versão 3 — última atualização: 17 de setembro de 2026<br/><em>Nesta versão: a infraestrutura de aplicação passou a ser nomeada corretamente (Northflank, em região brasileira — não Render, que deixou de ser usado); a Cloudflare foi declarada como fornecedora, inclusive o Web Analytics; e a seção de comunicações passou a descrever o que o sistema realmente faz — ele não envia mensagem ao Pagador.</em></p>
+  <p class="atualizado">Versão 2 — última atualização: 17 de setembro de 2026<br/><em>Nesta versão: identificação do operador passou de pessoa jurídica para pessoa física, com anúncio da transição para CNPJ.</em></p>
 
   <div class="contatos">
     <strong>Controlador:</strong> Bruno Henrique Sanches, sob o nome comercial SAN & CO.<br/>
@@ -96,12 +96,10 @@
   <p>9.3. A ausência de necessidade de consentimento não elimina os demais deveres de transparência, segurança, necessidade e respeito aos direitos do titular.</p>
   <p>A LGPD prevê expressamente bases como execução de contrato, obrigação legal, legítimo interesse e prevenção à fraude, além de assegurar os direitos do titular.</p>
 
-  <h3>10. COMUNICAÇÕES AO PAGADOR</h3>
-  <p>10.1. <strong>O San Checkout não envia mensagem ao Pagador.</strong> Não há envio de e-mail, SMS, mensagem de voz ou notificação por parte da SAN &amp; CO. ao Pagador — nem de confirmação de pagamento, nem de atualização de status.</p>
-  <p>10.2. As notificações automáticas do provedor de pagamento são <strong>desligadas por padrão</strong> em cada cliente criado na conta, para que o Pagador não receba comunicação de uma empresa com a qual não tratou.</p>
-  <p>10.3. Quem se comunica com o Pagador é o <strong>Lojista</strong>, a partir do evento que recebe em seu próprio sistema (seção 12). O e-mail e o telefone são coletados porque o processamento do pagamento os exige e porque permitem ao Lojista identificar e atender a sua própria venda.</p>
-  <p>10.4. O Pagador pode falar com a SAN &amp; CO. pelos canais indicados na seção 24; nesse caso, a comunicação parte dele.</p>
-  <p>10.5. Essas informações não são utilizadas para publicidade, própria ou de terceiros.</p>
+  <h3>10. COMUNICAÇÕES TRANSACIONAIS</h3>
+  <p>10.1. O e-mail e, quando aplicável, o telefone poderão ser utilizados para comunicações diretamente relacionadas à transação.</p>
+  <p>10.2. Essas comunicações poderão incluir: confirmação de pagamento; atualização de status; informações sobre cobrança; informações operacionais; comunicações necessárias ao atendimento.</p>
+  <p>10.3. O uso transacional dessas informações não constitui autorização para publicidade indiscriminada de terceiros.</p>
 
   <h3>11. COMPARTILHAMENTO COM A ASAAS</h3>
   <p>11.1. Os dados necessários ao processamento do pagamento poderão ser enviados à <strong>Asaas</strong>, atualmente utilizada como infraestrutura de processamento financeiro da operação.</p>
@@ -127,26 +125,20 @@
   <p>14.3. A documentação fiscal será mantida conforme os períodos de guarda decorrentes da legislação aplicável.</p>
   <p>14.4. A emissão de NFS-e pela SAN & CO. refere-se ao serviço cuja prestação seja atribuível à própria SAN & CO., não substituindo eventual documento fiscal que o Lojista esteja obrigado a emitir relativamente ao produto ou serviço vendido.</p>
 
-  <h3>15. INFRAESTRUTURA DE APLICAÇÃO E DE BORDA</h3>
-  <p>15.1. A aplicação do San Checkout é executada na infraestrutura da <strong>Northflank</strong>, em <strong>região brasileira</strong> (identificada pelo provedor como <em>southamerica-east</em>). Dados técnicos, metadados de requisições e informações necessárias à operação são processados nessa infraestrutura.</p>
-  <p>15.2. A Northflank é empresa estrangeira: ainda que a execução ocorra na região brasileira indicada, atividades de administração, suporte e observabilidade do provedor poderão envolver tratamento de metadados fora do Brasil, hipótese em que se aplica a seção 17.</p>
-  <p>15.3. <strong>A SAN &amp; CO. não utiliza mais o Render.</strong> Versões anteriores desta Política o indicavam como infraestrutura de aplicação; a migração para a Northflank ocorreu em setembro de 2026, e esta seção passa a refletir o estado real.</p>
-  <p>15.4. As páginas do checkout, do painel e dos documentos legais são servidas pela <strong>Cloudflare</strong> (Pages), que também responde pelo DNS do domínio e pelo controle de acesso à área administrativa (Cloudflare Access). Nessa camada são tratados dados técnicos de conexão, como endereço IP, agente do navegador e metadados da requisição, com finalidade de entrega, disponibilidade e segurança.</p>
-  <p>15.5. <strong>Medição de desempenho das páginas (Cloudflare Web Analytics).</strong> Está ativo, no domínio das páginas, o serviço <strong>Cloudflare Web Analytics</strong>, inserido automaticamente pela própria Cloudflare nas páginas por ela servidas — o San Checkout não instala esse script no código das páginas.</p>
-  <p>15.6. Conforme a documentação do provedor, esse serviço coleta o mínimo de informação necessária a métricas de desempenho (tempos de carregamento e indicadores de experiência de página), e a Cloudflare declara <strong>não rastrear usuários finais entre os sites de seus clientes</strong>.</p>
-  <p>15.7. <strong>Esse serviço não utiliza cookies</strong> e não constrói perfil de comportamento ou de publicidade. Por isso não há, nesta Plataforma, pedido de consentimento para cookies de análise: o que existe é este aviso, na forma orientada pela autoridade nacional para tratamentos dessa natureza. Os cookies da Plataforma são os estritamente necessários — sessão e controle de acesso administrativo.</p>
-  <p>15.8. A finalidade é exclusivamente técnica: medir o desempenho das telas de pagamento e detectar degradação. A base legal é o legítimo interesse (seção 9), limitada a dado técnico e sem identificação do Pagador para essa finalidade.</p>
-  <p>15.9. O período de guarda dos dados agregados de desempenho é definido pela Cloudflare, na condição de operadora desse serviço; a documentação pública consultada em 17 de setembro de 2026 não o declara, e a SAN &amp; CO. não afirma prazo que não pode verificar.</p>
-  <p>15.10. A utilização dessas infraestruturas não significa que o banco de dados principal do San Checkout esteja no exterior; o banco próprio descrito nesta Política permanece localizado no Brasil.</p>
+  <h3>15. RENDER E INFRAESTRUTURA DE APLICAÇÃO</h3>
+  <p>15.1. A SAN & CO. utiliza infraestrutura tecnológica associada ao <strong>Render</strong> para componentes da aplicação.</p>
+  <p>15.2. Dados técnicos, metadados de requisições e informações necessárias à operação poderão ser processados nessa infraestrutura.</p>
+  <p>15.3. <strong>O Render poderá realizar processamento em infraestrutura localizada fora do Brasil.</strong> A SAN & CO. não afirma, nesta Política, um país específico como destino permanente, pois a localização efetiva poderá depender da arquitetura, região, subprovedores e configuração do serviço utilizado.</p>
+  <p>15.4. A utilização do Render não significa que o banco de dados principal do San Checkout esteja localizado no exterior; o banco próprio descrito nesta Política permanece indicado como localizado no Brasil.</p>
 
   <h3>16. GOOGLE WORKSPACE</h3>
-  <p>16.1. A SAN & CO. utiliza <strong>Google Workspace</strong> para as caixas postais do domínio — entre elas os canais de atendimento e de exercício de direitos indicados na seção 24. <strong>Não há envio automático de e-mail pela aplicação</strong> (seção 10).</p>
-  <p>16.2. Quando um titular ou interessado escreve para esses canais, são tratados pelo serviço os dados contidos na própria mensagem, como endereço de e-mail e conteúdo da comunicação.</p>
+  <p>16.1. A SAN & CO. utiliza <strong>Google Workspace</strong> para infraestrutura relacionada ao envio de e-mails transacionais, inclusive mediante SMTP.</p>
+  <p>16.2. Dependendo da comunicação, poderão ser tratados pelo serviço dados mínimos necessários ao envio, como endereço de e-mail e informações relacionadas ao conteúdo da comunicação transacional.</p>
   <p>16.3. O uso do Google Workspace não autoriza a SAN & CO. a utilizar dados de Pagadores para publicidade de terceiros.</p>
 
   <h3>17. TRANSFERÊNCIAS INTERNACIONAIS</h3>
   <p>17.1. A infraestrutura principal de armazenamento descrita nesta Política está localizada no Brasil.</p>
-  <p>17.2. Entretanto, determinados fornecedores tecnológicos poderão processar dados fora do território brasileiro. O estado atual, por provedor: <strong>Supabase</strong> — banco de dados em região brasileira; <strong>Northflank</strong> — execução em região brasileira, com administração e suporte do provedor podendo envolver metadados no exterior; <strong>Cloudflare</strong> — rede distribuída globalmente, incluindo a medição de desempenho da seção 15.5; <strong>Google Workspace</strong> — caixas postais em infraestrutura global; <strong>Asaas</strong> — provedor brasileiro de pagamento.</p>
+  <p>17.2. Entretanto, determinados fornecedores tecnológicos, especialmente aqueles utilizados para infraestrutura de aplicação, comunicação ou suporte técnico, poderão processar dados fora do território brasileiro.</p>
   <p>17.3. Quando houver transferência internacional de dados pessoais, a SAN & CO. adotará mecanismo juridicamente válido previsto na LGPD e na regulamentação da ANPD aplicável à operação.</p>
   <p>17.4. A transferência deverá limitar-se aos dados necessários para a finalidade correspondente.</p>
   <p>17.5. Quando aplicável a utilização das cláusulas-padrão contratuais da ANPD, estas deverão ser incorporadas e utilizadas na forma exigida pela regulamentação vigente.</p>
@@ -154,7 +146,7 @@
 
   <h3>18. FORNECEDORES E PRESTADORES DE SERVIÇOS</h3>
   <p>18.1. A SAN & CO. poderá utilizar fornecedores tecnológicos necessários à operação, segurança e comunicação da Plataforma.</p>
-  <p>18.2. Os fornecedores atualmente utilizados na arquitetura são: <strong>Asaas</strong> (processamento e infraestrutura de pagamentos, provedor brasileiro); <strong>Supabase</strong> (banco de dados PostgreSQL, em região brasileira); <strong>Northflank</strong> (execução da aplicação, em região brasileira — seção 15.1); <strong>Cloudflare</strong> (entrega das páginas, DNS, controle de acesso à área administrativa e medição de desempenho — seções 15.4 a 15.9); <strong>Google Workspace</strong> (caixas postais do domínio — seção 16).</p>
+  <p>18.2. Entre os fornecedores atualmente considerados na arquitetura estão: <strong>Asaas</strong> (processamento e infraestrutura de pagamentos); <strong>Supabase</strong> (banco de dados e infraestrutura PostgreSQL, com servidor no Brasil); <strong>Render</strong> (infraestrutura de aplicação, podendo envolver processamento internacional); <strong>Google Workspace</strong> (envio de e-mails transacionais via infraestrutura de comunicação/SMTP).</p>
   <p>18.3. O acesso de fornecedores deverá observar a finalidade para a qual o serviço foi contratado e os controles aplicáveis.</p>
   <p>18.4. Novos fornecedores poderão ser incorporados quando necessários à operação, segurança, comunicação ou cumprimento de obrigações legais, respeitada a legislação aplicável.</p>
 

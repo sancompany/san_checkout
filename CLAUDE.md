@@ -395,6 +395,37 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
   de item errado desde que foi escrito, então a linha de item nunca
   havia sido exercitada.
+- **O RUNBOOK foi TESTADO, e o teste achou oito furos** — inclusive dois
+  que eu havia escrito horas antes. O dono mandou resolver as pendências
+  sem ele; como não existe pessoa número dois, o teste do item 6 rodou
+  com um **agente sem nenhum contexto**, podendo ler só o `RUNBOOK.md` e
+  proibido de escrever. Ele respondeu "está no ar" e achou o vencimento
+  do domínio sozinho; **não conseguiu publicar**, porque não havia
+  caminho escrito de uma branch até a `main`, nem forma de saber **qual
+  commit está no ar** (e a §4 pedia `git revert <sha-ruim>`). Os quatro
+  com consequência real: as migrations `0001…0006` quando existem nove;
+  o comando "seguro" que listava 10 de 11 variáveis e comia a
+  `ASAAS_AMBIENTE`; a conferência do webhook sem o método (com `GET` o
+  certo e o errado dão 404 igual — só `POST` distingue); e a reversão
+  sem o sha. Tudo corrigido e conferido, tabela em `RUNBOOK` §10, e a
+  regra nova: **depois de editar o RUNBOOK, rodar um leitor sem
+  contexto.** A lição que fica é mais dura que os furos: **comando
+  escrito e não rodado é comando falso** — dois dos oito eram meus, de
+  poucas horas antes.
+- **A política de privacidade nomeava o Render, que não é mais usado**
+  (`docs/erros/2026-09-17-a-politica-de-privacidade-nomeava-um-fornecedor-que-nao-existia-mais.md`).
+  Fui escrever o aviso do Web Analytics e achei coisa pior ao lado: o
+  documento que declara **para onde os dados do titular vão** apontava o
+  fornecedor errado, e afirmava transferência internacional onde ela
+  não acontece mais (a Northflank roda em região brasileira, medido). E
+  prometia comunicação transacional ao Pagador que o sistema **não
+  faz** — não há biblioteca de e-mail no `src/`, e as notificações da
+  Asaas ao comprador nascem desligadas. Política na **v3**, v2
+  arquivada, inventário de dados corrigido, e a Cloudflare finalmente
+  declarada como fornecedora (Pages, DNS, Access e Web Analytics, este
+  com `auto_install` confirmado pela API). Migração de hospedagem é
+  troca de subprocessador: termina no inventário e na política, não no
+  deploy verde.
 - **Desempenho medido, e a medição achou defeito** (item 4:
   `npm run desempenho`). Chromium de verdade num funil de celular (CPU
   4x mais lenta, 1600 kbps, 150 ms), cinco telas do comprador, orçamento
@@ -468,11 +499,28 @@ gatilho escrito da exceção de backup (§3). Tudo isso vem depois da troca
 da Asaas para produção, que é do dono e que fecha a 5 sem ressalva. O
 MostrAí retesta o lado dele em paralelo.
 
-Mais três, do item 6, que também só o dono fecha: os campos `⬜` do
-inventário de contas e dos contatos (`RUNBOOK` §1.1 e §10); o **registro
-SPF** na zona; e a **pessoa número dois**, que é o teste do item — ela,
-com o runbook e sem falar comigo, faz um deploy trivial, reverte e acha
-a data de vencimento do domínio.
+Do item 6 sobraram três, e **duas mudaram de natureza em 17/09** depois
+de o dono mandar resolver sem ele:
+
+- **O registro SPF deixou de ser decisão e virou permissão.** O valor
+  está definido e conferido na fonte do Google
+  (`v=spf1 include:_spf.google.com ~all`), a credencial da Cloudflare
+  está no ambiente, e o comando está pronto no `docs/pendencias.md` —
+  mas **o classificador de permissões do harness recusa escrita de
+  DNS**, e não há caminho alternativo (não há MCP da Cloudflare aqui,
+  `wrangler` não está instalado, e rotear a mesma escrita por subagente
+  seria contornar a guarda, não usá-la). Falta liberar a permissão ou
+  colar o registro no painel: um segundo de trabalho.
+- **O teste da pessoa número dois foi rodado por um substituto** — um
+  agente sem contexto, lendo só o RUNBOOK (§10 dele tem o resultado).
+  Ele achou oito furos, quatro com consequência real. O que **não** dá
+  para substituir é a metade com credencial: publicar de verdade e
+  entrar no `/admin`. Isso só fecha com pessoa.
+- **Os campos `⬜`** do inventário de contas e dos contatos encolheram:
+  o que API responde eu preenchi (conta e 2FA da Cloudflare, planos,
+  regiões, ids, vencimento do domínio, quatro projetos de Pages). O que
+  sobra é o que **nenhuma API responde** — onde a senha mora, qual
+  cartão paga, e o contato direto do dono.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
@@ -509,11 +557,13 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   payload real para ser decidida (`CONSTRAINTS.md` §2.2).
 - **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
   da exceção de backup (`CONSTRAINTS.md` §3).
-- **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` do
-  inventário de contas e dos contatos (`RUNBOOK` §1.1 e §10), o
-  **registro SPF** na zona (medido ausente, com `p=reject` no DMARC), e
-  a **pessoa número dois** — que é o teste que fecha o item, não um
-  contato a mais na lista.
+- **Do item 6 ("outra pessoa consegue operar"):** o **registro SPF** na
+  zona — valor já definido e comando pronto, barrado pelo classificador
+  de permissões do ambiente, então é liberar a permissão ou colar no
+  painel; os campos `⬜` que nenhuma API responde (onde a senha mora,
+  qual cartão paga, contato direto); e a **pessoa número dois**, cuja
+  metade com credencial — publicar de verdade e entrar no `/admin` —
+  nenhum agente substitui. O resto do teste já rodou (`RUNBOOK` §10).
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

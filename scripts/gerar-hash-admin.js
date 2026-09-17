@@ -41,5 +41,5 @@ rl.question(PERGUNTA, async (senha) => {
   console.log('Cole isto na variável de ambiente CHECKOUT_ADMIN_PASS_HASH:\n');
   console.log(await gerarHashSenha(senha));
   console.log('\nDepois REMOVA a variável antiga CHECKOUT_ADMIN_PASS — ela não é mais lida,');
-  console.log('e senha em texto puro parada no painel do Render não protege nada.');
+  console.log('e senha em texto puro parada no painel do Northflank não protege nada.');
 });

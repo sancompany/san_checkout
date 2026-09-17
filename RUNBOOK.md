@@ -31,27 +31,56 @@ dia em que o cartão do registrador expira e o domínio cai. A tabela
 abaixo é para outra pessoa conseguir operar sem falar com quem
 construiu.
 
-O que a sessão **mediu** em 17/09/2026 está escrito; o que **só o dono
-sabe** está marcado `⬜` e continua pendência até ele preencher —
-inventar aqui seria pior que deixar em branco.
+O que a sessão **mediu** — pelas APIs dos próprios provedores, em
+17/09/2026 — está escrito. O que continua `⬜` é o que **nenhuma API
+responde**: onde a senha mora e qual cartão paga. Isso não é preguiça de
+medir, é limite do que existe para ser medido; inventar aqui seria pior
+que deixar em branco.
+
+**E uma coisa que a API responde e mesmo assim não fica escrita aqui: o
+e-mail de login.** Ele é metade de um par de autenticação, e a regra
+desta seção é a mesma da §1.2 — ponteiro, nunca credencial. Quem tem a
+credencial do provedor descobre o endereço com um comando (abaixo);
+quem não tem, pega no gerenciador junto da senha. Escrever o e-mail de
+login de nove contas num arquivo versionado é entregar metade do
+caminho a quem só precisava da outra.
 
 | conta | para que | identificadores medidos | login | senha e 2º fator | renovação / quem paga |
 |---|---|---|---|---|---|
-| **registro.br** | domínio `sancocore.com.br` | registrado 31/08/2026, **vence 31/08/2027** (RDAP, medido) | ⬜ | ⬜ | **31/08/2027** · cartão ⬜ |
-| **Cloudflare** | DNS da zona, Pages (`san-checkout`), Access (equipe `fancy-dawn-740a`) | zona `sancocore.com.br` | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
-| **Northflank** | backend | projeto/serviço `san-checkout`, branch `main`, build `nf-compute-400-16`, runtime `nf-compute-50` | ⬜ | ⬜ | mensal ⬜ · cartão ⬜ |
-| **Supabase** | banco | org `fphbzkrzgijqzpqzvshh`, projeto `San_Checkout` ref `zacuaroarelaqnzjjlcz`, `sa-east-1`, Postgres 17.6 | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
+| **registro.br** | domínio `sancocore.com.br` | registrado 31/08/2026, **vence 31/08/2027**; contato técnico `BRHSA71`; status `active` (RDAP) | ⬜ | ⬜ | **31/08/2027** · cartão ⬜ |
+| **Cloudflare** | DNS da zona, Pages (4 projetos), Access (equipe `fancy-dawn-740a`), Web Analytics | zona `sancocore.com.br`, plano **Free Website**, NS `arely`/`decker`; os ids de conta e de zona saem do comando abaixo, não deste arquivo | e-mail pessoal do dono — o endereço **não fica escrito aqui**, sai do comando abaixo ou do gerenciador | **2FA ativo** (medido) · gerenciador ⬜ | **nada é pago**: `Cloudflare Free Plan` e `Teams Free Base`, ambos US$ 0 — a linha do Teams renova 11/10/2026 sem cobrança |
+| **Northflank** | backend | projeto/serviço `san-checkout`, cluster `nf-southamerica-east`, namespace `ns-9k49mqwtltxm`, criado 12/09/2026, branch `main`, build `nf-compute-400-16`, runtime `nf-compute-50` | ⬜ | ⬜ | mensal ⬜ · cartão ⬜ |
+| **Supabase** | banco | org `fphbzkrzgijqzpqzvshh`, projeto `San_Checkout` ref `zacuaroarelaqnzjjlcz`, `sa-east-1`, Postgres 17.6.1.166, criado 06/09/2026 | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
 | **Asaas** | pagamento | conta **pessoa física, em transição** (`CONSTRAINTS.md` §3); hoje `sandbox` | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
 | **GitHub** | repositório e CI | `sancompany/san_checkout`; **os dois workflows não usam segredo de repositório** (medido) | ⬜ | ⬜ | plano ⬜ |
-| **Google Workspace** | e-mail `@sancocore.com.br` | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject` — **sem registro SPF** (medido em dois resolvedores) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
+| **Google Workspace** | caixas `@sancocore.com.br` (`contato`, `financeiro`, `juridico`, `suporte`) | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject` — **sem registro SPF** (medido em dois resolvedores) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
 | **cron-job.org** | ping de 10 min em `/api/saude` | mantém o Supabase acordado | ⬜ | ⬜ | gratuito ⬜ |
 
-**Como reconferir o vencimento do domínio** (é o item que mais cai, e o
-único aqui que ninguém avisa):
+**O que a conta da Cloudflare serve além do checkout**, e importa numa
+troca de credencial: quatro projetos de Pages na mesma conta —
+`san-checkout` (`checkout.sancocore.com.br`), `san-core`
+(`sancocore.com.br`), `san-humano` (`humano.sancocore.com.br`) e
+`mostrai`. A credencial ali é a conta inteira (`CONSTRAINTS.md` §3):
+mexer nela alcança os quatro.
+
+**Como reconferir o que foi medido** (nenhum destes comandos imprime
+segredo; o primeiro não precisa de credencial nenhuma):
 
 ```bash
+# vencimento do domínio — o item que mais cai, e o único que ninguém avisa
 curl -s https://rdap.registro.br/domain/sancocore.com.br \
   | python3 -c "import sys,json;[print(e['eventAction'],e['eventDate']) for e in json.load(sys.stdin)['events']]"
+
+# conta e 2FA da Cloudflare (a credencial vem do ambiente, nunca deste arquivo)
+curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
+  https://api.cloudflare.com/client/v4/user \
+  | python3 -c "import sys,json;r=json.load(sys.stdin)['result'];print(r['email'],'2FA:',r['two_factor_authentication_enabled'])"
+
+# o id da zona, quando algum comando pedir — descobrir na hora é melhor
+# que guardar aqui: id escrito em documento envelhece e vaza sem precisar
+curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
+  "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])"
 ```
 
 **O SPF ausente é achado, não detalhe.** Com DKIM e `p=reject`, o
@@ -59,9 +88,15 @@ e-mail enviado pelo Google passa por alinhamento de DKIM — e foi por
 isso que a conferência do item 1 da prontidão deu "chega". Mas
 receptor que pesa SPF vê `none`, e qualquer caminho futuro que quebre a
 assinatura DKIM (encaminhamento, provedor transacional novo) é
-**rejeitado**, não classificado como spam. A correção é um registro TXT
-na zona — e mudar DNS é da lista curta, então é do dono
-(`docs/pendencias.md`).
+**rejeitado**, não classificado como spam. Para um endereço que é canal
+legal do titular (`juridico@`), silêncio é descumprimento.
+
+O registro a publicar é `v=spf1 include:_spf.google.com ~all`, no nome
+do domínio raiz — **e ainda não está no ar**. O valor, o motivo do
+`~all`, a conferência de que não existe outro remetente e o comando
+exato com a verificação estão em `docs/pendencias.md`: é mudança
+pendente, não operação do dia, e esta seção é o que alguém abre às 3 da
+manhã para saber quem paga a conta.
 
 ## 1.2 Segredos: onde moram e como rotacionar
 
@@ -95,9 +130,16 @@ declarado em `docs/pendencias.md`.
 > nomes:
 >
 > ```bash
-> northflank get service --project san-checkout --service san-checkout \
->   | grep -oE '^ +[A-Z][A-Z0-9_]+:' | sort -u
+> northflank get service --project san-checkout --service san-checkout -o json \
+>   | python3 -c "import sys,json;d=json.load(sys.stdin);e=(d.get('data') or d)['runtimeEnvironment'];print(len(e),sorted(e.keys()))"
 > ```
+>
+> São **11** hoje. A primeira versão desta receita filtrava a saída
+> bonita com `grep -oE '^ +[A-Z][A-Z0-9_]+:'` e devolvia **10** — comia
+> justamente a `ASAAS_AMBIENTE`, que vem na mesma linha da abertura do
+> bloco. Quem fosse auditar a troca para produção (§6.2, passo 4)
+> concluiria que a variável não existe. Ler o JSON e pegar as chaves é
+> exato: não depende de indentação e nunca imprime valor.
 
 ## 2. Está no ar?
 
@@ -114,51 +156,89 @@ Resposta boa: `200` com `{"status":"ok",…,"supabaseRespondendo":true,`
   apagada. Gerar nova no painel da Asaas e trocar `ASAAS_API_KEY` **no
   Northflank**.
 
-**Alerta de queda (Lei 8) — dois monitores, um cobre o cego do outro.**
-Decisão do dono 14/09: um externo (pega queda total da plataforma) e um
-interno no Northflank (pega o resto, mais barato e robusto). O sinal já
-existe: `/api/saude` → `200 ok` / `503 degradado` / sem resposta.
+**Alerta de queda: o que existe hoje é o e-mail de falha da Asaas.**
+Decisão do dono em 17/09/2026, com a ressalva escrita de que **tráfego
+zero não dispara nada** — sistema parado sem cobrança e sem mexida na
+conta não gera aviso. O sinal técnico existe (`/api/saude` → `200 ok` /
+`503 degradado` / sem resposta); o que não existe é alguém escutando por
+conta própria. A tabela de "aviso → primeira ação" é a §6.3.
 
-**INTERNO — Northflank** (`app.northflank.com/s/account/integrations/notifications`):
-1. **Integração:** Create → Slack ou Discord → autorizar → escolher o
-   canal (push no celular). Em "handle events only from specific
-   projects", marcar `san-checkout`.
-2. **Infrastructure alerts:** na página de alertas da conta, ligar
-   container crashed / high CPU / high memory / volume low → roteadas
-   para a integração. Cobre app caído / OOM / deploy ruim, sem job.
-3. **Cron Job para o banco fora** (o `503`, que o infra alert não vê):
-   projeto `san-checkout` → aba Jobs → Create → Cron.
-   - schedule: `*/5 * * * *` · plano `nf-compute-10` · concurrency Forbid
-   - imagem: `curlimages/curl:latest`
-   - secret do job `ALERTA_WEBHOOK` = a URL do webhook do canal (Discord:
-     Server Settings → Integrations → Webhooks → New; Slack: app de
-     Incoming Webhooks)
-   - comando (Discord usa `content`, Slack usa `text`):
-     `sh -c 'curl -fsS -o /dev/null https://api.sancocore.com.br/api/saude || curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"San Checkout: /api/saude nao-2xx\"}" "$ALERTA_WEBHOOK"'`
-   - o `-f` faz o curl sair !=0 em HTTP ≥400 (o 503 dispara o POST). O job
-     sai 0 no caminho feliz, sem ruído.
+> **Esta seção trazia, até 17/09/2026, um tutorial de ~30 linhas para
+> montar dois monitores** (integração do Northflank + UptimeRobot), e
+> ele descrevia um plano de 14/09 que a decisão de 17/09 substituiu.
+> Plano superado dentro do manual de operação é pior que ausência: quem
+> lesse acharia que os monitores existem. A receita não foi jogada fora
+> — está em `docs/proximas-versoes.md`, pronta para o dia em que for
+> decidido montar.
 
-**EXTERNO — UptimeRobot** (trocar o cron-job.org que caiu):
-1. Conta grátis → Add New Monitor → HTTP(s) →
-   `https://api.sancocore.com.br/api/saude` → intervalo 5 min.
-2. Keyword monitor: alertar quando **faltar** `"status":"ok"` no corpo —
-   pega o 503, o degradado e o fora-do-ar de uma vez.
-3. Alert Contacts: e-mail + app UptimeRobot no celular (push), associados
-   ao monitor.
-
-**Ponto cego que sobra:** os dois juntos cobrem app/banco/deploy e queda
-total da plataforma. A detecção de "fila do webhook pausada" fica para
-quando houver tráfego real — hoje, volume zero, qualquer limiar de
-silêncio dá alarme falso (`docs/proximas-versoes.md`).
+**O ping externo de 10 minutos é o ponto mais incerto deste arquivo.** A
+§1 o lista como `cron-job.org`, e o tutorial removido acima dizia
+"trocar o cron-job.org **que caiu**". Uma das duas afirmações é falsa, e
+**daqui não é verificável**: o serviço é externo, não tem credencial
+neste ambiente e não deixa rastro no nosso lado. Quem sabe é o painel do
+cron-job.org — está na lista de `⬜` da §1.1. O que o ping faz, se
+estiver de pé, é manter o Supabase do plano gratuito acordado; a queda
+dele não derruba nada, só deixa a primeira requisição do dia lenta.
 
 ## 3. Publicar
 
-`git push` na `main` publica nos dois lugares, sozinho: Northflank
-(CI+CD do GitHub) e Cloudflare Pages.
+**O que publica é a `main`**, sozinha, nos dois lugares: Northflank
+(CI+CD do GitHub, branch `main`) e Cloudflare Pages (produção = `main`).
+Nenhuma outra branch vai para produção — empurrar uma branch de trabalho
+é seguro nesse sentido.
 
-**A porta é o CI verde, não uma pessoa.** Dois workflows:
-`testes` (`npm test`) e `Segurança` (dependências, segredos, análise
-estática).
+**Mas ninguém trabalha na `main`, e esta seção não ensinava o caminho
+até ela.** O fluxo real, do jeito que o histórico mostra (merges
+`(#15)`, `(#16)`, `(#17)`):
+
+```bash
+# 0. de onde você está partindo — antes de qualquer coisa
+git status              # árvore limpa? você está em qual branch?
+git fetch origin main   # a main local envelhece em silêncio
+git log --oneline -1 origin/main
+
+# 1. trabalhar numa branch própria, nunca direto na main
+git checkout -b <sua-branch>            # ou continuar na que já existe
+git add -A && git commit -m "<o quê>"
+git push -u origin <sua-branch>
+
+# 2. antes de pedir merge, rodar a mesma porta que o CI roda
+npm run check           # análise de sintaxe + as 32 suítes
+
+# 3. abrir o PR e mesclar (a porta é o CI verde — ver abaixo)
+#    https://github.com/sancompany/san_checkout/pulls
+```
+
+`npm run check` **é seguro rodar local**: o runner injeta valores falsos
+só para os módulos carregarem, e nenhuma suíte toca banco, rede ou
+relógio. Não precisa de `.env`.
+
+**A porta é o CI verde, não uma pessoa.** Dois workflows: `testes`
+(`npm test`) e `Segurança` (dependências, segredos, análise estática).
+Onde olhar se ficou verde:
+
+- **https://github.com/sancompany/san_checkout/actions** — é a única
+  forma pela web, e vale dizer: **o `gh` não está instalado** nesta
+  máquina, então não há comando de terminal para isso aqui.
+
+**Qual commit está no ar AGORA** — a pergunta que a §4 precisa
+responder antes de reverter qualquer coisa, e que `/api/saude` não
+responde (o payload não traz versão):
+
+```bash
+# o commit que o Northflank está servindo
+northflank get service --project san-checkout --service san-checkout -o json \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);d=(d.get('data') or d);print(d['deployment']['internal']['deployedSHA'])"
+
+# e ele é o mesmo que a main?
+git fetch origin main && git log --oneline -1 origin/main
+```
+
+> Sem isso, a §4 mandava `git revert <sha-ruim>` sem dizer de onde vem o
+> sha — e reverter por palpite é como se troca um bug por dois. Furo
+> achado pelo teste da pessoa número dois (§10) em 17/09/2026: ele
+> conseguiu dizer que o sistema estava no ar e **não** conseguiu dizer
+> qual versão estava no ar.
 
 **O cache de 4h em JS e CSS acabou** — o dono trocou o Browser Cache TTL
 da zona em 14/09/2026. Medido no mesmo dia:
@@ -193,9 +273,18 @@ O push republica os dois lados. Tempo: o CI leva ~15 s (testes) e ~35 s
 **Tempo total de volta ao ar: não medido** — medir na próxima reversão
 real e escrever aqui.
 
-**Nunca `git reset --force` na `main`.** Este repositório já perdeu
+**Nunca reescrever histórico na `main`.** Os dois comandos que destroem,
+pelo nome exato: **`git push --force`** (e `--force-with-lease`, que só é
+menos pior) e **`git reset --hard`**. Reverter é commit novo — `git
+revert` —, nunca apagar o commit ruim. Este repositório já perdeu
 trabalho uma vez por reescrita de histórico
 (`docs/erros/2026-09-11-filter-repo-apagou-trabalho-nao-commitado.md`).
+
+> Até 17/09/2026 esta linha proibia `git reset --force`, **que não
+> existe**: o `git reset` não tem essa bandeira. Proibição que nomeia
+> comando inexistente não protege de nada e deixa os dois de verdade
+> sem nome — achado pelo teste da pessoa número dois (§10), que foi
+> conferir o comando.
 
 **Rollback pelo painel do Northflank** (redeploy de um build anterior)
 existe como caminho alternativo e **não foi testado neste projeto**. Não
@@ -268,6 +357,13 @@ Conferir sem abrir o navegador — a resposta traz o destino aprovado ou
 curl -sS "https://api.sancocore.com.br/api/checkout/pedido/{contratante}/{pedido}?returnUrl=https%3A%2F%2Fwww.loja.com.br%2Fok"
 ```
 
+**De onde saem os dois ids** (com os nomes entre chaves, como estão
+acima, a resposta é `404` — e isso confunde quem tenta colar e rodar):
+`{contratante}` é o id cadastrado no painel `/admin` → Contratantes,
+coluna id; `{pedido}` é um id que **o próprio contratante gera** no
+sistema dele, então sai do lado dele — ou de uma linha de `cobrancas`
+que já exista. Sem um par real, este `curl` não tem como funcionar.
+
 **Nunca cadastrar um domínio que não seja do contratante.** É a única
 forma de este mecanismo virar open redirect, e a fronteira de confiança
 aqui é exatamente a mesma do `webhook_url`.
@@ -297,8 +393,14 @@ mora em `supabase/migrations/`, versionado e imutável (`CONSTRAINTS.md`
 # 1. os dados (COM dado real — só em ambiente confiável)
 node scripts/backup-dados.mjs dados.sql --com-dado-real
 
-# 2. schema, na ordem, pelo editor SQL do Supabase ou psql:
-#    supabase/migrations/0001 … 0006
+# 2. schema: TODAS as migrations, em ordem numérica, pelo editor SQL do
+#    Supabase ou psql. Não confie no número escrito aqui — liste o
+#    diretório:  ls supabase/migrations/
+#    (eram 6 quando esta receita foi escrita e são 9 desde 17/09/2026;
+#     restaurar até a 0006 dá um banco SEM a tabela de erros (0007), sem
+#     `confirmado_em` (0008) e sem `ambiente`/`e_teste` (0009) — o
+#     restore "daria certo" e estaria errado, que é o mesmo modo de
+#     falha contra o qual o ON_ERROR_STOP abaixo protege)
 # 3. carregar dados.sql com ON_ERROR_STOP ligado
 psql -v ON_ERROR_STOP=1 -f dados.sql "<conexão>"
 ```
@@ -358,6 +460,20 @@ Nesta ordem, da resposta mais rápida para a mais cara:
    traz o alerta de chave prestes a expirar.
 4. **Log do Northflank.** Retenção curta, e é o único lugar com 4xx e
    com o que aconteceu antes do erro. Último recurso, não o primeiro.
+   **Só pelo painel:** `app.northflank.com` → projeto `san-checkout` →
+   serviço `san-checkout` → aba Logs. **O CLI não tem comando de log** —
+   conferido em 17/09/2026: `northflank logs` não existe (cai no help
+   geral), e em `get`/`list` só há `log-sink`, que é o destino de
+   exportação, não a leitura. Escrevi aqui um `northflank logs …` antes
+   de conferir, e ele não roda; a correção é esta linha.
+
+> **Os dois primeiros passos exigem entrar no `/admin`, e isso trava
+> quem não tem a credencial.** O `/admin` está atrás do Cloudflare
+> Access (equipe `fancy-dawn-740a`) **e** de usuário e senha próprios —
+> e os dois estão em `⬜` na §1.1. Para quem não os tem, esta lista
+> começa no passo 3. É um limite real do estado atual, não do
+> procedimento: sem o acesso preenchido, a pessoa número dois diagnostica
+> com uma mão nas costas. Achado pelo teste do §10.
 
 **O que a aba Erros NÃO mostra, de propósito:** 4xx (validação recusada é
 o sistema funcionando), corpo da requisição, cabeçalho e a URL com
@@ -383,9 +499,28 @@ existe porque a ordem inversa quebra algo.
    https://api.sancocore.com.br/api/webhooks/asaas
    ```
 
-   **Plural em `webhooks`.** Conferido ao vivo em 17/09: o plural
-   responde 401 (guarda de token funcionando) e o singular responde
-   **404**. Errar isto significa nenhuma cobrança confirmada, sem aviso.
+   **Plural em `webhooks`.** Errar isto significa nenhuma cobrança
+   confirmada, sem aviso. E a conferência **só funciona com `POST`** —
+   medido ao vivo em 17/09/2026, as quatro combinações:
+
+   | caminho | GET | POST sem token |
+   |---|---|---|
+   | `/api/webhooks/asaas` (certo) | 404 | **401** — a guarda existe e recusou |
+   | `/api/webhook/asaas` (errado) | 404 | **404** — rota não existe |
+
+   Com `GET` os dois devolvem 404 e parecem iguais: quem conferir com um
+   `curl` comum vai achar que a URL certa está errada. O comando que
+   distingue:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+     -H 'content-type: application/json' --data '{}' \
+     https://api.sancocore.com.br/api/webhooks/asaas     # espera 401
+   ```
+
+   Esta linha dizia só "o plural responde 401 e o singular responde
+   404", sem o método — e foi o teste da pessoa número dois (§10) que
+   mostrou que, do jeito escrito, a conferência não distinguia nada.
 
 3. Definir um **token de autenticação** no webhook, e guardá-lo — ele vai
    para `ASAAS_WEBHOOK_TOKEN`. Sem token, o nosso receptor recusa tudo
@@ -571,9 +706,28 @@ sendo pagas e nenhuma confirmação chega.
 1. Conferir a aba **Webhook** do painel admin (eventos recebidos, e
    quantos ficaram `nao_tratado`).
 2. Conferir no painel da Asaas se a fila está pausada, e reativar.
-3. Conciliar o que passou: `API.md` §5.2 (pedido) e §5.3 (assinatura).
-   As duas rotas reconsultam a Asaas e corrigem o banco — enxergam
-   pagamento que o webhook perdeu.
+3. Conciliar o que passou. As duas rotas reconsultam a Asaas e corrigem
+   o banco — enxergam o pagamento que o webhook perdeu. Os comandos,
+   aqui mesmo, porque no incidente ninguém abre outro documento:
+
+   ```bash
+   # pedido avulso — GET (API.md §5.2)
+   curl -sS -H "X-Checkout-Key: <a chave DO CONTRATANTE>" \
+     "https://api.sancocore.com.br/api/checkout/cobranca/<contratanteId>/<pedidoId>"
+
+   # assinatura — POST com corpo, e NÃO GET (API.md §5.3): o documento
+   # identifica o assinante, e documento em caminho de URL vaza para log
+   # de acesso, histórico e referer
+   curl -sS -X POST -H "X-Checkout-Key: <a chave DO CONTRATANTE>" \
+     -H 'content-type: application/json' \
+     --data '{"planoId":"<planoId>","documento":"<só dígitos>"}' \
+     "https://api.sancocore.com.br/api/checkout/consultar-assinatura"
+   ```
+
+   A chave é a do contratante (painel `/admin` → Contratantes), não uma
+   credencial nossa — é a mesma que ele usa na integração, e ela já
+   identifica de quem é a cobrança. O formato da resposta e os campos que
+   ela corrige estão em `API.md` §5.2 e §5.3.
 
 **Contratante fora do ar não é mais problema nosso.** Desde 15/09/2026 o
 aviso ao contratante não segura a resposta à Asaas, e cada tentativa tem
@@ -654,20 +808,27 @@ incidente é perder o prazo. Está na lista de pré-lançamento da skill
 `references/obrigacoes-brasil.md` (LGPD art. 48; Resoluções CD/ANPD nº
 15/2024, nº 2/2022), lido na fonte em 17/09/2026 — não de memória.
 
-| o que | prazo | dobrado para pequeno porte |
-|---|---|---|
-| comunicar à **ANPD** | **3 dias úteis** do conhecimento | 6 dias úteis |
-| comunicar aos **titulares** | **3 dias úteis**, em linguagem simples e individualizada (e-mail serve) | 6 dias úteis |
-| **complementar** o que faltava | **20 dias úteis** | — |
-| confirmação e acesso ao titular, formato simplificado | **imediatamente** | — |
-| declaração completa ao titular | **15 dias** | 30 dias |
+**Estes são os prazos a cumprir** — um só por linha, de propósito:
 
-> **Usar a coluna do meio, não a dobrada** — até que a validação
-> jurídica da Estação 7 diga o contrário. O regime flexibilizado é
-> autoenquadramento de ME, EPP e startup, e este projeto está
-> **pessoa física, em transição** (`CONSTRAINTS.md` §3): assumir o dobro
-> e estar errado é perder prazo legal, e prazo perdido não volta.
-> Assumir o curto e estar errado não custa nada.
+| o que | prazo |
+|---|---|
+| comunicar à **ANPD** | **3 dias úteis** do conhecimento |
+| comunicar aos **titulares** | **3 dias úteis**, em linguagem simples e individualizada (e-mail serve) |
+| **complementar** o que faltava | **20 dias úteis** |
+| confirmação e acesso ao titular, formato simplificado | **imediatamente** |
+| declaração completa ao titular | **15 dias** |
+
+> **Existe um regime de prazo em dobro, e ele NÃO se aplica aqui até
+> alguém provar que se aplica.** A tabela acima tinha uma segunda coluna
+> com os prazos dobrados (6 dias úteis, 30 dias) e um aviso logo abaixo
+> mandando não usá-la — publicar um número que não se deve usar é como
+> o número errado acaba usado sob pressão, e por isso ele saiu da
+> tabela. O regime flexibilizado é autoenquadramento de ME, EPP e
+> startup; este projeto está **pessoa física, em transição**
+> (`CONSTRAINTS.md` §3). Assumir o dobro e estar errado é perder prazo
+> legal, e prazo perdido não volta; assumir o curto e estar errado não
+> custa nada. Quem muda isto é a validação jurídica da Estação 7, por
+> escrito.
 
 Se a comunicação individual ao titular for inviável, o substituto é
 aviso no site por **no mínimo três meses**.
@@ -699,7 +860,7 @@ que importa é a última.
 | **Cloudflare — Pages** | as telas do comprador | a API — contratante integrado por API sente menos | página não carrega | o link de cobrança fica inútil até voltar |
 | **Google Workspace** | `juridico@` e `suporte@` | o sistema | e-mail devolvido | **é canal legal do titular** (LGPD): indisponibilidade prolongada é problema de conformidade, não só de suporte |
 | **registro.br** | o domínio, e com ele tudo | nada | ninguém avisa — é o motivo da data em §1.1 | **31/08/2027**; renovar antes |
-| **cron-job.org** | o ping que mantém o Supabase acordado | tudo | primeira requisição do dia lenta | nada urgente |
+| **cron-job.org** | o ping que mantém o Supabase acordado | tudo | primeira requisição do dia lenta | nada urgente — e **não está confirmado que ele existe hoje**, ver §2 |
 | **GitHub** | publicar versão nova | o que está no ar | push falha | o ar não depende do GitHub depois do deploy |
 | **npm / registro de imagem** | o build | o que está no ar | build vermelho | não forçar deploy; o ar está bom |
 
@@ -719,6 +880,44 @@ explícita sobre como fechá-lo:** ela, com este arquivo e sem falar com
 quem construiu, faz um deploy trivial, reverte, e acha a data de
 vencimento do domínio. Onde ela travar, este arquivo está incompleto.
 Uma vez por semestre basta.
+
+### O teste já foi rodado uma vez, por um substituto — 17/09/2026
+
+Pessoa número dois não existe ainda, então o teste foi rodado por um
+**agente sem nenhum contexto desta sessão**, autorizado a ler **só este
+arquivo** e proibido de executar qualquer ação de escrita. Não é a mesma
+coisa que uma pessoa (ele não tem as credenciais, e a metade "publique
+de verdade" ficou fora), mas mede exatamente o que interessa: **o
+arquivo ensina, ou não?**
+
+O que ele conseguiu sozinho: dizer que o sistema está no ar e onde roda
+(conferindo de fora que a API não passa pelo Cloudflare e o front
+passa), e achar o vencimento do domínio — **31/08/2027**, pelo comando
+do §1.1, na primeira tentativa.
+
+O que ele **não** conseguiu, e virou correção neste arquivo no mesmo dia:
+
+| o que travou | onde estava o furo | como ficou |
+|---|---|---|
+| publicar uma mudança | §3 dizia "`git push` na `main`" e não existia caminho de uma branch de trabalho até a `main`, nem aviso de que o fluxo real é por PR | §3 tem o caminho inteiro, com `git fetch`, a branch, o `npm run check` e o PR |
+| saber **qual versão está no ar** | nenhuma seção respondia, e a §4 pedia `git revert <sha-ruim>` | §3 tem o comando do `deployedSHA`, conferido |
+| ver se o CI ficou verde | §3 chamava o CI de "a porta" e não dizia onde olhar; o `gh` não está instalado | §3 traz a URL do Actions e diz que não há comando local |
+| restaurar o banco | §6 mandava aplicar as migrations `0001 … 0006`; existem **nove** | §6 manda listar o diretório e explica o que faltaria |
+| auditar as variáveis | o comando "seguro" do §1.2 listava **10 de 11** e comia a `ASAAS_AMBIENTE` — a variável da troca para produção | §1.2 lê o JSON e devolve as 11 |
+| conferir a URL do webhook | §6.2 dizia "o plural dá 401, o singular 404" sem o método; com `GET` **os dois dão 404** | §6.2 tem a matriz dos quatro casos e o `POST` |
+| entender o alerta que existe | §2 ensinava a montar dois monitores (plano de 14/09) e a §6.3 dizia que não existe alerta (decisão de 17/09) | o tutorial saiu para `docs/proximas-versoes.md`; §2 diz o que existe |
+| — | §4 proibia `git reset --force`, **que não existe como comando** | §4 nomeia `git push --force` e `git reset --hard` |
+
+Quatro desses oito teriam **consequência real** se alguém os seguisse:
+as migrations, a lista de variáveis, a conferência do webhook e a
+reversão sem saber o sha. Nenhum deles aparecia na §12 ("o que este
+runbook ainda não tem") — o que é a lição do teste: **a lista de
+lacunas escrita por quem escreveu o arquivo não enxerga as lacunas que
+travam quem o lê**.
+
+Repetir o teste é barato, e a regra passa a ser: **depois de qualquer
+edição grande neste arquivo, rodar um leitor sem contexto** — pessoa,
+quando houver; agente, enquanto não houver.
 
 ## 11. Desligar tudo com segurança
 
@@ -782,4 +981,15 @@ O que falta de verdade:
   si, e ele tem gatilho escrito (`CONSTRAINTS.md` §3);
 - **monitor que avise quando a tarefa agendada não rodou**;
 - **tempo de volta ao ar medido numa reversão real** — §4 descreve o
-  caminho, e ninguém cronometrou.
+  caminho, e ninguém cronometrou;
+- **se o ping externo de 10 minutos existe** (§2): a §1 diz
+  `cron-job.org`, e um texto de 14/09 dizia que ele havia caído. Daqui
+  não é verificável; quem sabe é o painel.
+
+> **Esta lista não enxergava as duas lacunas que mais travavam quem
+> lê.** Até 17/09/2026 ela não mencionava que não havia caminho escrito
+> de publicação a partir de uma branch, nem forma de saber qual commit
+> está no ar — as duas foram achadas pelo leitor sem contexto do §10,
+> não por quem escreveu o arquivo, e as duas já estão cobertas na §3.
+> A lição fica: **lacuna listada pelo autor é a lacuna que o autor
+> conhece.** O resto sai do teste.

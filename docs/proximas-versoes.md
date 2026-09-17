@@ -297,6 +297,55 @@ para um problema que talvez nem exista mais.
 
 ---
 
+## Dois monitores de queda — a receita pronta, se a decisão mudar
+
+- **O quê** — um monitor externo (pega queda total da plataforma) e um
+  interno no Northflank (pega app caído, OOM, deploy ruim e o `503` do
+  banco fora). O sinal já existe: `/api/saude` → `200 ok` /
+  `503 degradado` / sem resposta.
+- **Por que está aqui, e não no `RUNBOOK`** — este texto era um plano de
+  14/09/2026 que a decisão de 17/09 substituiu: **o canal de alerta é o
+  e-mail de falha da Asaas**. O plano ficou ~30 linhas no `RUNBOOK` §2,
+  em modo "faça assim", como se os monitores existissem — e foi o teste
+  da pessoa número dois que apontou a contradição com a §6.3, que diz o
+  contrário. Plano superado dentro do manual de operação engana; aqui,
+  não.
+- **O que a decisão de 17/09 aceita como custo** — o e-mail da Asaas
+  depende de **algum evento acontecer**. Silêncio total (app fora do ar,
+  sem cobrança e sem mexida na conta) não gera aviso.
+- **Quando vale a pena** — quando houver tráfego real, porque aí o
+  silêncio passa a ser anormal e detectável.
+
+**A receita, como estava escrita e medida em 14/09:**
+
+*Interno — Northflank* (`app.northflank.com/s/account/integrations/notifications`):
+1. Integração: Create → Slack ou Discord → autorizar → escolher o canal
+   (push no celular). Em "handle events only from specific projects",
+   marcar `san-checkout`.
+2. Infrastructure alerts: ligar container crashed / high CPU / high
+   memory / volume low, roteadas para a integração.
+3. Cron Job para o banco fora (o `503`, que o infra alert não vê):
+   projeto `san-checkout` → Jobs → Create → Cron.
+   - schedule `*/5 * * * *` · plano `nf-compute-10` · concurrency Forbid
+   - imagem `curlimages/curl:latest`
+   - secret do job `ALERTA_WEBHOOK` = URL do webhook do canal
+   - comando (Discord usa `content`, Slack usa `text`):
+     `sh -c 'curl -fsS -o /dev/null https://api.sancocore.com.br/api/saude || curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"San Checkout: /api/saude nao-2xx\"}" "$ALERTA_WEBHOOK"'`
+   - o `-f` faz o curl sair !=0 em HTTP ≥400, então o `503` dispara o
+     POST; no caminho feliz o job sai 0, sem ruído.
+
+*Externo — UptimeRobot:* conta grátis → Add New Monitor → HTTP(s) →
+`https://api.sancocore.com.br/api/saude`, intervalo 5 min; **keyword
+monitor** alertando quando **faltar** `"status":"ok"` no corpo (pega
+503, degradado e fora-do-ar de uma vez); Alert Contacts com e-mail e o
+app no celular.
+
+**Ponto cego que sobraria mesmo com os dois:** "fila do webhook
+pausada". Hoje, com volume zero, qualquer limiar de silêncio dá alarme
+falso — ver a entrada própria neste arquivo.
+
+---
+
 ## Alerta de orçamento nas contas pagas
 
 - **O quê** — ligar o aviso de gasto em cada uma das três contas pagas
