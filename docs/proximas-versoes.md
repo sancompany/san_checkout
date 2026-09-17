@@ -358,7 +358,7 @@ para um problema que talvez nem exista mais.
   |---|---|---|---|---|
   | mensal R$ 160 | 100 × 15/30 = **50** | 160 × 15/30 = **80** | **R$ 30** | R$ 160, mensal |
   | trimestral R$ 270 (R$ 90/mês) | **50** | 270 × 15/90 = **45** | **nada** (−5) | R$ 270, trimestral |
-  | anual R$ 2.400 (R$ 200/mês) | **50** | 2400 × 15/365 = **98,63** | **R$ 48,63** | R$ 2.400, anual |
+  | anual R$ 2.400 (R$ 200/mês) | **50** | 2400 × 15/360 = **100,00** | **R$ 50,00** | R$ 2.400, anual |
 
   A linha do meio é o motivo de a fórmula ser essa: "diferença entre os
   planos" daria R$ 270 − R$ 100 = **R$ 170 cobrados por 15 dias** de um
@@ -379,8 +379,12 @@ para um problema que talvez nem exista mais.
   o valor novo no ciclo seguinte. É exatamente "espera o fim e cobra
   menos", sem código de proporcional e sem devolução.
 
-  **As sete decisões que a regra ainda não responde**, e nenhuma é
-  técnica:
+  **As sete decisões que a regra não respondia, e nenhuma era técnica.**
+  ⚠️ **As sete foram respondidas pelo dono em 17/09/2026**, e a resposta
+  de cada uma está escrita no cabeçalho de
+  `src/services/proporcionalService.js` — que é o código que faz a
+  conta, e por isso é a fonte, não esta lista. Ficam aqui porque a
+  pergunta explica a resposta:
 
   1. **Acerto abaixo do piso de R$ 5,00.** A Asaas recusa a cobrança
      (medido: `400 invalid_value`). Absorve e sobe só no vencimento?
@@ -396,6 +400,11 @@ para um problema que talvez nem exista mais.
   5. **Base de dias.** Mês comercial de 30 e ano de 365, ou os dias
      reais do calendário entre vencimentos? Muda centavos, e muda o que
      o cliente confere na mão.
+     → **Respondida em 17/09/2026: mês comercial de 30 dias**, e por
+     consequência ano de **360** (não 365 — 12 × 30). É por isso que a
+     linha do anual na tabela acima dá R$ 50,00 e não R$ 48,63: a
+     primeira versão desta tabela dividia por 365 e contradizia a
+     decisão. Quem manda é `src/services/proporcionalService.js`.
   6. **O acerto estornado.** Ele é pedido avulso: se for estornado ou
      contestado, a troca já aconteceu. Reverte o plano? Mantém?
   7. **Consentimento (CDC).** Upgrade pedido pelo assinante é
@@ -403,10 +412,13 @@ para um problema que talvez nem exista mais.
      caminho honesto é cancelar e assinar de novo, onde ele autoriza o
      valor novo ao pagar.
 
-  **Nada disso existe em código hoje** — nem o cálculo, nem a rota, nem a
-  cobrança do acerto amarrada à troca. A entrada continua aqui e não em
-  `docs/pendencias.md` porque o MostrAí segue pelo pedido avulso por
-  decisão de 16/09.
+  ⚠️ **Autorizado a construir NESTA versão, por decisão do dono em
+  17/09/2026** ("isso eu estou falando pra fazer nessa mesmo"), depois de
+  responder as sete. Esta entrada deixou de ser "próxima versão" —
+  enquanto estava sendo construída, o trabalho ficou em
+  `docs/pendencias.md`; construída, quem manda é `API.md` (a rota) e
+  `docs/funcional.md` (as regras). O que sobrar aqui é histórico de como
+  a decisão foi tomada, não descrição do sistema.
 
 - **As duas coreografias possíveis, agora que o `PUT` está medido.** A
   escolha é de produto, não técnica, e as duas exigem autorização

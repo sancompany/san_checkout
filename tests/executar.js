@@ -33,6 +33,7 @@ const SUITES = [
   'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
+  'src/services/proporcionalService.js', // o acerto da troca de plano: as sete regras do dono, em aritmética
   'src/services/expurgoService.js',  // expurgo de dado pessoal: lista branca do que fica, e o piso do prazo
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas

@@ -190,13 +190,21 @@ debito         = valor_do_plano_novo  × (dias_restantes ÷ dias_do_ciclo_novo)
 cobra_agora    = debito − credito     (se ≤ 0, não cobra nada)
 ```
 
+**Base de dias: mês comercial de 30 dias**, e por consequência ano de
+360 — decisão do dono do checkout em 17/09/2026. Semanal 7, quinzenal
+14, mensal 30, bimestral 60, trimestral 90, semestral 180, anual 360.
+
 Com 15 dias restantes de um mensal de R$ 100:
 
 | troca para | crédito | débito | cobra agora |
 |---|---|---|---|
 | mensal R$ 160 | 50,00 | 80,00 | **R$ 30,00** |
 | trimestral R$ 270 | 50,00 | 45,00 | **nada** (dá −5) |
-| anual R$ 2.400 | 50,00 | 98,63 | **R$ 48,63** |
+| anual R$ 2.400 | 50,00 | 100,00 | **R$ 50,00** |
+
+Esses três números saem do **mesmo código** que o checkout usa
+(`src/services/proporcionalService.js`), não de conta feita à mão — o
+autoteste dele trava os três.
 
 **A armadilha é a linha do meio.** "Diferença entre os planos" daria
 R$ 270 − R$ 100 = **R$ 170 por 15 dias** de um plano que custa R$ 90/mês.
