@@ -43,7 +43,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas na abertura. Estado em 16/09: main = `d793f2e` (PR #16 mesclado) e **é o commit ativo no Northflank**, migrations 0001-0006 aplicadas, árvore limpa |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 17/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, migrations 0001-0008 aplicadas, árvore limpa |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -271,6 +271,36 @@ Feito em 16/09:
   diferença como pedido comum. Registrado em `docs/proximas-versoes.md`
   com o que faltaria construir (o cálculo proporcional, que não existe
   em lugar nenhum do sistema, e o token carregando o plano de destino).
+
+Feito em 17/09, tudo no ar (`b57df2b`):
+- **Restauração ensaiada** (`npm run ensaio-restauracao`): Postgres da
+  mesma major da produção, migrations, dados, e comparação em cinco
+  níveis com o banco no ar. Zero divergência, **RTO 1 s**. É o primeiro
+  lugar que PROVA que as migrations descrevem o banco real — e já
+  acusou as 0007 e 0008 antes de aplicadas. Fecha metade da exceção da
+  Lei 6; falta a cópia periódica fora do provedor.
+- **Captura de exceção** (Lei 8), sem serviço externo: tabela `erros`
+  (0007), aba no painel. Agrega por impressão digital, senão rota
+  pública que dá 500 vira escrita ilimitada no banco.
+- **Métrica por dia civil de Brasília**: exigiu `confirmado_em` (0008),
+  que não existia — "confirmadas ontem" era inrespondível por falta de
+  dado, não de recorte. O processo roda em **UTC**, medido no contêiner.
+- **Acessibilidade WCAG 2.2 AA** (`npm run acessibilidade`): cinco
+  violações reais corrigidas; a causa raiz era paleta duplicada nas
+  páginas legais.
+- **Troca para produção preparada**: `API.md` §11.1 (nada de sandbox
+  atravessa), `RUNBOOK` §6.2, e `npm run limpar-teste`. A URL do webhook
+  é `/api/webhooks/asaas` **plural** — o singular dá 404, conferido.
+- **Pessoa física, em transição**: documentos legais reidentificados, v1
+  arquivada. Subconta é bloqueio da Asaas (conta PF no registro), virou
+  atualização futura — sem split, 100% na conta-mãe, exceção §3.
+
+> Três coisas quase passaram por prova nesta rodada, e a lição é a
+> mesma: **evidência sem controle não é evidência.** Um RPO falso no
+> RUNBOOK (media tráfego, não backup); um verificador de acessibilidade
+> reportando "0 violações" sobre a tela de *"Acesso não autorizado"*; e
+> um teste que só pegou a sabotagem depois de eu corrigir o próprio
+> teste. Todas caíram por controle positivo.
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
