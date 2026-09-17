@@ -45,15 +45,11 @@ import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import {
   documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido,
   normalizarDocumento,
-  valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
+  valorCobradoAceitavel, MENSAGEM_PISO_ASAAS,
+  parcelasValidas, MAXIMO_DE_PARCELAS_DO_CHECKOUT
 } from '../utils/validadores.js';
 import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
 import { responderErro } from '../utils/erros.js';
-
-function parcelasValidas(valor) {
-  const numero = Number(valor);
-  return Number.isInteger(numero) && numero >= 1 && numero <= 12;
-}
 
 /**
  * Os SETE ciclos que a Asaas aceita — o conjunto inteiro, não o pedaço
@@ -84,7 +80,9 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
-  if (!parcelasValidas(parcelas)) return resposta.status(400).json({ erro: 'Número de parcelas inválido (1 a 12).' });
+  if (!parcelasValidas(parcelas)) {
+    return resposta.status(400).json({ erro: `Número de parcelas inválido (1 a ${MAXIMO_DE_PARCELAS_DO_CHECKOUT}).` });
+  }
 
   // Antifraude da Asaas pra Cartão — ver nota no topo do arquivo.
   if (!endereco || !enderecoNumero || !bairro || !cep || !cidadeIbge) {
@@ -113,8 +111,9 @@ export async function criarCheckoutCartao(requisicao, resposta) {
        A conta mora em `taxaService.taxaComParcelasQueCabem`, junto da
        taxa, porque as duas se determinam uma à outra: a taxa depende da
        faixa de parcelas, e quantas parcelas cabem depende do valor com
-       taxa. Ofertar menos em vez de recusar — um pedido de R$ 24,00 é
-       uma venda que a Asaas faz em 4x sem reclamar. */
+       taxa. Ofertar menos em vez de recusar: um pedido de R$ 24,00
+       fecha em R$ 26,15 e sai em 5x de R$ 5,23 — uma venda que a Asaas
+       faz sem reclamar, e que recusar jogaria fora. */
     const { parcelas: parcelasOfertadas, taxa } = taxaComParcelasQueCabem(
       valorBase,
       numeroParcelas,

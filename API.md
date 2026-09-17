@@ -1603,7 +1603,8 @@ digitar o cartão.
 
 **O checkout não recusa por isso — ele oferta menos parcelas.** Se você
 manda `parcelas: 12` num pedido cuja parcela ficaria abaixo de R$ 5,00, a
-pop-up abre oferecendo o máximo que cabe (R$ 24,00 → 4x), e **a taxa
+pop-up abre oferecendo o máximo que cabe (R$ 24,00 fecha em R$ 26,15 e
+sai em 5x de R$ 5,23), e **a taxa
 cobrada é a da faixa das parcelas ofertadas, não a da faixa pedida** —
 senão o comprador pagaria a taxa de 7-12x podendo usar só 4x. Recusar a
 venda seria jogar fora um pagamento que a Asaas faz sem reclamar.

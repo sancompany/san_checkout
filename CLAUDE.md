@@ -331,6 +331,29 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   iniciada"; o mapa dizia 18 suítes; `docs/pendencias.md` pedia um ciclo
   de segurança que rodou em 14/09, e declarava uma regra de validação de
   telefone que a medição desmentiu.
+- **A skill `revisar` rodou pela primeira vez sobre este código** — era
+  pendência da Lei 0, e a entrada dela no `pendencias.md` era um título
+  sem corpo. Onze ciclos, parando no primeiro limpo. Achou dívida em dez
+  das onze voltas, e **dois bugs graves pré-existentes no caminho do
+  dinheiro**: o `documento` gravado cru fazia `552.085.198-01` e
+  `55208519801` virarem duas chaves para a mesma pessoa, deixando
+  assinatura incancelável pela API (RN-32); e o piso da Asaas é **por
+  parcela**, que a minha primeira medição não viu porque mediu só com
+  uma — R$ 24,00 em 12x é recusado, e a sessão da pop-up é aceita, então
+  a recusa só apareceria lá dentro com o cartão já digitado. A correção
+  oferta menos parcelas em vez de recusar a venda, e a tela corta a
+  lista com o número que o servidor manda.
+- **`seguranca-san` junto**, e ela fechou a lição nº 23: a lista de
+  rotas limitadas passou a ser conferida por teste contra a lista de
+  rotas montadas (33 rotas, 17 prefixos), em vez de a olho.
+- **Oito autotestes tinham contador de checagens chumbado**, três deles
+  mentindo — `validadores` dizia 40 e tinha 91, e `senhaAdmin` dizia 22
+  e tinha 20, superestimando. Todos passaram a contar.
+- **Os três estados novos do checkout foram auditados em navegador de
+  verdade** (`npm run acessibilidade`), com checagem de que o estado
+  ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
+  de item errado desde que foi escrito, então a linha de item nunca
+  havia sido exercitada.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
@@ -346,7 +369,7 @@ MostrAí retesta o lado dele em paralelo.
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
-- Testes: `tests/` — `npm test` roda as 28 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. A contagem vive em `tests/executar.js`; se esta linha divergir dele, ele é que manda
+- Testes: `tests/` — `npm test` roda as 30 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. A contagem vive em `tests/executar.js`; se esta linha divergir dele, ele é que manda
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

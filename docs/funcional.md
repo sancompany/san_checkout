@@ -583,10 +583,13 @@ porque a primeira medição tinha sido feita só com uma parcela. R$ 24,00
 em 12x dá R$ 2,00 por parcela e a Asaas recusa a cobrança; mas a
 **sessão** da pop-up é aceita, então sem correção a recusa só apareceria
 lá dentro, com o cartão já digitado. A correção **não recusa a venda:
-oferta menos parcelas** (R$ 24,00 → até 4x), e a taxa cobrada passa a ser
-a da faixa ofertada, não a da pedida — capar depois da taxa seria pior
-que não capar, porque o comprador pagaria a faixa de 7-12x podendo usar
-só 4x. `taxaService.taxaComParcelasQueCabem`, `API.md` §9.1.
+oferta menos parcelas** (R$ 24,00 fecha em R$ 26,15 e sai em até 5x de
+R$ 5,23), e a taxa cobrada passa a ser a da faixa ofertada, não a da
+pedida — capar depois da taxa seria pior que não capar, porque o
+comprador pagaria a faixa de 7-12x podendo usar só 5x. E a **tela
+também corta a lista**, com o número que o servidor manda
+(`maxParcelas`): sem isso ele escolheria 12x aqui e veria 5x na pop-up.
+`taxaService.taxaComParcelasQueCabem`, `API.md` §9.1.
 
 **RN-29 · O telefone é recusado pela regra MEDIDA da Asaas, não pela
 suposta.** `docs/pendencias.md` dizia que a Asaas recusa "número de

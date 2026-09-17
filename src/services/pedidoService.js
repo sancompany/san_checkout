@@ -250,11 +250,11 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('pedidoService.js')) {
   const { strict: assertReal } = await import('node:assert');
-  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
-     estava errado — acrescentar assertiva não mexia nele. Contador
-     chumbado é documento falso barato de produzir e caro de notar, e em
-     17/09/2026 oito autotestes deste repositório tinham um. O proxy
-     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
   let checagens = 0;
   const assert = new Proxy(assertReal, {
     get(alvo, nome) {

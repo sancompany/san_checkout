@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 import { criarObterPedido, obterPedido } from '../src/controllers/pedidoController.js';
 import { criarObterPlano, obterPlano } from '../src/controllers/planoController.js';
-import { PISO_ASAAS } from '../src/utils/validadores.js';
+import { PISO_ASAAS, MAXIMO_DE_PARCELAS_DO_CHECKOUT } from '../src/utils/validadores.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
@@ -104,6 +104,34 @@ try {
   const piso = await pegar('/pedido/c1/2.49');
   igual(piso.corpo.taxa.valorCobrado, 5, 'controle: este pedido fecha em R$ 5,00 cravado');
   ok(piso.corpo.bloqueio === undefined, 'R$ 5,00 exato passa — é o valor que a Asaas aceitou');
+
+  /* QUANTAS PARCELAS A TELA PODE OFERECER.
+
+     O piso vale POR PARCELA, e a tela oferecia 1x a 12x fixo. Num pedido
+     de R$ 24,00 o comprador escolhia 12x aqui e a pop-up abria com
+     menos — duas telas discordando sobre a mesma compra. Quem decide é o
+     servidor, e ele manda o número. */
+  const parcelavel = await pegar('/pedido/c1/1000');
+  igual(parcelavel.corpo.maxParcelas, 12, 'pedido caro pode oferecer as 12 parcelas');
+
+  const poucoParcelavel = await pegar('/pedido/c1/24');
+  ok(
+    poucoParcelavel.corpo.maxParcelas < 12 && poucoParcelavel.corpo.maxParcelas >= 1,
+    `pedido de R$ 24,00 oferece menos que 12 (ofereceu ${poucoParcelavel.corpo.maxParcelas})`
+  );
+  ok(
+    poucoParcelavel.corpo.taxa.valorCobrado / poucoParcelavel.corpo.maxParcelas >= PISO_ASAAS,
+    'e nenhuma parcela ofertada fica abaixo do piso'
+  );
+  ok(
+    poucoParcelavel.corpo.taxa.valorCobrado / (poucoParcelavel.corpo.maxParcelas + 1) < PISO_ASAAS,
+    'nem sobra parcela: uma a mais já cairia abaixo do piso — o corte é o MÁXIMO que cabe, não um número tímido'
+  );
+
+  /* Pedido bloqueado pelo piso do total não anuncia parcelamento
+     nenhum — o `taxa` existe, mas a compra não acontece. */
+  ok(barato.corpo.maxParcelas === 1 || barato.corpo.maxParcelas === undefined,
+    'pedido abaixo do piso não oferece parcelamento');
 
   /* PLANO. Assinatura não leva taxa nossa: o piso bate direto no valor
      do plano. */
@@ -178,6 +206,47 @@ ok(
 );
 
 /* ------------------------------------------------------------------
+   3.1 O QUE VAI PARA A POP-UP É O NÚMERO CAPADO, NÃO O PEDIDO
+
+   A pop-up recebe `installment.maxInstallmentCount`, e é ele que limita
+   o que o comprador pode escolher lá dentro. Mandar o número PEDIDO
+   desfaz a correção inteira em silêncio: a tela mostra 5x, a pop-up
+   oferece 12x, e a Asaas recusa no fim. Nenhuma suíte exercita esta
+   rota (ela exige Supabase e Asaas no ar), então o que se trava é a
+   fonte — e o controle positivo garante que a varredura leu a função
+   certa, em vez de não achar nada e passar calada.
+------------------------------------------------------------------ */
+
+{
+  const fonte = readFileSync(join(DIR_CONTROLLERS, 'asaasCheckoutController.js'), 'utf8');
+  const inicio = fonte.indexOf('export async function criarCheckoutCartao');
+  const fim = fonte.indexOf('export async function', inicio + 10);
+  const corpo = fonte.slice(inicio, fim === -1 ? undefined : fim);
+
+  ok(inicio !== -1 && corpo.length > 500, 'controle positivo: a varredura achou o corpo de criarCheckoutCartao');
+  ok(corpo.includes('taxaComParcelasQueCabem('), 'o cartão capa as parcelas pelo piso por parcela');
+
+  /* Fatia depois do FECHO da chamada, não do começo: `numeroParcelas` é
+     legitimamente o argumento dela. A primeira versão desta assertiva
+     cortava do começo e reprovava o código correto — corrigida antes de
+     confiar nela. */
+  const abertura = corpo.indexOf('taxaComParcelasQueCabem(');
+  const depoisDoCap = corpo.slice(corpo.indexOf(');', abertura) + 2);
+  ok(
+    abertura !== -1 && depoisDoCap.length > 200,
+    'controle positivo: há corpo depois da chamada para varrer'
+  );
+  ok(
+    !/\bnumeroParcelas\b/.test(depoisDoCap),
+    'depois de capar, `numeroParcelas` (o número PEDIDO) não é mais usado — mandá-lo à pop-up desfaz a correção em silêncio'
+  );
+  ok(
+    /maxInstallmentCount:\s*parcelasOfertadas/.test(corpo),
+    'e o que vai em maxInstallmentCount é o número ofertado'
+  );
+}
+
+/* ------------------------------------------------------------------
    4. O FRONT HONRA O BLOQUEIO, e não reescreve o número do piso
 ------------------------------------------------------------------ */
 
@@ -185,6 +254,56 @@ const TELAS = [
   ['public/js/modules/pedidoHandler.js', 'bloqueio?.mensagem'],
   ['public/js/modules/assinaturaHandler.js', 'bloqueio?.mensagem']
 ];
+
+/* E a tela CORTA a lista com o número que o servidor mandou, em vez de
+   confiar nas opções escritas no HTML. */
+{
+  const fonte = readFileSync(join(RAIZ, 'public/js/modules/pedidoHandler.js'), 'utf8');
+
+  /* A CHAMADA, não a definição. `includes('cortarParcelas(maxParcelas)')`
+     casava `function cortarParcelas(maxParcelas) {` — então apagar a
+     chamada e deixar a função morta passava no teste. É a mesma
+     armadilha do teste de impressão digital de 16/09: exercitar o nome
+     em vez do caminho. Pego por sabotagem. */
+  ok(
+    /^\s+cortarParcelas\(maxParcelas\);\s*$/m.test(fonte),
+    'o resumo CHAMA cortarParcelas com o máximo do servidor (não só declara a função)'
+  );
+  ok(
+    /opcao\.remove\(\)/.test(fonte) && !/appendChild|new Option|innerHTML\s*=/.test(fonte.slice(fonte.indexOf('function cortarParcelas'), fonte.indexOf('function aplicarNoResumo'))),
+    'e só REMOVE opções, nunca acrescenta — o HTML é o teto e o servidor só aperta'
+  );
+}
+
+/* A TERCEIRA CÓPIA DO TETO: o `<select>` do HTML.
+
+   O número tem um dono (`MAXIMO_DE_PARCELAS_DO_CHECKOUT`), mas markup
+   não importa constante — a lista continua escrita à mão. Como o front
+   só REMOVE opções, uma lista mais CURTA que o teto é um limite que o
+   servidor nunca alcança: subir o teto para 18 e esquecer o HTML deixaria
+   o comprador preso em 12 sem erro nenhum. E uma lista mais longa
+   ofereceria o que o backend recusa com 400.
+
+   O comentário no HTML admite essa cópia; este teste é o que impede que
+   ela divirja calada. */
+{
+  const html = readFileSync(join(RAIZ, 'public/index.html'), 'utf8');
+  const bloco = html.slice(html.indexOf('id="cartao-parcelas"'));
+  const fimDoSelect = bloco.indexOf('</select>');
+  ok(fimDoSelect > 0, 'controle positivo: o `<select>` de parcelas existe e foi encontrado');
+
+  const valores = [...bloco.slice(0, fimDoSelect).matchAll(/<option value="(\d+)"/g)].map((m) => Number(m[1]));
+  ok(valores.length > 1, `controle positivo: a lista tem opções para conferir (achou ${valores.length})`);
+  igual(Math.min(...valores), 1, 'a lista começa em 1x');
+  igual(
+    Math.max(...valores), MAXIMO_DE_PARCELAS_DO_CHECKOUT,
+    'e termina exatamente no teto do checkout — lista mais curta prende o comprador, mais longa oferece o que o backend recusa'
+  );
+  igual(
+    valores, Array.from({ length: MAXIMO_DE_PARCELAS_DO_CHECKOUT }, (_, i) => i + 1),
+    'e não tem buraco nem repetição no meio'
+  );
+}
 for (const [caminho, trecho] of TELAS) {
   const fonte = readFileSync(join(RAIZ, caminho), 'utf8');
   ok(fonte.includes(trecho), `${caminho} lê a mensagem de bloqueio que o servidor manda`);

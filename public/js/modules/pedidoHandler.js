@@ -85,7 +85,36 @@ function marcarPedidoIndisponivel(mensagem) {
   document.querySelector('.checkout-panel--form')?.classList.add('hidden');
 }
 
-function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio }) {
+/* A LISTA DE PARCELAS É CORTADA PELO SERVIDOR.
+
+   O provedor tem um piso de valor POR PARCELA, e o backend manda em
+   `maxParcelas` quantas cabem neste pedido — o número do piso mora só lá
+   (`utils/validadores.js`), e não é repetido aqui nem em comentário:
+   número duplicado envelhece, e a suíte do piso recusa a duplicação de
+   propósito.
+
+   Sem cortar, o comprador de um pedido barato escolhe 12x nesta tela e a
+   pop-up da Asaas abre oferecendo menos — duas telas discordando sobre a
+   mesma compra, na hora de digitar o cartão.
+
+   Só REMOVE opções, nunca acrescenta: o `<select>` do HTML é o teto (12,
+   que é o limite da nossa própria regra), e o servidor só pode apertar.
+   Se `maxParcelas` não vier — cliente antigo, resposta sem o campo — a
+   lista fica como está e o comportamento é o de antes. */
+function cortarParcelas(maxParcelas) {
+  const seletor = document.getElementById('cartao-parcelas');
+  const maximo = Number(maxParcelas);
+  if (!seletor || !Number.isFinite(maximo) || maximo < 1) return;
+
+  for (const opcao of [...seletor.options]) {
+    if (Number(opcao.value) > maximo) opcao.remove();
+  }
+  // Se a seleção corrente foi removida, o navegador cai na primeira —
+  // mas deixar explícito evita depender disso.
+  if (!seletor.value) seletor.selectedIndex = 0;
+}
+
+function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio, maxParcelas }) {
   /* BLOQUEIO DECIDIDO NO SERVIDOR.
 
      Quem sabe o piso da Asaas é o backend, e ele manda a frase pronta.
@@ -166,6 +195,8 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio }) {
   if (!Number.isFinite(total) || total <= 0) {
     throw new Error('Não foi possível calcular o valor desta compra. Recarregue a página ou peça um link novo ao vendedor.');
   }
+
+  cortarParcelas(maxParcelas);
 
   const taxasTotais = Number(taxa.taxasTotais ?? 0);
 

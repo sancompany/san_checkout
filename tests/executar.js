@@ -45,7 +45,8 @@ const SUITES = [
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
   'tests/pull-nao-segue-para-onde-quiser.js', // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
   'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
-  'tests/documento-e-uma-chave-so.js' // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
+  'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
+  'tests/toda-rota-publica-tem-teto.js' // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
 ];
 
 /**

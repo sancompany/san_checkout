@@ -6,8 +6,11 @@
  */
 
 import { resolverPedido } from '../services/pedidoService.js';
-import { calcularTaxa } from '../services/taxaService.js';
-import { valorValido, valorCobradoAceitavel, MENSAGEM_PISO_ASAAS } from '../utils/validadores.js';
+import { calcularTaxa, taxaComParcelasQueCabem } from '../services/taxaService.js';
+import {
+  valorValido, valorCobradoAceitavel, MENSAGEM_PISO_ASAAS,
+  MAXIMO_DE_PARCELAS_DO_CHECKOUT
+} from '../utils/validadores.js';
 import { retornoSeguro } from '../utils/retornoSeguro.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -68,6 +71,23 @@ export function criarObterPedido({ resolverPedido: resolver = resolverPedido } =
         ? { codigo: 'valor_abaixo_do_piso', mensagem: MENSAGEM_PISO_ASAAS }
         : null;
 
+      /* QUANTAS PARCELAS A TELA PODE OFERECER.
+
+         O piso de R$ 5,00 da Asaas vale POR PARCELA (`API.md` §9.1), e o
+         backend já capa o que manda para a pop-up. Sem dizer isso à
+         tela, o comprador de um pedido de R$ 24,00 escolhe 12x aqui, a
+         pop-up abre oferecendo 5x, e ele vê duas telas discordando sobre
+         a compra que está fazendo — o tipo de coisa que faz desistir na
+         hora de digitar o cartão.
+
+         Quem decide é AQUI, como em todo o resto: a tela recebe o número
+         e corta a lista. Calcular no front exigiria a tabela de taxas no
+         navegador, que é a mesma razão pela qual o total não é calculado
+         lá (RN-03). */
+      const maxParcelas = taxa
+        ? taxaComParcelasQueCabem(valorBase, MAXIMO_DE_PARCELAS_DO_CHECKOUT, Boolean(pedido.isentarTaxa)).parcelas
+        : null;
+
       /* Quem decide o destino de volta é AQUI, não o navegador.
 
          O front manda o `returnUrl` cru que veio na barra de endereço e
@@ -88,6 +108,7 @@ export function criarObterPedido({ resolverPedido: resolver = resolverPedido } =
         pedido,
         taxa,
         retornoUrl,
+        ...(maxParcelas ? { maxParcelas } : {}),
         ...(bloqueio ? { bloqueio } : {})
       });
     } catch (erro) {

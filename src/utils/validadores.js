@@ -223,10 +223,32 @@ export function valorCobradoAceitavel(valorCobrado) {
  *
  * Por isso a correção NÃO é recusar: é ofertar menos parcelas. Recusar
  * um pedido de R$ 24,00 porque alguém pediu 12x seria perder uma venda
- * que a Asaas faria em 4x sem reclamar — e recusar o que o provedor
- * aceita é a falha que este arquivo evita em `nomeValido` e
- * `telefoneValido` pelo mesmo motivo.
+ * que a Asaas faz em 5x (R$ 26,15 com taxa, parcela de R$ 5,23 —
+ * conferido) sem reclamar. Recusar o que o provedor aceita é a falha
+ * que este arquivo evita em `nomeValido` e `telefoneValido` pelo mesmo
+ * motivo.
  */
+/**
+ * O teto de parcelas do CHECKOUT — regra nossa, não da Asaas.
+ *
+ * Ele morava em três lugares: no validador de entrada do cartão
+ * (`parcelasValidas`), na lista do `public/index.html`, e no cálculo de
+ * `maxParcelas` no `pedidoController`. Três cópias de um número é uma
+ * cópia a mais do que dá para manter em acordo — e o modo de falhar é
+ * silencioso: a tela oferece 12, o backend aceita 10, e ninguém percebe
+ * até alguém escolher 11.
+ *
+ * O HTML continua listando as opções (é markup, não pode importar
+ * daqui), mas quem MANDA é este número: o servidor devolve `maxParcelas`
+ * e a tela corta a lista. Se os dois discordarem, o servidor ganha.
+ */
+export const MAXIMO_DE_PARCELAS_DO_CHECKOUT = 12;
+
+export function parcelasValidas(valor) {
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero >= 1 && numero <= MAXIMO_DE_PARCELAS_DO_CHECKOUT;
+}
+
 export function maximoDeParcelas(valorCobrado) {
   const numero = Number(valorCobrado);
   if (!Number.isFinite(numero) || numero <= 0) return 1;
@@ -321,11 +343,21 @@ export { TETOS as TETOS_DE_CAMPO };
 if (process.argv[1]?.endsWith('validadores.js')) {
   const assertReal = (await import('node:assert/strict')).default;
 
-  /* O número de checagens era CHUMBADO no `console.log` do fim — e já
-     estava errado: acrescentar assertivas não mexia nele. Contador
-     chumbado é documento falso barato de produzir e caro de notar, então
-     ele passou a contar. O proxy existe para não precisar reescrever as
-     dezenas de chamadas `assert.ok(...)` que já estavam aqui. */
+  /* CONTADOR DE VERDADE — a explicação canônica, e os outros autotestes
+     apontam para cá.
+
+     O número de checagens era CHUMBADO no `console.log` do fim, e
+     acrescentar assertiva não mexia nele. Em 17/09/2026 oito autotestes
+     deste repositório tinham um, e três mentiam: este dizia 40 e tinha
+     91, `taxaService` dizia 13 e tinha 28, e `senhaAdmin` dizia 22 e
+     tinha 20 — este último SUPERESTIMANDO, que é a direção pior, porque
+     anuncia cobertura que não existe.
+
+     Contador chumbado é documento falso barato de produzir e caro de
+     notar: ninguém confere um número num log verde. O proxy existe para
+     contar sem reescrever as dezenas de chamadas `assert.ok(...)` que já
+     estavam aqui — reescrever todas seria um diff grande por um ganho
+     que a envolvente dá de graça. */
   let checagens = 0;
   const assert = new Proxy(assertReal, {
     get(alvo, nome) {
@@ -436,7 +468,12 @@ if (process.argv[1]?.endsWith('validadores.js')) {
      `maximoDeParcelas`). A regra é "nenhuma parcela abaixo de R$ 5,00",
      e o efeito é ofertar menos parcelas, nunca recusar a venda. */
   assert.equal(maximoDeParcelas(60), 12, 'R$ 60,00 cabem 12x de R$ 5,00 — foi o caso aceito na medição');
-  assert.equal(maximoDeParcelas(24), 4, 'R$ 24,00 cabem 4x, não as 12 pedidas (12x daria R$ 2,00 e a Asaas recusou)');
+  /* ATENÇÃO À UNIDADE: o argumento é o valor COBRADO, não o do pedido.
+     R$ 24,00 cobrados cabem 4x. Um PEDIDO de R$ 24,00 é outra conta —
+     fecha em R$ 26,15 com taxa e sai em 5x —, e quem a faz é
+     `taxaService.taxaComParcelasQueCabem`. Confundir as duas unidades é
+     fácil, e é por isso que o rótulo diz qual é. */
+  assert.equal(maximoDeParcelas(24), 4, 'R$ 24,00 COBRADOS cabem 4x (12x daria R$ 2,00, e a Asaas recusou isso na medição)');
   assert.equal(maximoDeParcelas(10), 2, 'R$ 10,00 cabem 2x');
   assert.equal(maximoDeParcelas(59.99), 11, 'um centavo abaixo de 60 cai para 11x');
   assert.equal(maximoDeParcelas(5), 1, 'no piso, só à vista');
@@ -444,7 +481,22 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.equal(maximoDeParcelas(0), 1, 'zero devolve 1, nunca 0 (0 parcela não existe)');
   assert.equal(maximoDeParcelas(null), 1, 'nulo idem');
   assert.equal(maximoDeParcelas('abc'), 1, 'texto idem');
-  assert.ok(maximoDeParcelas(1e9) > 12, 'valor alto não é limitado por esta função — o teto de 12 é regra nossa');
+  assert.ok(
+    maximoDeParcelas(1e9) > MAXIMO_DE_PARCELAS_DO_CHECKOUT,
+    'valor alto não é limitado por esta função — o teto de parcelas é regra nossa, e mora em MAXIMO_DE_PARCELAS_DO_CHECKOUT'
+  );
+
+  /* O teto do checkout, e o validador que o usa. Os dois moravam no
+     controlador, e o número estava escrito em três lugares. */
+  assert.equal(MAXIMO_DE_PARCELAS_DO_CHECKOUT, 12, 'o teto de parcelas do checkout é 12');
+  assert.ok(parcelasValidas(1), '1 parcela passa');
+  assert.ok(parcelasValidas(MAXIMO_DE_PARCELAS_DO_CHECKOUT), 'o teto passa');
+  assert.ok(!parcelasValidas(MAXIMO_DE_PARCELAS_DO_CHECKOUT + 1), 'uma acima do teto recusa');
+  assert.ok(!parcelasValidas(0), 'zero recusa');
+  assert.ok(!parcelasValidas(-1), 'negativo recusa');
+  assert.ok(!parcelasValidas(1.5), 'fracionário recusa');
+  assert.ok(!parcelasValidas('abc'), 'texto recusa');
+  assert.ok(!parcelasValidas(null), 'nulo recusa');
 
   /* A fronteira, em centavos: R$ 15,00 dão 3x exatas; R$ 14,99 não. */
   assert.equal(maximoDeParcelas(15), 3, 'R$ 15,00 dão 3x de R$ 5,00 cravados');

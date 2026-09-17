@@ -473,7 +473,55 @@ no ramo de não mapeado. É desenho, não descuido: a aba Webhook os mostra,
 e o primeiro payload real decide o tratamento. Entrada em
 `docs/proximas-versoes.md`.
 
-### Lei 0 · a skill `revisar` nunca rodou sobre produção
+### 🟢 Lei 0 · a skill `revisar` rodou — 11 ciclos, 17/09
+Esta entrada era um TÍTULO SEM CORPO: dizia que a skill nunca havia
+rodado e não dizia mais nada. Rodou em 17/09, lida na fonte (o plugin
+não carrega nesta sessão — `ListPlugins` vazio —, então o repositório
+`Plugin_san-co` foi clonado e a skill lida de lá, como o `CLAUDE.md`
+manda).
+
+**Onze ciclos completos**, cada um com as quatro varreduras (correção,
+segurança, simplicidade, legibilidade), parando no primeiro ciclo limpo
+— que é o critério da skill, não um número de voltas. O que cada volta
+achou:
+
+| ciclo | achados |
+|---|---|
+| 1 | expurgo lendo sem paginação (OOM e truncamento silencioso); corte de 29/02 transbordando e apagando um dia cedo; bloco duplicado no `server.js`; import duplo num teste |
+| 2 | **`documento` eram duas chaves para a mesma pessoa** — assinatura incancelável (RN-32); laço de paginação sem freio; contador de checagens chumbado |
+| 3 | `adminController` com cópia própria da normalização; contrato do webhook não dizia que o documento sai em dígitos |
+| 4 | comentário repetido literal em 6 lugares; script de expurgo cuspindo pilha para documento mal digitado |
+| 5 | **o piso da Asaas é POR PARCELA** e eu havia medido só com uma (RN-28 ampliada); oito autotestes com contador chumbado, três deles mentindo |
+| 6 | comentário do contador repetido em 10 arquivos |
+| 7 | a tela oferecia 12x num pedido que só cabe 5x; dois comentários falsos no `index.html`; número errado em 5 documentos |
+| 8 | o teto de 12 parcelas morando em três lugares |
+| 9 | a terceira cópia do teto (o `<select>`) podia divergir calada |
+| 10 | terceiro comentário falso; último `?? 0` de dinheiro no front |
+| 11 | **limpo** — o alarme do gitleaks foi investigado e é artefato de branch local nunca empurrada (conferido simulando o checkout do CI: 57 commits, zero vazamento) |
+
+**A honestidade que a skill pede:** achado apareceu em dez das onze
+voltas, e o teto de escalada dela manda dizer isso. Mas o padrão não é o
+que aquele teto descreve — não foi a MESMA área devolvendo achado sem
+parar, foi um código que nunca tinha passado por revisão nenhuma
+devolvendo dívida acumulada em áreas diferentes. Os dois achados graves
+(ciclos 2 e 5) eram bugs PRÉ-EXISTENTES no caminho do dinheiro, não
+defeitos do desenho novo. O desenho aguentou as onze voltas.
+
+**`seguranca-san` rodou junto**, e acrescentou duas coisas: travou que a
+`cause` do erro (que passou a carregar texto do contratante) nunca entra
+no diagnóstico, e escreveu o teste da **lição nº 23** — a lista de rotas
+limitadas conferida contra a lista de rotas montadas, que vinha sendo
+feita a olho: 33 rotas, 17 prefixos, 5 sabotagens pegas. A primeira
+versão dessa varredura acusou quatro rotas de Pix/Boleto que estão
+CERTAS (montam o limitador por rota), e foi a varredura que se
+corrigiu — guarda que acusa o que está certo é desligado na primeira vez
+que atrapalha.
+
+**Um achado fica declarado e NÃO corrigido, de propósito:** o import de
+`randomBytes` no `adminController.js` está morto, e já estava antes desta
+mudança. A skill manda não refatorar código vizinho que não faz parte do
+problema — misturar os dois trava o merge.
+
 
 ### 🟢 Lei 0 · cobertura de teste nas rotas HTTP — FECHADO 17/09
 Era: nenhuma suíte subia o Express, e o roteiro de login por token

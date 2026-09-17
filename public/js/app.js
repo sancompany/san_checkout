@@ -34,8 +34,25 @@ async function copiarCampo(idCampo, rotulo) {
   }
 }
 
+/* Valor que não dá para formatar vira travessão, NUNCA "R$ 0,00" — a
+   mesma regra de `status.js`, pelo mesmo motivo (`?? 0` transforma "não
+   sei" em "é zero", e zero num preço lê como grátis).
+
+   Os dois usos daqui são o valor do plano, e ele já é barrado antes em
+   `assinaturaHandler.resolverAssinatura` — então isto não corrige um
+   bug ativo, fecha uma armadilha: a função é genérica, e o próximo uso
+   dela pode não ter guarda nenhuma acima. */
 function formatarMoeda(valor) {
-  return Number(valor ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return null;
+  return numero.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** `formatarMoeda` com o travessão já resolvido, para quem só quer
+ *  escrever na tela. */
+function moedaOuTravessao(valor) {
+  const formatado = formatarMoeda(valor);
+  return formatado === null ? '—' : formatado;
 }
 
 function preencherCamposPagador(pagador) {
@@ -434,8 +451,8 @@ async function iniciarModoAssinatura() {
 
   document.getElementById('order-category').textContent = 'Assinatura';
   document.getElementById('order-title').textContent = plano.nome ?? 'Plano';
-  document.getElementById('order-subtotal').textContent = `R$ ${formatarMoeda(plano.valor)}`;
-  document.getElementById('order-amount').textContent = formatarMoeda(plano.valor);
+  document.getElementById('order-subtotal').textContent = `R$ ${moedaOuTravessao(plano.valor)}`;
+  document.getElementById('order-amount').textContent = moedaOuTravessao(plano.valor);
   document.getElementById('order-desconto').textContent = 'R$ 0,00';
   document.getElementById('order-taxa').textContent = 'R$ 0,00';
 

@@ -167,7 +167,8 @@ export function metodoCartaoPorParcelas(parcelas) {
  *
  * A Asaas recusa PARCELA abaixo de R$ 5,00, não só total (medido em
  * 17/09/2026 — ver `maximoDeParcelas` em `utils/validadores.js`). Então
- * um pedido de R$ 24,00 pedido em 12x precisa ser ofertado em 4x.
+ * um pedido de R$ 24,00 pedido em 12x fecha em R$ 26,15 com taxa e
+ * precisa ser ofertado em 5x (parcela de R$ 5,23).
  *
  * Mas a taxa depende da FAIXA de parcelas (à vista 2,99%, 2-6x 3,49%,
  * 7-12x 3,99%), e o valor cobrado depende da taxa. Baixar as parcelas
@@ -236,11 +237,11 @@ export function calcularTaxa(valorBase, metodo, parcelas = 1, isentarTaxa = fals
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('taxaService.js')) {
   const { strict: assertReal } = await import('node:assert');
-  /* O número de checagens era CHUMBADO no `console.log` do fim, e já
-     estava errado — acrescentar assertiva não mexia nele. Contador
-     chumbado é documento falso barato de produzir e caro de notar, e em
-     17/09/2026 oito autotestes deste repositório tinham um. O proxy
-     conta sem precisar reescrever as chamadas que já estavam aqui. */
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
   let checagens = 0;
   const assert = new Proxy(assertReal, {
     get(alvo, nome) {
