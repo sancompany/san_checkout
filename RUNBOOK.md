@@ -319,12 +319,28 @@ existe porque a ordem inversa quebra algo.
    de cada grupo está em `CONSTRAINTS.md` §2.2, e a lista para conferir
    item a item está no fim desta seção.
 
-### Passo 2 — desativar o webhook do SANDBOX
+### Passo 2 — desativar TODO webhook que não é o novo
 
-No painel de sandbox, desativar (ou apagar) o webhook atual. Se ficar
-ligado, ele passa a acumular 401 — e depois de 15 falhas seguidas a
-Asaas **pausa a fila** daquela conta (§2.3). Não afeta produção, mas
-deixa o sandbox inutilizável para o próximo teste.
+No painel, desativar (ou apagar) o webhook de sandbox e **qualquer
+endereço de hospedagem antiga que ainda esteja cadastrado**. Se ficar
+ligado, ele passa a acumular falha — e depois de 15 seguidas a Asaas
+**pausa a fila** daquela conta (§2.3).
+
+**Isto já aconteceu, e não foi hipótese.** Em 17/09/2026 a URL do Render
+— hospedagem que o projeto deixou de usar — ainda estava configurada, e
+a mudança de registro da conta de PJ para PF disparou um evento do grupo
+"Situação da conta" que tentou ser entregue lá. Falhou, e a Asaas mandou
+o e-mail de penalidade.
+
+Duas lições que valem para a troca:
+
+1. **Configuração de webhook sobrevive a troca de hospedagem**, e nada
+   no código sabe disso. É a mesma classe do "identificador preso ao
+   ambiente" do `API.md` §11.1: o que quebra está fora do repositório.
+2. **Não são só eventos de pagamento que disparam entrega.** O grupo
+   "Situação da conta" tem 18 eventos marcados e dispara sozinho quando
+   algo muda na conta — então um endereço morto acumula falha mesmo com
+   tráfego zero de cobrança.
 
 ### Passo 3 — limpar os registros de teste
 

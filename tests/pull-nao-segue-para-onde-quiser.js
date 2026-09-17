@@ -32,7 +32,7 @@
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,6 +42,7 @@ import {
   TETO_CORPO_BYTES,
   MAXIMO_DE_SALTOS
 } from '../src/utils/puxarDoContratante.js';
+import { arquivosJs } from './ajudantes.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
@@ -221,15 +222,6 @@ try {
    que passa numa revisão de diff grande.
 ------------------------------------------------------------------ */
 
-function arquivosJs(diretorio) {
-  const achados = [];
-  for (const nome of readdirSync(diretorio)) {
-    const caminho = join(diretorio, nome);
-    if (statSync(caminho).isDirectory()) achados.push(...arquivosJs(caminho));
-    else if (nome.endsWith('.js')) achados.push(caminho);
-  }
-  return achados;
-}
 
 const infratores = [];
 let chamadores = 0;

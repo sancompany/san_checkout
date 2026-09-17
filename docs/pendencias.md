@@ -347,13 +347,18 @@ para o estado atual (um operador, sem dinheiro real). **Mas dois não são
   a URL antiga do Render, que não é mais usada —, o que é a evidência de
   que o canal funciona de verdade e chega nele.
 
-  **A ressalva, para o documento não mentir:** este alerta só dispara
-  quando existe evento de pagamento. Com tráfego zero, que é o estado de
-  hoje, uma queda passa silenciosa até alguém tentar pagar. Com tráfego
-  real ele cobre o caso que importa (app fora = webhook falha = e-mail),
-  e ainda cobre a fila pausada, que era a outra metade do item. Aceito
-  como está: um monitor externo seria detecção mais cedo, não detecção
-  onde hoje não existe nenhuma.
+  **A ressalva, corrigida pelo dono no mesmo dia** — eu havia escrito que
+  o alerta "só dispara quando existe evento de pagamento", e isso é
+  falso. O e-mail que ele recebeu veio de uma mudança de **situação da
+  conta** (o registro passando de PJ para PF), sem pagamento nenhum no
+  meio: o grupo "Situação da conta" tem 18 eventos marcados (§2.2), e
+  eles disparam sozinhos quando algo muda na conta.
+
+  O que fica de ressalva verdadeira é mais estreito: o e-mail depende de
+  **algum evento acontecer**. Silêncio total — app fora do ar sem
+  pagamento e sem mexida na conta — não gera aviso. Aceito como está: um
+  monitor externo seria detecção mais cedo, não detecção onde hoje não
+  existe nenhuma.
 - **Backup com restauração testada (Lei 6) — metade feita, metade virou
   versão futura.** A restauração foi ENSAIADA em 17/09
   (`npm run ensaio-restauracao`, RTO 1 s, zero divergência). A cópia
@@ -461,10 +466,26 @@ a URL velha do Render), então o canal está provado ponta a ponta sem
 nada para configurar — e ele cobre também a fila pausada, que a entrada
 antiga tratava como item separado e adiado.
 
-**A ressalva fica registrada:** o e-mail só existe quando existe evento
-de pagamento. Tráfego zero, alerta zero. Não é o mesmo que um monitor
-batendo de minuto em minuto; é o que existe, funciona, e chega no
-celular de quem opera.
+**A evidência, e o que ela prova de verdade.** O e-mail que chegou foi
+disparado pela mudança de registro da conta de **PJ para PF** — a
+entrega foi tentada na URL velha do Render, falhou, e a Asaas avisou.
+Isso prova duas coisas de uma vez: o canal chega no celular do dono, e
+ele **não depende de tráfego de pagamento** — o grupo "Situação da
+conta" (18 eventos marcados, §2.2) dispara sozinho.
+
+**A ressalva verdadeira, mais estreita do que a que eu escrevi
+primeiro:** o aviso depende de *algum* evento acontecer. Silêncio total
+— nada de pagamento e nada mudando na conta — não gera aviso. Não é o
+mesmo que um monitor batendo de minuto em minuto; é o que existe,
+funciona, e chega em quem opera.
+
+**E um efeito colateral que vale registrar:** a penalidade veio porque a
+URL velha do Render ainda estava configurada no painel da Asaas. Isso é
+a mesma classe do "identificador preso ao ambiente" do `API.md` §11.1 —
+configuração de webhook que sobrevive a uma troca de hospedagem gera
+falha silenciosa até alguém ler o e-mail. Na troca para produção
+(`RUNBOOK` §6.2), desativar o webhook antigo é passo, não faxina
+posterior.
 
 ### Lei 8 · eventos que chegam e só entram no log
 `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e os
@@ -506,6 +527,44 @@ parar, foi um código que nunca tinha passado por revisão nenhuma
 devolvendo dívida acumulada em áreas diferentes. Os dois achados graves
 (ciclos 2 e 5) eram bugs PRÉ-EXISTENTES no caminho do dinheiro, não
 defeitos do desenho novo. O desenho aguentou as onze voltas.
+
+**SEGUNDA RODADA no mesmo dia, a pedido do dono** — porque o que foi
+escrito durante os ciclos 6 a 11 e depois deles (a suíte de rotas, o
+teste da `cause`, os estados novos da acessibilidade, as correções de
+documento) nunca tinha passado por ciclo nenhum. Nove voltas, parando
+limpa. O que ela achou:
+
+| ciclo | achados |
+|---|---|
+| 1 | uma assertiva `ok(true, …)` que NÃO PODE FALHAR, escrita por mim como preenchimento; dublês copiando à mão a mensagem do piso e o `maxParcelas` |
+| 2 | controle positivo fraco: exigia "achou algum teto" em vez do número exato, então perder dois blocos passaria calado; a tabela de skills precisava se declarar índice, não regra |
+| 3 | o `2.49` do teste de fronteira é preso à tabela de taxa e não avisava; expressão repetida no ponto fixo |
+| 4 | **o ponto fixo podia devolver `parcelas` de uma faixa com a `taxa` de outra** ao sair pelo teto de voltas; o comentário do teto era chute meu — duas vezes; a varredura de propriedade usava 14 bases escolhidas à mão e não pegava nenhum dos 1.260 casos que uma volta quebra |
+| 5 | a varredura da válvula de teste olhava só `src/controllers/`, quando a função pode ser chamada de qualquer lugar do `src/` |
+| 6 | três suítes com cópia própria do andador de diretório — e a cópia nova **não descia subdiretório**, então aprovava o que não olhava |
+| 7 | só um dos três caminhos de saída tinha guarda de execução para o `signal`, e é justamente o que recebe de fora |
+| 8 | o `CLAUDE.md` mentia a contagem de suítes **pela terceira vez no dia**; ferramenta de uso manual em `tests/` tratada como suíte esquecida; cabeçalho do mock apontando para pasta que nunca existiu |
+| 9 | **limpo** |
+
+O achado do ciclo 4 é o que justifica a rodada inteira: para decidir o
+teto de voltas do ponto fixo eu varri cada centavo de R$ 0,01 a
+R$ 2.000,00 × 12 parcelas × isento e não isento, quatro vezes (4,8
+milhões de casos por teto). Uma volta erra em 1.260 casos; duas acertam
+mas só pela rede de segurança; três convergem sozinhas; quatro não muda
+nada. O comentário que estava lá dizia "folga" e depois "o exato
+necessário" — os dois errados, os dois meus.
+
+E duas coisas que só a sabotagem mostrou: a bandeira de convergência era
+sempre `true` (logo, não verificava nada) e a rede de segurança era
+inalcançável — as duas viraram testáveis expondo o teto de voltas como
+parâmetro, com varredura garantindo que nenhum chamador de produção o
+usa.
+
+O ciclo 8 fechou o problema que eu vinha tratando à mão: a contagem de
+suítes no `CLAUDE.md` errou três vezes em um dia. Agora existe
+`tests/o-que-os-documentos-afirmam.js`, que confere contra a realidade o
+que os documentos AFIRMAM em número — contagem de suítes, tabela de
+skills, e se cada caminho citado existe.
 
 **`seguranca-san` rodou junto**, e acrescentou duas coisas: travou que a
 `cause` do erro (que passou a carregar texto do contratante) nunca entra

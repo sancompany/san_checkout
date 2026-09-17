@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { criarObterPedido, obterPedido } from '../src/controllers/pedidoController.js';
 import { criarObterPlano, obterPlano } from '../src/controllers/planoController.js';
 import { PISO_ASAAS, MAXIMO_DE_PARCELAS_DO_CHECKOUT } from '../src/utils/validadores.js';
+import { arquivosJs, argumentosDe } from './ajudantes.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
@@ -100,7 +101,13 @@ try {
 
   /* A fronteira exata. Um pedido cujo total dá exatamente R$ 5,00 tem
      de PASSAR — foi o controle positivo da medição na Asaas. Sem esta
-     checagem, trocar `>=` por `>` no validador passaria despercebido. */
+     checagem, trocar `>=` por `>` no validador passaria despercebido.
+
+     ⚠️ O `2.49` é preso à TABELA DE TAXA: é a base que, com a taxa de
+     hoje, fecha em R$ 5,00 cravados. Mudando a taxa, esta checagem
+     falha — e falhar é o comportamento certo, porque a fronteira deixou
+     de ser exercitada. Ao ver este teste vermelho depois de mexer em
+     taxa: recalcule a base, não apague a checagem. */
   const piso = await pegar('/pedido/c1/2.49');
   igual(piso.corpo.taxa.valorCobrado, 5, 'controle: este pedido fecha em R$ 5,00 cravado');
   ok(piso.corpo.bloqueio === undefined, 'R$ 5,00 exato passa — é o valor que a Asaas aceitou');
@@ -244,6 +251,46 @@ ok(
     /maxInstallmentCount:\s*parcelasOfertadas/.test(corpo),
     'e o que vai em maxInstallmentCount é o número ofertado'
   );
+}
+
+/* ------------------------------------------------------------------
+   3.2 NENHUM CHAMADOR DE PRODUÇÃO BAIXA O TETO DO PONTO FIXO
+
+   `taxaComParcelasQueCabem` ganhou um quarto parâmetro — o teto de
+   voltas — porque sem ele o autoteste não alcançava nem a bandeira de
+   convergência nem a rede de segurança (as duas sabotagens passavam).
+   É válvula de teste, e válvula de teste usada em produção é a guarda
+   virando decoração: com o teto em 2 o resultado continua certo e o
+   laço para de convergir, em silêncio.
+------------------------------------------------------------------ */
+
+{
+  /* O `src/` INTEIRO, não só os controladores: a função é exportada de
+     um serviço e pode ser chamada de qualquer lugar. Varredura com
+     alcance menor que o risco é a que aprova o que ela não olhou — e a
+     primeira versão desta seção olhava uma pasta só. */
+  let chamadores = 0;
+  const infratores = [];
+  for (const caminho of arquivosJs(join(RAIZ, 'src'))) {
+    const arquivo = caminho.slice(RAIZ.length + 1);
+    const fonte = readFileSync(caminho, 'utf8');
+    // A própria declaração não é chamada.
+    if (fonte.includes('export function taxaComParcelasQueCabem')) continue;
+    const NOME = 'taxaComParcelasQueCabem(';
+    for (let i = fonte.indexOf(NOME); i !== -1; i = fonte.indexOf(NOME, i + 1)) {
+      chamadores += 1;
+      const quantos = argumentosDe(fonte, i + NOME.length - 1);
+      // Três é o uso normal (base, parcelas, isenção); o quarto é o teto.
+      if (quantos > 3 || quantos === -1) {
+        infratores.push(`${arquivo}: chamada com ${quantos} argumentos`);
+      }
+    }
+  }
+  ok(chamadores >= 1, `controle positivo: a varredura achou chamadores (achou ${chamadores})`);
+  igual(infratores, [], 'nenhum controlador passa o teto de voltas — ele é válvula do autoteste');
+
+  /* O contador tem autoteste próprio em `tests/ajudantes.js`, com a
+     armadilha de parênteses que o gerou. Não se repete aqui. */
 }
 
 /* ------------------------------------------------------------------

@@ -34,6 +34,14 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
+/* As duas coisas que este dublê NÃO copia à mão, e não pode copiar: a
+   frase do piso e quantas parcelas cabem. Copiadas, elas viram a mentira
+   do dia seguinte — o número muda no código e o dublê continua afirmando
+   o antigo, com a auditoria verde por cima. Importar do dono é o que faz
+   o dublê acompanhar sozinho. */
+import { MENSAGEM_PISO_ASAAS } from '../src/utils/validadores.js';
+import { taxaComParcelasQueCabem } from '../src/services/taxaService.js';
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLICO = join(RAIZ, 'public');
 
@@ -88,10 +96,7 @@ const PEDIDO_ABAIXO_DO_PISO = {
   pedido: { ...PEDIDO_DUBLE.pedido, valorCheio: 2, valorComDesconto: 2 },
   taxa: { taxaAsaas: 1.99, taxaPropria: 0.52, taxasTotais: 2.51, valorCobrado: 4.51 },
   maxParcelas: 1,
-  bloqueio: {
-    codigo: 'valor_abaixo_do_piso',
-    mensagem: 'O valor mínimo para pagamento é de R$ 5,00. Este link está abaixo disso — peça um link novo ao vendedor.'
-  }
+  bloqueio: { codigo: 'valor_abaixo_do_piso', mensagem: MENSAGEM_PISO_ASAAS }
 };
 
 /** Item sem preço: mostra travessão, nunca "R$ 0,00" — zero numa linha
@@ -107,13 +112,32 @@ const PEDIDO_COM_ITEM_SEM_PRECO = {
   }
 };
 
-/** Pedido barato, mas pagável: a lista de parcelas tem de encurtar. */
+/** Pedido barato, mas pagável: a lista de parcelas tem de encurtar.
+ *  A taxa e o `maxParcelas` vêm da MESMA função que o servidor usa — não
+ *  de números que eu escrevi aqui olhando o resultado de uma vez. */
+const BASE_POUCO_PARCELAVEL = 24;
+const CABEM = taxaComParcelasQueCabem(BASE_POUCO_PARCELAVEL, 12, false);
 const PEDIDO_POUCO_PARCELAVEL = {
   ...PEDIDO_DUBLE,
-  pedido: { ...PEDIDO_DUBLE.pedido, valorCheio: 24, valorComDesconto: 24 },
-  taxa: { taxaAsaas: 1.99, taxaPropria: 0.72, taxasTotais: 2.71, valorCobrado: 26.15 },
-  maxParcelas: 5
+  pedido: {
+    ...PEDIDO_DUBLE.pedido,
+    valorCheio: BASE_POUCO_PARCELAVEL,
+    valorComDesconto: BASE_POUCO_PARCELAVEL
+  },
+  taxa: CABEM.taxa,
+  maxParcelas: CABEM.parcelas
 };
+
+/* E o dublê só serve se o cenário for o que se quer testar: se um dia a
+   taxa mudar de tal forma que R$ 24,00 passe a caber em 12x, este estado
+   deixa de exercitar o corte — e passaria verde sem testar nada. */
+if (CABEM.parcelas >= 12) {
+  console.error(
+    `A base de R$ ${BASE_POUCO_PARCELAVEL},00 passou a caber em ${CABEM.parcelas}x: ` +
+    'o estado "lista cortada" deixou de exercitar o corte. Baixe a base.'
+  );
+  process.exit(1);
+}
 
 /* A tela de ASSINATURA é outra tela, e carrega por outro endpoint
    (`/api/checkout/plano/:c/:id`, parâmetro `?assinatura=`). Sem ela a

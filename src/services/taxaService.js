@@ -6,7 +6,7 @@
  * Asaas Checkout entrar na próxima leva.
  */
 
-import { maximoDeParcelas } from '../utils/validadores.js';
+import { maximoDeParcelas, PISO_ASAAS } from '../utils/validadores.js';
 
 const TAXA_PERCENTUAL_PROPRIA = Number(process.env.TAXA_PERCENTUAL ?? 0.9) / 100;
 const TAXA_FIXA_PROPRIA = Number(process.env.TAXA_FIXA ?? 0.5);
@@ -177,26 +177,95 @@ export function metodoCartaoPorParcelas(parcelas) {
  * o comprador pagaria a taxa da faixa de 12x e só poderia usar 4x.
  *
  * O ponto fixo é decrescente (menos parcelas → faixa menor ou igual) e
- * o piso de uma parcela o encerra. Três voltas são folga sobre as três
- * faixas que existem.
+ * o piso de uma parcela o encerra.
  *
- * @returns {{ parcelas: number, taxa: object, capado: boolean }}
+ * O TETO DE TRÊS VOLTAS É MEDIDO, e aqui já esteve escrito "folga" e
+ * depois "o exato necessário" — os dois chutes meus, os dois errados.
+ * Varrendo cada centavo de R$ 0,01 a R$ 2.000,00 × 12 parcelas × isento
+ * e não isento (4,8 milhões de casos por teto, em 17/09/2026):
+ *
+ *   | teto | viola o piso | sai pela contagem |
+ *   |------|--------------|-------------------|
+ *   |   1  |  1.260 casos |      73.733       |
+ *   |   2  |       0      |       1.260       |
+ *   |   3  |       0      |         0         |
+ *   |   4  |       0      |         0         |
+ *
+ * Lidas juntas, as linhas dizem três coisas. **Uma volta erra**: base
+ * R$ 8,41 pedida em 10x ofertaria 2x de R$ 4,885, abaixo do piso. **Duas
+ * voltas acertam, mas só por causa do recálculo final** — 1.260 casos
+ * terminam batendo no teto em vez de convergir. **Três é onde o laço
+ * converge sozinho**, e quatro não muda nada: é o ponto fixo do próprio
+ * teto.
+ *
+ * Por isso o número é 3 e não 2: depender da rede de segurança para
+ * estar correto é diferente de tê-la para o caso de o desenho mudar. O
+ * autoteste exige CONVERGÊNCIA, não só resultado certo — baixar este
+ * número deixa a suíte vermelha mesmo sem produzir valor errado.
+ *
+ * O `voltasMaximas` existe SÓ PARA O AUTOTESTE, e por um motivo que a
+ * sabotagem provou: com o teto real de 3, nenhuma entrada sai pela
+ * contagem — então `convergiu` nunca é `false` e a rede de segurança
+ * nunca é exercitada. Uma bandeira que é sempre `true` não verifica
+ * nada, e uma guarda que nada alcança não tem prova. Baixando o teto, o
+ * teste alcança os dois. Nenhum chamador de produção passa este
+ * parâmetro, e a suíte varre o `src/` para garantir.
+ *
+ * @returns {{ parcelas: number, taxa: object, capado: boolean, convergiu: boolean }}
  *          `parcelas` é quantas OFERTAR (≤ as pedidas), `taxa` é a da
  *          faixa dessas parcelas, e `capado` diz se houve corte — quem
  *          chama pode querer contar isso.
  */
-export function taxaComParcelasQueCabem(valorBase, parcelasPedidas, isentarTaxa = false) {
-  let parcelas = Math.max(1, Number(parcelasPedidas) || 1);
-  let taxa;
+export const VOLTAS_DO_PONTO_FIXO = 3;
 
-  for (let volta = 0; volta < 3; volta += 1) {
+export function taxaComParcelasQueCabem(valorBase, parcelasPedidas, isentarTaxa = false, voltasMaximas = VOLTAS_DO_PONTO_FIXO) {
+  // Uma vez, não duas: `capado` comparava contra a mesma expressão
+  // recalculada, e duas cópias de uma conta é uma que um dia divergirá.
+  const pedidas = Math.max(1, Number(parcelasPedidas) || 1);
+  let parcelas = pedidas;
+  let taxa;
+  /* `false` significa que o laço acabou pelo teto de voltas em vez de
+     convergir. Sai no retorno porque é o que o autoteste exige que
+     NUNCA aconteça — sem expor isto, baixar o teto de voltas continuaria
+     produzindo resultado certo (pela rede de segurança abaixo) e
+     passaria por prova. */
+  let convergiu = false;
+
+  for (let volta = 0; volta < voltasMaximas; volta += 1) {
     taxa = calcularTaxa(valorBase, metodoCartaoPorParcelas(parcelas), parcelas, isentarTaxa);
     const cabem = maximoDeParcelas(taxa.valorCobrado);
-    if (cabem >= parcelas) break;
+    if (cabem >= parcelas) { convergiu = true; break; }
     parcelas = cabem;
   }
 
-  return { parcelas, taxa, capado: parcelas < Math.max(1, Number(parcelasPedidas) || 1) };
+  /* A INVARIANTE, garantida por construção e não por raciocínio.
+
+     O laço tem duas saídas: convergência (`break`) e contagem. Saindo
+     pela contagem, `parcelas` já foi baixado mas `taxa` continua sendo a
+     da volta anterior — e devolver as duas coisas juntas significa
+     cobrar a taxa de uma faixa acima da que o comprador pode usar, que é
+     exatamente o erro que capar antes da taxa existe para evitar.
+
+     COM O TETO DE 3, NENHUMA ENTRADA DE HOJE CHEGA AQUI — medido: zero
+     saídas pela contagem em 4,8 milhões de casos. Então remover este
+     recálculo não deixa nenhum teste vermelho hoje, e ele fica mesmo
+     assim, por uma razão concreta e não por precaução vaga: é ele que
+     torna o teto de 2 CORRETO (a linha do meio da tabela acima). Ou
+     seja, ele é o que faz a escolha do teto deixar de ser crítica.
+
+     O par trabalha junto: se um dia entrar uma quarta faixa na tabela de
+     taxa, o laço pode parar de convergir em três voltas — o autoteste
+     fica vermelho avisando para subir o teto, e ENQUANTO ISSO o
+     resultado continua certo por causa desta linha. Vermelho e correto
+     ao mesmo tempo é melhor que vermelho e errado.
+
+     Guarda não exercitada e declarada é dívida honesta; não declarada é
+     a que alguém apaga achando que é código morto. */
+  const taxaDaFaixaFinal = calcularTaxa(
+    valorBase, metodoCartaoPorParcelas(parcelas), parcelas, isentarTaxa
+  );
+
+  return { parcelas, taxa: taxaDaFaixaFinal, capado: parcelas < pedidas, convergiu };
 }
 
 function arredondar(valor) {
@@ -334,6 +403,103 @@ if (process.argv[1]?.endsWith('taxaService.js')) {
     assert.equal(taxaComParcelasQueCabem(1, 12).parcelas, 1, 'valor mínimo cai para 1 parcela, não para 0');
     assert.equal(taxaComParcelasQueCabem(100, 1).parcelas, 1, 'quem pede 1 parcela recebe 1');
     assert.equal(taxaComParcelasQueCabem(100, 0).parcelas, 1, 'pedido de 0 parcelas vira 1');
+
+    /* A INVARIANTE, varrida em vez de argumentada: para TODA combinação
+       de base e parcelas pedidas, a taxa devolvida tem de ser a da faixa
+       das parcelas DEVOLVIDAS. Se o laço sair pela contagem em vez da
+       convergência, isto pega — e pegaria também alguém acrescentando
+       uma faixa na tabela, que é o caso em que o meu argumento sobre
+       "três voltas bastam" deixaria de valer sem quebrar nada visível. */
+    /* VARREDURA DENSA, e não uma lista de bases escrita à mão.
+
+       A primeira versão desta varredura usava catorze bases escolhidas
+       por mim, e ela aprovou uma sabotagem que reduzia o laço a UMA
+       volta — porque nenhuma das catorze exercitava o caminho de mais de
+       uma volta. Varrendo de centavo em centavo, 1.260 casos violam o
+       piso nessa sabotagem; a minha lista não continha nenhum deles.
+       Escolher casos à mão é escolher também o que não se testa.
+
+       O passo de 7 centavos é primo em relação às faixas da taxa, então
+       não sincroniza com nenhuma fronteira e cobre os três caminhos de
+       volta — conferido pelos contadores no fim. */
+    const violacoes = [];
+    let combinacoes = 0;
+    const voltasVistas = new Set();
+
+    for (let centavos = 1; centavos <= 30000; centavos += 7) {
+      const base = centavos / 100;
+      for (const pedidas of [1, 2, 5, 6, 7, 11, 12]) {
+        for (const isenta of [false, true]) {
+          const r = taxaComParcelasQueCabem(base, pedidas, isenta);
+          combinacoes += 1;
+
+          const daFaixa = calcularTaxa(
+            base, metodoCartaoPorParcelas(r.parcelas), r.parcelas, isenta
+          ).valorCobrado;
+
+          if (r.taxa.valorCobrado !== daFaixa) {
+            violacoes.push(`base ${base}, pedidas ${pedidas}: taxa não é a da faixa de ${r.parcelas}x`);
+          } else if (r.parcelas < 1 || r.parcelas > Math.max(1, pedidas)) {
+            violacoes.push(`base ${base}, pedidas ${pedidas}: ofertou ${r.parcelas}x`);
+          } else if (r.parcelas > 1 && r.taxa.valorCobrado / r.parcelas < PISO_ASAAS) {
+            violacoes.push(
+              `base ${base}, pedidas ${pedidas}: ${r.parcelas}x de ` +
+              `R$ ${(r.taxa.valorCobrado / r.parcelas).toFixed(2)}, abaixo do piso`
+            );
+          }
+
+          /* A INVARIANTE MAIS FORTE: convergir, não sobreviver. Com o
+             teto em 2 o resultado continua certo (a rede de segurança
+             cobre), então sem esta checagem baixar o teto passaria por
+             prova — e passaria escondendo que o laço deixou de fechar
+             sozinho. Medido: 1.260 casos saem pela contagem com teto 2. */
+          if (!r.convergiu) {
+            violacoes.push(`base ${base}, pedidas ${pedidas}: o laço acabou pelo teto de voltas, sem convergir`);
+          }
+
+          // Quantos desfechos diferentes a varredura tocou.
+          if (r.capado) voltasVistas.add(r.parcelas === 1 ? 'ate-1' : 'intermediaria');
+          else voltasVistas.add('convergiu-direto');
+        }
+      }
+    }
+
+    assert.deepEqual(violacoes.slice(0, 5), [], `${violacoes.length} violação(ões); as 5 primeiras acima`);
+
+    /* CONTROLE POSITIVO DA BANDEIRA `convergiu`.
+
+       Sem isto, trocar `let convergiu = false` por `= true` passava por
+       prova — pego por sabotagem. A bandeira só significa algo se
+       existir um caso em que ela é `false`, e com o teto real de 3
+       nenhum caso é. Baixando o teto para 1, 1.260 casos param de
+       convergir (medido), e a base R$ 8,41 é um deles. */
+    const comTetoDeUmaVolta = taxaComParcelasQueCabem(8.41, 10, false, 1);
+    assert.equal(comTetoDeUmaVolta.convergiu, false, 'com uma volta só, a base R$ 8,41 NÃO converge');
+    assert.equal(
+      taxaComParcelasQueCabem(8.41, 10, false).convergiu, true,
+      'controle negativo: com o teto real de 3, a mesma base converge'
+    );
+    assert.equal(VOLTAS_DO_PONTO_FIXO, 3, 'o teto medido é 3 — ver a tabela no comentário da função');
+
+    /* CONTROLE POSITIVO DA REDE DE SEGURANÇA (o recálculo final).
+
+       Ela é inalcançável com o teto de 3, então removê-la também passava
+       por prova. Com o teto baixado, o laço sai pela contagem — e é aí
+       que se vê se a taxa devolvida é a da faixa das parcelas
+       devolvidas, ou a da volta anterior. */
+    for (const teto of [1, 2]) {
+      const r = taxaComParcelasQueCabem(8.41, 10, false, teto);
+      assert.equal(
+        r.taxa.valorCobrado,
+        calcularTaxa(8.41, metodoCartaoPorParcelas(r.parcelas), r.parcelas, false).valorCobrado,
+        `saindo pela contagem (teto ${teto}), a taxa devolvida tem de ser a da faixa de ${r.parcelas}x`
+      );
+    }
+    assert.ok(combinacoes >= 50000, `controle positivo: a varredura cobriu ${combinacoes} combinações`);
+    assert.equal(
+      voltasVistas.size, 3,
+      `controle positivo: a varredura exercitou os três desfechos do ponto fixo (viu ${[...voltasVistas].join(', ')})`
+    );
 
     /* Isenção de taxa muda o valor cobrado, então muda o quanto cabe —
        e o ponto fixo tem de ver isso. */

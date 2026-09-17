@@ -11,6 +11,47 @@ por baixo. Segue as leis do plugin `san-co`.
 > Sem o plugin carregado, clonar `sancompany/Plugin_san-co` e ler de lá
 > antes de fechar qualquer coisa.
 
+## Antes de agir: existe uma skill para isto?
+
+**Procure a skill que corresponde à FUNÇÃO que você está exercendo, e
+rode-a.** Não é sugestão e não depende de o dono pedir: pedir uma skill
+que existe para a tarefa em curso é trabalho dele fazer duas vezes.
+
+Regra escrita em 17/09/2026 porque o dono tinha pedido `revisar` várias
+vezes e ela só rodou naquele dia — e quando rodou, achou dois bugs
+graves pré-existentes no caminho do dinheiro em onze ciclos. O custo de
+não ter rodado antes é medível: os dois furos ficaram no ar por dias.
+
+A tabela abaixo é **índice, não regra** — pela mesma razão do aviso no
+topo deste arquivo: o `description` de cada skill é a fonte, e esta
+paráfrase não é. Ela serve para achar a skill certa em um olhar; achada,
+lê-se o `SKILL.md` dela. Índice que vira regra é como uma estação foi
+fechada errado em 13/09.
+
+| a função que você está exercendo | a skill |
+|---|---|
+| escrever, refatorar, escolher biblioteca | `construir` |
+| revisar mudança antes de commit, merge ou deploy | `revisar` |
+| qualquer coisa que toque cobrança, senha, documento, admin, Asaas | `seguranca-san` |
+| algo quebrou, teste falhou, comportamento não bate | `depurar` |
+| abrir/fechar estação, estrutura, prontidão, subir para produção | `leis` |
+| dado novo, integração de terceiro, texto legal, ir ao ar | `legal` |
+| onde uma capacidade mora, banco compartilhado ou separado | `classificar` |
+| integrar um projeto ao San Checkout | `checkout` |
+| ideia nova, escopo de projeto novo | `novo-projeto` |
+
+São **nove** skills no plugin em 17/09/2026, e as nove estão na tabela —
+se um dia a contagem não bater, a tabela envelheceu e o plugin manda.
+
+Duas ou mais se aplicando ao mesmo trabalho, rodam todas — `revisar`
+manda explicitamente chamar `seguranca-san` quando a mudança toca
+dinheiro ou dado de cliente.
+
+E o aviso do topo vale aqui com força: **`ListPlugins` vazio significa
+trabalhar de segunda mão.** Sem o plugin carregado, clonar
+`sancompany/Plugin_san-co` e ler o `SKILL.md` da fonte — foi assim que a
+`revisar` foi lida em 17/09.
+
 ## Antes de propor ou escrever qualquer coisa, leia
 - `CONSTRAINTS.md` — o que NÃO se faz aqui, os limites e as exceções
 - `docs/funcional.md` — o que o sistema faz, tela por tela. Comportamento alterado se reescreve ali, na mesma tarefa
@@ -369,7 +410,7 @@ MostrAí retesta o lado dele em paralelo.
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
-- Testes: `tests/` — `npm test` roda as 30 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. A contagem vive em `tests/executar.js`; se esta linha divergir dele, ele é que manda
+- Testes: `tests/` — `npm test` roda as 32 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

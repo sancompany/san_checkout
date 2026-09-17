@@ -38,9 +38,10 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
+import { arquivosJs } from './ajudantes.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ORIGEM = join(RAIZ, 'src');
@@ -48,15 +49,6 @@ const ORIGEM = join(RAIZ, 'src');
 /** Quantas linhas depois do `fetch(` ainda contam como "a mesma chamada". */
 const JANELA_DA_CHAMADA = 14;
 
-function arquivosJs(diretorio) {
-  const achados = [];
-  for (const nome of readdirSync(diretorio)) {
-    const caminho = join(diretorio, nome);
-    if (statSync(caminho).isDirectory()) achados.push(...arquivosJs(caminho));
-    else if (nome.endsWith('.js')) achados.push(caminho);
-  }
-  return achados;
-}
 
 let chamadas = 0;
 const semTeto = [];
@@ -109,4 +101,47 @@ for (const [arquivo, declaracao, porque] of tetos) {
   );
 }
 
-console.log(`nenhuma-chamada-de-saida-sem-teto: ${chamadas} chamadas de saída, todas com teto — 3 tetos conferidos`);
+/* ------------------------------------------------------------------
+   QUEM RECEBE O `signal` DE FORA PRECISA DE GUARDA DE EXECUÇÃO
+
+   A varredura acima é de texto e não vê VALOR: `signal: undefined`
+   passaria por ela sem teto nenhum. Sabotagem provou isso em 17/09/2026.
+
+   Mas o buraco não é igual em todo lugar, e a diferença é estrutural:
+
+   - quem CRIA o `AbortController` na própria função (`asaasService`,
+     `webhookController`) não tem como passar `undefined` — o
+     controlador nasce duas linhas acima, e a única falha possível é
+     apagar a linha do `signal`, que a varredura de texto pega;
+   - quem RECEBE o `signal` por parâmetro (`puxarDoContratante`) depende
+     de o chamador ter passado algo. Aí `undefined` é erro plausível, a
+     varredura de texto fica satisfeita, e o `fetch` espera para sempre
+     no endereço de um terceiro.
+
+   Então a regra é essa: recebe de fora, checa em execução. Endurecer o
+   outro caso seria cerimônia onde não há risco.
+------------------------------------------------------------------ */
+
+let recebemDeFora = 0;
+for (const caminho of arquivosJs(ORIGEM)) {
+  const fonte = readFileSync(caminho, 'utf8');
+  if (!/(?:await |= |return )fetch\(/.test(fonte)) continue;
+  if (fonte.includes('new AbortController()')) continue;
+
+  recebemDeFora += 1;
+  assert.ok(
+    /if \(!signal\)\s*throw/.test(fonte),
+    `${relative(RAIZ, caminho)} recebe o \`signal\` de fora e não recusa a chamada sem ele — ` +
+    '`signal: undefined` passa pela varredura de texto e não tem teto nenhum'
+  );
+}
+
+assert.ok(
+  recebemDeFora >= 1,
+  `controle positivo: a varredura precisa ACHAR quem recebe o signal de fora (achou ${recebemDeFora})`
+);
+
+console.log(
+  `nenhuma-chamada-de-saida-sem-teto: ${chamadas} chamadas de saída, todas com teto — ` +
+  `3 tetos conferidos, ${recebemDeFora} com guarda de execução`
+);

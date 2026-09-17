@@ -143,10 +143,34 @@ igual(
    passa por revisão de olho.
 ------------------------------------------------------------------ */
 
-const orfaos = PREFIXOS_LIMITADOS.filter(
-  (prefixo) => !rotas.some((r) => r.caminho === prefixo || r.caminho.startsWith(`${prefixo}/`))
+function orfaosEntre(prefixos) {
+  return prefixos.filter(
+    (prefixo) => !rotas.some((r) => r.caminho === prefixo || r.caminho.startsWith(`${prefixo}/`))
+  );
+}
+
+const orfaos = orfaosEntre(PREFIXOS_LIMITADOS);
+
+/* CONTROLE POSITIVO DE VERDADE.
+
+   Aqui havia um `ok(true, …)` — uma assertiva que não pode falhar. Ela
+   contava como checagem, aparecia no total, e não verificava nada:
+   exatamente o tipo de número que o projeto acabou de corrigir em oito
+   autotestes com contador chumbado. Pior que não ter checagem é ter uma
+   que parece checagem.
+
+   O controle certo é provar que o detector DETECTA: um prefixo que não
+   cobre rota nenhuma tem de ser acusado. Sem isto, a lista vazia acima
+   poderia significar "nada órfão" ou "o detector está cego". */
+igual(
+  orfaosEntre(['/api/checkout/rota-que-nao-existe']),
+  ['/api/checkout/rota-que-nao-existe'],
+  'controle positivo: o detector de órfão acusa um prefixo que não cobre rota nenhuma'
 );
-ok(true, 'órfãos calculados sobre a lista completa de rotas');
+igual(
+  orfaosEntre(['/api/admin']), [],
+  'controle negativo: e NÃO acusa um prefixo que cobre rota de verdade'
+);
 igual(
   orfaos, [],
   'prefixo com limitador que não cobre rota nenhuma — provavelmente escrito errado, e a rota de verdade está sem teto'
@@ -165,7 +189,20 @@ igual(
 const tetos = [...servidor.matchAll(/app\.use\('(\/api\/[^']+)',\s*rateLimit\(\{[^}]*?max:\s*(\d+)/gs)]
   .map((m) => ({ prefixo: m[1], max: Number(m[2]) }));
 
-ok(tetos.length > 0, 'controle positivo: achou os tetos declarados direto no server.js');
+/* CONTROLE POSITIVO PELO NÚMERO EXATO, não por "achou algum".
+
+   `tetos.length > 0` era o controle antes, e ele é fraco de um jeito
+   específico: se a regex do `max` deixasse de casar dois dos três
+   blocos, ela acharia um só, o laço abaixo não teria com quem comparar,
+   e a suíte passaria dizendo que o teto do login é o mais apertado sem
+   ter olhado nenhum outro. Contar os blocos `rateLimit(` por fora e
+   exigir o mesmo número fecha isso. */
+const BLOCOS = [...servidor.matchAll(/app\.use\('(\/api\/[^']+)',\s*rateLimit\(/g)].map((m) => m[1]);
+ok(BLOCOS.length >= 3, `controle positivo: há blocos rateLimit para ler (achou ${BLOCOS.length})`);
+igual(
+  tetos.map((t) => t.prefixo), BLOCOS,
+  'a regex do `max` leu TODOS os blocos rateLimit — lendo menos, a comparação abaixo fica sem com quem comparar'
+);
 
 const login = tetos.find((t) => t.prefixo === '/api/admin/sessao');
 ok(login, 'a rota de sessão do admin tem teto próprio');

@@ -1,0 +1,164 @@
+#!/usr/bin/env node
+/**
+ * tests/o-que-os-documentos-afirmam.js
+ *
+ * Os números que os documentos afirmam, conferidos contra a realidade.
+ *
+ * ── Por que esta suíte existe ───────────────────────────────────────
+ * "Um documento falso é pior que um documento ausente" é regra deste
+ * repositório, e em 17/09/2026 ela foi violada três vezes pelo MESMO
+ * número: o `CLAUDE.md` dizia 18 suítes quando eram 24, depois 24
+ * quando eram 28, depois 30 quando eram 31. Duas dessas vezes fui eu
+ * que corrigi à mão — e a terceira apareceu no mesmo dia, porque
+ * corrigir à mão não impede a próxima.
+ *
+ * Número em prosa envelhece em silêncio: ninguém relê o mapa de
+ * caminhos ao acrescentar uma suíte. Então o que se conserta não é o
+ * número, é o fato de ele poder divergir sem ninguém ver.
+ *
+ * ── O que entra aqui, e o que não ───────────────────────────────────
+ * Só afirmação que a máquina consegue conferir sem opinião: contagem,
+ * lista, existência de arquivo. Nada de "o texto está claro" ou "a
+ * decisão está bem explicada" — isso é leitura humana, e um teste que
+ * finge medir isso é pior que não ter teste.
+ */
+
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
+let checagens = 0;
+const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
+const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
+
+const CLAUDE = readFileSync(join(RAIZ, 'CLAUDE.md'), 'utf8');
+const RUNNER = readFileSync(join(RAIZ, 'tests', 'executar.js'), 'utf8');
+
+/* ------------------------------------------------------------------
+   1. A CONTAGEM DE SUÍTES
+------------------------------------------------------------------ */
+
+/* A lista do runner é a fonte: cada entrada é uma linha `  '…',`.
+   Contá-la por regex aqui é aceitável porque o formato é o mesmo desde
+   o começo, e o controle positivo abaixo acusa se deixar de casar. */
+const suites = [...RUNNER.matchAll(/^ {2}'([^']+\.js)'/gm)].map((m) => m[1]);
+ok(suites.length > 10, `controle positivo: achou a lista de suítes no runner (achou ${suites.length})`);
+ok(
+  suites.every((caminho) => existsSync(join(RAIZ, caminho))),
+  `o runner lista suíte que não existe: ${suites.filter((c) => !existsSync(join(RAIZ, c)))}`
+);
+
+const afirmado = CLAUDE.match(/roda as (\d+) suítes/);
+ok(afirmado, 'o CLAUDE.md afirma um número de suítes (se esta linha mudou de forma, ajuste a regex)');
+igual(
+  Number(afirmado[1]), suites.length,
+  `o CLAUDE.md diz ${afirmado?.[1]} suítes e o runner lista ${suites.length} — ` +
+  'o runner é a fonte; corrija a prosa'
+);
+
+/* E TODA SUÍTE que existe está no runner: teste que não roda é pior que
+   nenhum, porque parece cobertura.
+
+   Mas `tests/` também guarda FERRAMENTA de uso manual — o mock da API do
+   contratante, que uma pessoa sobe num terminal separado. Ferramenta não
+   tem assertiva e não deve entrar no `npm test`; tratá-la como suíte
+   esquecida foi o primeiro veredito desta checagem, e era falso.
+
+   A régua que separa as duas é a única honesta: **tem assertiva?** Tendo,
+   é suíte e precisa rodar. Não tendo, é ferramenta — e aí o que se exige
+   é que ela esteja documentada, senão é código órfão que ninguém sabe
+   para que serve. */
+const emDisco = readdirSync(join(RAIZ, 'tests'))
+  .filter((n) => n.endsWith('.js') && n !== 'executar.js');
+ok(emDisco.length > 10, `controle positivo: achou os arquivos de tests/ (achou ${emDisco.length})`);
+
+const comAssertiva = [];
+const ferramentas = [];
+for (const nome of emDisco) {
+  const fonte = readFileSync(join(RAIZ, 'tests', nome), 'utf8');
+  (/\bassert\b/.test(fonte) ? comAssertiva : ferramentas).push(nome);
+}
+ok(comAssertiva.length > 10, `controle positivo: a maioria de tests/ é suíte (${comAssertiva.length})`);
+ok(ferramentas.length >= 1, `controle positivo: e há ao menos uma ferramenta (${ferramentas.length})`);
+
+igual(
+  comAssertiva.filter((n) => !suites.includes(`tests/${n}`)), [],
+  'arquivo com assertiva que o runner NÃO roda — parece cobertura e não é'
+);
+
+const DOCS = readdirSync(join(RAIZ, 'docs'))
+  .filter((n) => n.endsWith('.md'))
+  .map((n) => readFileSync(join(RAIZ, 'docs', n), 'utf8'))
+  .join('\n') + CLAUDE + readFileSync(join(RAIZ, 'README.md'), 'utf8');
+
+igual(
+  ferramentas.filter((n) => !DOCS.includes(n)), [],
+  'ferramenta em tests/ que nenhum documento menciona — código órfão'
+);
+
+/* E o cabeçalho de cada arquivo de `tests/` tem de apontar para ele
+   mesmo. O mock dizia `mock/servidor-mock-pedido.js`, pasta que nunca
+   existiu — quem procurasse o arquivo pelo caminho do próprio
+   comentário não o acharia. */
+const cabecalhoErrado = [];
+for (const nome of emDisco) {
+  const inicio = readFileSync(join(RAIZ, 'tests', nome), 'utf8').slice(0, 400);
+  /* O caminho no INÍCIO da linha de comentário, com ou sem texto
+     depois. A primeira versão exigia a linha inteira ser só o caminho, e
+     por isso não pegava ` * tests/ajudantes.js — o que mais…` — a
+     sabotagem passou. Só o primeiro caminho conta: citação a outro
+     arquivo no meio do cabeçalho é legítima. */
+  const citado = inicio.match(/^ \* ([\w./-]+\.js)(?=\s|$)/m);
+  if (citado && citado[1] !== `tests/${nome}`) cabecalhoErrado.push(`${nome} diz "${citado[1]}"`);
+}
+igual(cabecalhoErrado, [], 'cabeçalho apontando para um caminho que não é o do próprio arquivo');
+
+/* ------------------------------------------------------------------
+   2. A TABELA DE SKILLS
+
+   O `CLAUDE.md` afirma "são nove skills no plugin". Se o plugin estiver
+   clonado (não está no CI), confere contra ele; se não, confere ao
+   menos que a tabela tenha o número que o texto afirma.
+------------------------------------------------------------------ */
+
+const bloco = CLAUDE.slice(CLAUDE.indexOf('| a função que você está exercendo'));
+const tabela = bloco.slice(0, bloco.indexOf('\n\n'));
+const naTabela = [...new Set([...tabela.matchAll(/`([a-z-]+)`/g)].map((m) => m[1]))].sort();
+
+const quantasAfirma = CLAUDE.match(/São \*\*(\w+)\*\* skills no plugin/);
+ok(quantasAfirma, 'o CLAUDE.md afirma quantas skills existem');
+const PALAVRAS = { sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12 };
+const numeroAfirmado = PALAVRAS[quantasAfirma[1]] ?? Number(quantasAfirma[1]);
+ok(numeroAfirmado > 0, `o número de skills afirmado é legível ("${quantasAfirma[1]}")`);
+igual(naTabela.length, numeroAfirmado, `a tabela lista ${naTabela.length} skills e o texto afirma ${numeroAfirmado}`);
+
+const DIR_PLUGIN = join(RAIZ, '..', 'sancompany', 'plugin_san-co', 'plugins', 'san-co', 'skills');
+if (existsSync(DIR_PLUGIN)) {
+  const noPlugin = readdirSync(DIR_PLUGIN).sort();
+  igual(naTabela, noPlugin, 'a tabela do CLAUDE.md bate exatamente com as skills do plugin');
+  igual(noPlugin.length, numeroAfirmado, `o plugin tem ${noPlugin.length} skills e o texto afirma ${numeroAfirmado}`);
+} else {
+  /* Não é falha: o plugin não é clonado no CI. Mas dizer isso em voz
+     alta importa — "passou" sem ter conferido contra a fonte é a
+     confiança falsa que este repositório já pagou caro uma vez. */
+  console.log('          (plugin não clonado aqui: a tabela NÃO foi conferida contra a fonte)');
+}
+
+/* ------------------------------------------------------------------
+   3. OS ARQUIVOS QUE O CLAUDE.MD MANDA LER EXISTEM
+
+   "Ponteiro envelhece calado" é o aviso da própria skill `revisar`.
+   Um índice apontando para arquivo que não existe manda o próximo
+   leitor procurar o que não está lá.
+------------------------------------------------------------------ */
+
+const apontados = [...CLAUDE.matchAll(/`((?:docs|supabase|src|public|scripts|tests)\/[\w./-]+\.(?:md|js|sql|mjs|css|html))`/g)]
+  .map((m) => m[1]);
+ok(apontados.length > 5, `controle positivo: achou caminhos citados no CLAUDE.md (achou ${apontados.length})`);
+
+const sumidos = [...new Set(apontados)].filter((c) => !existsSync(join(RAIZ, c)));
+igual(sumidos, [], 'o CLAUDE.md aponta para arquivo que não existe');
+
+console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills)`);

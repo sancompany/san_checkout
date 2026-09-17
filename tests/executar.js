@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SUITES = [
+  'tests/ajudantes.js',              // os ajudantes das suítes também são código, e um já teve bug
+  'tests/o-que-os-documentos-afirmam.js', // os números que os documentos afirmam, conferidos contra a realidade
   'src/utils/validadores.js',        // tetos de campo e comparação de credencial
   'src/utils/alvoDeRede.js',         // https + host público para alvo de saída (anti-SSRF)
   'src/utils/retornoSeguro.js',      // returnUrl: allowlist por origem (anti open redirect)
