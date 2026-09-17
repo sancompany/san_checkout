@@ -26,8 +26,20 @@ function mostrarToast(mensagem, tipo = 'info') {
   setTimeout(() => toast.remove(), 4500);
 }
 
+/* Valor que não dá para formatar vira travessão, NUNCA "R$ 0,00".
+
+   Era o quarto e último lugar da família dos dois bugs de total
+   (`docs/pendencias.md`): `Number(valor ?? 0)` transforma "não sei" em
+   "zero", e esta tela é a que a pessoa abre DEPOIS de pagar. "R$ 0,00"
+   aqui diz a quem acabou de pagar que não pagou nada.
+
+   Diferente do checkout, esta tela não é comprável — não há botão para
+   travar —, então a correção é só parar de afirmar o número: devolve
+   `null`, e quem chama escreve `—`. */
 function formatarMoeda(valor) {
-  return Number(valor ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return null;
+  return numero.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const NOME_METODO = {
@@ -148,7 +160,8 @@ function renderizar(dados) {
   $('titulo-status').textContent = visual.titulo;
   $('texto-status').textContent = visual.texto;
 
-  $('resumo-valor').textContent = `R$ ${formatarMoeda(dados.valorCobrado)}`;
+  const valorFormatado = formatarMoeda(dados.valorCobrado);
+  $('resumo-valor').textContent = valorFormatado === null ? 'R$ —' : `R$ ${valorFormatado}`;
   $('resumo-metodo').textContent = NOME_METODO[dados.metodoPagamento] ?? dados.metodoPagamento ?? '—';
 
   const pagamento = dados.pagamento;

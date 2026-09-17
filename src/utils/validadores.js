@@ -135,10 +135,99 @@ export function valorValido(valor) {
   return Number.isFinite(numero) && numero > 0 && numero <= 100000;
 }
 
+/**
+ * PISO DE VALOR DA ASAAS — R$ 5,00 sobre o valor COBRADO.
+ *
+ * MEDIDO em 17/09/2026 de dentro do contêiner de produção, contra o
+ * sandbox, com controle positivo em R$ 5,00 exato (que passa nos seis
+ * caminhos). Sem o controle, um 400 qualquer passaria por "piso":
+ *
+ *   POST /v3/payments      PIX          2,50 → 400 "O valor da cobrança (R$ 2,50) menos o valor do desconto (R$ 0,00) não pode ser menor que R$ 5,00."
+ *   POST /v3/payments      BOLETO       2,50 → 400 "O valor mínimo para cobranças via Boleto Bancário é R$ 5,00."
+ *   POST /v3/payments      CREDIT_CARD  2,50 → 400 "O valor mínimo para cobranças via Cartão de Crédito é R$ 5,00."
+ *   POST /v3/payments      UNDEFINED    2,50 → 400 "... forma de pagamento Pergunte ao Cliente é R$ 5,00."
+ *   POST /v3/subscriptions CREDIT_CARD  2,50 → 400 "O valor mínimo para cobranças via cartão de crédito é R$ 5,00."
+ *   POST /v3/checkouts     CREDIT_CARD  2,50 → 400 (mesma mensagem do Pix)
+ *   os seis, em 5,00        → 200 (e as cobranças criadas foram apagadas)
+ *
+ * NÃO é a mesma regra de `valorValido`, e os dois têm de coexistir:
+ * `valorValido` guarda o valor que VEM do contratante (aceita de
+ * R$ 0,01, porque um item barato dentro de um pedido maior é legítimo);
+ * este guarda o que VAI para a Asaas, depois da taxa. Um pedido de
+ * R$ 4,00 fecha em R$ 5,53 e passa; um de R$ 2,00 fecha em R$ 3,48 e
+ * não passa.
+ *
+ * O piso mora numa constante e não espalhado: se a Asaas mexer nele, o
+ * lugar de trocar é um só. Não vem de variável de ambiente de
+ * propósito — é regra do provedor, não configuração nossa, e a
+ * mensagem ao comprador cita o número.
+ */
+export const PISO_ASAAS = 5;
+
+/** Compara em CENTAVOS, que é a unidade que a Asaas lê. `valorCobrado`
+ *  já chega arredondado em 2 casas de `calcularTaxa`; comparar em reais
+ *  com ponto flutuante deixaria 4,999999999 passar por 5. */
+export function valorCobradoAceitavel(valorCobrado) {
+  const numero = Number(valorCobrado);
+  if (!Number.isFinite(numero)) return false;
+  return Math.round(numero * 100) >= PISO_ASAAS * 100;
+}
+
+/** Uma frase só, e ela é mostrada ao COMPRADOR — por isso diz o que
+ *  fazer ("peça um link"), não o nome do provedor: quem está na tela
+ *  não tem contrato com a Asaas e não pode fazer nada com esse nome. */
+export const MENSAGEM_PISO_ASAAS =
+  `O valor mínimo para pagamento é de R$ ${PISO_ASAAS},00. ` +
+  'Este link está abaixo disso — peça um link novo ao vendedor.';
+
+/**
+ * REGRA MEDIDA contra a Asaas em 17/09/2026 (24 combinações, de dentro
+ * do contêiner de produção, `POST /v3/checkouts` com
+ * `customerData.phone`; as sessões criadas foram canceladas).
+ *
+ * A `docs/pendencias.md` dizia que a Asaas recusa "número de dígito
+ * repetido". NÃO É VERDADE, e escrever o validador contra essa frase
+ * teria recusado comprador legítimo: `11988888888` e `11911111111`
+ * passam. O que ela recusa de verdade:
+ *
+ *   recusa 400            aceita 200
+ *   11999999999           11988888888   11911111111   11999999998
+ *   11099999999           11990000000   11922222222   11912345678
+ *   11899999999           1133334444    1132165498    21999998888
+ *   1111111111            1112345678    1122223333    1162345678
+ *   1900000000            1192345678    9933334444    2033334444
+ *   00999999999
+ *   0199999999
+ *   1033334444
+ *
+ * Três regras explicam os 24 pontos, e nenhuma delas é "dígito repetido":
+ *   1. DDD (os dois primeiros dígitos) >= 11 — `10`, `01` e `00` caem.
+ *   2. Com 11 dígitos (celular), o dígito depois do DDD tem de ser `9`
+ *      — `11099999999` e `11899999999` caem por isso, não por repetição.
+ *   3. A parte LOCAL (depois do DDD) não pode ser um único dígito
+ *      repetido — `999999999`, `11111111` e `00000000` caem.
+ *      Repare que a regra é sobre a parte local: `11988888888` tem oito
+ *      `8` seguidos e passa, porque o local é `988888888`.
+ *
+ * O que fica DE FORA de propósito, embora não exista no Brasil: a Asaas
+ * aceita DDD inexistente (`20`) e prefixo de fixo inexistente (`1`,
+ * `6`). Recusar aqui o que o provedor aceita é bloquear comprador
+ * legítimo no caminho do dinheiro — mesma razão de `nomeValido` só
+ * olhar tamanho. Este validador recusa o que a Asaas recusaria, e nada
+ * além.
+ */
 export function telefoneValido(valor) {
   if (!passaNoTeto(valor, TETOS.telefone)) return false;
   const telefone = String(valor ?? '').replace(/\D/g, '');
-  return telefone.length === 10 || telefone.length === 11;
+  if (telefone.length !== 10 && telefone.length !== 11) return false;
+
+  if (Number(telefone.slice(0, 2)) < 11) return false;
+
+  const local = telefone.slice(2);
+  if (telefone.length === 11 && local[0] !== '9') return false;
+  if (/^(\d)\1*$/.test(local)) return false;
+
+  return true;
 }
 
 export function cepValido(valor) {
@@ -186,10 +275,35 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.ok(!emailValido('sem-arroba'), 'sem arroba recusa');
   assert.ok(!emailValido('a@b'), 'sem ponto no domínio recusa');
 
-  // --- telefone e CEP ---
-  assert.ok(telefoneValido('(11) 99999-9999'), 'celular com DDD passa');
-  assert.ok(telefoneValido('1133334444'), 'fixo com DDD passa');
+  /* --- TELEFONE ---
+     Cada linha é um ponto MEDIDO contra a Asaas em 17/09/2026 (ver a
+     tabela no comentário de `telefoneValido`). O teste antigo afirmava
+     `telefoneValido('(11) 99999-9999')` — e esse é exatamente o número
+     que a Asaas RECUSA. O teste travava o bug no lugar de pegá-lo. */
+  assert.ok(telefoneValido('(11) 98765-4321'), 'celular realista passa');
+  assert.ok(telefoneValido('11988888888'), 'celular com 8 repetidos passa — a Asaas aceita');
+  assert.ok(telefoneValido('11911111111'), 'celular com 1 repetidos passa — a Asaas aceita');
+  assert.ok(telefoneValido('11999999998'), 'celular quase todo 9 passa');
+  assert.ok(telefoneValido('11990000000'), 'celular com zeros passa');
+  assert.ok(telefoneValido('1133334444'), 'fixo com pares repetidos passa');
+  assert.ok(telefoneValido('1112345678'), 'fixo com prefixo 1 passa — a Asaas aceita, então nós também');
+  assert.ok(telefoneValido('1162345678'), 'fixo com prefixo 6 passa — idem');
+  assert.ok(telefoneValido('2033334444'), 'DDD 20 passa — não existe no Brasil, mas a Asaas aceita');
+  assert.ok(telefoneValido('9933334444'), 'DDD 99 passa');
+
+  assert.ok(!telefoneValido('11999999999'), 'celular todo 9 recusa — a Asaas recusa');
+  assert.ok(!telefoneValido('(11) 99999-9999'), 'e recusa também pontuado');
+  assert.ok(!telefoneValido('1111111111'), 'fixo todo 1 recusa');
+  assert.ok(!telefoneValido('1900000000'), 'fixo com local todo zero recusa');
+  assert.ok(!telefoneValido('11099999999'), 'celular que não começa em 9 recusa');
+  assert.ok(!telefoneValido('11899999999'), 'celular começando em 8 recusa');
+  assert.ok(!telefoneValido('00999999999'), 'DDD 00 recusa');
+  assert.ok(!telefoneValido('0199999999'), 'DDD 01 recusa');
+  assert.ok(!telefoneValido('1033334444'), 'DDD 10 recusa');
   assert.ok(!telefoneValido('999999999'), '9 dígitos recusa');
+  assert.ok(!telefoneValido('119876543210'), '12 dígitos recusa');
+
+  // --- CEP ---
   assert.ok(cepValido('01310-100'), 'CEP pontuado passa');
   assert.ok(!cepValido('0131010'), 'CEP de 7 dígitos recusa');
 
@@ -199,6 +313,32 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.ok(!valorValido(-1), 'negativo recusa');
   assert.ok(!valorValido(100001), 'acima do teto recusa');
   assert.ok(!valorValido('abc'), 'texto recusa');
+
+  /* --- PISO DA ASAAS ---
+     Separado de `valorValido` de propósito: são duas perguntas
+     diferentes, e confundi-las é o bug. `valorValido` olha o que veio
+     do contratante; `valorCobradoAceitavel` olha o que vai para a
+     Asaas. Os dois valores medidos (2,50 recusado, 5,00 aceito) estão
+     aqui como fronteira. */
+  assert.equal(PISO_ASAAS, 5, 'o piso medido é R$ 5,00');
+  assert.ok(valorCobradoAceitavel(5), 'R$ 5,00 exato passa — foi o controle positivo da medição');
+  assert.ok(valorCobradoAceitavel(5.01), 'acima do piso passa');
+  assert.ok(valorCobradoAceitavel(9.5), 'o valor do ped_completo passa');
+  assert.ok(!valorCobradoAceitavel(2.5), 'R$ 2,50 recusa — foi o valor recusado pela Asaas');
+  assert.ok(!valorCobradoAceitavel(4.99), 'um centavo abaixo do piso recusa');
+  assert.ok(!valorCobradoAceitavel(0), 'zero recusa');
+  assert.ok(!valorCobradoAceitavel(null), 'nulo recusa');
+  assert.ok(!valorCobradoAceitavel(undefined), 'ausente recusa');
+  assert.ok(!valorCobradoAceitavel('abc'), 'texto recusa');
+  assert.ok(!valorCobradoAceitavel(NaN), 'NaN recusa');
+  // A comparação é em centavos: em reais, 4,995 arredonda para 5,00 na
+  // Asaas, e reprovar aqui recusaria algo que ela aceita.
+  assert.ok(valorCobradoAceitavel(4.995), 'valor que a Asaas lê como 5,00 passa');
+  assert.ok(!valorCobradoAceitavel(4.994), 'valor que a Asaas lê como 4,99 recusa');
+  assert.ok(
+    MENSAGEM_PISO_ASAAS.includes('R$ 5,00') && !MENSAGEM_PISO_ASAAS.toLowerCase().includes('asaas'),
+    'a mensagem cita o valor e não cita o provedor — quem lê é o comprador'
+  );
 
   // --- nome ---
   assert.ok(nomeValido('Ana'), 'nome curto passa');

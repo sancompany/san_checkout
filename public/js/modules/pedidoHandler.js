@@ -85,7 +85,20 @@ function marcarPedidoIndisponivel(mensagem) {
   document.querySelector('.checkout-panel--form')?.classList.add('hidden');
 }
 
-function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
+function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio }) {
+  /* BLOQUEIO DECIDIDO NO SERVIDOR.
+
+     Quem sabe o piso da Asaas é o backend, e ele manda a frase pronta.
+     Cair aqui derruba o carregamento inteiro pelo mesmo caminho do
+     total indisponível: o `catch` de `resolverContexto` escreve a
+     mensagem na tela, esconde o formulário e devolve `null`, e o
+     `app.js` sai antes de ligar qualquer botão.
+
+     A mensagem vem do servidor em vez de ser escrita aqui de propósito:
+     duplicar o texto no front significa que um dia o piso muda num
+     lugar só e a tela passa a mentir o número. */
+  if (bloqueio?.mensagem) throw new Error(bloqueio.mensagem);
+
   document.getElementById('order-category').textContent = ROTULOS_TIPO[pedido.tipo] ?? contratanteNome ?? 'Produto / Serviço';
   document.getElementById('order-title').textContent = pedido.descricao ?? 'Pedido';
 
@@ -99,8 +112,17 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
       const linha = document.createElement('div');
       linha.className = 'order-item-row';
 
+      /* Item sem preço mostra travessão, não "R$ 0,00".
+
+         Este era o terceiro lugar da família dos dois bugs de total
+         (`docs/pendencias.md`): `?? 0` transforma "não sei o preço" em
+         "o preço é zero", e zero numa linha de item lê como brinde. O
+         total continua sendo o do servidor — esta linha é só o detalhe
+         —, então um item sem preço não derruba a tela; ele só para de
+         afirmar um valor que ninguém informou. */
       const quantidade = Number(item.quantidade ?? 1);
-      const valorItem = quantidade * Number(item.valorUnitario ?? 0);
+      const unitario = Number(item.valorUnitario);
+      const valorItem = Number.isFinite(unitario) ? quantidade * unitario : null;
 
       const label = document.createElement('span');
       label.className = 'order-item-label';
@@ -111,7 +133,7 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
 
       const valor = document.createElement('span');
       valor.className = 'order-item-value';
-      valor.textContent = `R$ ${formatarMoeda(valorItem)}`;
+      valor.textContent = valorItem === null ? '—' : `R$ ${formatarMoeda(valorItem)}`;
 
       linha.append(label, valor);
       lista.appendChild(linha);

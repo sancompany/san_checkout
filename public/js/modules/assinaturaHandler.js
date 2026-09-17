@@ -70,6 +70,15 @@ export async function resolverAssinatura() {
       return { ids, erro: 'Este plano está sem valor definido. Peça um link novo ao vendedor.' };
     }
 
+    /* BLOQUEIO DECIDIDO NO SERVIDOR (piso de valor da Asaas).
+
+       Vem em `_checkout.bloqueio` com a frase pronta — o front não
+       repete o número do piso, senão um dia ele muda no backend e a
+       tela passa a mentir. Sai pelo mesmo `erro` do caso acima, que o
+       `app.js` já trata: total em `R$ —`, sem botão. */
+    const bloqueio = plano?._checkout?.bloqueio;
+    if (bloqueio?.mensagem) return { ids, erro: bloqueio.mensagem };
+
     contextoResolvido = { ...ids, plano };
     definirRetorno(plano?._checkout?.retornoUrl, plano?._checkout?.contratanteNome);
     return { ids, plano };

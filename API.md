@@ -58,6 +58,9 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
    - 7.5 [O que a assinatura NÃO faz — leia antes de prometer benefício](#75-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
 8. [Taxas, split e o valor cobrado](#8-taxas-split-e-o-valor-cobrado)
 9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
+   - 9.0 [A resposta da sua API: redirecionamento e tamanho](#90-a-resposta-da-sua-api-redirecionamento-e-tamanho)
+   - 9.1 [O piso de R$ 5,00](#91-o-piso-de-r-500--e-por-que-ele-não-é-o-mesmo-que-o-valor-do-pedido)
+   - 9.2 [O que o telefone precisa ter](#92-o-que-o-telefone-precisa-ter)
 10. [Compatibilidade e versionamento](#10-compatibilidade-e-versionamento)
 11. [Checklist de integração](#11-checklist-de-integração)
     - 11.1 [A troca de sandbox para produção — o que NÃO atravessa](#111-a-troca-de-sandbox-para-produção--o-que-não-atravessa)
@@ -1502,10 +1505,11 @@ direto não contorna nada.
 |---|---|---|
 | Valor da cobrança | R$ 0,01 a **R$ 100.000,00** | `400` "Valor do pedido inválido" |
 | Valor do plano | idem | `400` "Valor do plano inválido" |
+| **Valor COBRADO** (pedido + taxa) | mínimo **R$ 5,00** | `400` "O valor mínimo para pagamento é de R$ 5,00…" |
 | Parcelas no cartão | 1 a 12 | `400` |
 | CPF | 11 dígitos, com dígito verificador conferido | `400` "CPF/CNPJ inválido" |
 | CNPJ | 14 dígitos, com dígito verificador conferido | `400` idem |
-| Telefone | 10 ou 11 dígitos | `400` "Telefone inválido" |
+| Telefone | 10 ou 11 dígitos, DDD ≥ 11, celular começando em 9 | `400` "Telefone inválido" |
 | CEP | 8 dígitos | `400` "CEP inválido" |
 | `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
 | Timeout da sua API | 45 segundos | `504` |
@@ -1525,6 +1529,77 @@ o teto de 30/min existe porque essa rota toca o banco.
 
 CPF e CNPJ dividem o mesmo campo `documento` — o checkout detecta qual é
 pelo tamanho.
+
+### 9.0 A resposta da sua API: redirecionamento e tamanho
+
+O checkout resolve pedido e plano ligando de volta para a **sua** API
+(§1). Duas regras valem para o que ela responde, e as duas são novas:
+
+- **Redirecionamento só na mesma origem.** `302`/`301` para outro
+  caminho do mesmo `https://host:porta` é seguido normalmente (barra
+  final, caminho movido). Para **outra origem**, é recusado, e o
+  checkout responde `502`. O motivo não é só SSRF: a requisição leva a
+  sua `X-Checkout-Key` no cabeçalho, e seguir o `Location` entregaria
+  essa chave — que autoriza consulta e **estorno** — a quem respondeu
+  o redirecionamento. Se a sua API mudou de endereço, **cadastre o
+  endereço final** em vez de redirecionar. No máximo 3 saltos.
+
+- **Corpo de até 1 MiB.** O checkout para de ler ao passar disso e
+  responde `502`. Um pedido ou plano em JSON tem alguns KB; o teto
+  existe porque um corpo sem fim derrubaria o processo e, com ele, a
+  confirmação de pagamento de todos os contratantes. O `Content-Length`
+  é usado só para recusar cedo — quem conta de verdade é o que chega.
+
+### 9.1 O piso de R$ 5,00 — e por que ele não é o mesmo que o valor do pedido
+
+A Asaas **recusa qualquer cobrança abaixo de R$ 5,00**. Medido em
+17/09/2026 contra o sandbox, nos seis caminhos, com controle positivo em
+R$ 5,00 exato (que passa em todos):
+
+| caminho | R$ 2,50 | R$ 5,00 |
+|---|---|---|
+| `POST /v3/payments` Pix | `400` | `200` |
+| `POST /v3/payments` Boleto | `400` | `200` |
+| `POST /v3/payments` Cartão | `400` | `200` |
+| `POST /v3/payments` "pergunte ao cliente" | `400` | `200` |
+| `POST /v3/subscriptions` | `400` | `200` |
+| `POST /v3/checkouts` (pop-up) | `400` | `200` |
+
+**O piso é sobre o valor COBRADO, não sobre o valor do pedido.** Como a
+taxa entra por cima (§8), um pedido de R$ 4,00 fecha em R$ 5,53 e passa;
+um de R$ 2,00 fecha em R$ 3,48 e não passa. Em **assinatura** não há taxa
+nossa, então o piso bate direto no `valor` do plano, **por ciclo**.
+
+**Você descobre isso na hora de abrir a tela, não no clique.** Se o
+total ficar abaixo do piso:
+
+- `GET /api/checkout/pedido/...` responde `200` com um campo novo
+  `bloqueio: { codigo: "valor_abaixo_do_piso", mensagem: "…" }`, e `taxa`
+  continua preenchida (o total é aquele mesmo — o que muda é que a tela
+  nasce sem formulário, com o motivo escrito);
+- `GET /api/checkout/plano/...` traz o mesmo objeto em `_checkout.bloqueio`;
+- as rotas que criam cobrança respondem `400` com a mesma mensagem.
+
+`bloqueio` é **campo acrescentado**, nunca renomeado: pela regra do §10,
+uma integração que o ignore volta ao comportamento anterior, não a um
+comportamento pior.
+
+### 9.2 O que o telefone precisa ter
+
+Medido contra a Asaas em 17/09/2026, 24 combinações. Três regras, e
+**"dígito repetido" não é uma delas** — `11988888888` e `11911111111`
+são aceitos:
+
+1. 10 ou 11 dígitos;
+2. DDD (os dois primeiros) **≥ 11** — `10`, `01` e `00` são recusados;
+3. com 11 dígitos, o dígito seguinte ao DDD tem de ser **`9`**;
+4. a parte depois do DDD não pode ser **um único dígito repetido** —
+   `11999999999` e `1111111111` caem aqui.
+
+O checkout **não** recusa o que a Asaas aceita: DDD que não existe no
+Brasil (`20`) e prefixo de fixo que não existe (`1`, `6`) passam, porque
+recusar comprador legítimo no caminho do dinheiro é pior do que aceitar
+um número estranho que o provedor aprova.
 
 ---
 

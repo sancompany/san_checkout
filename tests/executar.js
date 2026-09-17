@@ -40,7 +40,9 @@ const SUITES = [
   'tests/retorno-nao-vira-open-redirect.js', // returnUrl: quem decide o destino é o servidor, e continua sendo
   'tests/nenhuma-chamada-de-saida-sem-teto.js', // fetch sem signal espera para sempre: varre src/ inteiro
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
-  'tests/renovacao-exige-token-nao-so-documento.js' // renovar não pode confiar só no documento do body
+  'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
+  'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
+  'tests/pull-nao-segue-para-onde-quiser.js' // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
 ];
 
 /**

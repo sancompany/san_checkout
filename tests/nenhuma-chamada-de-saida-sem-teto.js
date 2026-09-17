@@ -71,7 +71,13 @@ for (const caminho of arquivosJs(ORIGEM)) {
 
     chamadas += 1;
     const janela = linhas.slice(i, i + JANELA_DA_CHAMADA).join('\n');
-    if (!/signal\s*:/.test(janela)) {
+    /* Aceita as duas formas de passar: `signal: controlador.signal` e a
+       abreviada `signal,` (quando a variável já se chama `signal`).
+       Exigir só os dois pontos dava alarme falso em
+       `puxarDoContratante.js`, que usa a abreviada — e alarme falso num
+       guarda de segurança é o caminho mais curto para alguém desligar o
+       guarda. A borda `\b` antes impede casar `sinal` ou `xsignal`. */
+    if (!/\bsignal\s*[:,}]/.test(janela)) {
       semTeto.push(`${relative(RAIZ, caminho)}:${i + 1} — ${linha.trim()}`);
     }
   });

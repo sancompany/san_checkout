@@ -42,7 +42,10 @@ import {
 import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
-import { documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido } from '../utils/validadores.js';
+import {
+  documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido,
+  valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
+} from '../utils/validadores.js';
 import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
 import { responderErro } from '../utils/erros.js';
 
@@ -101,6 +104,13 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       numeroParcelas,
       Boolean(pedido.isentarTaxa)
     );
+
+    // Ver a nota do piso em `utils/validadores.js`. No cartão isto
+    // poupa o comprador de preencher endereço inteiro (exigência
+    // antifraude da Asaas) para receber um 400 no fim.
+    if (!valorCobradoAceitavel(valorCobrado)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
+    }
 
     const splits = contratante?.wallet_id
       ? [{ walletId: contratante.wallet_id, fixedValue: valorBase }]
@@ -227,6 +237,13 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     const valor = Number(plano.valor ?? 0);
     if (!valorValido(valor)) {
       return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    }
+
+    // Assinatura não leva taxa nossa — o valor do plano é o valor
+    // cobrado, e o piso de R$ 5,00 vale por CICLO (medido em
+    // `POST /v3/subscriptions`, ver `utils/validadores.js`).
+    if (!valorCobradoAceitavel(valor)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
     }
 
     // O ciclo vem da API do contratante, então é entrada externa e é
@@ -394,6 +411,7 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
 
     const valor = Number(plano.valor ?? 0);
     if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    if (!valorCobradoAceitavel(valor)) return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
 
     const ciclo = plano.ciclo ?? 'MONTHLY';
     if (!CICLOS_VALIDOS.includes(ciclo)) {

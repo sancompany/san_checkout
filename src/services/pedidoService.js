@@ -6,6 +6,7 @@
  */
 
 import { supabase } from '../config/supabase.js';
+import { puxarDoContratante, RespostaRecusada } from '../utils/puxarDoContratante.js';
 
 const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuita
 
@@ -129,16 +130,27 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_MS);
 
+  /* Quem vai à rede é `puxarDoContratante`: ele revalida cada
+     redirecionamento e lê o corpo com teto. O `fetch` cru que estava
+     aqui seguia redirect sem perguntar (SSRF pela resposta, não pelo
+     cadastro) e lia o corpo inteiro (OOM na instância de 512 MiB) —
+     ver a nota no topo daquele arquivo. */
   let resposta;
   try {
-    resposta = await fetch(`${contratante.api_base_url}/pedido/${pedidoId}`, {
-      method: 'GET',
-      headers: { 'X-Checkout-Key': contratante.api_key },
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/pedido/${pedidoId}`, {
+      chave: contratante.api_key,
       signal: controlador.signal
     });
   } catch (erroFetch) {
+    /* Redirect para fora, cadeia longa demais e corpo acima do teto são
+       resposta ERRADA do contratante, não rede fora do ar: `502`, como
+       qualquer outra resposta que não dá para usar. Só a falha de rede
+       de verdade continua `504`. A mensagem ao comprador é a mesma nos
+       dois casos de propósito — ele não tem o que fazer com a diferença,
+       e o motivo fica no log pelo `erro.cause`. */
     const erro = new Error('Não foi possível carregar os dados do pedido, tente novamente.');
-    erro.status = 504;
+    erro.status = erroFetch instanceof RespostaRecusada ? 502 : 504;
+    erro.cause = erroFetch;
     throw erro;
   } finally {
     clearTimeout(timeoutId);
@@ -150,13 +162,13 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
     throw erro;
   }
 
-  if (!resposta.ok) {
+  if (resposta.status < 200 || resposta.status >= 300 || resposta.corpo === null) {
     const erro = new Error('Não foi possível carregar os dados do pedido, tente novamente.');
     erro.status = 502;
     throw erro;
   }
 
-  const pedido = await resposta.json();
+  const pedido = resposta.corpo;
 
   if (pedido.status === 'pago' || pedido.status === 'cancelado') {
     const erro = new Error(`Este pedido já está com status "${pedido.status}".`);
@@ -195,16 +207,17 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_MS);
 
+  // Mesma troca do `resolverPedido` — ver a nota lá.
   let resposta;
   try {
-    resposta = await fetch(`${contratante.api_base_url}/plano/${planoId}`, {
-      method: 'GET',
-      headers: { 'X-Checkout-Key': contratante.api_key },
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/plano/${planoId}`, {
+      chave: contratante.api_key,
       signal: controlador.signal
     });
-  } catch {
+  } catch (erroFetch) {
     const erro = new Error('Não foi possível carregar os dados do plano, tente novamente.');
-    erro.status = 504;
+    erro.status = erroFetch instanceof RespostaRecusada ? 502 : 504;
+    erro.cause = erroFetch;
     throw erro;
   } finally {
     clearTimeout(timeoutId);
@@ -216,13 +229,13 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
     throw erro;
   }
 
-  if (!resposta.ok) {
+  if (resposta.status < 200 || resposta.status >= 300 || resposta.corpo === null) {
     const erro = new Error('Não foi possível carregar os dados do plano, tente novamente.');
     erro.status = 502;
     throw erro;
   }
 
-  const plano = await resposta.json();
+  const plano = resposta.corpo;
   return { contratante, plano };
 }
 

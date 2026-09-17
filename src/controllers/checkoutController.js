@@ -23,7 +23,10 @@ import {
   recuperarCobrancaBoleto
 } from '../services/asaasService.js';
 import { registrarCobranca, buscarCobrancaPendenteDoPedido } from '../services/cobrancaService.js';
-import { documentoValido, emailValido, valorValido, nomeValido } from '../utils/validadores.js';
+import {
+  documentoValido, emailValido, valorValido, nomeValido,
+  valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
+} from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function gerarReferenciaExterna(documento) {
@@ -105,6 +108,14 @@ export async function gerarPix(requisicao, resposta) {
       1,
       Boolean(pedido.isentarTaxa)
     );
+
+    // O piso é sobre o valor COBRADO, então só dá para conferir depois
+    // da taxa. A tela já barra isto ao abrir (`pedidoController`); aqui
+    // é a mesma regra do lado que não dá para pular chamando a API
+    // direto, e ela evita uma ida à Asaas que volta 400.
+    if (!valorCobradoAceitavel(valorCobrado)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
+    }
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
@@ -212,6 +223,14 @@ export async function gerarBoleto(requisicao, resposta) {
       1,
       Boolean(pedido.isentarTaxa)
     );
+
+    // O piso é sobre o valor COBRADO, então só dá para conferir depois
+    // da taxa. A tela já barra isto ao abrir (`pedidoController`); aqui
+    // é a mesma regra do lado que não dá para pular chamando a API
+    // direto, e ela evita uma ida à Asaas que volta 400.
+    if (!valorCobradoAceitavel(valorCobrado)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
+    }
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 

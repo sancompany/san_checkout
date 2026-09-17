@@ -199,6 +199,7 @@ escrito, nunca omitido.
 | Sucesso (pronto) | resumo, total, métodos habilitados, formulário |
 | Vazio | **não se aplica** — a tela é sempre de um pedido só; sem pedido ela é "indisponível", não vazia |
 | **Erro / Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor cobrável** (ausente, zero, negativo ou acima do teto): total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
+| **Abaixo do valor mínimo** | total cobrável, mas **abaixo do piso de R$ 5,00 da Asaas**: a tela diz o mínimo e manda pedir um link novo ao vendedor, e o formulário não aparece (RN-28) |
 | Pedido encerrado | pedido já pago ou cancelado na origem: mensagem de encerrado; não deixa cobrar de novo |
 | Reserva expirada | `expiraEm` no passado: o cronômetro zera e a tela diz "Esta reserva expirou." |
 | Resultado Pix | QR, copia-e-cola e link permanente de status |
@@ -226,6 +227,14 @@ preço:
   deixar `R$ 0,00` aparecer com o botão de assinar ligado.
 
 Protegido por `tests/total-nao-confiavel-nao-vira-tela-compravel.js`.
+
+**Item sem preço mostra travessão, não `R$ 0,00`.** A linha de item do
+resumo era o terceiro lugar da mesma família: `?? 0` transformava "não
+sei o preço" em "o preço é zero", e zero numa linha de item lê como
+brinde. O total continua sendo o do servidor — a linha é só o detalhe —,
+então um item sem preço não derruba a tela; ele apenas para de afirmar
+um valor que ninguém informou. O quarto lugar era a tela de status
+(§4.2), corrigido junto.
 
 ### 4.2 Status (`/status`)
 
@@ -554,6 +563,50 @@ banco para quem só descobriu a URL); **só 5xx** (validação recusada é o
 sistema funcionando, e gravá-la apaga o sinal); e **nada de pessoa
 entra** — a mensagem é raspada e corpo, cabeçalho e URL com valores
 nunca entram (`docs/inventario-de-dados.md` §7.2).
+
+**RN-28 · O piso de R$ 5,00 é dito ao abrir a tela, não no clique.**
+A Asaas recusa qualquer cobrança abaixo de R$ 5,00 no valor cobrado —
+medido em 17/09/2026 nos seis caminhos de criação, com controle positivo
+em R$ 5,00 exato (`API.md` §9.1). Quem decide é o servidor, nas duas
+rotas que abrem tela (`GET /pedido/…` e `GET /plano/…`), que passam a
+devolver `bloqueio` com a frase pronta; as cinco rotas que criam cobrança
+repetem o guarda, porque a tela não é a única porta. *Violada:* o
+comprador preenche nome, e-mail, CPF, telefone — e, no cartão, endereço
+inteiro, que a Asaas exige por antifraude — para receber no fim um erro
+escrito em linguagem de provedor sobre um link que nunca ia funcionar.
+*Quem vê:* o comprador, na abertura da tela. O texto do piso mora no
+servidor e não é repetido no front de propósito: duplicado, um dia o
+número muda num lugar só e a tela passa a mentir.
+
+**RN-29 · O telefone é recusado pela regra MEDIDA da Asaas, não pela
+suposta.** `docs/pendencias.md` dizia que a Asaas recusa "número de
+dígito repetido"; 24 combinações medidas em 17/09/2026 mostram que não —
+`11988888888` e `11911111111` passam. As regras reais são DDD ≥ 11,
+celular começando em 9, e a parte depois do DDD não ser um único dígito
+repetido (`API.md` §9.2). *Violada:* de um lado, `11999999999` atravessa
+o checkout e só a Asaas recusa, no clique; do outro, um validador escrito
+contra a frase errada recusaria números legítimos no caminho do dinheiro.
+*Quem vê:* o comprador, no campo de telefone. O que a Asaas aceita e o
+Brasil não (DDD `20`, prefixo de fixo `1` ou `6`) **passa aqui também** —
+recusar o que o provedor aprova é bloquear comprador de verdade.
+
+**RN-30 · A resposta do contratante não pode virar o alvo, nem encher a
+memória.** O pull revalida cada redirecionamento (só mesma origem, no
+máximo 3 saltos) e lê o corpo com teto de 1 MiB, contando o que chega em
+vez de acreditar no `Content-Length`. *Violada:* o `fetch` seguia
+redirect sozinho, então um contratante malicioso ou comprometido
+responderia `302` para `http://169.254.169.254/…` e o checkout buscaria a
+credencial da nuvem — a checagem de cadastro (RN-14) não vê isso, porque
+o endereço cadastrado continua público e https; quem trocou o alvo foi a
+resposta. E como a requisição leva a `X-Checkout-Key` do contratante,
+seguir para outra origem entregaria a credencial de consulta e estorno
+dele a quem respondeu o `Location`. Do outro lado, `resposta.json()` lia
+até o fim: um corpo de alguns giga derrubaria a instância de 512 MiB e,
+com ela, a confirmação de pagamento de TODOS os contratantes — o mesmo
+dano do `fetch` sem timeout de 15/09. *Quem vê:* o comprador vê a mesma
+mensagem de "não foi possível carregar", e o operador vê o motivo no
+diagnóstico; a diferença que importa é que o `502` diz "resposta errada
+do contratante" e o `504` diz "rede fora do ar".
 
 ---
 
