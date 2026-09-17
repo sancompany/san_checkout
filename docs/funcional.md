@@ -117,6 +117,9 @@ Nenhum dos três é botão, e o porquê de cada um está na seção 8.
 4. Recebe o webhook de saída, assinado com a `api_key` dele.
 5. Quando decide devolver, chama `POST /checkout/estornar` com a chave
    dele — a decisão de estornar é do lojista, a execução é nossa.
+6. Quando o assinante muda de plano, chama
+   `POST /checkout/trocar-plano` — e **avisa o assinante por e-mail e no
+   site dele** (RN-35: o checkout não fala com o pagador).
 
 ### 2.8 Principal — o operador cadastra um contratante
 
@@ -684,8 +687,11 @@ excluídas, 0 de negócio).
 nos conta.** A Asaas **aceita** alterar `value` e `cycle` de uma
 assinatura ativa — aumentar, diminuir e trocar o ciclo —, medido no
 sandbox em 17/09/2026 em assinatura de cartão e de boleto. O checkout
-**não expõe rota** para isso (as quatro são criar, cancelar, pausar e
-retomar), e **não recebe aviso quando acontece**: nenhum evento chegou
+passou a expor **troca de PLANO** no mesmo dia (RN-35), o que cobre o
+caso legítimo — o assinante vai do plano A para o plano B, e o preço sai
+do plano B. O que esta regra descreve continua valendo para o caso que
+não passa por nós: alteração feita **pelo painel da Asaas** ou por API
+direta. O checkout **não recebe aviso quando isso acontece**: nenhum evento chegou
 ao receptor em toda a bateria de alterações, porque `SUBSCRIPTION_*`
 não está entre os 53 eventos configurados e `PAYMENT_UPDATED` está
 desmarcado de propósito (`CONSTRAINTS.md` §2.2). *Violada:* mudado o
@@ -704,6 +710,45 @@ real. **Declarado, não corrigido às cegas:** reconciliar `valor` é
 mudança no caminho do dinheiro e depende de decisão do dono (é a Asaas
 que passa a mandar no número, inclusive quando a alteração de lá foi um
 erro humano) — `docs/pendencias.md`.
+
+**RN-35 · Trocar de plano cobra a diferença antes de trocar, e avisar o
+assinante é obrigação do contratante.** Autorizada pelo dono em
+17/09/2026, com as sete regras do acerto decididas por ele.
+`POST /api/checkout/trocar-plano` (`API.md` §5.6) leva o assinante do
+plano A para o plano B **mantendo o vínculo**, e a ordem é a regra:
+o plano de destino é **puxado da API do contratante** (valor e ciclo
+nunca vêm do corpo da requisição); o acerto proporcional é **cobrado no
+cartão já salvo**; e **o plano só muda se o acerto for aprovado**. Para
+baixo não cobra e **não devolve** — o preço novo vale no vencimento que
+já estava marcado, que a Asaas não move nem quando o ciclo muda
+(medido). Acerto abaixo do piso de R$ 5,00 é **absorvido**, nunca
+arredondado para cima. *Violada de um jeito:* alterar o plano antes de
+cobrar daria o plano caro de graça a quem tem cartão recusado. *Violada
+do outro:* confiar no `200` do `PUT` gravaria "trocou" no nosso banco
+sobre uma alteração que a Asaas ignorou em silêncio — ela responde `200`
+para campo que não conhece, medido, e por isso a assinatura é **relida**
+depois. *Quem vê:* o contratante, no `evento: 'plano_trocado'` e na
+resposta, que traz crédito, débito e dias restantes. **O assinante não é
+avisado por nós:** o checkout não fala com o pagador (não há biblioteca
+de e-mail no `src/`), e mudar o valor que um cartão salvo vai cobrar
+exige concordância dele (CDC) — então avisar por **e-mail e por aviso no
+site** é obrigação de cada projeto contratante, decisão do dono, escrita
+em `API.md` §5.6 e no checklist da §11.
+
+**RN-36 · Duas trocas simultâneas não cobram o acerto duas vezes.** A
+troca reivindica um arrendamento na própria linha da assinatura
+(`assinaturas.trocando_em`, migration 0010) antes de cobrar, com um
+`update` condicional — que é atômico no Postgres. *Violada:* sem ele, as
+duas chamadas leem "não trocou ainda", as duas cobram, e desfazer é
+estorno no cartão de uma pessoa real. *Quem vê:* a segunda chamada, com
+`409` e **nada cobrado**. Medido dentro do contêiner em 17/09/2026: 1ª
+reivindicação ganha, 2ª não ganha, e um arrendamento de dez minutos
+atrás volta a poder — o prazo curto existe para que um processo que morra
+no meio não tranque a assinatura para sempre. O acerto também **não conta
+como "última cobrança da assinatura"** na conciliação (`API.md` §5.3):
+ele carrega o mesmo `plano_id` e nasce depois do ciclo, e sem o filtro de
+método o contratante leria o acerto de R$ 30 como se fosse o preço do
+plano — medido com as duas consultas lado a lado.
 
 ---
 

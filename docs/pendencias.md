@@ -329,6 +329,43 @@ vigente — o que é verdade é `ultimaCobranca.valorCobrado`, histórico de
 cobrança real. RN-34 em `docs/funcional.md`, etapa T12 em
 `docs/ciclo-assinatura-mapa.md`.
 
+### 🟢 Trocar de plano numa assinatura já ativa — CONSTRUÍDO 17/09
+**O que ERA:** entrada em `docs/proximas-versoes.md`, com o motivo
+errado ("a Asaas congela `valor` e `ciclo`") corrigido por medição no
+mesmo dia, e sete decisões em aberto. **O que passou a ser:**
+`POST /api/checkout/trocar-plano` no ar do lado do código
+(`API.md` §5.6, RN-35 e RN-36, migration 0010) — o dono respondeu as
+sete e mandou construir **nesta versão**: *"isso eu estou falando pra
+fazer nessa mesmo"*.
+
+Vale registrar por que ela saiu de "próxima versão": a decisão anterior
+(16/09, o MostrAí seguir pelo pedido avulso) havia sido tomada sobre uma
+afirmação minha que era falsa. Corrigida a afirmação, a decisão voltou
+para ele — e mudou.
+
+**As sete regras dele, em uma linha cada** (a fonte é o cabeçalho de
+`src/services/proporcionalService.js`, que é o código que faz a conta):
+absorver acerto abaixo de R$ 5,00; não devolver nada para baixo; recusar
+a troca com cobrança do período pendente; crédito que **não acumula**
+(cada troca recalcula sobre o valor pago); mês comercial de 30 dias e
+ano de 360; acerto só para cima; e **avisar o assinante é obrigação de
+cada contratante**, por e-mail e por aviso no site.
+
+**O que ficou DECLARADO, não construído** — e nenhum tem dano ativo:
+
+1. **Acerto estornado ou contestado depois da troca não reverte o
+   plano.** O status da cobrança é atualizado (o receptor grava), mas
+   nada desfaz a troca: reverter sozinho tiraria o plano de quem já está
+   usando. É decisão de operação, e o caminho manual existe (trocar de
+   volta). T13 do mapa.
+2. **Troca de plano em assinatura por Pix Automático** com acerto a
+   cobrar: recusada com `409`, porque não há cartão salvo e cobrar
+   exigiria interação do assinante. Sem dano — o Pix Automático está
+   desligado nesta conta (`CONSTRAINTS.md` §2.4).
+3. **Não existe tela.** A troca é rota servidor-a-servidor, como
+   cancelar/pausar/retomar: quem aciona é o contratante. Ninguém pediu
+   tela, e o pagador não decide o próprio plano pelo checkout.
+
 ### 🟢 Web Analytics declarado na política, e a política parou de nomear o Render — FECHADO 17/09
 Achado escrevendo o item 4: a CSP do `public/_headers` libera
 `static.cloudflareinsights.com` (script) e `cloudflareinsights.com`

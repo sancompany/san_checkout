@@ -23,7 +23,7 @@
 | 4.2 — Payload | 4.3.3 — Payload de pedido avulso |
 | 4.3 — Novas tentativas | 4.3.6 — Política de novas tentativas |
 | 4.4 — Consulta própria | 5.2 — Consultar uma cobrança |
-| 4.5 — Página de status | 5.6 — Página pública de status |
+| 4.5 — Página de status | 5.7 — Página pública de status |
 | 4.6 — Compatibilidade | 10 — Compatibilidade e versionamento |
 | 5 — Moeda | 5.1 — Convenções gerais |
 | 6 — Combinado manualmente | 2 — Antes de começar |
@@ -46,11 +46,16 @@ antes de prometer benefício a assinante).
 
 Acrescentado em 17/09/2026: **mudar o preço de quem já assinou**
 (7.5) — a Asaas permite aumentar, diminuir e trocar o ciclo de uma
-assinatura ativa, medido no sandbox; o checkout **não expõe rota** para
-isso, e o `valor` da conciliação (5.3) sai do nosso registro, não da
-Asaas. Se você mudar preço direto no painel da Asaas, o número que nós
-devolvemos fica errado em silêncio. Leia a seção antes de planejar
-upgrade ou downgrade de plano.
+assinatura ativa, medido no sandbox; e o `valor` da conciliação (5.3)
+sai do nosso registro, não da Asaas. Se você mudar preço direto no
+painel da Asaas, o número que nós devolvemos fica errado em silêncio.
+
+Acrescentado ainda em 17/09/2026: **trocar de plano** (5.6, rota nova
+`POST /trocar-plano`) — upgrade e downgrade mantendo o vínculo, com o
+acerto proporcional cobrado no cartão já salvo, e o evento
+`plano_trocado` (4.3.4). A conta do acerto está em 7.5. Esta linha
+substitui a anterior, que dizia que "o checkout não expõe rota" para
+isso: era verdade até o dono autorizar a construção, no mesmo dia.
 
 > **Este arquivo não descreve comportamento.** Ele só redireciona. Se
 > uma linha daqui discordar do `API.md`, o `API.md` está certo e esta

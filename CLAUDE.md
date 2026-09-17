@@ -516,6 +516,37 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   uma checagem geral: todo campo que o agregador lê de uma linha tem de
   estar no `select` da rota
   (`docs/erros/2026-09-17-o-filtro-dependia-de-coluna-que-a-consulta-nao-trazia.md`).
+- **Troca de plano, construída NESTA versão por ordem do dono**
+  (`POST /api/checkout/trocar-plano`, `API.md` §5.6, RN-35 e RN-36,
+  migration 0010). Ela nasceu de uma pergunta dele — "no Asaas não é
+  possível fazer uma alteração de preço nos planos já contratados?" —
+  cuja resposta minha, escrita em quatro lugares, era **falsa**; medida,
+  a Asaas permite. Ele decidiu as sete regras do acerto, e elas moram no
+  cabeçalho de `src/services/proporcionalService.js`, que é quem faz a
+  conta (42 checagens). **O que a rota acrescenta é a ordem**, que é
+  onde o dinheiro se perde: plano de destino puxado da API do
+  contratante (valor e ciclo nunca do corpo), recusa cedo do que a Asaas
+  recusaria depois, **acerto cobrado no cartão já salvo antes de o plano
+  mudar**, e **releitura** depois do `PUT` — porque a Asaas responde
+  `200` e ignora em silêncio campo que não conhece. 72 checagens de
+  coreografia, com dependências injetadas, verificadas por **nove
+  sabotagens** (inverter a ordem, tirar a releitura, ler o valor do
+  corpo, devolver arrendamento de outra chamada).
+  Duas guardas que a medição provou serem necessárias, não teóricas:
+  **duas chamadas simultâneas cobrariam o acerto duas vezes** (o
+  arrendamento em `assinaturas.trocando_em`, exercitado dentro do
+  contêiner: 1ª ganha, 2ª não, expirado volta a poder); e **o acerto
+  virava a "última cobrança da assinatura"** na conciliação — com as
+  duas consultas lado a lado, sem o filtro de método vinha o acerto de
+  R$ 30 onde o integrador lê o preço do plano (`API.md` §5.3), com o
+  filtro vem o ciclo de R$ 160. O acerto também tem método próprio
+  (`acerto_troca`) porque o `PAYMENT_CONFIRMED` dele chega ao nosso
+  receptor: como `cartao`, anunciaria ao contratante a confirmação de um
+  pedido com `pedidoId: null`.
+  **Avisar o assinante é obrigação do contratante** — e-mail e aviso no
+  site, decisão do dono (RN-35): o checkout não fala com o pagador, e é
+  por isso que a resposta e o evento `plano_trocado` levam crédito,
+  débito e dias restantes em vez de só o valor.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`

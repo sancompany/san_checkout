@@ -56,7 +56,7 @@ trate como desconhecido.
   dígitos** em toda fronteira desde 17/09/2026: mande com ou sem
   pontuação, é a mesma chave.
 
-## 2. As quatro rotas que existem
+## 2. As cinco rotas que existem
 
 | o que | rota | observação |
 |---|---|---|
@@ -65,13 +65,18 @@ trate como desconhecido.
 | pausar | `POST /pausar-assinatura` | para de cobrar, vínculo vivo |
 | retomar | `POST /retomar-assinatura` | volta a cobrar |
 | conciliar | `POST /consultar-assinatura` | reconfere o estado real na Asaas |
+| **trocar de plano** | `POST /trocar-plano` | **nova em 17/09/2026** — cobra o acerto no cartão salvo e só então troca |
 
 Todas com `X-Checkout-Key` do contratante, e corpo
-`{ planoId, documento }`. `POST` e não `GET` de propósito: documento em
-caminho de URL vaza para log de acesso, histórico e referer.
+`{ planoId, documento }` — a troca de plano leva um campo a mais,
+`planoNovoId`. `POST` e não `GET` de propósito: documento em caminho de
+URL vaza para log de acesso, histórico e referer.
 
-**Não existe rota para alterar valor, ciclo ou data de um assinante.**
-Ver a seção 5.
+⚠️ Esta seção dizia **"as quatro rotas"** e **"não existe rota para
+alterar valor, ciclo ou data de um assinante"** até 17/09/2026. A troca
+de plano passou a existir; o que continua não existindo é **mudar a
+data de vencimento** de um assinante, e **mudar o valor para um número
+solto** (sem um plano seu por trás). Ver a seção 5.
 
 ## 3. O que o checkout te avisa, e o que ele NÃO avisa
 
@@ -154,34 +159,48 @@ meio que o checkout usa) e de boleto, com fixtures descartáveis:
 
 **O que isso significa para o MostrAí:**
 
-1. **Sim, dá para aumentar e diminuir** — no provedor. **Não pelo
-   checkout**: não existe rota nossa, e enquanto não existir, alterar
-   preço significa mexer no painel da Asaas, o que deixa o `valor` do
-   checkout errado (seção 4).
+1. **Sim, dá para aumentar e diminuir** — e **o checkout passou a expor
+   isso** no fim de 17/09/2026, como troca de PLANO:
+   `POST /api/checkout/trocar-plano` (`API.md` §5.6). ⚠️ Esta seção
+   dizia "não existe rota nossa" até aquele dia; a rota foi autorizada e
+   construída depois de o dono do checkout decidir as sete regras do
+   acerto. **Leia a §5.6 do `API.md`, não esta lista, como contrato.**
 2. **O piso de R$ 5,00 vale na alteração também**, com mensagem por meio
-   de pagamento. Quem for alterar valida antes.
+   de pagamento. A rota valida antes de chamar a Asaas e devolve `400`.
 3. **Ciclo novo não move a data já marcada.** Trocar mensal por anual
    mantém a próxima data; o ciclo novo conta dali. Quem assumir "virou
-   anual, próxima em um ano" erra por onze meses.
+   anual, próxima em um ano" erra por onze meses. A troca de plano vive
+   disso: o acerto cobre os dias que faltam, e o plano novo inteiro entra
+   na data que o assinante já tinha.
 4. **`200` não prova alteração nessa API** — a Asaas ignora em silêncio
-   campo que não conhece. Quem alterar confere lendo de volta.
+   campo que não conhece. A rota **relê** a assinatura depois de alterar,
+   e responde `502` sem mexer no registro se a alteração não pegou.
 5. **`value` não está no schema documentado** do `PUT` da Asaas.
-   Funciona, é comportamento não documentado, e pode mudar sem aviso.
+   Funciona, é comportamento não documentado, e pode mudar sem aviso —
+   o dia em que mudar, o `502` acima é o que aparece.
+6. **Alterar pelo PAINEL da Asaas continua sendo o caminho ruim**: nada
+   nos avisa, e o `valor` do checkout fica errado para sempre (seção 4).
+   Se for para mudar preço, mude pela rota.
 
-**Como se muda preço hoje, sem rota nova:** cancelar e assinar de novo
-(o assinante digita o cartão outra vez), ou **cobrar a diferença como
-pedido avulso** mantendo a assinatura — que é a decisão do dono para o
-MostrAí, tomada em 16/09/2026.
+**Como se muda preço hoje — três caminhos:**
 
-#### Se o MostrAí for cobrar a diferença, a conta é do lado dele — e tem uma armadilha
+0. **`POST /trocar-plano`** (o novo): o assinante vai do plano A para o
+   plano B, o acerto proporcional é cobrado **no cartão já salvo** (ele
+   não digita nada), e o plano só muda se o acerto for aprovado. Para
+   baixo não cobra e não devolve — o preço novo vale no vencimento.
+   **O valor e o ciclo saem do SEU `GET /plano/{planoNovoId}`**, nunca
+   do corpo da requisição.
+1. **Cancelar e assinar de novo** (o assinante digita o cartão outra vez).
+2. **Cobrar a diferença como pedido avulso** mantendo a assinatura — era
+   a decisão do dono em 16/09/2026, tomada quando a rota não existia.
 
-O checkout **não calcula proporcional**, e a **Asaas também não**: medido
-em 17/09, `updatePendingPayments: true` põe na cobrança pendente o valor
-novo **cheio**, não um rateio. Então quem calcula a diferença é o
-MostrAí, e a cobra como pedido avulso comum.
+#### A conta do acerto, que agora o checkout faz — e a armadilha que ela evita
 
-A fórmula que funciona **também entre ciclos diferentes** proporcionaliza
-os dois lados, não a diferença:
+A **Asaas não tem proporcional nenhum**: medido em 17/09,
+`updatePendingPayments: true` põe na cobrança pendente o valor novo
+**cheio**, não um rateio. Quem calcula é o checkout, e a conta é esta —
+vale conferir, porque ela aparece aberta na resposta da rota (`credito`,
+`debito`, `diasRestantes`):
 
 ```
 dias_restantes = vencimento_atual − hoje
@@ -211,19 +230,32 @@ R$ 270 − R$ 100 = **R$ 170 por 15 dias** de um plano que custa R$ 90/mês.
 Um plano mais caro no total pode ser **mais barato por dia** — e aí a
 troca não gera acerto nenhum.
 
-E três limites que valem para o pedido avulso do acerto:
+E as decisões do dono do checkout que você vai sentir na prática (são
+**decisão**, não medição — a rota se comporta assim):
 
-- **piso de R$ 5,00 por parcela**: acerto de R$ 3,00 é recusado pela
-  Asaas. Decida antes o que fazer (absorver é o mais simples);
-- **valor zero é vetado** em qualquer caminho de cobrança;
-- se o assinante tem **cobrança pendente não paga**, não existe crédito
-  de período que não foi pago — a conta acima não se aplica.
+- **acerto abaixo de R$ 5,00 é absorvido**, nunca arredondado para cima:
+  a Asaas recusaria a cobrança, e cobrar mais do que o devido para caber
+  na régua dela seria pior;
+- **para baixo não devolve nada**: o preço novo vale no vencimento que já
+  estava marcado;
+- **crédito não acumula**: cada troca recalcula sobre os dias que restam
+  naquele momento, a partir do valor **pago** do período;
+- **cobrança do período pendente recusa a troca** (`409`): não existe
+  crédito de período que não foi pago;
+- **duas trocas simultâneas**: a segunda recebe `409` e **nada é
+  cobrado** — a guarda existe para ninguém pagar o mesmo acerto duas
+  vezes;
+- **avisar o assinante da mudança de preço é obrigação SUA**, por e-mail
+  e por aviso no site. O checkout não fala com o pagador — ele te manda
+  `evento: 'plano_trocado'` com `planoAnterior`, `valor`, `ciclo` e
+  `acertoCobrado`, e a resposta da rota traz crédito, débito e dias
+  restantes para você explicar a cobrança.
 
-> Essa decisão foi tomada sobre uma premissa **falsa** que eu havia
-> escrito: que a Asaas não permitia alterar valor. Ela permite. A
-> decisão pode continuar valendo — o pedido avulso é mais simples e não
-> exige cálculo proporcional —, mas agora é escolha informada, e é do
-> dono do checkout.
+> A decisão de 16/09 (seguir pelo pedido avulso) foi tomada sobre uma
+> premissa **falsa** que eu havia escrito: que a Asaas não permitia
+> alterar valor. Ela permite — e, corrigida a premissa, o dono decidiu
+> construir a rota **nesta versão**, em 17/09. O pedido avulso continua
+> funcionando; só deixou de ser a única saída.
 
 ## 6. Renovação e troca de cartão — MUDANÇA INCOMPATÍVEL
 
@@ -263,7 +295,17 @@ criação é pública.
 - pular ou adiar um ciclo;
 - desconto ou cupom no plano (`desconto` existe só no pedido avulso);
 - ciclo de 4, 5 ou 8 meses — só os sete ciclos da lista;
-- **trocar de plano mantendo o vínculo** (é a seção 5).
+- **mudar a data de vencimento** de um assinante — nem a troca de plano
+  faz isso: a Asaas não move o `nextDueDate` nem quando o ciclo muda;
+- **cobrar um valor solto** de um assinante (sem plano por trás) — para
+  isso, pedido avulso.
+
+> **Trocar de plano saiu desta lista em 17/09/2026** — passou a existir,
+> e é a seção 5.
+
+**E o que o checkout não faz e é SEU:** avisar o assinante quando o
+preço dele muda — por e-mail e por aviso no site. O checkout não fala
+com o pagador em nenhum caminho.
 
 ## 9. O estado do checkout hoje, que muda o que você deve testar
 

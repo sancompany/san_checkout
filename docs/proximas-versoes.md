@@ -228,7 +228,19 @@ para um problema que talvez nem exista mais.
   feita com um contratante em produção no ar. É a entrada deste arquivo
   com prazo de validade mais curto.
 
-## Trocar de plano numa assinatura já ativa
+## Trocar de plano numa assinatura já ativa — ⚠️ CONSTRUÍDO EM 17/09/2026
+
+> **Esta entrada saiu do mapa de versões futuras no fim de 17/09/2026**,
+> por ordem do dono depois de ele responder as sete decisões: *"isso eu
+> estou falando pra fazer nessa mesmo"*. A rota existe —
+> `POST /api/checkout/trocar-plano`, `API.md` §5.6 —, e **quem descreve o
+> sistema é o `API.md` e o `docs/funcional.md` (RN-35, RN-36)**, não este
+> arquivo. O que ficou aqui é o histórico de como a decisão foi tomada,
+> inclusive a premissa falsa que ela teve de corrigir; o resumo do que
+> foi construído e do que ficou declarado está em `docs/pendencias.md`.
+> Ler o que está abaixo como estado atual é o erro que o aviso do topo
+> deste arquivo existe para evitar.
+
 
 - **O quê** — um caminho de "upgrade/downgrade" que leve o assinante do
   plano A para o plano B mantendo o vínculo: cobrar a diferença (ou
@@ -291,8 +303,10 @@ para um problema que talvez nem exista mais.
   aviso. Quem construir precisa de teste que pegue isso deixando de
   funcionar, senão a troca de preço falha calada.
 
-  Então o que falta **é deste lado**: não existe rota nossa para alterar
-  valor de assinante, e enquanto não existir a saída continua sendo
+  Então o que falta **é deste lado** *(escrito na manhã de 17/09; a rota
+  foi construída no fim do mesmo dia — `API.md` §5.6)*: não existe rota
+  nossa para alterar valor de assinante, e enquanto não existir a saída
+  continua sendo
   cancelar e criar outra — com o assinante digitando o cartão de novo,
   perda do vínculo e uma janela sem assinatura. A infraestrutura mais
   próxima é a **renovação** (`API.md` §7.3): ela já sabe criar a nova e
