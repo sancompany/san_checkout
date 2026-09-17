@@ -175,6 +175,39 @@ try {
   igual(saude.corpo.status, 'degradado', 'e o corpo diz "degradado"');
   ok(saude.cabecalhos.get('x-content-type-options') === 'nosniff', 'o helmet está na pilha (nosniff presente)');
   ok(!saude.cabecalhos.get('x-powered-by'), 'e o X-Powered-By não vaza');
+
+  /* ---- 7.1 NADA DESTA API PODE SER GUARDADO ----------------------
+     `Cache-Control: no-store` em toda resposta de `/api`. Sem isso quem
+     decide guardar é o navegador e qualquer intermediário, pelo palpite
+     dele: o botão "voltar" repinta um pedido já pago como pendente, e
+     um proxy compartilhado pode servir o pedido de um comprador para
+     outro.
+
+     A lista é medida na pilha montada, não escrita à mão: uma rota
+     nova nasce coberta. E `no-cache` não passa — ele autoriza guardar
+     e só exige revalidar. */
+  const CAMINHOS = [
+    '/api/saude',
+    '/api/admin/contratantes',
+    '/api/admin/sessao',
+    '/api/checkout/pedido/testemaster/ped_inexistente',
+    '/api/checkout/status/ped_inexistente',
+    '/api/caminho-que-nao-existe'
+  ];
+  for (const caminho of CAMINHOS) {
+    const r = await chamar(caminho);
+    const cache = r.cabecalhos.get('cache-control');
+    igual(cache, 'no-store', `${caminho} responde com no-store (veio "${cache}", http ${r.http})`);
+  }
+
+  /* Controle positivo: a resposta que não é `/api` NÃO recebe o header
+     — senão este teste passaria com um `setHeader` global que também
+     mataria o cache do front, e ninguém veria. */
+  const foraDaApi = await chamar('/');
+  ok(
+    foraDaApi.cabecalhos.get('cache-control') !== 'no-store',
+    `controle positivo: fora de /api o no-store não é aplicado (veio "${foraDaApi.cabecalhos.get('cache-control')}")`
+  );
 } finally {
   servidor.close();
 }

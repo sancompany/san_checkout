@@ -59,16 +59,40 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as dezoito suítes de uma vez (assinatura HMAC do webhook,
-conversão das taxas da Asaas, regra de id imprevisível, hash da senha do
-admin, a allowlist de origem do `returnUrl` — que carrega uma suíte de
-bypasses reais de open redirect —, a redação do log de auditoria, que
-falha se qualquer dado de pessoa sobreviver, e o caminho crítico do
-webhook de entrada: guarda de origem, mapa de evento→status,
-idempotência, soma de taxas e a gravação da linha de auditoria). Não precisa de `.env`: o
-runner injeta valores falsos só para os módulos carregarem, e nenhum
-teste toca banco, rede ou relógio. Os mesmos testes rodam sozinhos a cada
-push, em `.github/workflows/ci.yml` — push que quebra teste não entra.
+Roda as 32 suítes de uma vez — e este número é **conferido por teste**
+(`tests/o-que-os-documentos-afirmam.js`), porque ele já esteve errado
+três vezes em 17/09/2026 e corrigir à mão não impede a próxima. Até
+aquele dia este parágrafo dizia "dezoito".
+
+A fonte da lista é `tests/executar.js`. O que ela cobre, em grupos:
+assinatura HMAC e o caminho crítico do webhook de entrada (guarda de
+origem, mapa de evento→status, idempotência, soma de taxas, gravação da
+auditoria); a conversão das taxas da Asaas e o piso de valor do
+provedor; a allowlist de origem do `returnUrl`, com bypasses reais de
+open redirect; a redação do log, que falha se sobreviver dado de
+pessoa; as rotas HTTP contra a pilha do Express montada de verdade; e o
+que os documentos afirmam.
+
+Não precisa de `.env`: o runner injeta valores falsos só para os módulos
+carregarem, e nenhum teste toca banco, rede ou relógio. Os mesmos testes
+rodam sozinhos a cada push, em `.github/workflows/ci.yml` — push que
+quebra teste não entra.
+
+## Medir acessibilidade e desempenho
+
+Estes dois abrem um **Chromium de verdade** e por isso não entram no
+`npm test` — precisam de navegador, e o CI não tem um.
+
+```bash
+npm run acessibilidade   # axe-core, WCAG 2.2 AA, falha com violação
+npm run desempenho       # LCP, INP e CLS num funil de celular em 4G lento
+```
+
+O de desempenho mede **laboratório**, não campo: o "p75" dele é sobre as
+rodadas da execução, não sobre usuários. Campo exige visitante real, e é
+o painel do Web Analytics da Cloudflare que vai ter isso quando houver
+tráfego. Este script serve para outra coisa — orçamento reprodutível,
+que cai junto com uma regressão.
 
 Exige **Node 22 ou mais novo** (`engines` no `package.json`, e `.nvmrc`):
 `@supabase/supabase-js` usa WebSocket nativo, que não existe no Node 20 —

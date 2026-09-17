@@ -63,6 +63,30 @@ app.use((_req, resposta, proximo) => {
   resposta.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
   proximo();
 });
+/* NADA que esta API responde pode ser guardado — e o item 5 da
+   prontidão operacional ("a conta não surpreende") pede `Cache-Control`
+   em toda resposta que pode ser cacheada. Aqui a resposta certa é a
+   oposta: **nenhuma pode**.
+
+   O que passa por estas rotas é pedido de uma pessoa (nome, documento,
+   valor), status de pagamento que muda de segundo a segundo, e painel
+   administrativo autenticado. Sem o header, quem decide guardar é o
+   navegador e qualquer intermediário no caminho, pelo palpite dele: o
+   botão "voltar" pode repintar um pedido já pago como pendente, e um
+   proxy compartilhado pode servir o pedido de um comprador para outro.
+
+   `no-store` e não `no-cache`: `no-cache` autoriza guardar e só exige
+   revalidar — a cópia fica no disco de quem passou por aqui. Não há
+   exceção a abrir depois: resposta cacheável desta API não existe, e o
+   `/api/saude` não é exceção (ele responde exatamente o estado de
+   AGORA, que é o motivo de existir). O front estático tem política
+   própria, no `public/_headers`, e é outra coisa: lá o que se guarda é
+   HTML, CSS e JS, e a regra é revalidar sempre. */
+app.use('/api', (_req, resposta, proximo) => {
+  resposta.setHeader('Cache-Control', 'no-store');
+  proximo();
+});
+
 app.use(cors({ origin: process.env.ORIGEM_FRONTEND || 'http://127.0.0.1:5501' }));
 app.use(express.json());
 

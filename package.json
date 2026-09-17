@@ -14,7 +14,8 @@
     "ensaio-restauracao": "scripts/ensaio-restauracao.sh",
     "acessibilidade": "node scripts/acessibilidade.mjs",
     "limpar-teste": "node scripts/limpar-registros-de-teste.mjs",
-    "expurgo": "node scripts/expurgo.mjs"
+    "expurgo": "node scripts/expurgo.mjs",
+    "desempenho": "node scripts/desempenho.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

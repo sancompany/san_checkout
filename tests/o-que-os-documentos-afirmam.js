@@ -50,13 +50,23 @@ ok(
   `o runner lista suíte que não existe: ${suites.filter((c) => !existsSync(join(RAIZ, c)))}`
 );
 
-const afirmado = CLAUDE.match(/roda as (\d+) suítes/);
-ok(afirmado, 'o CLAUDE.md afirma um número de suítes (se esta linha mudou de forma, ajuste a regex)');
-igual(
-  Number(afirmado[1]), suites.length,
-  `o CLAUDE.md diz ${afirmado?.[1]} suítes e o runner lista ${suites.length} — ` +
-  'o runner é a fonte; corrija a prosa'
-);
+/* O número aparece em DOIS documentos, e a primeira versão desta suíte
+   conferia só um. O `README.md` dizia "dezoito" enquanto o `CLAUDE.md`
+   já dizia 32 — conferir um documento e não o outro é o mesmo erro em
+   escala menor, porque quem lê o README acredita nele. */
+const AFIRMAM = [
+  ['CLAUDE.md', CLAUDE],
+  ['README.md', readFileSync(join(RAIZ, 'README.md'), 'utf8')]
+];
+for (const [nome, texto] of AFIRMAM) {
+  const afirmado = texto.match(/[Rr]oda as (\d+) suítes/);
+  ok(afirmado, `o ${nome} afirma um número de suítes (se a linha mudou de forma, ajuste a regex)`);
+  igual(
+    Number(afirmado[1]), suites.length,
+    `o ${nome} diz ${afirmado?.[1]} suítes e o runner lista ${suites.length} — ` +
+    'o runner é a fonte; corrija a prosa'
+  );
+}
 
 /* E TODA SUÍTE que existe está no runner: teste que não roda é pior que
    nenhum, porque parece cobertura.

@@ -165,6 +165,130 @@ Medido no dia, e escrito no arquivo: domínio `sancocore.com.br` vence
 `zacuaroarelaqnzjjlcz` em `sa-east-1`; Northflank publica de `main`; e
 os dois workflows do CI **não usam segredo de repositório** nenhum.
 
+### 🟢 Prontidão item 5 · `Cache-Control`, retenção de log e imagens — 17/09
+O item pede quatro coisas, e três estavam feitas ou eram do dono. O que
+faltava:
+
+- **`Cache-Control` não existia em resposta nenhuma da API.** Agora toda
+  resposta de `/api` sai com **`no-store`** — e não `no-cache`, que
+  autoriza guardar e só exige revalidar. O que passa por ali é pedido de
+  uma pessoa, status que muda de segundo a segundo e painel autenticado:
+  sem o header, quem decide guardar é o navegador e qualquer
+  intermediário, pelo palpite dele. Dois efeitos concretos que isso
+  evita: o botão "voltar" repintando um pedido já pago como pendente, e
+  um proxy compartilhado servindo o pedido de um comprador para outro.
+  Coberto em `tests/rotas-http-respondem-como-prometido.js`, na pilha
+  montada, **com controle positivo de que fora de `/api` o header não é
+  aplicado** — senão a correção mataria o cache do front sem ninguém
+  ver. O front tem política própria no `public/_headers` (revalidar
+  sempre), e ela já existia.
+- **O logo era um PNG de 1378x1378 e 127 KB exibido com 32 px de
+  altura**, na primeira tela do comprador, em dado móvel. Passou a ser
+  um de 192 px e **8,9 KB** (93% menos), gerado por redução no próprio
+  Chromium e conferido a olho contra o original. O arquivo grande
+  continua servindo o `og:image`, que é o único lugar onde tamanho
+  grande tem função. Os `<img>` ganharam `width`/`height`, que dão a
+  proporção antes do download e evitam reflow.
+  Travado por **orçamento de 30 KB por imagem** em
+  `npm run desempenho`: passada estática que lê o HTML das telas do
+  comprador e reprova imagem acima do teto — sem ela, alguém aponta o
+  `src` de volta para o arquivo grande e ninguém vê, que é exatamente
+  como ele chegou lá.
+
+**Já estava pronto, conferido no mesmo dia:** a retenção de log é
+definida e finita em três lugares (`webhook_eventos` 90 dias, amostras
+de rejeição 30 dias, tabela `erros` 30 dias, e as linhas de
+`webhook_rejeicoes` são agregadas, no máximo 24 por dia). **Do dono:** o
+alerta de orçamento nas contas pagas, que virou atualização futura por
+decisão dele.
+
+### 🟢 Prontidão item 4 · LCP, INP e CLS medidos — e o CLS da assinatura estava 4x fora — 17/09
+`npm run desempenho` (`scripts/desempenho.mjs`) abre um Chromium de
+verdade num funil de celular — **CPU 4x mais lenta, 1600 kbps de
+download, 150 ms de latência, viewport 390x844** —, mede as cinco telas
+do comprador em 5 rodadas cada e falha com código 1 fora do orçamento
+(LCP ≤ 2,5 s, INP ≤ 200 ms, CLS ≤ 0,1 — os limiares "bom" do Core Web
+Vitals).
+
+**O que este número é, e o que não é:** é laboratório, e o "p75" é sobre
+as RODADAS, não sobre usuários. Campo exigiria visitante real, e não há:
+o checkout está em sandbox e sem divulgação. O que se ganha aqui é um
+orçamento reprodutível, que cai junto com uma regressão.
+
+**Correção de uma frase que eu escrevi errada neste mesmo dia:** eu
+havia escrito que "o projeto não tem analytics de terceiro". Tem — o
+**Web Analytics da Cloudflare** está ativo no domínio das telas (a CSP
+libera `static.cloudflareinsights.com` desde 09/09, e o relatório de
+segurança daquele dia registra o script carregando). Ele é sem cookie e
+sem perfil, e **reporta Core Web Vitals de visitante real**: é onde o
+p75 de campo vai aparecer quando houver tráfego. O painel é do dono.
+Entrada própria abaixo, porque isso levanta uma pergunta de política de
+privacidade.
+
+Medido em 17/09/2026, **depois** das duas correções que a própria
+medição pediu (o CLS da assinatura, abaixo, e o logo de 127 KB do item
+5) — cinco telas dentro do orçamento, cinco rodadas cada:
+
+| tela | LCP | INP | CLS | antes das correções |
+|---|---|---|---|---|
+| Checkout · pedido avulso | 684 ms | 32 ms | 0,063 | 632 ms · 32 ms · 0,064 |
+| Checkout · assinatura | **1 256 ms** | ≤ 16 ms | **0,033** | 1 560 ms · ≤ 16 ms · **0,409** |
+| Status do pedido | 544 ms | 16 ms | 0,013 | igual |
+| Termos de Uso | 572 ms | ≤ 16 ms | 0,000 | igual |
+| Política de Privacidade | 600 ms | ≤ 16 ms | 0,000 | igual |
+
+O LCP do avulso subiu 52 ms e o da assinatura caiu 304 ms: são rodadas
+diferentes num funil emulado, e variação nessa ordem é ruído do
+laboratório, não regressão — dizer que o logo "melhorou o LCP em 304 ms"
+seria ler sorte como resultado. O que a troca do logo garante é peso:
+127 KB → 8,9 KB, que é medida, não estimativa.
+
+**O defeito que a medição achou:** a tela de assinatura tinha CLS de
+**0,409**, quatro vezes o teto. O diagnóstico saiu do próprio script,
+que reporta QUEM deslocou: o fieldset de endereço era revelado **depois**
+da ida à rede, e ele empurrava para baixo o bloco de pagamento, o aceite
+dos termos e o botão — 0,4 de deslocamento na parte da tela onde o dedo
+já está indo. Como o endereço **não depende da resposta** (assinatura é
+sempre cartão), revelá-lo antes do `await` resolve sem esconder nada:
+0,409 → **0,033**, reconferido no mesmo funil. No caminho de erro ele
+volta a se esconder — formulário que não pode ser enviado não fica na
+tela pedindo CEP.
+
+**Duas coisas que a primeira versão do script fazia errado**, e valem
+como lição sobre medir: ela mandava clicar em `#method-assinatura`, que
+não existe, e reportava "não mediu" como cinco rodadas estouradas; e
+tratava "nenhuma entrada de evento" como falha, quando o observador de
+INP tem **piso de 16 ms** e interação mais rápida que isso não gera
+entrada nenhuma. As páginas legais foram reprovadas por serem rápidas.
+Agora um contador de cliques separa "não interagiu" de "interagiu abaixo
+do piso".
+
+### 🟠 A política de privacidade não menciona o Web Analytics da Cloudflare — ACHADO 17/09
+Achado escrevendo o item 4: a CSP do `public/_headers` libera
+`static.cloudflareinsights.com` (script) e `cloudflareinsights.com`
+(conexão), e o relatório de 09/09 registra o script carregando de
+verdade. O beacon **não está no HTML** — a Cloudflare injeta sozinha nos
+domínios que ela serve —, e é por isso que ele não aparece procurando no
+repositório.
+
+`public/privacidade.html` não cita analytics nenhum, e o
+`docs/inventario-de-dados.md` também não. Pela orientação da ANPD que a
+skill `legal` traz, analytics **sem cookie e sem perfil** não exige
+banner de consentimento — mas exige **o aviso na política**. Então não é
+o caso de tirar o beacon: é o caso de a política dizer que ele existe,
+o que ela não diz.
+
+Duas coisas para o dono decidir, e as duas são da Estação 7 (documentos
+legais):
+1. confirmar no painel da Cloudflare se o Web Analytics está ligado
+   para `checkout.sancocore.com.br` (leitura de painel, e o painel é
+   dele);
+2. estando ligado, incluir o aviso na política e a linha no inventário
+   de dados. Eu não reescrevo documento legal por conta própria.
+
+De brinde, é a resposta para o p75 de **campo** do item 4: ele vai
+aparecer nesse mesmo painel quando houver visitante real.
+
 ### 🟠 A zona `sancocore.com.br` não tem registro SPF, e o DMARC é `p=reject` — MEDIDO 17/09
 Conferido em dois resolvedores independentes (Cloudflare e Google): a
 zona tem DKIM (seletor `google`) e `_dmarc` com `v=DMARC1; p=reject`, e
@@ -437,9 +561,11 @@ para o estado atual (um operador, sem dinheiro real). **Mas dois não são
   `docs/proximas-versoes.md` com o que essa escolha não cobre.
 
 **Alerta de orçamento** nas contas pagas virou atualização futura por
-decisão do dono (17/09) — `docs/proximas-versoes.md`. Genuinamente
-adiáveis enquanto for um operador: desempenho p75 no celular e o teste da
-segunda pessoa com o RUNBOOK.
+decisão do dono (17/09) — `docs/proximas-versoes.md`. Do que estava
+adiado aqui, **o desempenho saiu da lista no mesmo dia**: foi medido, e a
+medição achou um defeito real (entrada logo abaixo). Continua adiável o
+teste da segunda pessoa com o RUNBOOK, que depende de existir uma
+segunda pessoa.
 
 ### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
 Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX

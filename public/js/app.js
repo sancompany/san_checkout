@@ -364,16 +364,23 @@ async function iniciarModoAssinatura() {
   document.getElementById('payment-methods').classList.add('hidden');
   document.getElementById('subscription-action').classList.remove('hidden');
 
+  /* O fieldset de endereço aparece ANTES da ida à rede, e a ordem é o
+     conserto: ele não depende da resposta (assinatura é sempre cartão,
+     `INTEGRACAO.md` 6.1), e revelá-lo depois empurrava meia tela para
+     baixo justamente quando o comprador já estava lendo.
+
+     Medido em 17/09/2026 (`npm run desempenho`): CLS de **0,409** nesta
+     tela, com teto de 0,1 — e o deslocamento é do bloco de pagamento,
+     que é onde ele custa caro, porque o dedo já está indo no botão. */
+  const endereco = document.getElementById('endereco-fieldset');
+  endereco?.classList.remove('hidden');
+
   const resultado = await resolverAssinatura();
   const falhou = !resultado || resultado.erro;
 
   const form = document.getElementById('checkout-form');
   ligarMascaras(form);
   ligarBuscaCep();
-
-  // Assinatura é sempre cartão (ver INTEGRACAO.md 6.1) — endereço fica
-  // visível direto, sem depender de seleção de método.
-  document.getElementById('endereco-fieldset')?.classList.remove('hidden');
 
   // Pix Automático é alternativa ao cartão neste mesmo modo. Aparece só
   // se o contratante tiver o método habilitado — ele depende de a Asaas
@@ -442,6 +449,11 @@ async function iniciarModoAssinatura() {
   });
 
   if (falhou) {
+    /* Aqui o endereço volta a se esconder: formulário que não pode ser
+       enviado não fica na tela pedindo CEP. O deslocamento que isso
+       causa acontece só no caminho de erro, onde a tela já mudou de
+       assunto — é o oposto de deslocar quem estava pagando. */
+    endereco?.classList.add('hidden');
     document.getElementById('order-title').textContent = resultado?.erro ?? 'Link de assinatura inválido.';
     mostrarToast(resultado?.erro ?? 'Link de assinatura inválido ou incompleto.', 'erro');
     return;

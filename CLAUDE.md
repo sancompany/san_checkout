@@ -395,6 +395,39 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
   de item errado desde que foi escrito, então a linha de item nunca
   havia sido exercitada.
+- **Desempenho medido, e a medição achou defeito** (item 4:
+  `npm run desempenho`). Chromium de verdade num funil de celular (CPU
+  4x mais lenta, 1600 kbps, 150 ms), cinco telas do comprador, orçamento
+  que falha com código 1. A tela de **assinatura tinha CLS de 0,409**,
+  quatro vezes o teto: o fieldset de endereço era revelado depois da ida
+  à rede e empurrava o bloco de pagamento, o aceite e o botão para
+  baixo — deslocamento na parte da tela onde o dedo já está indo. Como
+  ele não depende da resposta, passou a aparecer antes do `await`:
+  **0,409 → 0,033**, reconferido, e provado por sabotagem (desfazer a
+  correção reprova a tela). O número é de laboratório e o "p75" é sobre
+  as rodadas, não sobre usuários — está escrito no script, porque
+  chamar isso de p75 de campo seria mentira. E uma frase minha do mesmo
+  dia estava errada: eu escrevi que "o projeto não tem analytics de
+  terceiro". Tem — o **Web Analytics da Cloudflare**, injetado pela
+  própria Cloudflare (por isso não aparece no HTML), sem cookie e sem
+  perfil, e é ele que vai ter o p75 de **campo** quando houver
+  visitante. Consequência achada junto: a política de privacidade não o
+  menciona, e pela orientação da ANPD analytics sem cookie dispensa
+  banner mas **não** dispensa o aviso — virou pendência da Estação 7,
+  porque documento legal não se reescreve por conta própria.
+- **O logo pesava 127 KB para aparecer com 32 px de altura** (item 5,
+  "imagens otimizadas"): PNG de 1378x1378 na primeira tela do comprador,
+  em dado móvel. Virou um de 192 px e **8,9 KB**, com o grande mantido
+  só no `og:image`. Travado por orçamento de 30 KB por imagem no
+  `npm run desempenho` — porque a forma de isso voltar não é um bug
+  novo, é alguém apontando o `src` de volta.
+- **`Cache-Control: no-store` em toda resposta de `/api`** (item 5). Não
+  existia nenhum: quem decidia guardar era o navegador e qualquer
+  intermediário, pelo palpite dele — botão "voltar" repintando pedido
+  pago como pendente, e proxy compartilhado podendo servir o pedido de
+  um comprador para outro. Coberto por teste na pilha montada, **com
+  controle positivo de que fora de `/api` o header NÃO é aplicado** —
+  senão a correção mataria o cache do front sem ninguém ver.
 - **As sete seções que faltavam no `RUNBOOK`** (item 6 da prontidão:
   "outra pessoa consegue operar"). Inventário de contas, segredos e como
   rotacionar cada um, alerta → significado → primeira ação, incidente
@@ -448,6 +481,7 @@ a data de vencimento do domínio.
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
+- Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
 - Testes: `tests/` — `npm test` roda as 32 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
