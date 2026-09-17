@@ -14,6 +14,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { ambienteAsaas } from '../config/asaas.js';
+import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
 
 export async function registrarCobranca(dados) {
   const { error } = await supabase.from('cobrancas').insert({
@@ -170,6 +171,51 @@ export async function registrarCicloAssinatura(dados) {
   return { duplicado: false };
 }
 
+/**
+ * Registra o ACERTO PROPORCIONAL de uma troca de plano — a cobrança
+ * avulsa que a rota `/trocar-plano` faz no cartão já salvo.
+ *
+ * Nasce já `confirmado`: quem chama só grava depois de a Asaas devolver
+ * `CONFIRMED`/`RECEIVED` (é o fail-closed da troca — o plano só muda com
+ * o dinheiro dentro). Por isso `confirmado_em` vai preenchido aqui, e
+ * não esperando webhook: o dado é conhecido neste instante, e a métrica
+ * conta por ele (migration 0008).
+ *
+ * `metodo_pagamento` é `acerto_troca`, nunca `cartao` — o porquê está em
+ * `METODO_ACERTO_TROCA` (`pedidoService.js`), e não é cosmético: com
+ * `cartao`, o `PAYMENT_CONFIRMED` que a Asaas manda para esta cobrança
+ * viraria uma confirmação de pedido com `pedidoId: null` no webhook do
+ * contratante.
+ *
+ * `plano_id` é o plano NOVO: o acerto é o que o assinante pagou para
+ * passar a ter aquele plano nos dias que faltavam. De onde ele veio fica
+ * em `assinaturas.plano_anterior_id` (migration 0010).
+ */
+export async function registrarAcertoDeTroca(dados) {
+  const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
+    charge_id: dados.chargeId,
+    asaas_subscription_id: dados.asaasSubscriptionId,
+    contratante_id: dados.contratanteId,
+    plano_id: dados.planoId,
+    documento: dados.documento,
+    valor_cheio: dados.valor,
+    valor_com_desconto: dados.valor,
+    taxa_asaas: 0,
+    taxa_propria: 0,
+    taxa_isenta: true,
+    valor_cobrado: dados.valor,
+    metodo_pagamento: METODO_ACERTO_TROCA,
+    parcelas: 1,
+    ciclo: dados.ciclo ?? null,
+    status: 'confirmado',
+    confirmado_em: new Date().toISOString()
+  });
+
+  if (error) console.error('[cobrancaService.registrarAcertoDeTroca]', error.message);
+  return { registrado: !error };
+}
+
 /** Busca pelo id da SESSÃO (asaas_checkout_id) — é o que o front tem
  *  logo depois de criar, antes de qualquer charge_id existir. Usado
  *  pelo endpoint de status/polling. */
@@ -299,6 +345,17 @@ export async function buscarUltimaCobrancaDaAssinatura(contratanteId, planoId, d
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
     .eq('documento', documento)
+    /* Ciclo de assinatura, não "qualquer cobrança que compartilhe o
+       plano". O filtro nasceu em 17/09/2026 junto da troca de plano: o
+       acerto proporcional é uma cobrança avulsa que carrega o MESMO
+       `plano_id` e nasce depois do último ciclo, então sem isto ele
+       viraria a "última cobrança" da assinatura — e `API.md` §5.3 manda
+       o contratante ler `ultimaCobranca.valorCobrado` como o valor que
+       está sendo cobrado, justamente porque `valor` não é reconciliado
+       (RN-34). O contratante veria o acerto de R$ 30 como se fosse o
+       preço do plano. Hoje é no-op (toda linha com `plano_id` é
+       `assinatura`); a partir da troca, não. */
+    .in('metodo_pagamento', METODOS_DE_ASSINATURA)
     .or('substitui_assinatura_id.is.null,status.not.in.(pendente,cancelado,expirado)')
     .order('criado_em', { ascending: false })
     .limit(1)

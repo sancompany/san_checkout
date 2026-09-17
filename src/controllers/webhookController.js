@@ -75,6 +75,7 @@ import {
   redigirPayload,
   extrairReferencia
 } from '../services/auditoriaWebhookService.js';
+import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from '../services/pedidoService.js';
 import { compararSeguro } from '../utils/validadores.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
 
@@ -225,9 +226,12 @@ const EVENTOS_PAYMENT_TRATADOS = [
  */
 const VERSAO_WEBHOOK = 1;
 
-/** Os dois jeitos de assinar. Ambos falam o vocabulário de assinatura
- *  no webhook do contratante, não o de pedido avulso. */
-const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
+/* `METODOS_DE_ASSINATURA` (os dois jeitos de assinar — ambos falam o
+   vocabulário de assinatura no webhook do contratante, não o de pedido
+   avulso) era declarado aqui e virou import de `pedidoService.js` em
+   17/09/2026: a conciliação e a troca de plano precisam da MESMA lista,
+   e três cópias dessincronizam no dia em que um terceiro método de
+   assinatura nascer. */
 
 /**
  * O roteamento por vocabulário de evento, sem Express em volta. É aqui
@@ -577,6 +581,22 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
   if (!primeiraDoCheckout && cobranca.status === novoStatus) return; // já processado — evita duplicar notificação/e-mail
 
   await deps.atualizarStatusCobranca(chargeId, novoStatus);
+
+  /* O ACERTO DE UMA TROCA DE PLANO não tem evento próprio no contrato, e
+     não pode cair no ramo de pedido avulso lá embaixo.
+
+     Ele é uma cobrança avulsa de verdade (cartão salvo, `POST
+     /v3/payments`), então a Asaas manda `PAYMENT_CONFIRMED` — e um dia
+     pode mandar `PAYMENT_REFUNDED` — para ele. Sem esta guarda, o ramo
+     final montaria `montarPayloadConfirmacaoPedido` com `pedidoId:
+     null` e anunciaria ao contratante a confirmação de um pedido que
+     nunca existiu; o checklist do `API.md` §11 manda creditar em cima
+     disso. Quem anuncia a troca é a própria rota `/trocar-plano`, na
+     hora, com `evento: 'plano_trocado'` (§4.3.4).
+
+     O status CONTINUA sendo gravado acima, de propósito: é assim que um
+     estorno do acerto aparece no painel. O que não sai é a notificação. */
+  if (cobranca.metodo_pagamento === METODO_ACERTO_TROCA) return;
 
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     /* Aqui o trabalho ACABOU, e notificar seria um erro caro.
@@ -930,6 +950,44 @@ export async function notificarAssinaturaCancelada(contratante, { planoId, docum
     planoId,
     documento,
     evento: 'cancelada'
+  }, contratante.api_key);
+}
+
+/**
+ * `POST /trocar-plano` (trocaPlanoController.js) — o assinante passou do
+ * plano A para o plano B, com o vínculo mantido.
+ *
+ * Mesmo canal e mesmo vocabulário dos outros avisos de assinatura
+ * (`API.md` §4.3.4). Duas diferenças que o payload precisa carregar, e
+ * que nenhum outro evento tem:
+ *
+ *  - **`planoAnterior`.** O payload de assinatura identifica por
+ *    `planoId` + `documento`, e o `planoId` acabou de mudar: sem o
+ *    anterior, o contratante não acha o próprio registro para atualizar.
+ *  - **`valor`, `ciclo` e `acertoCobrado`.** É ele que tem de explicar a
+ *    cobrança ao assinante (RN-35: avisar o pagador é obrigação do
+ *    contratante, por e-mail e por aviso no site dele). Sem os números,
+ *    o aviso dele seria "seu plano mudou" sem dizer para quanto.
+ *
+ * Fire-and-forget como os outros: a resposta síncrona da rota já
+ * confirmou a quem chamou.
+ */
+export async function notificarPlanoTrocado(
+  contratante,
+  { planoId, planoAnterior, documento, valor, ciclo, acertoCobrado },
+  deps = dependenciasPadrao
+) {
+  if (!contratante?.webhook_url) return;
+  return deps.notificar(contratante.webhook_url, {
+    versao: VERSAO_WEBHOOK,
+    tipo: 'assinatura',
+    planoId,
+    planoAnterior,
+    documento,
+    evento: 'plano_trocado',
+    valor,
+    ciclo,
+    acertoCobrado
   }, contratante.api_key);
 }
 

@@ -20,6 +20,36 @@ const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuit
  */
 export const METODOS_VALIDOS = ['pix', 'boleto', 'cartao', 'assinatura', 'assinatura_pix'];
 
+/**
+ * Os dois métodos que significam "esta cobrança é de uma assinatura".
+ *
+ * Mora aqui, junto de `METODOS_VALIDOS`, porque três lugares precisam da
+ * MESMA lista e ela vinha declarada dentro do `webhookController`: o
+ * webhook (para escolher o vocabulário de evento), a conciliação (para
+ * achar o último CICLO, e não qualquer cobrança que compartilhe o plano)
+ * e a troca de plano. Três cópias dessincronizam no dia em que um
+ * terceiro método de assinatura nascer.
+ */
+export const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
+
+/**
+ * O acerto proporcional de uma troca de plano — `POST /trocar-plano`.
+ *
+ * Tem método PRÓPRIO, e não `cartao`, por dois motivos que não são
+ * cosméticos:
+ *
+ *  1. **O webhook da Asaas chega para ele.** O acerto é uma cobrança
+ *     avulsa de verdade, então `PAYMENT_CONFIRMED` (e um eventual
+ *     `PAYMENT_REFUNDED`) batem no nosso receptor. Sem um método que o
+ *     identifique, o receptor o trataria como pedido avulso e mandaria
+ *     ao contratante a confirmação de um pedido com `pedidoId: null` —
+ *     uma venda que não existe, no caminho do dinheiro.
+ *  2. **A métrica fica legível.** O acerto é dinheiro confirmado e
+ *     entra na conta, mas não é venda nova: num balde próprio ninguém
+ *     o confunde com uma.
+ */
+export const METODO_ACERTO_TROCA = 'acerto_troca';
+
 /** `metodos_habilitados` nulo (linha antiga, antes da migração) libera
  *  tudo — mesmo default do `create table` novo, só reforçado aqui pra
  *  não travar contratante nenhum silenciosamente. */
@@ -193,10 +223,15 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
  * é um pedido com ciclo de vida, é só a definição de um produto
  * recorrente).
  */
-export async function resolverPlano(contratanteId, planoId, { metodoRequerido } = {}) {
+export async function resolverPlano(contratanteId, planoId, { metodoRequerido, contratante: jaCarregado } = {}) {
   exigirIdImprevisivel(planoId, 'planoId');
 
-  const contratante = await buscarContratante(contratanteId);
+  /* `contratante` já carregado entra por parâmetro em vez de ser buscado
+     de novo — quem autentica por `X-Checkout-Key` (a troca de plano) já
+     tem a linha inteira em mãos, e cada ida ao banco custou 213 ms
+     medidos em 12/09/2026 (`tests/sem-consulta-repetida.js`). Sem isto,
+     a troca faria duas leituras da MESMA linha. */
+  const contratante = jaCarregado ?? await buscarContratante(contratanteId);
   if (!contratante) {
     const erro = new Error('Contratante não encontrado.');
     erro.status = 404;

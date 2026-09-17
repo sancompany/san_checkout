@@ -108,6 +108,10 @@ app.use('/api/checkout/cancelar-assinatura', criarLimitadorCriacao());
 // aqui não é sobre volume de uso, é sobre força bruta na chave.
 app.use('/api/checkout/pausar-assinatura', criarLimitadorCriacao());
 app.use('/api/checkout/retomar-assinatura', criarLimitadorCriacao());
+
+// Troca de plano cobra dinheiro (o acerto proporcional): teto de
+// criação, não de consulta.
+app.use('/api/checkout/trocar-plano', criarLimitadorCriacao());
 /* A ROTA DE LOGIN É O ÚNICO LUGAR CARO QUE SOBROU, e por isso tem o
    teto mais apertado do projeto. Cada tentativa custa ~830 ms de CPU no
    scrypt: a 10/min, um atacante consumiria 8,3 s de CPU por minuto numa

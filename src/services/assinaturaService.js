@@ -56,6 +56,88 @@ export async function atualizarCicloAssinatura(id, ciclo) {
   if (error) console.error('[assinaturaService.atualizarCicloAssinatura]', error.message);
 }
 
+/** Prazo do arrendamento da troca. Curto de propósito — ver
+ *  `reivindicarTroca`. */
+const MINUTOS_DE_ARRENDAMENTO = 5;
+
+/**
+ * Reivindica a troca de plano de uma assinatura — o arrendamento
+ * (migration 0010, coluna `trocando_em`).
+ *
+ * Por que existe: a troca cobra o acerto ANTES de alterar o plano (uma
+ * recusa de cartão não pode deixar o assinante no plano caro de graça).
+ * Duas chamadas simultâneas da rota leriam as duas o mesmo estado e
+ * cobrariam DUAS vezes o mesmo acerto — dinheiro do assinante, e um
+ * estorno para desfazer.
+ *
+ * O `update` condicional é a guarda inteira: no Postgres ele é atômico,
+ * então só uma das duas chamadas encontra linha para atualizar. A outra
+ * recebe `false` e a rota devolve 409 **sem ter cobrado nada**.
+ *
+ * O prazo curto é deliberado: um processo que morra entre a cobrança e
+ * a alteração não pode trancar a assinatura para sempre. Passados os
+ * minutos, uma nova tentativa reivindica de novo — e nesse caso o
+ * acerto anterior já está registrado em `cobrancas`, que é onde se
+ * confere o que foi cobrado.
+ *
+ * @returns {Promise<boolean>} `true` quando esta chamada é a dona da
+ *   troca; `false` quando outra está em andamento.
+ */
+export async function reivindicarTroca(id) {
+  const limite = new Date(Date.now() - MINUTOS_DE_ARRENDAMENTO * 60_000).toISOString();
+
+  const { data, error } = await supabase
+    .from('assinaturas')
+    .update({ trocando_em: new Date().toISOString() })
+    .eq('id', id)
+    .or(`trocando_em.is.null,trocando_em.lt.${limite}`)
+    .select('id');
+
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
+}
+
+/** Devolve o arrendamento sem trocar nada — usada quando a troca é
+ *  abandonada depois de reivindicada (cartão recusado, plano sem cartão
+ *  salvo). Falha aqui não é fatal: o prazo expira sozinho. */
+export async function liberarTroca(id) {
+  const { error } = await supabase
+    .from('assinaturas')
+    .update({ trocando_em: null })
+    .eq('id', id);
+
+  if (error) console.error('[assinaturaService.liberarTroca]', error.message);
+}
+
+/**
+ * Grava a troca de plano — os cinco campos numa escrita só.
+ *
+ * `plano_id`, `valor` e `ciclo` passam a valer; `plano_anterior_id` e
+ * `trocado_em` são o rastro (migration 0010), e existem porque a troca
+ * PARA BAIXO não gera cobrança nenhuma: sem eles, esse caso mudaria o
+ * plano de um assinante sem deixar nada no nosso banco.
+ *
+ * Escrever aqui é obrigatório e não é opcional: a Asaas **não manda
+ * evento nenhum** de assinatura (`CONSTRAINTS.md` §2.2, medido — zero
+ * eventos `SUBSCRIPTION_*` entre os 53 configurados). Quem altera lá
+ * escreve aqui na mesma operação, ou o dado nunca chega.
+ */
+export async function aplicarTrocaDePlano(id, { planoNovoId, planoAnteriorId, valor, ciclo }) {
+  const { error } = await supabase
+    .from('assinaturas')
+    .update({
+      plano_id: planoNovoId,
+      plano_anterior_id: planoAnteriorId,
+      valor,
+      ciclo,
+      trocado_em: new Date().toISOString(),
+      trocando_em: null
+    })
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
 export async function atualizarStatusAssinatura(id, status) {
   const { error } = await supabase
     .from('assinaturas')

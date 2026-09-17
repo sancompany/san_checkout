@@ -93,7 +93,16 @@ export function diasAte(vencimento, hoje) {
  *   cobre até ali, e o plano novo inteiro entra nela.
  * @param {string} p.hoje — `AAAA-MM-DD`
  * @returns {{cobra: boolean, acerto: number, credito: number, debito: number,
- *   diasRestantes: number, motivo: string}}
+ *   diasRestantes: number, motivo: string, dadoIncoerente?: true}}
+ *
+ * `cobra: false` tem dois significados que NÃO podem se confundir no
+ * caminho do dinheiro, e é por isso que `dadoIncoerente` existe:
+ *   - **não é devido** (rebaixamento, acerto abaixo do piso, vencimento
+ *     hoje) → a troca segue, sem cobrar. `dadoIncoerente` ausente.
+ *   - **eu não sei calcular** (ciclo fora da lista, data impossível,
+ *     dias restantes maiores que o ciclo) → `dadoIncoerente: true`, e
+ *     quem chama RECUSA a troca. Tratar isto como "não é devido" daria
+ *     de graça uma troca que ninguém conferiu.
  */
 export function calcularAcertoDeTroca({
   valorPagoDoPeriodo,
@@ -111,21 +120,21 @@ export function calcularAcertoDeTroca({
      valor errado de gente real. */
   if (!diasAtual || !diasNovo) {
     return {
-      cobra: false, acerto: 0, credito: 0, debito: 0, diasRestantes: 0,
+      cobra: false, dadoIncoerente: true, acerto: 0, credito: 0, debito: 0, diasRestantes: 0,
       motivo: `ciclo desconhecido: ${!diasAtual ? cicloAtual : cicloNovo}`
     };
   }
 
   if (!(valorPagoDoPeriodo > 0) || !(valorDoPlanoNovo > 0)) {
     return {
-      cobra: false, acerto: 0, credito: 0, debito: 0, diasRestantes: 0,
+      cobra: false, dadoIncoerente: true, acerto: 0, credito: 0, debito: 0, diasRestantes: 0,
       motivo: 'valor não utilizável'
     };
   }
 
   const dias = diasAte(vencimentoAtual, hoje);
   if (dias === null) {
-    return { cobra: false, acerto: 0, credito: 0, debito: 0, diasRestantes: 0, motivo: 'data não utilizável' };
+    return { cobra: false, dadoIncoerente: true, acerto: 0, credito: 0, debito: 0, diasRestantes: 0, motivo: 'data não utilizável' };
   }
 
   /* Vencimento hoje ou no passado: não há período restante para
@@ -139,7 +148,7 @@ export function calcularAcertoDeTroca({
      quem chamou decide. Cobrar sobre isso daria acerto inflado. */
   if (dias > diasAtual) {
     return {
-      cobra: false, acerto: 0, credito: 0, debito: 0, diasRestantes: dias,
+      cobra: false, dadoIncoerente: true, acerto: 0, credito: 0, debito: 0, diasRestantes: dias,
       motivo: `dias restantes (${dias}) maiores que o ciclo atual (${diasAtual})`
     };
   }
@@ -281,6 +290,34 @@ if (process.argv[1]?.endsWith('proporcionalService.js')) {
     !calcularAcertoDeTroca({ valorPagoDoPeriodo: 100, cicloAtual: 'MONTHLY', valorDoPlanoNovo: 200, cicloNovo: 'MONTHLY', vencimentoAtual: 'amanhã', hoje: '2026-09-25' }).cobra,
     'data que não é data não cobra'
   );
+
+  /* --- 6b. "não é devido" e "não sei calcular" são coisas diferentes --
+     `cobra: false` sozinho não distingue as duas, e confundi-las daria
+     de graça uma troca sobre dado que ninguém conferiu. Quem chama
+     recusa a troca quando `dadoIncoerente` aparece, e segue sem cobrar
+     quando ele não aparece. */
+  conferir(
+    calcularAcertoDeTroca({ ...base, valorPagoDoPeriodo: 100, cicloAtual: 'DECADAL', valorDoPlanoNovo: 200, cicloNovo: 'MONTHLY' }).dadoIncoerente === true,
+    'ciclo inventado é dado incoerente'
+  );
+  conferir(
+    calcularAcertoDeTroca({ ...base, valorPagoDoPeriodo: 0, cicloAtual: 'MONTHLY', valorDoPlanoNovo: 200, cicloNovo: 'MONTHLY' }).dadoIncoerente === true,
+    'valor pago zero é dado incoerente — não é o mesmo que "nada a cobrar"'
+  );
+  conferir(
+    calcularAcertoDeTroca({ valorPagoDoPeriodo: 100, cicloAtual: 'MONTHLY', valorDoPlanoNovo: 200, cicloNovo: 'MONTHLY', vencimentoAtual: 'amanhã', hoje: '2026-09-25' }).dadoIncoerente === true,
+    'data que não é data é dado incoerente'
+  );
+  conferir(longe.dadoIncoerente === true, 'dias restantes maiores que o ciclo é dado incoerente');
+
+  /* E o controle positivo, que é o que dá sentido aos quatro acima: os
+     três "não cobra" LEGÍTIMOS não carregam a marca. Sem este par, um
+     `dadoIncoerente` chumbado em tudo passaria pelos testes e a troca
+     nunca aconteceria. */
+  conferir(barato.dadoIncoerente === undefined, 'rebaixamento não é dado incoerente — é regra');
+  conferir(perto.dadoIncoerente === undefined, 'acerto absorvido não é dado incoerente — é regra');
+  conferir(hojeVence.dadoIncoerente === undefined, 'vencimento hoje não é dado incoerente — é regra');
+  conferir(trimestral.dadoIncoerente === undefined, 'acerto negativo entre ciclos não é dado incoerente — é regra');
 
   /* --- 7. os sete ciclos estão na tabela -------------------------- */
   const SETE = ['WEEKLY', 'BIWEEKLY', 'MONTHLY', 'BIMONTHLY', 'QUARTERLY', 'SEMIANNUALLY', 'YEARLY'];
