@@ -291,6 +291,44 @@ entrada nenhuma. As páginas legais foram reprovadas por serem rápidas.
 Agora um contador de cliques separa "não interagiu" de "interagiu abaixo
 do piso".
 
+### 🟠 A conciliação não reconfere o `valor` da assinatura — DECLARADO 17/09
+Achado respondendo uma pergunta do dono ("não é possível alterar preço
+de plano já contratado?"). A resposta medida é **sim** — e ela abriu um
+furo que já existia sem ninguém ver.
+
+A conciliação (`API.md` §5.3) reconfere contra a Asaas o `status`, o
+`ciclo` e a `proximaCobranca`. **O `valor` sai do nosso banco**
+(`cobrancaConsultaController.js`: `valor: assinatura?.valor ?? null`).
+Como a Asaas aceita alterar `value` de uma assinatura ativa (medido no
+sandbox, cartão e boleto, aumentando e diminuindo) e **nada nos avisa**
+— `SUBSCRIPTION_*` fora dos 53 eventos, `PAYMENT_UPDATED` desmarcado de
+propósito (§2.2) —, um preço mudado no painel da Asaas deixa o nosso
+registro errado **para sempre e sem sintoma**.
+
+É a **mesma família** do bug do `ciclo` de 15/09: dado local que
+divergiu da fonte e ninguém reparava. A correção de 16/09 (RN-26.1)
+fechou `ciclo` e **deixou `valor` aberto** — porque naquele dia eu
+acreditava que `valor` não podia mudar.
+
+**Não corrigido às cegas, e o motivo é decisão, não preguiça:**
+reconciliar `valor` significa deixar a Asaas mandar no número, inclusive
+quando a alteração de lá foi erro humano de quem mexeu no painel. É
+caminho de dinheiro (lista curta da skill `leis`) e é escolha do dono
+entre duas coisas defensáveis:
+
+1. **Reconciliar** — o que a Asaas cobra é a verdade, e o nosso registro
+   segue. Consistente, e aceita que um erro no painel vire preço oficial.
+2. **Não reconciliar, e denunciar** — manter o nosso valor e devolver um
+   sinal de divergência (`valorDivergente: true`, por exemplo) quando os
+   dois não baterem. Mais informação para o contratante, mais código, e
+   exige decidir o que o painel mostra.
+
+**Mitigação que já está no ar, sem código:** o `API.md` §5.3 e §7.5
+passaram a dizer ao integrador, com destaque, que `valor` não é preço
+vigente — o que é verdade é `ultimaCobranca.valorCobrado`, histórico de
+cobrança real. RN-34 em `docs/funcional.md`, etapa T12 em
+`docs/ciclo-assinatura-mapa.md`.
+
 ### 🟢 Web Analytics declarado na política, e a política parou de nomear o Render — FECHADO 17/09
 Achado escrevendo o item 4: a CSP do `public/_headers` libera
 `static.cloudflareinsights.com` (script) e `cloudflareinsights.com`

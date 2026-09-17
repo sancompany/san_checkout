@@ -242,10 +242,40 @@ para um problema que talvez nem exista mais.
 
   | o que tentei | resposta | o `GET` de volta |
   |---|---|---|
-  | `PUT {value: 35}` numa assinatura de R$ 20 | `200` | `value: 35` |
+  | `PUT {value: 35}` numa assinatura de R$ 20 (boleto) | `200` | `value: 35` |
   | `PUT {value: 42, updatePendingPayments: true}` | `200` | `value: 42` — **e a cobrança pendente já gerada passou de R$ 20 para R$ 42**, mesmo id, mesmo vencimento |
   | `PUT {cycle: QUARTERLY}` num `MONTHLY` | `200` | `cycle: QUARTERLY` |
   | **controle negativo:** `PUT {campoQueNaoExiste}` | `200`, sem erro | nada mudou |
+
+  **Segunda rodada, no meio que importa — CARTÃO** (a primeira usou
+  boleto, e o checkout assina por cartão), com as perguntas que
+  faltavam:
+
+  | tentativa | resposta | `GET` de volta |
+  |---|---|---|
+  | **aumentar** R$ 30 → R$ 45 | `200` | `value: 45` |
+  | **diminuir** R$ 45 → R$ 12 | `200` | `value: 12` — **dá para os dois lados** |
+  | **abaixo do piso**: R$ 12 → R$ 3 | **`400 invalid_value`** — "O valor mínimo para cobranças via cartão de crédito é R$ 5,00." | continuou `12` |
+  | mesma coisa **na criação**, para comparar | `400`, "…via Boleto Bancário é R$ 5,00." | — |
+  | `cycle: MONTHLY → YEARLY` | `200` | `cycle: YEARLY`, **`nextDueDate` NÃO se moveu** |
+  | em assinatura **pausada** (`INACTIVE`) | `200` | `value: 77`, `status: INACTIVE` |
+  | **a Asaas nos avisou?** | — | **nenhum evento chegou** ao nosso receptor em nenhuma das operações |
+
+  Quatro coisas que essa rodada decide para o desenho:
+
+  - **o piso vale na alteração também**, e a mensagem é por meio de
+    pagamento — quem alterar precisa validar antes, senão a recusa
+    aparece na cara do operador sem contexto;
+  - **ciclo novo não move a data já marcada**: o ciclo passa a contar a
+    partir dela. Quem assumir "virou anual, próxima em um ano" erra por
+    onze meses;
+  - **pausada aceita mudança de preço** — então "pausar, mudar, retomar"
+    é uma sequência possível, e não precisa ser;
+  - **silêncio total de eventos.** Isso é configuração, não
+    incapacidade (`SUBSCRIPTION_*` fora dos 53, `PAYMENT_UPDATED`
+    desmarcado de propósito — `CONSTRAINTS.md` §2.2), mas o efeito
+    prático é o mesmo: **quem alterar precisa escrever no nosso banco na
+    mesma transação**, porque nada vai contar depois.
 
   O controle negativo é o que dá valor aos três primeiros: a Asaas
   **ignora campo desconhecido em silêncio e responde 200**, então o
@@ -293,12 +323,47 @@ para um problema que talvez nem exista mais.
   valendo (o avulso é mais simples e não constrói cálculo proporcional
   para dois casos por mês); o que não pode é continuar valendo por um
   motivo que não existe.
+- **As duas coreografias possíveis, agora que o `PUT` está medido.** A
+  escolha é de produto, não técnica, e as duas exigem autorização
+  (caminho de dinheiro):
+
+  **A · Alterar a assinatura existente** (`PUT` com `value` e, se o
+  plano de destino tiver outro, `cycle`).
+  - *Ganha:* o assinante **não digita o cartão de novo**, o vínculo
+    continua o mesmo, não existe janela sem assinatura, e o histórico
+    fica numa linha só.
+  - *Exige:* validar o piso de R$ 5,00 antes de mandar (a Asaas recusa
+    com `400`); decidir se a cobrança pendente muda junto
+    (`updatePendingPayments`); **escrever `valor`, `ciclo` e o plano
+    novo no nosso banco na mesma operação**, porque nenhum evento vai
+    contar depois; e saber que `nextDueDate` não se move — o preço novo
+    vale da próxima data em diante.
+  - *Cuidado de produto, não de código:* mudar o valor que um cartão
+    salvo vai cobrar exige **concordância do assinante** (CDC). Um
+    upgrade que ele pediu é uma coisa; um aumento que ele não pediu é
+    outra, e a segunda não se resolve com API.
+
+  **B · Cancelar e criar outra**, a coreografia que a renovação já sabe
+  fazer (`API.md` §7.3): cria a nova e encerra a antiga **só depois** da
+  nova confirmar, com token HMAC para ninguém mexer na assinatura alheia
+  (RN-25).
+  - *Ganha:* nada de novo para construir na Asaas, e o assinante
+    **autoriza explicitamente** o valor novo ao pagar.
+  - *Custa:* cartão digitado de novo, vínculo antigo morto, e a janela
+    entre as duas.
+
+  Com o `PUT` na mesa, **A** é o caminho mais simples para
+  upgrade/downgrade pedido pelo assinante, e **B** continua sendo o
+  caminho honesto quando o preço sobe sem ele ter pedido. Não é ou-ou.
+
 - **O que toca** — `asaasCheckoutController.js` (a mesma porta da
   renovação), `tokenRenovacao.js` (o token precisaria carregar o plano
   de DESTINO, não só o de origem, senão um token de renovação vira um
   token de troca), `encerrarAssinaturaSubstituida`, a tabela
-  `assinaturas` (de qual plano veio), e o cálculo proporcional, que hoje
-  não existe em lugar nenhum do sistema. Caminho de dinheiro: exige
+  `assinaturas` (de qual plano veio, e `valor`/`ciclo` reescritos), uma
+  função nova em `asaasService.js` para o `PUT` (hoje o único `PUT` que
+  existe é o de pausar/retomar), e o cálculo proporcional, que hoje não
+  existe em lugar nenhum do sistema. Caminho de dinheiro: exige
   autorização.
 - **Quando vale a pena** — quando algum contratante tiver assinantes
   suficientes para a troca ser rotina, e não exceção que se resolve na

@@ -55,7 +55,8 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
    - 7.2 [Assinatura por Pix Automático](#72-assinatura-por-pix-automático)
    - 7.3 [Renovação — cartão vencido ou troca de cartão](#73-renovação--cartão-vencido-ou-troca-de-cartão)
    - 7.4 [Ciclo de vida completo](#74-ciclo-de-vida-completo)
-   - 7.5 [O que a assinatura NÃO faz — leia antes de prometer benefício](#75-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
+   - 7.5 [Mudar o preço de quem já assinou](#75-mudar-o-preço-de-quem-já-assinou--o-que-dá-o-que-não-dá-e-o-que-o-checkout-não-faz)
+   - 7.6 [O que a assinatura NÃO faz — leia antes de prometer benefício](#76-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
 8. [Taxas, split e o valor cobrado](#8-taxas-split-e-o-valor-cobrado)
 9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
    - 9.0 [A resposta da sua API: redirecionamento e tamanho](#90-a-resposta-da-sua-api-redirecionamento-e-tamanho)
@@ -970,8 +971,21 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > gravadas como `MONTHLY` independentemente do plano (o código lia um
 > campo de webhook que não existe). A correção na origem só valeu para as
 > novas — **para as antigas, é esta rota que repara**. Se você guardou o
-> `ciclo` do seu lado antes desta data, vale reconciliar. `valor`
-> continua vindo do registro local.
+> `ciclo` do seu lado antes desta data, vale reconciliar.
+>
+> ⚠️ **`valor` é o único campo desta resposta que NÃO é reconferido.**
+> Ele sai do nosso banco, e não da Asaas. Isso tem consequência prática
+> desde 17/09/2026, quando foi medido que **a Asaas aceita alterar o
+> valor de uma assinatura ativa** (seção 7.5): mudado o preço lá — pelo
+> painel ou por API —, a Asaas passa a cobrar o novo e **nós continuamos
+> devolvendo o antigo aqui, para sempre**, porque nada nos avisa
+> (`SUBSCRIPTION_*` não está entre os eventos configurados e
+> `PAYMENT_UPDATED` está desmarcado de propósito).
+>
+> Então: **não use `valor` como "o preço que está sendo cobrado"**. Para
+> isso existe `ultimaCobranca.valorCobrado`, que é histórico de cobrança
+> real e por isso é verdade. O `valor` diz o que foi combinado na
+> criação, do nosso lado.
 
 | Campo | Descrição |
 |---|---|
@@ -1408,7 +1422,98 @@ não um erro que trava o pagador.
                                           (definitivo)
 ```
 
-### 7.5 O que a assinatura NÃO faz — leia antes de prometer benefício
+### 7.5 Mudar o preço de quem já assinou — o que dá, o que não dá, e o que o checkout não faz
+
+**Resumo em três linhas.** A Asaas **permite** aumentar e diminuir o
+valor de uma assinatura ativa, e trocar o ciclo dela. **O San Checkout
+não expõe rota para isso** — não existe `POST /alterar-assinatura`. E
+enquanto não existir, o valor que este contrato devolve na seção 5.3 é
+**o nosso registro**, não o da Asaas.
+
+Tudo abaixo foi **medido no sandbox em 17/09/2026**, em assinatura de
+**cartão** (o meio que o checkout usa) e também em boleto, com fixtures
+descartáveis apagadas no fim. Até aquele dia este documento afirmava que
+valor e ciclo eram congelados pela Asaas — era falso, e o registro do
+erro está em
+`docs/erros/2026-09-17-declarei-limite-do-provedor-sem-ter-medido.md`.
+
+#### O que a Asaas faz, medido
+
+| o que eu tentei | resposta | conferido no `GET` depois |
+|---|---|---|
+| **aumentar**: R$ 30 → R$ 45 (cartão) | `200` | `value: 45` |
+| **diminuir**: R$ 45 → R$ 12 (cartão) | `200` | `value: 12` |
+| **abaixo do piso**: R$ 12 → R$ 3 | **`400 invalid_value`** — "O valor mínimo para cobranças via cartão de crédito é R$ 5,00." | continuou `12`: nada mudou |
+| **trocar o ciclo**: `MONTHLY` → `YEARLY` | `200` | `cycle: YEARLY`, e **`nextDueDate` NÃO se moveu** |
+| **em assinatura PAUSADA** (`INACTIVE`) | `200` | `value: 77`, `status: INACTIVE` — pausada aceita mudança de preço |
+| alterar **a cobrança pendente já gerada** | só com `updatePendingPayments: true` | sem a bandeira, a pendente fica no valor antigo; com ela, a pendente muda (mesmo id, mesmo vencimento) |
+| **controle negativo**: mandar um campo que não existe | `200`, **sem erro** | nada mudou |
+
+Três coisas que essa tabela ensina, e que valem para qualquer integração
+com a Asaas:
+
+1. **O piso de R$ 5,00 vale na alteração também**, não só na criação — e
+   a mensagem de erro é **por meio de pagamento** ("via cartão de
+   crédito" × "via Boleto Bancário", as duas medidas). Quem alterar
+   preço precisa validar antes, senão a recusa aparece na cara do
+   operador sem explicação.
+2. **Ciclo novo não mexe na data já marcada.** Trocar `MONTHLY` por
+   `YEARLY` mantém o `nextDueDate`; o ciclo novo passa a contar **a
+   partir** daquela data. Quem espera "virou anual, então a próxima é em
+   um ano" vai errar por onze meses.
+3. **`200` não prova nada nesta API.** O controle negativo devolveu
+   `200` sem erro para um campo inventado: a Asaas **ignora em silêncio
+   o que não conhece**. Portanto mandar `valor` em vez de `value`, ou
+   `amount`, é aceito e não faz nada. Quem alterar preço confere lendo
+   de volta, nunca pelo código HTTP.
+
+> **Uma ressalva de estabilidade:** `value` **não aparece no schema
+> documentado** do `PUT` de assinatura da Asaas (a documentação lista
+> `cycle`, `nextDueDate`, `billingType`, `updatePendingPayments`,
+> `status`, `description`, `discount`, `interest`, `fine`, `split`,
+> `callback`, `endDate`, `externalReference`). Funciona — medido —, mas
+> é comportamento **não documentado**, e comportamento não documentado
+> pode mudar sem aviso.
+
+#### O que o San Checkout faz hoje: nada, e é isto que você precisa saber
+
+- **Não existe rota nossa** para alterar valor ou ciclo de um assinante.
+  As quatro rotas de assinatura são criar (pelo link), cancelar, pausar
+  e retomar (seção 5.5).
+- **Nada nos avisa se o valor mudar na Asaas.** Medido: nenhum evento
+  chegou ao nosso receptor em toda a bateria acima — criar, aumentar,
+  diminuir, trocar ciclo, pausar e apagar a assinatura. Isso é
+  **configuração**, não incapacidade: o grupo `SUBSCRIPTION_*` não está
+  entre os 53 eventos marcados nesta conta, e `PAYMENT_UPDATED` está
+  desmarcado de propósito (`CONSTRAINTS.md` §2.2).
+- **Consequência direta, e é a parte que te afeta:** na seção 5.3, os
+  campos `status`, `ciclo` e `proximaCobranca` são reconferidos contra a
+  Asaas a cada chamada — **`valor` não é**. Ele sai do nosso banco. Se
+  alguém alterar o preço pelo painel da Asaas, ou por API, **o `valor`
+  que você lê de nós fica errado, e fica errado para sempre.**
+
+  Não trate `valor` da seção 5.3 como preço vigente na operadora. O
+  número que o seu sistema deve considerar cobrado é o
+  `ultimaCobranca.valorCobrado` — esse é histórico, e é verdade.
+
+#### Então como se muda o preço de um assinante hoje
+
+Dois caminhos, os dois sem rota nova:
+
+1. **Cancelar e assinar de novo** (`POST /cancelar-assinatura`, depois um
+   link novo com o plano de valor diferente). Custo: o assinante digita
+   o cartão outra vez, o vínculo antigo morre, e existe uma janela em
+   que ele não tem nem uma assinatura nem a outra.
+2. **Cobrar a diferença como pedido avulso** (seção 4.1), mantendo a
+   assinatura como está. É o caminho que o dono escolheu para o MostrAí
+   em 16/09/2026. Não mexe em nada recorrente.
+
+**Se você mudar o preço direto no painel da Asaas**, saiba o que
+acontece: a Asaas passa a cobrar o valor novo, e nós continuamos
+dizendo o antigo na seção 5.3. Não é proibido — é inconsistente, e a
+inconsistência é silenciosa.
+
+### 7.6 O que a assinatura NÃO faz — leia antes de prometer benefício
 
 Esta seção existe porque promessa feita ao assinante e não cumprida pelo
 motor vira cobrança indevida, e cobrança indevida não volta com redeploy.

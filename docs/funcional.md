@@ -680,6 +680,31 @@ mais excluído é igual ao lido do banco, conferido por autoteste e
 medido contra o banco de produção em 17/09/2026 (10 linhas lidas, 10
 excluídas, 0 de negócio).
 
+**RN-34 · O valor de uma assinatura pode mudar na Asaas, e hoje nada
+nos conta.** A Asaas **aceita** alterar `value` e `cycle` de uma
+assinatura ativa — aumentar, diminuir e trocar o ciclo —, medido no
+sandbox em 17/09/2026 em assinatura de cartão e de boleto. O checkout
+**não expõe rota** para isso (as quatro são criar, cancelar, pausar e
+retomar), e **não recebe aviso quando acontece**: nenhum evento chegou
+ao receptor em toda a bateria de alterações, porque `SUBSCRIPTION_*`
+não está entre os 53 eventos configurados e `PAYMENT_UPDATED` está
+desmarcado de propósito (`CONSTRAINTS.md` §2.2). *Violada:* mudado o
+preço no painel da Asaas, ela passa a cobrar o valor novo e
+`assinaturas.valor` aqui continua o antigo — a conciliação
+(`API.md` §5.3) reconfere `status`, `ciclo` e `proximaCobranca` contra a
+Asaas, **e não reconfere `valor`**. O contratante que confia nesse campo
+mostra ao assinante um preço que não é o cobrado, para sempre e sem
+sintoma. É a MESMA família do bug do `ciclo` de 15/09 (dado local que
+divergiu da fonte e ninguém reparava) por outra porta: a correção de
+16/09 fechou `ciclo` e deixou `valor` aberto. *Quem vê:* ninguém, até
+alguém comparar a fatura com a tela. Por isso o `API.md` §5.3 passou a
+dizer, na cara do integrador, que `valor` não é preço vigente — o que é
+verdade é `ultimaCobranca.valorCobrado`, que é histórico de cobrança
+real. **Declarado, não corrigido às cegas:** reconciliar `valor` é
+mudança no caminho do dinheiro e depende de decisão do dono (é a Asaas
+que passa a mandar no número, inclusive quando a alteração de lá foi um
+erro humano) — `docs/pendencias.md`.
+
 ---
 
 ## 6. Textos que o sistema diz

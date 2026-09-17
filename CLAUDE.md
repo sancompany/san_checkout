@@ -318,6 +318,25 @@ Feito em 16/09:
   negativo** que dá sentido a ela: a Asaas responde `200` e ignora em
   silêncio campo que não conhece, então status não prova nada — quem
   prova é o `GET` de volta.
+  **Segunda rodada, no meio que importa (cartão), respondendo o que
+  faltava:** aumentar (30→45) e **diminuir** (45→12) funcionam; **abaixo
+  do piso de R$ 5,00 a Asaas recusa** com `400 invalid_value` e mensagem
+  por meio de pagamento; `cycle` novo **não move** `nextDueDate`;
+  assinatura **pausada aceita** mudança de preço; e **nenhum evento
+  chegou** ao nosso receptor em nenhuma das operações — o que é
+  configuração (§2.2), não incapacidade, mas dá no mesmo: quem alterar
+  tem de escrever no nosso banco na mesma operação.
+  **E isso escancarou um furo que já existia:** a conciliação reconfere
+  `status`, `ciclo` e `proximaCobranca` contra a Asaas e **não
+  reconfere `valor`** — preço mudado no painel dela deixa o nosso
+  registro errado para sempre, sem sintoma. Mesma família do bug do
+  `ciclo` de 15/09, e a correção de 16/09 fechou um e deixou o outro.
+  RN-34, T12 do mapa, e **declarado em vez de corrigido às cegas**:
+  reconciliar `valor` é deixar a Asaas mandar no número inclusive quando
+  a alteração de lá foi erro humano, e a escolha entre isso e "denunciar
+  a divergência" é do dono. Documentado em `API.md` §7.5 (nova) e no
+  aviso da §5.3, `INTEGRACAO.md`, `docs/funcional.md` RN-34,
+  `docs/ciclo-assinatura-mapa.md` T12 e `docs/pendencias.md`.
 
 Feito em 17/09, tudo no ar (`b57df2b`):
 - **Restauração ensaiada** (`npm run ensaio-restauracao`): Postgres da
@@ -535,6 +554,7 @@ de o dono mandar resolver sem ele:
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
+- O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
 - Testes: `tests/` — `npm test` roda as 32 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
