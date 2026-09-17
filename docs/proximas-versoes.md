@@ -294,3 +294,52 @@ para um problema que talvez nem exista mais.
   disso, converter registro de conta de pagamento no meio de uma
   integração em andamento troca um custo conhecido (repasse na mão) por
   um desconhecido.
+
+---
+
+## Alerta de orçamento nas contas pagas
+
+- **O quê** — ligar o aviso de gasto em cada uma das três contas pagas
+  (Northflank, Supabase, e o domínio/Cloudflare), com um teto e um
+  e-mail de destino.
+- **Por quê** — hoje a primeira notícia de um gasto fora do normal é a
+  fatura. Um laço acidental, um pico de tráfego ou um plano que sobe de
+  faixa aparecem com um mês de atraso, e não existe nenhum sinal antes
+  disso.
+- **O que NÃO é** — não é controle de custo nem otimização de plano. É
+  só um aviso; quem decide o que fazer com ele é o dono.
+- **Por que foi cortado** — decisão do dono em 17/09/2026. O gasto de
+  hoje é baixo e previsível, e o checkout ainda não move dinheiro real:
+  o risco que o alerta cobre não chegou.
+- **Quando vale a pena** — quando houver tráfego real, ou quando
+  qualquer uma das três contas sair do plano em que está hoje.
+
+---
+
+## Cópia periódica do banco fora do provedor
+
+- **O quê** — uma cópia do Postgres do Supabase guardada em outro lugar
+  que não o Supabase, gerada sozinha e com prazo de guarda.
+- **Por quê** — a Lei 6 pede cópia **fora do provedor**, e a razão é o
+  caso em que o provedor é o problema: conta suspensa, projeto apagado
+  por engano, região fora do ar. O ensaio de restauração de 17/09
+  (`npm run ensaio-restauracao`, RTO 1 s, zero divergência) prova que
+  **sabemos restaurar** — ele não prova que teremos de onde.
+- **O que NÃO é** — não é o ensaio de restauração, que já existe e
+  continua rodando. E não é o backup do próprio Supabase, que é a
+  mesma conta: se ela cair, ele cai junto.
+- **Por que foi cortado** — decisão do dono em 17/09/2026: **a Asaas é a
+  cópia.** Todo dado de cobrança e de assinatura que importa existe
+  também lá, e a conciliação já sabe reconstruir status, ciclo e próxima
+  cobrança a partir dela (`API.md` §5.2 e §5.3) — o que foi exercitado
+  ao vivo, reparando três linhas erradas em 16/09.
+- **O que essa escolha NÃO cobre, e fica escrito para não se descobrir
+  na hora errada** — a Asaas não guarda o que é só nosso: o cadastro de
+  contratantes (inclusive `api_key`, `webhook_url` e os domínios de
+  retorno), o log de auditoria do webhook, a captura de erro, e o
+  vínculo entre a cobrança na Asaas e o `pedidoId` do contratante. Perder
+  o banco significa recadastrar contratante e perder a conciliação com o
+  lado do lojista, mesmo com a Asaas inteira.
+- **Quando vale a pena** — no primeiro dinheiro real, ou no segundo
+  contratante — o que vier primeiro. A partir daí, recadastrar à mão
+  deixa de ser uma tarde de trabalho.

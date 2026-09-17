@@ -966,14 +966,29 @@ decidir **onde** a cópia periódica fica, porque a regra 3-2-1-1-0 pede uma
 fora do provedor principal, e Supabase Pro sozinho não atende isso (a
 cópia ficaria no mesmo provedor que se está protegendo).
 
-**O gatilho, que é o que torna isto exceção e não omissão: o primeiro
-pagamento real de terceiro fecha esta exceção.** A partir daí, rodar sem
-backup deixa de ser aceitável — perder o projeto Supabase passaria a
-significar perder o histórico financeiro de todos os contratantes, sem
-cópia em lugar nenhum. A ação nesse dia é Supabase Pro (backup diário,
-7 dias, com Point-in-Time Recovery disponível), junto do plano pago do
-Render que já está decidido. Backup só conta como feito depois de uma
-restauração testada pelo menos uma vez.
+**DECISÃO DO DONO EM 17/09/2026 sobre a cópia: a Asaas é o backup.**
+Todo dado de cobrança e de assinatura que importa existe também lá, e a
+conciliação já sabe reconstruir status, ciclo e próxima cobrança a partir
+dela (`API.md` §5.2 e §5.3) — exercitado ao vivo em 16/09, reparando três
+linhas erradas com valores medidos na Asaas. A cópia periódica fora do
+provedor virou atualização futura (`docs/proximas-versoes.md`).
+
+**O que essa decisão NÃO cobre, e fica escrito aqui para não ser
+descoberto na hora errada:** a Asaas não guarda o que é só nosso — o
+cadastro de contratantes (inclusive `api_key`, `webhook_url` e os
+domínios de retorno), o log de auditoria do webhook, a captura de erro,
+e o vínculo entre a cobrança na Asaas e o `pedidoId` do contratante.
+Perder o projeto Supabase significa recadastrar contratante à mão e
+perder a conciliação com o lado do lojista, mesmo com a Asaas inteira.
+Com um contratante isso é uma tarde; com dez, não é.
+
+**O gatilho continua valendo, e é o que torna isto exceção e não
+omissão: o primeiro pagamento real de terceiro reabre esta decisão.** A
+partir daí o que se perde deixa de ser recadastro e passa a ser
+histórico financeiro de terceiro. A ação nesse dia é Supabase Pro
+(backup diário, 7 dias, com Point-in-Time Recovery disponível). Backup
+só conta como feito depois de uma restauração testada pelo menos uma vez
+— e essa metade já está feita e continua rodando.
 
 ### Lei 3 · scrypt no lugar de Argon2id — 13/09/2026
 

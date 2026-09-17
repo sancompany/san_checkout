@@ -302,12 +302,42 @@ Feito em 17/09, tudo no ar (`b57df2b`):
 > um teste que só pegou a sabotagem depois de eu corrigir o próprio
 > teste. Todas caíram por controle positivo.
 
-Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
-ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
-backup+restauração (amarrado ao 1º pagamento real, §3); e os demais itens
-de prontidão adiados (`docs/pendencias.md`). A troca da Asaas para
-produção vem depois e fecha a 5 sem ressalva. O MostrAí retesta o lado
-dele em paralelo.
+Ainda em 17/09, a segunda metade do dia — o dono pediu para eu fechar
+tudo que era meu, e estas eram as pendências que restavam do meu lado:
+- **Recusar cedo o que a Asaas recusa** (RN-28, RN-29). O piso de
+  R$ 5,00 no valor cobrado, medido nos seis caminhos de criação com
+  controle positivo em R$ 5,00 exato; e a regra do telefone, que **não
+  era a que estava escrita na pendência** — "dígito repetido" é falso,
+  `11988888888` passa. 24 combinações medidas para achar a regra real
+  antes de escrever validador: errar aqui recusa comprador legítimo no
+  caminho do dinheiro, que é pior que o bug original.
+- **SSRF residual do pull fechado** (RN-30): redirect revalidado a cada
+  salto, só mesma origem, e corpo com teto de 1 MiB contado no fluxo. A
+  regra de mesma origem não é só anti-SSRF — a requisição leva a
+  `X-Checkout-Key` do contratante, que autoriza estorno.
+- **O Express passou a subir no teste** (Lei 0). O roteiro de login por
+  token, exercitado à mão em 12/09, virou suíte contra a pilha montada
+  de verdade. Uma sabotagem dela passou e revelou um **comentário falso**
+  no `server.js` sobre ordem de limitadores — medido e corrigido.
+- **A rotina de expurgo de dado pessoal existe** (Lei 10, RN-31), por
+  lista branca do que fica, conferida em simulação contra o banco de
+  produção com controle positivo.
+- **Três decisões do dono registradas**: o canal de alerta é o e-mail de
+  falha da Asaas (com a ressalva de que tráfego zero não dispara nada);
+  alerta de orçamento e cópia periódica fora do provedor viraram
+  atualizações futuras — a Asaas é a cópia, e o que ela NÃO cobre está
+  escrito em `CONSTRAINTS.md` §3.
+- **Documentos falsos corrigidos**: esta seção dizia "Estação 6 não
+  iniciada"; o mapa dizia 18 suítes; `docs/pendencias.md` pedia um ciclo
+  de segurança que rodou em 14/09, e declarava uma regra de validação de
+  telefone que a medição desmentiu.
+
+Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
+assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
+(exigem payload real); o primeiro pagamento real de valor baixo, que é o
+gatilho escrito da exceção de backup (§3). Tudo isso vem depois da troca
+da Asaas para produção, que é do dono e que fecha a 5 sem ressalva. O
+MostrAí retesta o lado dele em paralelo.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
@@ -316,7 +346,7 @@ dele em paralelo.
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
-- Testes: `tests/` — `npm test` roda as 18 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- Testes: `tests/` — `npm test` roda as 28 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. A contagem vive em `tests/executar.js`; se esta linha divergir dele, ele é que manda
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade
@@ -324,7 +354,28 @@ Violação segue o ciclo da skill `leis`. Não existe estado final fora de
 conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 
 ## Pendências que bloqueiam a esteira
-- **Estação 6 · não iniciada, esperando autorização.** Ela é da sessão por inteiro (decisão do dono, 13/09): teste de ponta a ponta com todos os meios de pagamento no sandbox, ciclo de segurança sobre o Northflank, e os sete itens de prontidão operacional de `leis/references/prontidao-operacional.md` — cada um com evidência medida, não "configurei". Depois dela, troca das variáveis para produção e segunda rodada sem os testes de pagamento (`CONSTRAINTS.md` §3).
-- **Antes de abrir a 6**, a lei pede três condições conferidas (`leis/references/varredura-final.md`): commit servido igual ao da branch principal, migrations aplicadas em produção, nada relevante só no disco.
+
+> Esta seção dizia **"Estação 6 · não iniciada, esperando autorização"** e
+> **"antes de abrir a 6"** até 17/09/2026 — três dias depois de a estação
+> ter sido aberta e quase toda executada, com o estado verdadeiro escrito
+> logo acima, no "Estado na esteira". Duas partes do mesmo arquivo se
+> contradizendo é a falha que este documento existe para não ter: quem
+> lesse só esta seção planejaria de novo um trabalho já feito.
+
+**O que falta para fechar a Estação 6** — nada disso é código nosso:
+
+- **A troca da Asaas para produção** (as três variáveis no Northflank e o
+  webhook de produção em `/api/webhooks/asaas`, plural). É do dono, e ele
+  a fez depender de o MostrAí bater o mesmo ponto de equilíbrio deste
+  lado. Fecha junto a ressalva da Estação 5 (`CONSTRAINTS.md` §3).
+- **O ciclo de assinatura pago em produção**, que só existe depois da
+  troca — e com ele a marcação dos eventos `SUBSCRIPTION_*`, que exige
+  payload real para ser decidida (`CONSTRAINTS.md` §2.2).
+- **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
+  da exceção de backup (`CONSTRAINTS.md` §3).
+
+Tudo o mais de prontidão está fechado ou virou decisão registrada — a
+lista completa, com o que era e o que passou a ser, está em
+`docs/pendencias.md`.
 
 As demais, que não bloqueiam, estão em `docs/pendencias.md`.

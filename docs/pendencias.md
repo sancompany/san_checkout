@@ -3,7 +3,16 @@
 Lista completa. O `CLAUDE.md` aponta para cá e guarda só o que bloqueia a
 esteira — ele é índice e cabe numa tela; esta é a lista de trabalho.
 
-Fechar uma pendência é removê-la daqui, não riscá-la.
+**Fechar uma pendência é reescrevê-la em 🟢, com o que ERA e o que passou
+a ser** — não apagá-la nem riscá-la. Esta linha dizia "é removê-la
+daqui", e o arquivo nunca fez isso: são quinze entradas verdes mantidas,
+e mantê-las é o certo. A entrada fechada guarda o motivo, e o motivo é
+o que impede alguém de reabrir o mesmo buraco em seis meses achando que
+foi esquecimento. A regra foi alinhada à prática em 17/09/2026.
+
+O que NÃO pode ficar é entrada aberta descrevendo trabalho já feito —
+disso este arquivo teve um caso de três dias (o ciclo de segurança sobre
+o Northflank), e é o pior dos dois erros: manda refazer.
 
 ---
 
@@ -42,11 +51,20 @@ caro por tentativa é mais forte contra força bruta, o login é assíncrono
 manter N=2^17.** Baixar N para caber em ≤1 s enfraqueceria o hash sem
 ganho real. Decisão do dono se quiser mirar o meio da faixa.
 
-### Estação 6 · o ciclo de segurança precisa rodar sobre o Northflank
-O ciclo 1 rodou em 11/09 contra o Render, em Oregon. A produção vai ficar
-no Northflank, em São Paulo, com CDN na frente e outra topologia de
-proxy. A Estação 6 verifica **o que está no ar** — e o que vai ficar no
-ar é o outro. Repetir o ciclo lá, e comparar com o que já passou.
+### 🟢 Estação 6 · o ciclo de segurança sobre o Northflank — FEITO 14/09
+Era: o ciclo 1 rodou em 11/09 contra o Render, em Oregon, e a produção
+ficaria no Northflank, em São Paulo, com CDN na frente e outra topologia
+de proxy — então o ciclo precisava ser repetido sobre o que está de fato
+no ar. **Foi repetido em 14/09** e o resultado está no `CLAUDE.md`
+("Segurança de fora"): Supabase RLS default-deny, admin fail-closed, IDOR
+401/403 ao vivo, erro genérico, webhook fail-closed. Achou dois furos,
+os dois corrigidos e no ar (`alvoDeRede` e o `search_path` da migration
+0004), e derrubou a hipótese da origem-bypass
+(`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
+
+Esta entrada ficou três dias dizendo "precisa rodar" DEPOIS de ter
+rodado. Documento falso é pior que documento ausente: quem lesse a lista
+de pendências planejaria de novo um trabalho já feito.
 
 ### 🟢 Estação 6 · ponta a ponta de seis passos (Pix) — FEITO 14/09
 Os seis passos rodaram ao vivo no sandbox contra o `testemaster`, com
@@ -254,16 +272,13 @@ permanente (`app.js`, `mostrarLinkPermanente`) e repetir a fiação em
 `status.js`, contra a rota `/api/checkout/status`, que hoje nem recebe o
 parâmetro.
 
-### 🟡 Dois lugares menores ainda leem valor com `?? 0`
-`public/js/status.js` renderiza `formatarMoeda(dados.valorCobrado)`, e a
-linha de item do `pedidoHandler.js` mostra `R$ 0,00` para item sem preço
-— visto na tela em 13/09, dentro do estado indisponível.
-
-Nenhum dos dois é furo hoje: o da status lê da nossa base, onde o valor
-passou pelo guarda na criação, e o do item aparece numa tela que já está
-indisponível, sem nada para clicar. São o terceiro e o quarto lugar da
-mesma classe dos dois erros de total, e ficam anotados como os próximos
-se uma linha vier incompleta.
+### 🟢 Os dois últimos `?? 0` — FECHADOS 17/09
+Eram o terceiro e o quarto lugar da família dos dois erros de total: a
+linha de item do resumo (`R$ 0,00` para item sem preço) e a tela de
+status (`formatarMoeda(dados.valorCobrado)` com `?? 0` por baixo). Os
+dois passaram a mostrar travessão. O da tela de status era o mais
+desconfortável dos quatro: é a tela que a pessoa abre DEPOIS de pagar, e
+"R$ 0,00" ali diz a quem acabou de pagar que não pagou nada.
 
 ### 🟢 Métrica · janela por dia civil — CORRIGIDO 16/09
 Era: `GET /api/admin/metricas?dias=N` contava as últimas N×24 h, sem
@@ -300,22 +315,24 @@ nenhuma outra guarda além do tamanho. Declarado em `CONSTRAINTS.md` §2.7;
 contador por credencial está em `docs/proximas-versoes.md`, esperando
 evidência de tentativa real no log de rejeição.
 
-### 🟠 Piso de R$5 da Asaas vs. o R$0,01 que o checkout aceita
-Medido em 14/09 no ponta a ponta: gerar Pix para um pedido de R$1
-(`ped_teste`, → R$2,50 com taxa) é recusado pela Asaas com "O valor da
-cobrança (R$ 2,50) ... não pode ser menor que R$ 5,00". O `valorValido`
-aceita de R$0,01 a R$100.000, mas a Asaas chão em **R$5,00 no valor
-cobrado**. Hoje o comprador só descobre depois de preencher tudo e
-clicar — mesma classe do bug de total que a RN-03 tratou, mas vindo da
-Asaas. Fechar: recusar cedo (na criação e no resolver) valor cobrado
-abaixo do piso da Asaas, com mensagem clara, e documentar o piso no
-`API.md`. O teste de pagamento seguiu com `ped_completo` (R$9,50).
+### 🟢 Piso de R$5 da Asaas e a regra do telefone — FECHADOS 17/09
+Eram duas entradas da mesma família ("o checkout aceita entrada que a
+Asaas depois rejeita, e quem descobre é o comprador no clique"), e as
+duas foram fechadas por MEDIÇÃO de dentro do contêiner de produção.
 
-Mesma classe, achado no ciclo de assinatura (14/09): `telefoneValido`
-aceita número de dígito repetido (`11999999999`), e a Asaas recusa no
-cartão/assinatura com "phoneNumber inválido" (número realista passa). O
-checkout aceita entrada que a Asaas depois rejeita — recusar cedo, com
-mensagem própria, fecha os dois casos.
+**O piso é R$ 5,00 no valor cobrado, nos seis caminhos** — Pix, boleto,
+cartão, "pergunte ao cliente", assinatura e a pop-up —, com controle
+positivo em R$ 5,00 exato passando em todos (`API.md` §9.1). Agora as
+duas rotas que abrem tela devolvem `bloqueio` com a frase pronta, e as
+cinco que criam cobrança repetem o guarda. RN-28.
+
+**A regra do telefone não era a que estava escrita aqui.** Esta entrada
+dizia que a Asaas recusa "número de dígito repetido"; 24 combinações
+medidas mostram que não — `11988888888` e `11911111111` passam. As
+regras reais são DDD ≥ 11, celular começando em 9, e a parte depois do
+DDD não ser um único dígito repetido (`API.md` §9.2). Escrever o
+validador contra a frase errada teria recusado comprador legítimo no
+caminho do dinheiro, que é pior que o bug original. RN-29.
 
 ### Prontidão operacional · decisão de 14/09 — adiar, com dois gates
 O dono decidiu tratar os itens de prontidão que exigem correção/criação
@@ -324,18 +341,31 @@ para o estado atual (um operador, sem dinheiro real). **Mas dois não são
 "quando der" — travam a troca para produção:**
 
 - **Alerta externo de queda + fila de webhook pausada (Lei 8, item 2) —
-  PRIORIDADE.** O motor move dinheiro de terceiro; a Asaas pausa a fila
-  após 15 falhas seguidas (§2.3) e isso só aparece por ausência. Sem um
-  alerta que chega no celular, uma queda ou fila pausada em produção só
-  é descoberta quando um contratante reclama = dinheiro não capturado.
-  Deve existir **antes** do primeiro dinheiro real.
-- **Backup com restauração testada (Lei 6) — já é gate.** Exceção §3 do
-  `CONSTRAINTS.md` amarra isto exatamente ao primeiro pagamento real.
+  RESOLVIDO POR DECISÃO DO DONO, 17/09.** O canal de alerta **é o e-mail
+  de falha da Asaas**: sempre que uma entrega de webhook falha, a Asaas
+  avisa por e-mail, e o dono recebe. Ele já recebeu um desses — apontando
+  a URL antiga do Render, que não é mais usada —, o que é a evidência de
+  que o canal funciona de verdade e chega nele.
 
-Barato e vale fazer junto na troca: **alerta de orçamento** em cada conta
-paga (10 min, evita fatura surpresa). Genuinamente adiáveis enquanto for
-um operador: desempenho p75 no celular e o teste da segunda pessoa com o
-RUNBOOK.
+  **A ressalva, para o documento não mentir:** este alerta só dispara
+  quando existe evento de pagamento. Com tráfego zero, que é o estado de
+  hoje, uma queda passa silenciosa até alguém tentar pagar. Com tráfego
+  real ele cobre o caso que importa (app fora = webhook falha = e-mail),
+  e ainda cobre a fila pausada, que era a outra metade do item. Aceito
+  como está: um monitor externo seria detecção mais cedo, não detecção
+  onde hoje não existe nenhuma.
+- **Backup com restauração testada (Lei 6) — metade feita, metade virou
+  versão futura.** A restauração foi ENSAIADA em 17/09
+  (`npm run ensaio-restauracao`, RTO 1 s, zero divergência). A cópia
+  periódica fora do provedor virou atualização futura por decisão do
+  dono no mesmo dia: **a Asaas é a cópia**, porque todo dado de cobrança
+  e assinatura que importa existe lá também. Registrado em
+  `docs/proximas-versoes.md` com o que essa escolha não cobre.
+
+**Alerta de orçamento** nas contas pagas virou atualização futura por
+decisão do dono (17/09) — `docs/proximas-versoes.md`. Genuinamente
+adiáveis enquanto for um operador: desempenho p75 no celular e o teste da
+segunda pessoa com o RUNBOOK.
 
 ### 🟢 Prontidão · e-mail do titular/suporte — CONFERIDO, funciona
 Investigado em 14/09. O `dig`/DoH da sessão de nuvem não resolveu MX
@@ -358,17 +388,26 @@ Transform Rule volta a fazer sentido. Não feito, é decisão de infra do
 dono. O middleware que dependia disso foi revertido em 14/09
 (`docs/erros/2026-09-14-origem-direta-alcancavel-por-fora.md`).
 
-### 🟡 SSRF residual · o pull ainda segue redirect e não limita o tamanho do corpo
-O ciclo de segurança da Estação 6 (14/09) fechou a entrada — `apiBaseUrl`
-e `webhookUrl` agora exigem https e host público (RN-14, `utils/alvoDeRede.js`).
-Fica o residual: `resolverPedido`/`resolverPlano` (`pedidoService.js`) fazem
-`fetch` seguindo redirect e leem o corpo inteiro sem teto. Um contratante
-cujo servidor seja malicioso ou comprometido poderia redirecionar para
-host interno (contornando a checagem estática de host) ou devolver um
-corpo enorme (OOM na instância de 512 MiB). Baixo risco hoje: o alvo é
-cadastrado pelo admin e semi-confiável. Fechar de verdade pede `redirect`
-controlado (sem quebrar redirect legítimo de contratante) e leitura com
-teto — quando houver mais de um contratante real.
+### 🟢 SSRF residual do pull — FECHADO 17/09
+Era: a entrada estava fechada (`apiBaseUrl` e `webhookUrl` exigem https e
+host público, RN-14), mas a RESPOSTA do contratante não. O `fetch` seguia
+redirect sozinho — um contratante malicioso ou comprometido responderia
+`302` para `169.254.169.254` e o checkout buscaria a credencial da nuvem,
+sem que a checagem de cadastro visse nada — e `resposta.json()` lia o
+corpo inteiro, sem teto, numa instância de 512 MiB.
+
+Fechado em `src/utils/puxarDoContratante.js`: redirect revalidado a cada
+salto, **só mesma origem**, no máximo 3, e corpo com teto de 1 MiB
+contado no fluxo (o `Content-Length` só serve para recusar cedo, nunca
+para deixar passar). A regra de mesma origem não é só anti-SSRF: a
+requisição leva a `X-Checkout-Key` do contratante, que autoriza consulta
+e estorno — seguir o `Location` para outra origem entregaria essa chave a
+quem respondeu. RN-30, `API.md` §9.0, 31 checagens exercitadas contra um
+servidor de contratante malicioso de verdade.
+
+A entrada antiga adiava isto para "quando houver mais de um contratante
+real". A troca para produção chega antes, e o vetor não depende de
+quantos contratantes existem — depende de um só ser comprometido.
 
 ### 🟡 Latência do painel · o piso é o Supabase, não o nosso código
 Medido em 13/09/2026 **do navegador do operador** (não de container na
@@ -409,20 +448,23 @@ ilimitada no banco para quem só descobriu a URL. `CONSTRAINTS.md`
 **Falta a evidência que fecha o item da prontidão:** forçar uma exceção
 em produção e vê-la na aba. Entra na primeira rodada depois do deploy.
 
-### Lei 8 · alerta de queda — metade de código feita 14/09
-Log de produção legível por conector desde 12/09. **A metade de código do
-alerta de queda entrou em 14/09:** `/api/saude` devolve `503`/`degradado`
-quando o banco não responde (antes era `200 ok` mesmo caído), então um
-monitor de uptime consegue alertar por HTTP. **Falta a ligação (decisão do dono
-14/09: pelo próprio Northflank):** integração de notificação
-Slack/Discord + infrastructure alerts (container caído) + um Cron Job
-que dá curl no `/api/saude` para o caso de banco fora (o 503). Passo a
-passo e o ponto cego (Northflank vigiando o Northflank; queda total da
-plataforma não se auto-avisa) em `RUNBOOK.md §2`. Some da lista quando a
-integração existir e um alerta de teste chegar no celular. A **detecção de fila
-do webhook pausada** continua adiada por decisão anterior: com tráfego
-zero, qualquer limiar de silêncio é alarme falso (`docs/proximas-versoes.md`);
-revisar quando houver volume real.
+### 🟢 Lei 8 · alerta de queda — FECHADO 17/09, por decisão do dono
+A metade de código entrou em 14/09: `/api/saude` devolve `503`/
+`degradado` quando o banco não responde (antes era `200 ok` mesmo caído),
+o que deixa qualquer monitor por HTTP alertar. A metade de LIGAÇÃO estava
+pendente — a entrada antiga pedia integração Slack/Discord no Northflank
+mais um Cron Job batendo no `/api/saude`.
+
+**O dono fechou por outro caminho em 17/09: o canal é o e-mail de falha
+de webhook da Asaas.** Ele recebe esse e-mail hoje (recebeu um apontando
+a URL velha do Render), então o canal está provado ponta a ponta sem
+nada para configurar — e ele cobre também a fila pausada, que a entrada
+antiga tratava como item separado e adiado.
+
+**A ressalva fica registrada:** o e-mail só existe quando existe evento
+de pagamento. Tráfego zero, alerta zero. Não é o mesmo que um monitor
+batendo de minuto em minuto; é o que existe, funciona, e chega no
+celular de quem opera.
 
 ### Lei 8 · eventos que chegam e só entram no log
 `PAYMENT_APPROVED_BY_RISK_ANALYSIS`, os três de divergência de split e os
@@ -433,17 +475,37 @@ e o primeiro payload real decide o tratamento. Entrada em
 
 ### Lei 0 · a skill `revisar` nunca rodou sobre produção
 
-### Lei 0 · cobertura de teste não alcança as rotas HTTP
-As onze suítes cobrem módulos e invariantes de texto-fonte. Nenhuma sobe
-o Express e exercita uma rota de ponta a ponta — o fluxo de login por
-token foi exercitado assim **à mão** em 12/09/2026 (login certo, senha
-errada, token adulterado, token de outro hash, teto de 5/min), e é
-exatamente esse roteiro que deveria virar suíte.
+### 🟢 Lei 0 · cobertura de teste nas rotas HTTP — FECHADO 17/09
+Era: nenhuma suíte subia o Express, e o roteiro de login por token
+exercitado à mão em 12/09 nunca virou teste. Virou —
+`tests/rotas-http-respondem-como-prometido.js`, 29 checagens contra a
+pilha montada de verdade (`src/server.js`), não contra um Express
+remontado pelo teste: login certo, senha errada e usuário errado com a
+MESMA mensagem, token inventado, token adulterado num caractere, token
+assinado com outro hash de senha, o teto de 5/min, o 404 sem pilha, e os
+cabeçalhos do helmet.
 
-### Lei 10 · a rotina de expurgo de dado pessoal não existe
-Retenção de 5 anos está declarada (`docs/inventario-de-dados.md` §6), o
-caminho de exclusão foi conferido contra a modelagem (§6.2), e a rotina
-não foi escrita. Validação jurídica é da Estação 7.
+Uma sabotagem desta suíte passou, e o que ela revelou foi um comentário
+falso no `server.js` — a afirmação de que a ordem de registro dos
+limitadores importa. Medido: não importa, o `app.use` roda todos os que
+casam. Comentário corrigido; o teste não passou a exigir uma ordem que
+não existe.
+
+### 🟢 Lei 10 · a rotina de expurgo de dado pessoal — ESCRITA 17/09
+Era: retenção de 5 anos declarada, caminho de exclusão conferido contra a
+modelagem, e nenhuma rotina — ou seja, prazo como intenção, não prática.
+`src/services/expurgoService.js`, no ciclo de 24 h, com `npm run expurgo`
+para o operador ver antes (simula por padrão) e uma função separada para
+o pedido do titular (LGPD art. 18) que respeita a guarda fiscal e diz
+quantas linhas ficaram retidas em vez de responder "feito".
+
+Decide por **lista branca do que fica**: lista negra falha aberta, e
+falhar aberta aqui é uma coluna pessoal criada em 2027 sobrevivendo para
+sempre. Conferida em simulação contra o banco de produção, com controle
+positivo. RN-31, `docs/inventario-de-dados.md` §6.
+
+**A validação jurídica continua aberta e é da Estação 7** — os 5 anos são
+a escolha mais defensável sem advogado, não um parecer.
 
 ### Migration 0004 — search_path feito; colunas ainda não
 A **correção de `search_path`** das duas funções da 0002 que o linter
