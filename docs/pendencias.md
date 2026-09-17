@@ -378,15 +378,14 @@ Então a pendência deixou de ser "decidir o valor" e passou a ser
 permissão no `settings`), ou colar o registro no painel.
 
 ```bash
+# a função `cf` que lê os cabeçalhos do ambiente está no RUNBOOK §1.1
+
 # o id da zona sai na hora — não fica escrito em documento
-ZONA=$(curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
-  "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
+ZONA=$(cf "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])")
 
 # CRIA um TXT novo (POST) — não toca nos 12 registros que já existem
-curl -sS -X POST \
-  -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
-  -H "Content-Type: application/json" \
+cf -X POST -H "Content-Type: application/json" \
   "https://api.cloudflare.com/client/v4/zones/$ZONA/dns_records" \
   --data '{"type":"TXT","name":"sancocore.com.br","content":"v=spf1 include:_spf.google.com ~all","ttl":1}'
 

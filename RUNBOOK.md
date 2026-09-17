@@ -67,19 +67,27 @@ mexer nela alcança os quatro.
 segredo; o primeiro não precisa de credencial nenhuma):
 
 ```bash
-# vencimento do domínio — o item que mais cai, e o único que ninguém avisa
+# vencimento do domínio — o item que mais cai, e o único que ninguém avisa.
+# Não precisa de credencial nenhuma.
 curl -s https://rdap.registro.br/domain/sancocore.com.br \
   | python3 -c "import sys,json;[print(e['eventAction'],e['eventDate']) for e in json.load(sys.stdin)['events']]"
+```
 
-# conta e 2FA da Cloudflare (a credencial vem do ambiente, nunca deste arquivo)
-curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
-  https://api.cloudflare.com/client/v4/user \
+Para a Cloudflare, os dois cabeçalhos de autenticação da API (o e-mail e
+a chave global, os dois lidos do ambiente e nunca escritos aqui) ficam
+numa função, definida uma vez:
+
+```bash
+# cole no terminal; lê do ambiente, não imprime nada
+cf() { curl -sS -H "X-Auth-Email: ${CLOUDFLARE_EMAIL}" -H "X-Auth-Key: ${CLOUDFLARE_API_KEY}" "$@"; }
+
+# quem é a conta, e o 2FA está ligado?
+cf https://api.cloudflare.com/client/v4/user \
   | python3 -c "import sys,json;r=json.load(sys.stdin)['result'];print(r['email'],'2FA:',r['two_factor_authentication_enabled'])"
 
 # o id da zona, quando algum comando pedir — descobrir na hora é melhor
-# que guardar aqui: id escrito em documento envelhece e vaza sem precisar
-curl -s -H "X-Auth-Email: $CLOUDFLARE_EMAIL" -H "X-Auth-Key: $CLOUDFLARE_API_KEY" \
-  "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
+# que guardar aqui: id escrito em documento envelhece sem ninguém notar
+cf "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])"
 ```
 
