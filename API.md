@@ -1265,6 +1265,13 @@ Os `409` são as recusas deliberadas, e cada uma tem motivo:
 > (CDC). Um upgrade que ele pediu é uma coisa; um aumento que ele não
 > pediu é outra, e a segunda não se resolve com API.
 
+> ⚠️ **Depois da troca, o `planoId` do assinante é o NOVO.** Cancelar,
+> pausar, retomar, conciliar (seção 5.5 e 5.3) e gerar link de renovação
+> (seção 7.3) passam a usar `planoNovoId`. Continuar mandando o antigo
+> responde `404` — a assinatura não está mais lá. É por isso que o evento
+> `plano_trocado` carrega `planoAnterior`: é com ele que você acha o seu
+> próprio registro para atualizar.
+
 > **Uma troca por vez, e o crédito não acumula.** Cada troca recalcula
 > sobre os dias que restam naquele momento, a partir do valor **pago**
 > do período — o crédito da troca anterior não sobrevive (decisão do

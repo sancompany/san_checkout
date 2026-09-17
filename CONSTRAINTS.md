@@ -961,6 +961,48 @@ virar mentira:
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
 esquecida não é conformidade.
 
+### Lei 4 · o acerto da troca de plano é cobrado no cartão salvo SEM reconfirmação de CVV — 17/09/2026
+
+A skill `seguranca-san` diz, sem ressalva: **"cartão salvo pede
+reconfirmação de CVV antes de pagar"**. A rota `POST /trocar-plano`
+(`API.md` §5.6) cobra o acerto proporcional no cartão tokenizado da
+assinatura **sem CVV e sem nenhuma interação do assinante**. É desvio da
+regra, e fica registrado aqui em vez de virar silêncio.
+
+**Por que não dá para cumprir como escrito.** Reconfirmar CVV exige
+receber CVV, e receber CVV é exatamente o que a arquitetura deste
+projeto veta: os dados de cartão só existem dentro da pop-up hospedada
+da Asaas, e é isso que mantém o checkout fora do escopo PCI
+(`API.md` §6.2, e o veto de §1.2 acima pela mesma razão). O caminho
+técnico também não existe: `POST /v3/payments` com `creditCardToken`
+substitui os dados do cartão pelo token — não há campo de CVV a
+preencher. Cumprir a letra da regra significaria construir um formulário
+de cartão nosso, que é uma piora de segurança, não uma melhora.
+
+**A compensação, e é ela que torna o desvio aceitável:**
+
+1. **O pagador não dispara isto.** A rota exige a `X-Checkout-Key` do
+   contratante — a mesma credencial de cancelar, pausar e estornar. Não
+   há caminho público, nem tela, nem link.
+2. **Quem dispara não escolhe o valor.** O acerto é calculado pelo
+   servidor a partir do plano de destino **puxado da API do
+   contratante** e do valor efetivamente pago no ciclo (RN-35). O corpo
+   da requisição não carrega valor nenhum; mandar um é ignorado, e há
+   teste que reprova se isso mudar.
+3. **É o MESMO cartão que a assinatura já cobra sem CVV todo ciclo.**
+   A recorrência inteira funciona assim, por desenho do provedor: o
+   acerto não abre uma porta nova, usa a que o assinante autorizou ao
+   assinar.
+4. **Não cobra duas vezes:** arrendamento por linha de assinatura
+   (RN-36), medido.
+5. **Teto de rota** de criação (10/min por IP), como as outras rotas que
+   cobram.
+
+**Revisar no dia em que** o acerto passar a ser disparado por uma tela do
+assinante (aí o consentimento dele volta a ser o assunto, e o caminho é
+a pop-up, não um campo de CVV nosso), ou em que a Asaas passar a aceitar
+CVV junto do token sem que os dados do cartão toquem o nosso servidor.
+
 ### Lei 3 · a credencial do Cloudflare no ambiente é a conta inteira — 14/09/2026
 
 Testado em 14/09 (`curl` direto com `CLOUDFLARE_EMAIL` +

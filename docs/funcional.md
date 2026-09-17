@@ -735,6 +735,20 @@ exige concordância dele (CDC) — então avisar por **e-mail e por aviso no
 site** é obrigação de cada projeto contratante, decisão do dono, escrita
 em `API.md` §5.6 e no checklist da §11.
 
+**RN-35.1 · Depois da troca, quem manda é a assinatura, não o plano.**
+A troca tira do `plano_id` a estabilidade que todo o resto do sistema
+assumia (é a chave de cancelar, pausar, retomar, conciliar e do webhook
+de assinatura, `API.md` §4.3.4). Três lugares dependiam disso e foram
+corrigidos na revisão, antes de ir ao ar: a segunda troca dentro do mesmo
+período (o ciclo pago está sob o plano antigo), o ciclo seguinte à troca
+(que se monta copiando a cobrança anterior e nasceria com o plano velho —
+para sempre, porque cada ciclo copia do anterior) e a conciliação (que
+diria "nenhuma cobrança" para uma assinatura que já cobrou). Todos
+passaram a ancorar no **id da assinatura**. *Violada:* o contratante
+credita o plano que o assinante deixou de ter, a cada cobrança, sem
+sintoma. *Quem vê:* ninguém, até alguém comparar o acesso com a fatura.
+`docs/erros/2026-09-17-uma-chave-que-era-estavel-deixou-de-ser.md`.
+
 **RN-36 · Duas trocas simultâneas não cobram o acerto duas vezes.** A
 troca reivindica um arrendamento na própria linha da assinatura
 (`assinaturas.trocando_em`, migration 0010) antes de cobrar, com um

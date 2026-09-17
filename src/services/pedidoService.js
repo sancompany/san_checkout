@@ -230,7 +230,22 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido, c
      de novo — quem autentica por `X-Checkout-Key` (a troca de plano) já
      tem a linha inteira em mãos, e cada ida ao banco custou 213 ms
      medidos em 12/09/2026 (`tests/sem-consulta-repetida.js`). Sem isto,
-     a troca faria duas leituras da MESMA linha. */
+     a troca faria duas leituras da MESMA linha.
+
+     A guarda existe porque o atalho poderia calar a discordância: com um
+     `contratante` de um lado e um `contratanteId` de outro, quem passasse
+     a valer seria o objeto — o método habilitado e a `api_base_url`
+     consultada seriam de OUTRO contratante, e o `contratanteId` viraria
+     enfeite. Isso é um furo entre inquilinos esperando um segundo
+     chamador desatento, e custa três linhas fechar agora. */
+  if (jaCarregado && jaCarregado.id !== contratanteId) {
+    /* SEM `.status` de propósito: isto é erro de programação, não
+       validação de entrada, e `utils/erros.js` só devolve a mensagem
+       crua ao cliente quando o `.status` está lá. Assim a frase fica no
+       log e na tabela `erros`, e quem chamou recebe o genérico. */
+    throw new Error('Contratante carregado não corresponde ao contratanteId pedido.');
+  }
+
   const contratante = jaCarregado ?? await buscarContratante(contratanteId);
   if (!contratante) {
     const erro = new Error('Contratante não encontrado.');
@@ -322,6 +337,28 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
   // vazio/nulo não é tratado aqui (a rota do Express nem casa sem o
   // parâmetro) — só não pode explodir
   assert.ok(!recusa(undefined), 'undefined não estoura');
+
+  /* O atalho de `resolverPlano` não pode calar uma discordância entre o
+     `contratante` passado e o `contratanteId` pedido: se calasse, quem
+     valeria seria o objeto, e a rota trabalharia com a `api_base_url` e
+     os métodos habilitados de OUTRO inquilino. */
+  let recusouDivergencia = false;
+  try {
+    await resolverPlano('contratante-a', 'plano-x', { contratante: { id: 'contratante-b' } });
+  } catch (erro) {
+    recusouDivergencia = /não corresponde/.test(erro.message);
+  }
+  assert.ok(recusouDivergencia, 'contratante carregado de OUTRO id tem de ser recusado, não aceito em silêncio');
+
+  /* Controle positivo: com os dois iguais, o atalho vale e a função
+     segue (aqui ela falha na rede, que é depois da guarda). */
+  let passouDaGuarda = false;
+  try {
+    await resolverPlano('contratante-a', 'plano-x', { contratante: { id: 'contratante-a', api_base_url: 'https://exemplo.test' } });
+  } catch (erro) {
+    passouDaGuarda = !/não corresponde/.test(erro.message);
+  }
+  assert.ok(passouDaGuarda, 'mesmo id passa da guarda — senão a guarda recusaria tudo');
 
   // método habilitado: lista ausente libera tudo (contratante antigo)
   assert.ok(metodoHabilitado({}, 'pix'), 'sem lista libera');

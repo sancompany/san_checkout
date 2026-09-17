@@ -300,6 +300,20 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
+    /* CICLO, não "qualquer cobrança ligada a esta assinatura" — e aqui o
+       filtro conserta dois usos de uma vez:
+
+       1. como **molde** do ciclo seguinte (`registrarNovoCicloAssinatura`,
+          webhookController), esta consulta entrega a linha de onde saem
+          contratante, plano, documento, telefone e endereço. O acerto de
+          uma troca de plano (17/09/2026) também aponta para a assinatura
+          e nasce DEPOIS do último ciclo: sem o filtro, ele viraria o
+          molde, e como ele não guarda telefone nem endereço, o ciclo
+          seguinte nasceria sem esses campos — e o erro se propagaria
+          para sempre, porque cada ciclo copia do mais recente.
+       2. como **último ciclo pago** (`/trocar-plano`), é daqui que sai o
+          valor que o assinante realmente pagou pelo período em curso. */
+    .in('metodo_pagamento', METODOS_DE_ASSINATURA)
     .eq('asaas_subscription_id', subscriptionId)
     .order('criado_em', { ascending: false })
     .limit(1)

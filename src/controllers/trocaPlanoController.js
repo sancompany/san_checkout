@@ -48,7 +48,15 @@
  *   novo inteiro entra na data que o assinante já tinha;
  * - **não troca plano de assinatura sem cartão salvo** (Pix Automático)
  *   quando há acerto a cobrar — sem cartão não há como cobrar sem
- *   interação, e inventar um caminho aqui seria pior que recusar.
+ *   interação, e inventar um caminho aqui seria pior que recusar;
+ * - **não reconfirma CVV**, e isso é desvio registrado de uma regra da
+ *   skill `seguranca-san` ("cartão salvo pede reconfirmação de CVV
+ *   antes de pagar"). Cumpri-la exigiria receber CVV, o que colocaria o
+ *   projeto no escopo PCI que a pop-up hospedada existe para evitar — e
+ *   `POST /v3/payments` com `creditCardToken` não tem nem campo de CVV.
+ *   A exceção está em `CONSTRAINTS.md` §3, com as cinco compensações
+ *   que a tornam aceitável (a principal: quem dispara é o contratante
+ *   com a chave dele, e nem ele escolhe o valor).
  */
 
 import {
@@ -62,7 +70,7 @@ import {
   aplicarTrocaDePlano
 } from '../services/assinaturaService.js';
 import {
-  buscarUltimaCobrancaDaAssinatura,
+  buscarCobrancaPorSubscriptionId,
   registrarAcertoDeTroca
 } from '../services/cobrancaService.js';
 import {
@@ -103,6 +111,18 @@ const STATUS_QUE_TROCAM = ['ativa', 'pausada'];
  *  vem do valor PAGO, nunca de saldo guardado). */
 const STATUS_PERIODO_PAGO = 'confirmado';
 
+/**
+ * Valor em CENTAVOS, que é a unidade que a Asaas guarda.
+ *
+ * A reconferência do `PUT` compara assim, e não em reais, porque a
+ * igualdade em ponto flutuante criaria um falso negativo caro: um plano
+ * de R$ 45,999 passa por `valorValido`, a Asaas guarda 46,00, e a
+ * comparação exata falharia — `502` e registro não gravado DEPOIS de o
+ * acerto já ter sido cobrado. Mesma unidade, e mesmo motivo, de
+ * `valorCobradoAceitavel`.
+ */
+const emCentavos = (n) => Math.round(Number(n) * 100);
+
 
 const dependenciasPadrao = {
   buscarContratantePorChave,
@@ -111,7 +131,7 @@ const dependenciasPadrao = {
   reivindicarTroca,
   liberarTroca,
   aplicarTrocaDePlano,
-  buscarUltimaCobrancaDaAssinatura,
+  buscarCobrancaPorSubscriptionId,
   registrarAcertoDeTroca,
   consultarAssinaturaNaAsaas,
   dadosDeCobrancaDaAssinatura,
@@ -157,6 +177,14 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
        exemplo) devolveria no `catch` um arrendamento que pertence a
        OUTRA chamada em andamento — e aí as duas cobrariam o acerto. */
     let arrendamentoMeu = false;
+    /* Fora do `try` porque o `catch` precisa dele: o arrendamento só é
+       DEVOLVIDO enquanto nada foi cobrado. Depois da cobrança ele é a
+       única coisa que impede uma retentativa de debitar o acerto duas
+       vezes — se o `GET` de reconferência estourar (timeout da Asaas,
+       5xx) com o cartão já debitado, devolver o arrendamento faria a
+       chamada seguinte cobrar de novo. Aqui o prazo expira sozinho em
+       minutos, e até lá a segunda tentativa recebe 409. */
+    let chargeIdDoAcerto = null;
 
     try {
       const contratante = await deps.buscarContratantePorChave(chave);
@@ -213,8 +241,21 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
 
       /* Regra 3 do dono: não existe crédito de período que não foi pago.
          Sem cobrança confirmada, a troca é recusada em vez de creditar
-         um valor que ninguém pagou. */
-      const ultima = await deps.buscarUltimaCobrancaDaAssinatura(contratante.id, planoId, documento);
+         um valor que ninguém pagou.
+
+         A busca é pelo id da ASSINATURA, e não por `planoId`, e a
+         diferença aparece na SEGUNDA troca dentro do mesmo período: o
+         ciclo pago está gravado sob o plano ANTIGO, então procurar pelo
+         plano atual não acharia nada e a rota responderia "cobrança não
+         confirmada" — falso, e no caminho do dinheiro. A assinatura é o
+         que não muda quando o plano muda.
+
+         Status diferente de `confirmado` recusa, inclusive quando existe
+         um ciclo confirmado mais antigo: um ciclo recusado ou vencido
+         como linha mais recente significa que o período em curso não foi
+         pago, e adivinhar o contrário daria crédito por dinheiro que não
+         entrou. Recusar é o lado seguro do erro. */
+      const ultima = await deps.buscarCobrancaPorSubscriptionId(assinatura.id);
       if (!ultima || ultima.status !== STATUS_PERIODO_PAGO) {
         return resposta.status(409).json({
           erro: 'A cobrança do período em curso não está confirmada. Resolva o pagamento pendente antes de trocar de plano.'
@@ -247,7 +288,11 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         return resposta.status(409).json({ erro: 'Já existe uma troca de plano em andamento para esta assinatura.' });
       }
 
-      let chargeIdDoAcerto = null;
+      /* `cobra: false` com acerto negativo (rebaixamento) ou absorvido
+         significa cobrança ZERO, não o número calculado — ele iria para
+         a resposta e para o aviso ao contratante como se tivesse sido
+         debitado. */
+      const acertoCobradoEmReais = acerto.cobra ? acerto.acerto : 0;
 
       if (acerto.cobra) {
         const cobravel = await deps.dadosDeCobrancaDaAssinatura(assinatura.id);
@@ -278,13 +323,13 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
           await deps.liberarTroca(assinatura.id);
           return resposta.status(402).json({
             erro: 'O acerto proporcional não foi aprovado no cartão salvo. O plano NÃO foi alterado.',
-            acerto: { valor: acerto.acerto, status: cobranca.status ?? null }
+            acerto: { cobrado: false, valor: acerto.acerto, status: cobranca.status ?? null }
           });
         }
 
         chargeIdDoAcerto = cobranca.chargeId;
 
-        await deps.registrarAcertoDeTroca({
+        const registro = await deps.registrarAcertoDeTroca({
           chargeId: cobranca.chargeId,
           asaasSubscriptionId: assinatura.id,
           contratanteId: contratante.id,
@@ -293,6 +338,22 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
           valor: acerto.acerto,
           ciclo: cicloNovo
         });
+
+        /* Dinheiro cobrado e não registrado é o pior dos dois estados, e
+           por isso não pode passar calado: a métrica não conta, o painel
+           não mostra, e ninguém sabe que existe. A troca SEGUE — o
+           cartão já foi debitado, e recusar agora deixaria o assinante
+           pagando sem receber —, mas o furo vira linha na tabela `erros`
+           (Lei 8) com o `chargeId`, que é o que permite reparar à mão. */
+        if (!registro?.registrado) {
+          await deps.registrarErro(
+            new Error(
+              `Acerto de troca cobrado e NÃO registrado em cobrancas: charge ${cobranca.chargeId}, ` +
+              `assinatura ${assinatura.id}, valor ${acerto.acerto}`
+            ),
+            { contexto: 'trocaPlano.acertoNaoRegistrado', rota: '/api/checkout/trocar-plano', metodo: 'POST' }
+          );
+        }
       }
 
       await deps.alterarPlanoAssinatura(assinatura.id, { valor: valorNovo, ciclo: cicloNovo });
@@ -304,7 +365,9 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
          cobrado, o estado é ruim e tem de ser DITO, não escondido: o
          nosso banco não mente dizendo que trocou. */
       const depois = await deps.consultarAssinaturaNaAsaas(assinatura.id);
-      const pegou = Number(depois?.valor) === valorNovo && depois?.ciclo === cicloNovo;
+      const pegou = Number.isFinite(Number(depois?.valor))
+        && emCentavos(depois.valor) === emCentavos(valorNovo)
+        && depois?.ciclo === cicloNovo;
 
       if (!pegou) {
         /* Arrendamento NÃO é devolvido de propósito: ele expira sozinho
@@ -320,7 +383,7 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
 
         return resposta.status(502).json({
           erro: 'A alteração do plano não foi confirmada pela Asaas. O plano NÃO foi alterado.',
-          acerto: { cobrado: Boolean(chargeIdDoAcerto), valor: acerto.cobra ? acerto.acerto : 0, chargeId: chargeIdDoAcerto }
+          acerto: { cobrado: Boolean(chargeIdDoAcerto), valor: acertoCobradoEmReais, chargeId: chargeIdDoAcerto }
         });
       }
 
@@ -343,7 +406,7 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         documento,
         valor: valorNovo,
         ciclo: cicloNovo,
-        acertoCobrado: acerto.cobra ? acerto.acerto : 0
+        acertoCobrado: acertoCobradoEmReais
       });
 
       resposta.json({
@@ -358,7 +421,7 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
            débito e dias, ele só teria um valor sem origem. */
         acerto: {
           cobrado: Boolean(chargeIdDoAcerto),
-          valor: acerto.cobra ? acerto.acerto : 0,
+          valor: acertoCobradoEmReais,
           chargeId: chargeIdDoAcerto,
           credito: acerto.credito,
           debito: acerto.debito,
@@ -367,10 +430,10 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         }
       });
     } catch (erro) {
-      /* Erro depois de reivindicar: devolve o arrendamento para a
-         próxima tentativa não esperar o prazo. Nada aqui cobra de novo —
-         a cobrança do acerto, quando aconteceu, já está registrada. */
-      if (arrendamentoMeu) await deps.liberarTroca(assinatura.id);
+      /* Erro depois de reivindicar e ANTES de cobrar: devolve o
+         arrendamento, para a próxima tentativa não esperar o prazo.
+         Depois de cobrar, não devolve — ver `chargeIdDoAcerto` acima. */
+      if (arrendamentoMeu && !chargeIdDoAcerto) await deps.liberarTroca(assinatura.id);
       responderErro(resposta, erro, 'trocaPlano.trocarPlano');
     }
   };
@@ -447,15 +510,24 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
       },
       liberarTroca: async (id) => { anotar('liberarTroca', [id]); },
       aplicarTrocaDePlano: async (id, dados) => { anotar('aplicarTrocaDePlano', [id, dados]); },
-      buscarUltimaCobrancaDaAssinatura: async () => {
-        anotar('buscarUltimaCobrancaDaAssinatura', []);
+      buscarCobrancaPorSubscriptionId: async (id) => {
+        anotar('buscarCobrancaPorSubscriptionId', [id]);
         if (ajustes.ultima === null) return null;
         return ajustes.ultima ?? { status: 'confirmado', valor_cobrado: 100 };
       },
-      registrarAcertoDeTroca: async (dados) => { anotar('registrarAcertoDeTroca', [dados]); },
+      registrarAcertoDeTroca: async (dados) => {
+        anotar('registrarAcertoDeTroca', [dados]);
+        return { registrado: ajustes.registroFalha ? false : true };
+      },
       consultarAssinaturaNaAsaas: async (id) => {
         anotar('consultarAssinaturaNaAsaas', [id]);
         if (ajustes.asaasNaoConhece) return null;
+        /* A reconferência é a SEGUNDA chamada: `reconferenciaEstoura`
+           simula a rede caindo entre cobrar e conferir. */
+        if (ajustes.reconferenciaEstoura
+            && chamadas.filter((c) => c.nome === 'consultarAssinaturaNaAsaas').length > 1) {
+          throw new Error('rede caiu depois de cobrar');
+        }
         return { ...asaas };
       },
       dadosDeCobrancaDaAssinatura: async (id) => {
@@ -476,7 +548,12 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
         anotar('alterarPlanoAssinatura', [id, { valor, ciclo }]);
         // O `PUT` só "pega" quando a Asaas de verdade aceitou — é isso
         // que a releitura confere.
-        if (!ajustes.putNaoPega) { asaas.valor = valor; asaas.ciclo = ciclo; }
+        if (!ajustes.putNaoPega) {
+          // A Asaas guarda em centavos: um valor com mais casas volta
+          // arredondado, e é esse o caso que o falso negativo criava.
+          asaas.valor = ajustes.asaasArredonda ? Math.round(valor * 100) / 100 : valor;
+          asaas.ciclo = ciclo;
+        }
       },
       notificarPlanoTrocado: (contratante, dados) => { anotar('notificarPlanoTrocado', [contratante, dados]); },
       registrarErro: async (erro, ctx) => { anotar('registrarErro', [erro, ctx]); },
@@ -661,6 +738,43 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
   conferir(t.r.corpo.acerto.chargeId === 'pay_acerto', 'e a resposta entrega o chargeId do acerto, que é o que resolve na mão');
   conferir(!t.chamou('liberarTroca'), 'o arrendamento fica de pé: ele é o que impede uma retentativa automática de cobrar de novo');
 
+  /* --- 8b. a segunda troca DENTRO do mesmo período ---------------- */
+  /* O ciclo pago está gravado sob o plano ANTIGO. Procurar o último
+     ciclo por `planoId` não acharia nada depois da primeira troca, e a
+     rota responderia "cobrança não confirmada" — falso, e no caminho do
+     dinheiro. A busca é pela ASSINATURA, que não muda quando o plano
+     muda. */
+  t = await rodar();
+  conferir(
+    t.args('buscarCobrancaPorSubscriptionId')[0][0] === 'sub_1',
+    `o último ciclo é procurado pelo id da ASSINATURA, veio "${t.args('buscarCobrancaPorSubscriptionId')[0][0]}"`
+  );
+  conferir(
+    !t.nomes().includes('buscarUltimaCobrancaDaAssinatura'),
+    'e NÃO pela busca por plano+documento, que erra na segunda troca do mesmo período'
+  );
+
+  /* --- 8c. valor com mais de duas casas não vira falso 502 -------- */
+  t = await rodar({ plano: { valor: 45.999, ciclo: 'MONTHLY' }, asaasArredonda: true });
+  conferir(
+    t.r.codigo === 200,
+    `plano de R$ 45,999 (a Asaas guarda 46,00) tem de passar, veio ${t.r.codigo} — comparar em reais daria 502 DEPOIS de cobrar o acerto`
+  );
+  conferir(t.chamou('aplicarTrocaDePlano'), 'e a troca é gravada');
+
+  /* Controle positivo: o arredondamento não pode virar "aceita
+     qualquer valor de volta". Se a Asaas devolver outro número, é 502. */
+  t = await rodar({ putNaoPega: true, asaasArredonda: true });
+  conferir(t.r.codigo === 502, 'valor diferente continua sendo 502 — o arredondamento não afrouxa a conferência');
+
+  /* --- 8d. acerto cobrado e não registrado não passa calado ------- */
+  t = await rodar({ registroFalha: true });
+  conferir(t.r.codigo === 200, 'falha ao GRAVAR o acerto não desfaz a troca — o cartão já foi debitado');
+  conferir(
+    t.chamou('registrarErro'),
+    'mas vira erro registrado (Lei 8): dinheiro cobrado e não registrado é invisível para a métrica e para o painel'
+  );
+
   /* --- 9. erro no meio devolve o arrendamento; erro antes, não ---- */
   const erroDoPlano = Object.assign(new Error('Plano não encontrado.'), { status: 404 });
   t = await rodar({ planoErro: erroDoPlano });
@@ -669,6 +783,27 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
     !t.chamou('liberarTroca'),
     'ERRO ANTES DE REIVINDICAR NÃO DEVOLVE ARRENDAMENTO — devolver o de outra chamada é o que faria as duas cobrarem'
   );
+
+  /* --- 9b. exceção DEPOIS de cobrar não devolve o arrendamento ----
+     Este é o furo que o ciclo 2 da revisão achou: o `GET` de
+     reconferência pode estourar (timeout, 5xx) com o cartão já
+     debitado. Devolver o arrendamento ali faria a retentativa cobrar o
+     acerto de novo — e desfazer isso é estorno no cartão de uma pessoa
+     real. */
+  t = await rodar({ reconferenciaEstoura: true });
+  conferir(t.r.codigo >= 500, `exceção depois de cobrar responde erro, veio ${t.r.codigo}`);
+  conferir(t.chamou('cobrarNoCartaoSalvo'), 'o acerto foi cobrado neste cenário');
+  conferir(
+    !t.chamou('liberarTroca'),
+    'ARRENDAMENTO NÃO É DEVOLVIDO depois de cobrar — é o que impede a retentativa de debitar duas vezes'
+  );
+
+  /* E o par que dá sentido a isso: a MESMA exceção, antes de cobrar,
+     devolve o arrendamento — senão a guarda viraria "nunca devolve", e
+     um erro de rede trancaria a assinatura por minutos sem motivo. */
+  t = await rodar({ reconferenciaEstoura: true, plano: { valor: 60, ciclo: 'MONTHLY' } });
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'rebaixamento não cobra, então nada foi debitado');
+  conferir(t.chamou('liberarTroca'), 'e aí o arrendamento VOLTA — sem cobrança não há o que proteger');
 
   /* --- 10. o documento é normalizado antes de qualquer busca ------ */
   t = await rodar({}, { ...CORPO_OK, documento: '111.444.777-35' });
@@ -698,6 +833,34 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
     t.args('resolverPlano')[0][2]?.metodoRequerido === 'assinatura',
     'e o método exigido é assinatura: contratante sem assinatura habilitada não troca plano'
   );
+
+  /* --- 13. a regra fica no código, não na memória ----------------
+     As duas consultas que devolvem "a cobrança da assinatura" precisam
+     filtrar por MÉTODO de assinatura. Sem isso o acerto de uma troca —
+     que aponta para a mesma assinatura, carrega o mesmo plano e nasce
+     depois do último ciclo — vira a cobrança mais recente dela, e
+     estraga dois usos: o valor que o contratante lê como preço do plano
+     (`API.md` §5.3) e o MOLDE do ciclo seguinte, que copiaria uma linha
+     sem telefone e sem endereço.
+
+     Foi medido ao vivo, dentro do contêiner: sem o filtro vinha o acerto
+     de R$ 30 onde devia vir o ciclo de R$ 160. A checagem é no
+     texto-fonte porque provar de novo exigiria banco, e provar que o
+     filtro não foi removido não exige nada. */
+  {
+    const { readFileSync } = await import('node:fs');
+    const fonte = readFileSync(new URL('../services/cobrancaService.js', import.meta.url), 'utf8');
+
+    for (const funcao of ['buscarUltimaCobrancaDaAssinatura', 'buscarCobrancaPorSubscriptionId']) {
+      const inicio = fonte.indexOf(`export async function ${funcao}`);
+      conferir(inicio > 0, `${funcao} ainda existe em cobrancaService`);
+      const corpo = fonte.slice(inicio, fonte.indexOf('\n}', inicio));
+      conferir(
+        /\.in\(\s*'metodo_pagamento'\s*,\s*METODOS_DE_ASSINATURA\s*\)/.test(corpo),
+        `${funcao} tem de filtrar por METODOS_DE_ASSINATURA — senão o acerto de troca vira "a cobrança da assinatura"`
+      );
+    }
+  }
 
   console.log(`trocaPlanoController: ${checagens} checagens OK`);
 }

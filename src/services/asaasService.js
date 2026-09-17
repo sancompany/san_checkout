@@ -592,6 +592,12 @@ export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
  * como `cartaoToken: null` — quem chama recusa a troca em vez de
  * inventar um caminho de cobrança.
  *
+ * **O custo dessa separação é uma segunda ida ao `GET` da mesma
+ * assinatura**, e ele é pago de propósito: acontece só quando há acerto
+ * a cobrar (a troca sem acerto nem chama esta função), e a alternativa
+ * era fazer o token passar pela função que alimenta a resposta ao
+ * contratante.
+ *
  * @returns {Promise<{clienteId: string|null, cartaoToken: string|null}|null>}
  *   `null` quando a assinatura não existe (404) — mesma convenção de
  *   `consultarAssinaturaNaAsaas`.

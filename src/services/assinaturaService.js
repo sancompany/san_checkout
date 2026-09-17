@@ -138,6 +138,33 @@ export async function aplicarTrocaDePlano(id, { planoNovoId, planoAnteriorId, va
   if (error) throw error;
 }
 
+/**
+ * A assinatura pelo id dela na Asaas (`sub_...`).
+ *
+ * Existe por causa da troca de plano: a partir dela, o `plano_id` da
+ * assinatura passa a divergir do `plano_id` das cobranças ANTIGAS, e o
+ * ciclo novo (`registrarNovoCicloAssinatura`, webhookController) se
+ * monta copiando a cobrança anterior. Sem esta consulta, o ciclo
+ * seguinte a uma troca nasceria com o plano VELHO — e, como cada ciclo
+ * copia do anterior, o erro se repetiria para sempre, avisando o
+ * contratante do plano errado a cada cobrança.
+ *
+ * Aqui mora a verdade do plano vigente; a cobrança guarda o histórico.
+ */
+export async function buscarAssinaturaPorId(id) {
+  const { data, error } = await supabase
+    .from('assinaturas')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[assinaturaService.buscarAssinaturaPorId]', error.message);
+    return null;
+  }
+  return data;
+}
+
 export async function atualizarStatusAssinatura(id, status) {
   const { error } = await supabase
     .from('assinaturas')

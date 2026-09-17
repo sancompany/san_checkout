@@ -245,6 +245,10 @@ E as decisões do dono do checkout que você vai sentir na prática (são
 - **duas trocas simultâneas**: a segunda recebe `409` e **nada é
   cobrado** — a guarda existe para ninguém pagar o mesmo acerto duas
   vezes;
+- ⚠️ **depois da troca, o `planoId` do assinante é o NOVO**: cancelar,
+  pausar, retomar, conciliar e gerar link de renovação passam a usar
+  `planoNovoId`; mandar o antigo responde `404`. É por isso que o evento
+  leva `planoAnterior`;
 - **avisar o assinante da mudança de preço é obrigação SUA**, por e-mail
   e por aviso no site. O checkout não fala com o pagador — ele te manda
   `evento: 'plano_trocado'` com `planoAnterior`, `valor`, `ciclo` e

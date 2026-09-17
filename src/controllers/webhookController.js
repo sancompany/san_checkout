@@ -67,7 +67,7 @@ import {
   registrarCicloAssinatura,
   atualizarSituacaoSubconta
 } from '../services/cobrancaService.js';
-import { upsertAssinatura, atualizarStatusAssinatura } from '../services/assinaturaService.js';
+import { upsertAssinatura, atualizarStatusAssinatura, buscarAssinaturaPorId } from '../services/assinaturaService.js';
 import { cancelarAssinatura as cancelarAssinaturaNaAsaas } from '../services/asaasService.js';
 import {
   registrarEventoWebhook,
@@ -105,6 +105,7 @@ const dependenciasPadrao = {
   atualizarSituacaoSubconta,
   upsertAssinatura,
   atualizarStatusAssinatura,
+  buscarAssinaturaPorId,
   cancelarAssinaturaNaAsaas,
   /* SEM `await`, pelo MESMO motivo que a auditoria em
      `criarReceptorWebhook` não é aguardada — e aqui o risco é maior, não
@@ -767,11 +768,20 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     return null;
   }
 
+  /* O PLANO vem da assinatura, não da cobrança-modelo, e a diferença
+     só aparece depois de uma troca de plano (`/trocar-plano`, 17/09):
+     a cobrança anterior guarda o plano que ERA, e copiá-la faria o
+     ciclo novo nascer com o plano velho — e, como cada ciclo copia do
+     anterior, o contratante seria avisado do plano errado a cada
+     cobrança, para sempre. O molde continua valendo para o resto
+     (contratante, documento, telefone, endereço), que não muda. */
+  const assinatura = await deps.buscarAssinaturaPorId(subscriptionId);
+
   const resultado = await deps.registrarCicloAssinatura({
     chargeId: payment.id,
     asaasSubscriptionId: subscriptionId,
     contratanteId: modelo.contratante_id,
-    planoId: modelo.plano_id,
+    planoId: assinatura?.plano_id ?? modelo.plano_id,
     documento: modelo.documento,
     email: modelo.email,
     telefone: modelo.telefone,
@@ -783,7 +793,8 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     cidade: modelo.cidade,
     uf: modelo.uf,
     cidadeIbge: modelo.cidade_ibge,
-    ciclo: modelo.ciclo,
+    /* Mesmo motivo do plano: a troca reescreve o ciclo da assinatura. */
+    ciclo: assinatura?.ciclo ?? modelo.ciclo,
     valorCheio: payment.value ?? modelo.valor_cheio,
     valorComDesconto: payment.value ?? modelo.valor_com_desconto,
     valorCobrado: payment.value ?? modelo.valor_cobrado
@@ -1299,6 +1310,51 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   );
   assert.equal(deps.chamou('notificar').length, 0, 'entrega perdedora da corrida não pode notificar de novo o mesmo ciclo');
   assert.equal(chamadasBuscarCobranca, 1, 'com o guarda, nem chega a buscar a cobrança de novo');
+
+  /* CICLO NOVO DEPOIS DE UMA TROCA DE PLANO — o plano sai da
+     ASSINATURA, não da cobrança-modelo.
+
+     Achado no ciclo 3 da revisão da troca de plano (17/09/2026), e é o
+     furo mais duradouro que ela tinha: a cobrança anterior guarda o
+     plano que ERA. Copiá-la faz o ciclo seguinte nascer com o plano
+     velho — e como cada ciclo copia do anterior, o contratante receberia
+     `cobranca_confirmada` com o planoId errado a CADA cobrança, para
+     sempre, creditando o plano que o assinante deixou de ter. */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorSubscriptionId: { ...modeloAssinatura, plano_id: 'plano_velho', ciclo: 'MONTHLY' },
+    buscarAssinaturaPorId: { id: 'sub_1', plano_id: 'plano_novo', ciclo: 'QUARTERLY' },
+    registrarCicloAssinatura: () => ({ duplicado: false })
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_pos_troca', subscription: 'sub_1', value: 160 } },
+    deps
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].planoId, 'plano_novo',
+    'o ciclo depois da troca tem que nascer com o plano NOVO — o molde guarda o antigo'
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].ciclo, 'QUARTERLY',
+    'e com o ciclo novo, pelo mesmo motivo'
+  );
+
+  /* Controle positivo: sem troca (ou sem linha de assinatura), o molde
+     continua mandando — senão a correção viraria "ignora o molde". */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorSubscriptionId: { ...modeloAssinatura, plano_id: 'plano_unico', ciclo: 'MONTHLY' },
+    buscarAssinaturaPorId: null,
+    registrarCicloAssinatura: () => ({ duplicado: false })
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sem_assinatura', subscription: 'sub_1', value: 50 } },
+    deps
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].planoId, 'plano_unico',
+    'sem linha de assinatura, o molde continua sendo a fonte'
+  );
 
   // Ciclo novo sem molde local: ignora, não adivinha o contratante.
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });
