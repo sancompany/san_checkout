@@ -475,10 +475,21 @@ próprios dados.
 > valor e prefill específicos por anunciante. O checkout não impõe
 > formato; só chama `GET /plano/{o que vier}`.
 
-> **`valor` e `ciclo` são congelados na criação da assinatura.** Os
-> ciclos seguintes cobram o que foi combinado naquele momento — o
-> checkout **não reconsulta** `/plano/{id}` a cada cobrança. Para mudar o
-> preço de um assinante, cancele e crie uma assinatura nova.
+> **`valor` e `ciclo` são congelados NO CHECKOUT, e isso não é limite do
+> provedor.** Os ciclos seguintes cobram o que foi combinado no momento
+> da assinatura — o checkout **não reconsulta** `/plano/{id}` a cada
+> cobrança, e **não existe rota nossa** para alterar o valor de um
+> assinante.
+>
+> Até 17/09/2026 este parágrafo dizia que o congelamento vinha da Asaas e
+> que o único caminho era cancelar e criar outra. **É falso, e foi medido
+> no sandbox nesse dia:** a Asaas aceita `PUT /v3/subscriptions/{id}`
+> alterando `value` e `cycle`, e com `updatePendingPayments: true` ela
+> altera até a cobrança pendente já gerada. O que falta para você mudar
+> preço de assinante é **construção deste lado**, não permissão do
+> provedor — está em `docs/proximas-versoes.md`. Enquanto não existir,
+> o caminho continua sendo cancelar e criar outra, ou cobrar a diferença
+> como pedido avulso.
 
 ---
 
@@ -951,7 +962,8 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > forte para o "rode uma vez por dia" da 5.3.
 >
 > **`ciclo` passou a ser reconferido junto, desde 16/09/2026.** Ele
-> continua congelado na criação — o que mudou é de onde a resposta o lê:
+> continua congelado **pelo nosso fluxo** (a Asaas aceitaria alterá-lo —
+> seção 4.2) — o que mudou é de onde a resposta o lê:
 > quem cobra é a Asaas, então se o nosso registro divergir do dela, o
 > errado é o nosso, e esta rota corrige o registro. Isso existe por causa
 > de um rastro real: as assinaturas criadas antes de 15/09/2026 foram
@@ -1408,7 +1420,7 @@ motor vira cobrança indevida, e cobrança indevida não volta com redeploy.
 | **Pular ou adiar um ciclo** | Os ciclos seguintes caem exatamente a cada `ciclo`, contados da primeira cobrança. Não há "este mês não cobra" |
 | **Desconto, cupom ou promoção no plano** | O campo `desconto` existe **só no pedido avulso** (seção 4.1). A assinatura cobra `valor` exatamente como veio do seu `GET /plano/{id}` |
 | **Ciclo de 4, 5 ou 8 meses** | Só os sete da seção 7.1. Não há quadrimestral |
-| **Mudar valor, ciclo ou data de um assinante existente** | `valor` e `ciclo` são congelados na criação (seção 4.2). Para mudar, cancele e crie outra |
+| **Mudar valor, ciclo ou data de um assinante existente** | Não existe **rota nossa** para isso (seção 4.2). **A Asaas permite** — medido em 17/09/2026 —, então é construção pendente deste lado, não impedimento do provedor. Hoje: cancele e crie outra, ou cobre a diferença como pedido avulso |
 
 #### Como modelar "pague 3, leve 4" mesmo assim
 

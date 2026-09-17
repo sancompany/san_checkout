@@ -306,12 +306,18 @@ Feito em 16/09:
 - **Troca de plano: decidida como atualização futura, não pendência.** O
   dono perguntou se o checkout atendia as duas aplicações do MostrAí.
   **Cancelar plano já está pronto** (§7.4, exercitado ao vivo). **Trocar
-  plano não existe** — `valor` e `ciclo` são congelados na criação da
-  assinatura, e isso vem da Asaas, não de escolha nossa. Decisão do
-  dono: o MostrAí segue pela **ideia do pedido avulso**, cobrando a
-  diferença como pedido comum. Registrado em `docs/proximas-versoes.md`
-  com o que faltaria construir (o cálculo proporcional, que não existe
-  em lugar nenhum do sistema, e o token carregando o plano de destino).
+  plano não existe** — e o motivo que eu dei aqui estava **errado**: eu
+  escrevi que `valor` e `ciclo` são congelados pela Asaas, "não por
+  escolha nossa". ⚠️ **Corrigido em 17/09/2026 por medição** — a Asaas
+  aceita `PUT /v3/subscriptions/{id}` mudando `value` e `cycle`, e com
+  `updatePendingPayments: true` muda até a cobrança pendente já gerada.
+  O congelamento é **do nosso fluxo**. Decisão do dono na conversa de
+  16/09: o MostrAí segue pela **ideia do pedido avulso** — decisão que
+  volta a ser dele, porque foi tomada sobre a premissa falsa. Tudo em
+  `docs/proximas-versoes.md`, com a tabela da medição e o **controle
+  negativo** que dá sentido a ela: a Asaas responde `200` e ignora em
+  silêncio campo que não conhece, então status não prova nada — quem
+  prova é o `GET` de volta.
 
 Feito em 17/09, tudo no ar (`b57df2b`):
 - **Restauração ensaiada** (`npm run ensaio-restauracao`): Postgres da

@@ -234,18 +234,48 @@ para um problema que talvez nem exista mais.
   plano A para o plano B mantendo o vínculo: cobrar a diferença (ou
   creditar), e emendar os ciclos seguintes no valor novo, sem o
   assinante precisar cancelar e assinar de novo do zero.
-- **Por que** — `valor` e `ciclo` são **congelados na criação** da
-  assinatura (`API.md` §4.2), e isso não é limitação nossa: é como a
-  assinatura existe na Asaas. Hoje a única saída é cancelar a antiga e
-  criar outra, o que significa o assinante digitando o cartão de novo,
-  perda do histórico de vínculo, e uma janela em que ele não tem nem uma
-  assinatura nem a outra. A infraestrutura mais próxima que existe é a
-  **renovação** (`API.md` §7.3): ela já sabe criar a nova e encerrar a
-  antiga **só depois** que a nova confirma, com token HMAC para ninguém
-  mexer na assinatura alheia (RN-25). Trocar de plano é a mesma coreografia
-  com plano de destino diferente — o que falta é o dinheiro no meio
-  (proporcional do que já foi pago, e o que fazer com uma troca no meio
-  de um trimestre).
+- **Por que — e aqui eu estava errado, corrigido em 17/09/2026 por
+  medição.** Esta entrada dizia que `valor` e `ciclo` são "congelados na
+  criação" e que "isso não é limitação nossa: é como a assinatura existe
+  na Asaas". **É falso.** Medido no sandbox, dentro do contêiner, com
+  fixture descartável apagada no fim:
+
+  | o que tentei | resposta | o `GET` de volta |
+  |---|---|---|
+  | `PUT {value: 35}` numa assinatura de R$ 20 | `200` | `value: 35` |
+  | `PUT {value: 42, updatePendingPayments: true}` | `200` | `value: 42` — **e a cobrança pendente já gerada passou de R$ 20 para R$ 42**, mesmo id, mesmo vencimento |
+  | `PUT {cycle: QUARTERLY}` num `MONTHLY` | `200` | `cycle: QUARTERLY` |
+  | **controle negativo:** `PUT {campoQueNaoExiste}` | `200`, sem erro | nada mudou |
+
+  O controle negativo é o que dá valor aos três primeiros: a Asaas
+  **ignora campo desconhecido em silêncio e responde 200**, então o
+  código HTTP não prova nada — quem prova é o `GET` de volta. (E o
+  avesso também: mandar `valor` em português, ou `amount`, seria aceito
+  com `200` e não mudaria nada. Quem construir isto confere lendo,
+  nunca pelo status.)
+
+  Uma ressalva que a medição também dá: **`value` não está no schema
+  documentado** do `PUT` (a doc lista `cycle`, `nextDueDate`,
+  `billingType`, `updatePendingPayments` e outros, mas não `value`).
+  Funciona, e é comportamento não documentado — portanto pode mudar sem
+  aviso. Quem construir precisa de teste que pegue isso deixando de
+  funcionar, senão a troca de preço falha calada.
+
+  Então o que falta **é deste lado**: não existe rota nossa para alterar
+  valor de assinante, e enquanto não existir a saída continua sendo
+  cancelar e criar outra — com o assinante digitando o cartão de novo,
+  perda do vínculo e uma janela sem assinatura. A infraestrutura mais
+  próxima é a **renovação** (`API.md` §7.3): ela já sabe criar a nova e
+  encerrar a antiga **só depois** que a nova confirma, com token HMAC
+  para ninguém mexer na assinatura alheia (RN-25).
+
+  **E com o `PUT` na mesa, a coreografia mais simples deixa de ser essa:**
+  alterar a assinatura existente não pede cartão de novo, não perde
+  vínculo e não tem janela morta. O que ela pede é o cálculo do meio
+  (proporcional do que já foi pago) e uma decisão de produto — mudar o
+  valor que um cartão salvo vai cobrar exige **concordância do
+  assinante** (CDC), então "tecnicamente possível" não quer dizer "pode
+  cobrar diferente sem avisar". Isso é decisão do dono, não minha.
 - **De onde veio** — o dono, em 16/09/2026, perguntando se o checkout já
   atendia as duas aplicações que o MostrAí vai ter: cancelar plano e
   trocar plano. **Cancelar já está pronto** (§7.4, exercitado ao vivo).
@@ -253,6 +283,16 @@ para um problema que talvez nem exista mais.
   ideia do pedido avulso** — cobra a diferença como pedido comum e
   resolve o resto do lado dele. Então isto não bloqueia ninguém hoje, e
   é justamente por isso que fica aqui e não em `docs/pendencias.md`.
+
+  **Essa decisão foi tomada sobre uma premissa minha que era falsa**, e
+  ele merece saber: eu disse que a Asaas não permitia alterar valor, e
+  ela permite. Em 17/09/2026 ele perguntou justamente isso — "não é
+  possível fazer uma alteração de preço nos planos já contratados?" —, a
+  medição acima é a resposta, e **a decisão de seguir pelo pedido avulso
+  volta a ser dele**, agora com o fato certo na mesa. Pode continuar
+  valendo (o avulso é mais simples e não constrói cálculo proporcional
+  para dois casos por mês); o que não pode é continuar valendo por um
+  motivo que não existe.
 - **O que toca** — `asaasCheckoutController.js` (a mesma porta da
   renovação), `tokenRenovacao.js` (o token precisaria carregar o plano
   de DESTINO, não só o de origem, senão um token de renovação vira um
