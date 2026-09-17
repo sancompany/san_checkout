@@ -33,6 +33,7 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
 
 1. [Como funciona — o modelo pull](#1-como-funciona--o-modelo-pull)
 2. [Antes de começar — o que é combinado manualmente](#2-antes-de-começar--o-que-é-combinado-manualmente)
+   - 2.0 [Quem opera o checkout hoje](#20-quem-opera-o-checkout-hoje)
    - 2.1 [Os dois endereços do checkout](#21-os-dois-endereços-do-checkout)
 3. [Links de checkout](#3-links-de-checkout)
    - 3.1 [`returnUrl` — o caminho de volta para a sua loja](#31-returnurl--o-caminho-de-volta-para-a-sua-loja)
@@ -59,6 +60,7 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
 9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
 10. [Compatibilidade e versionamento](#10-compatibilidade-e-versionamento)
 11. [Checklist de integração](#11-checklist-de-integração)
+    - 11.1 [A troca de sandbox para produção — o que NÃO atravessa](#111-a-troca-de-sandbox-para-produção--o-que-não-atravessa)
 12. [Referência rápida](#12-referência-rápida)
 
 ---
@@ -128,6 +130,27 @@ Para trocar qualquer um desses dados, fale com quem administra o
 checkout. A URL base da sua API e o `webhook_url` podem ser alterados
 sem quebrar nada; o `contratante_id` e a chave, não — os links já
 distribuídos param de funcionar.
+
+### 2.0 Quem opera o checkout hoje
+
+O San Checkout é operado por **Bruno Henrique Sanches**, sob o nome
+comercial **SAN & CO.**, como **pessoa física** — e não como pessoa
+jurídica. A identificação completa (nome, CPF e endereço) está nos
+Termos de Uso e na Política de Privacidade, e é o Decreto 7.962/2013,
+art. 2º, que pede a inscrição no CPF **ou** no CNPJ.
+
+**Operação em transição para pessoa jurídica.** Três coisas dependem
+disso, e valem ser sabidas antes de integrar:
+
+- **Não há `split`** enquanto a conta da Asaas for de pessoa física
+  (conta PF não cria subconta). O valor que lhe cabe passa pela conta do
+  operador e o repasse é manual — ver a seção 8.
+- **A nota fiscal do serviço tecnológico** sai na inscrição vigente do
+  operador. A nota do **seu** produto continua sendo sua, sempre (seção
+  4.3 e Termos §15.1.1).
+- Quando a conversão concluir, os documentos legais mudam de versão e o
+  `split` passa a valer. **Nada no contrato desta API muda por causa
+  disso** — nem endpoint, nem payload, nem status.
 
 ### 2.1 Os dois endereços do checkout
 
@@ -1420,8 +1443,26 @@ valorCobrado = valorComDesconto + frete + taxasTotais
 ```
 
 A taxa do checkout é **somada por cima**, nunca descontada do que você
-configurou: você recebe `valorComDesconto + frete` integral — via split,
-se tiver `wallet_id` cadastrado; direto na conta, se não tiver.
+configurou: o valor que **lhe cabe** é `valorComDesconto + frete`
+integral.
+
+> ⚠️ **Como esse valor chega até você depende do `wallet_id`, e hoje ele
+> não existe para nenhum contratante.**
+>
+> | com `wallet_id` | sem `wallet_id` — **é o caso hoje** |
+> |---|---|
+> | a Asaas divide na liquidação (`split`) e a sua parte cai direto na sua subconta | **tudo cai na conta do operador**, e o repasse a você é **manual, por fora do sistema** |
+>
+> A frase anterior desta seção dizia "direto na conta, se não tiver", o
+> que se lia como "direto na sua conta". Era falso e está corrigido: sem
+> `wallet_id` a sua parte passa pela conta do operador antes de chegar a
+> você.
+>
+> O motivo não é escolha de arquitetura: a conta-mãe da Asaas está
+> registrada como pessoa física, e conta PF não cria subconta — logo não
+> há `wallet_id` para cadastrar. Medido em 17/09/2026. A conversão para
+> CNPJ é atualização futura, e o `split` liga junto com ela. Detalhe em
+> `CONSTRAINTS.md` §2.5.3 e §3.
 
 **Tabela da Asaas (valores de referência):**
 
@@ -1551,6 +1592,62 @@ melhoria nossa derrube a sua integração:
 5. Estornar — o webhook de estorno chega?
 6. (Recorrência) assinar, e depois pausar, retomar e cancelar.
 7. (Se usa `returnUrl`) pagar e conferir que o botão de volta aparece e leva para a sua página — e que a sua página de destino **não** dá o pedido por pago sem consultar o próprio banco.
+
+### 11.1 A troca de sandbox para produção — o que NÃO atravessa
+
+Se você integrou contra o sandbox da Asaas e a instalação vai virar
+produção, leia isto **antes** de combinar a data da troca. Não é
+configuração: é dado que deixa de existir.
+
+**Todo identificador da Asaas é preso ao ambiente.** `pay_…`, `sub_…`,
+`chk_…`, id de cliente e `walletId` de sandbox **não existem** em
+produção. Não há migração, não há importação, não há equivalente: são
+duas contas separadas que por acaso falam a mesma API.
+
+Consequência prática, em ordem de quem dói mais:
+
+| o que | acontece na troca |
+|---|---|
+| **Assinaturas criadas no sandbox** | param de existir. Quem estava assinado **assina de novo**, com o cartão de novo. Não há como preservar o vínculo |
+| **Cobranças de teste** (Pix, boleto, cartão) | viram histórico morto. O `chargeId` não resolve mais |
+| **`walletId` do split** | é outro em produção. Split configurado com o de sandbox não repassa nada |
+| **Webhook da Asaas** | é outro cadastro, com outro token. O do sandbox precisa ser **desativado**, ou acumula 401 e a Asaas pausa a fila dele |
+
+> ⚠️ **Assinatura de sandbox que sobreviver no nosso registro vira
+> zumbi.** O caminho é este: `POST /cancelar-assinatura` chama a Asaas
+> de produção com um id de sandbox, a Asaas devolve `404`, e a nossa
+> linha que gravaria o status novo nunca roda — o registro fica
+> `ativa` para sempre, incancelável pela API.
+>
+> Por isso os registros de teste são **apagados na troca, não depois**.
+> Quem administra o checkout faz isso; do seu lado, o equivalente é não
+> deixar id de sandbox no seu banco de produção.
+
+**O que NÃO muda, e é o que permite integrar antes da troca:**
+
+- `contratante_id`, `X-Checkout-Key`, `api_base_url` e `webhook_url`
+- **A assinatura HMAC dos nossos webhooks**, que é calculada com a sua
+  `X-Checkout-Key` (seção 4.3.2) — nada a ver com a chave da Asaas. A
+  sua verificação continua valendo sem tocar em nada
+- Os endpoints da seção 5, os campos do payload, e o vocabulário de
+  status
+- O formato do `pedidoId` e do `planoId`, que são **seus**
+
+Ou seja: **o seu código não precisa mudar na troca.** O que muda é o
+dado. Integre, teste e feche o seu lado no sandbox com tranquilidade —
+só não conte com nenhum `sub_…` ou `pay_…` sobrevivendo à virada.
+
+**Roteiro sugerido, para a troca não pedir retrabalho:**
+
+1. Fechar a integração no sandbox, com o teste de ponta a ponta acima
+2. Combinar a data da troca com quem administra o checkout
+3. Antes da troca: parar de criar cobrança nova no sandbox
+4. Na troca: registros de teste apagados dos dois lados
+5. Depois da troca: **repetir o teste de ponta a ponta com valor baixo e
+   dinheiro real** — é o único jeito de conferir os quatro pontos que
+   mudam de ambiente (identificador de cobrança, formato do webhook,
+   assinatura e mensagem de erro)
+6. Reassinar quem era assinante de teste, se for para continuar
 
 ---
 

@@ -199,17 +199,240 @@ aqui é exatamente a mesma do `webhook_url`.
 
 ## 6. Restaurar o banco
 
-**NÃO HÁ BACKUP AUTOMÁTICO.** O plano gratuito do Supabase não faz, e
-isso é exceção registrada com gatilho no `CONSTRAINTS.md` (Lei 6): o
-gatilho é a primeira cobrança real. Enquanto o banco só tem dado de
-teste, o custo de perdê-lo é reescrever o schema a partir de
-`supabase/migrations/`.
+### O que existe hoje, sem enfeite
 
-Reconstruir do zero: aplicar `supabase/migrations/0001` a `0003`, na
-ordem, pelo editor SQL do Supabase.
+| | estado |
+|---|---|
+| Procedimento de restauração | **existe e foi exercitado** — `npm run ensaio-restauracao` |
+| RTO medido | **1 s** de máquina (16/09/2026) |
+| Backup automático | **NÃO EXISTE** |
+| RPO | **indefinido** — sem job de cópia, no pior caso perde-se tudo |
 
-**Restauração nunca foi exercitada.** Enquanto não for, é backup
-hipotético — e é isso que a Lei 6 chama de não conforme.
+As duas linhas de baixo são a exceção da Lei 6 no `CONSTRAINTS.md` §3,
+com gatilho na primeira cobrança real. **Saber restaurar não é ter
+backup:** hoje existe o procedimento provado e não existe a cópia.
+
+### Como restaurar
+
+Restaurar aqui é **aplicar as migrations e carregar os dados** — o schema
+mora em `supabase/migrations/`, versionado e imutável (`CONSTRAINTS.md`
+§2.1), não num arquivo de dump.
+
+```bash
+# 1. os dados (COM dado real — só em ambiente confiável)
+node scripts/backup-dados.mjs dados.sql --com-dado-real
+
+# 2. schema, na ordem, pelo editor SQL do Supabase ou psql:
+#    supabase/migrations/0001 … 0006
+# 3. carregar dados.sql com ON_ERROR_STOP ligado
+psql -v ON_ERROR_STOP=1 -f dados.sql "<conexão>"
+```
+
+`ON_ERROR_STOP=1` não é zelo: o padrão do `psql` é **seguir em erro, em
+silêncio** — é assim que um restore "bem-sucedido" chega quebrado.
+
+### O ensaio, e o que ele prova
+
+```bash
+npm run ensaio-restauracao
+```
+
+Sobe um Postgres descartável da **mesma major da produção** (17), aplica
+as migrations, carrega um despejo **anonimizado**, e compara o resultado
+com a produção em cinco níveis: colunas, restrições, índices, RLS e
+contagem de linhas. Uma divergência reprova e o comando sai com 1.
+
+Ele também é o **único lugar do projeto que prova que
+`supabase/migrations/` ainda descreve o que está no ar** — um `pg_dump`
+nunca provaria: copiaria a divergência junto. Verificado por sabotagem em
+16/09: coluna a mais no restaurado → `ENSAIO REPROVOU`.
+
+Os dados do ensaio saem **anonimizados por padrão**, mascarados dentro do
+banco. Não se puxa base de produção para máquina de desenvolvimento, e o
+CPF certo não é necessário para provar que o restore funciona.
+
+### Último ensaio
+
+| | |
+|---|---|
+| Data | **16/09/2026** |
+| Resultado | **PASSOU** — 98 colunas, 10 restrições, 20 índices, 6 tabelas com RLS, 6 contagens, zero divergência |
+| RTO | **1 s** |
+| Postgres | produção 17.6 · ensaio 17.11 |
+
+A lei pede ensaio com menos de trinta dias. **Refazer até 16/10/2026**, e
+depois de qualquer mudança de versão, extensão ou ferramenta.
+
+> O RTO de 1 s é **tempo de máquina**. O relógio de um incidente começa
+> antes, em perceber que caiu — e isso depende do alerta externo, que é
+> item aberto (§2 e `docs/pendencias.md`).
+
+## 6.1 Onde olhar quando algo quebrou
+
+Nesta ordem, da resposta mais rápida para a mais cara:
+
+1. **Painel `/admin` → aba Erros.** Toda exceção que virou 5xx, dos
+   últimos 30 dias, agrupada por onde acontece. `ocorrencias` diz se é
+   rajada ou caso isolado; `ultima_vez`, se ainda está acontecendo.
+   É o primeiro lugar, porque responde "o quê e onde" sem login em
+   provedor nenhum.
+2. **Painel `/admin` → aba Webhook.** Se o sintoma é "o contratante não
+   foi avisado" ou "o pedido ficou pendente", o evento da Asaas está
+   aqui — inclusive o que o código ainda não trata.
+3. **`GET /api/saude`.** Diz se banco e chave da Asaas estão de pé, e
+   traz o alerta de chave prestes a expirar.
+4. **Log do Northflank.** Retenção curta, e é o único lugar com 4xx e
+   com o que aconteceu antes do erro. Último recurso, não o primeiro.
+
+**O que a aba Erros NÃO mostra, de propósito:** 4xx (validação recusada é
+o sistema funcionando), corpo da requisição, cabeçalho e a URL com
+valores. Se a pergunta é "qual pedido era?", a resposta sai de `contexto`
++ `ultima_vez` cruzados com `cobrancas`, não do log — que nunca guarda o
+`pedidoId`, porque ele é credencial (`docs/inventario-de-dados.md` §7.2).
+
+## 6.2 Trocar a Asaas de sandbox para produção
+
+Fecha a exceção §3 do `CONSTRAINTS.md`. **A ordem importa** — cada passo
+existe porque a ordem inversa quebra algo.
+
+> ⚠️ Antes de começar, leia `API.md §11.1`: **nada de sandbox atravessa.**
+> Assinatura de teste para de existir, cobrança de teste vira histórico
+> morto, e `walletId` é outro. Não há migração.
+
+### Passo 1 — no painel da Asaas de PRODUÇÃO
+
+1. Gerar a `ASAAS_API_KEY` de produção (Integrações → Chave de API).
+2. Criar o webhook apontando **exatamente** para:
+
+   ```
+   https://api.sancocore.com.br/api/webhooks/asaas
+   ```
+
+   **Plural em `webhooks`.** Conferido ao vivo em 17/09: o plural
+   responde 401 (guarda de token funcionando) e o singular responde
+   **404**. Errar isto significa nenhuma cobrança confirmada, sem aviso.
+
+3. Definir um **token de autenticação** no webhook, e guardá-lo — ele vai
+   para `ASAAS_WEBHOOK_TOKEN`. Sem token, o nosso receptor recusa tudo
+   (fail-closed, por desenho).
+4. Marcar os eventos. São **53**, medidos no sandbox em 17/09 — o porquê
+   de cada grupo está em `CONSTRAINTS.md` §2.2, e a lista para conferir
+   item a item está no fim desta seção.
+
+### Passo 2 — desativar o webhook do SANDBOX
+
+No painel de sandbox, desativar (ou apagar) o webhook atual. Se ficar
+ligado, ele passa a acumular 401 — e depois de 15 falhas seguidas a
+Asaas **pausa a fila** daquela conta (§2.3). Não afeta produção, mas
+deixa o sandbox inutilizável para o próximo teste.
+
+### Passo 3 — limpar os registros de teste
+
+```bash
+npm run limpar-teste          # mostra o que apagaria, não apaga
+npm run limpar-teste -- --apagar --confirmo-que-e-sandbox
+```
+
+A segunda bandeira não é burocracia. O script **não tem como saber** se
+o banco já tem dinheiro real: `ASAAS_AMBIENTE` vive no contêiner e
+nenhuma coluna marca "esta cobrança é real". Em vez de fingir um guarda,
+ele exige que você afirme — e recusa com código 1 se a bandeira faltar.
+Confira a lista que ele imprime antes de confirmar.
+
+**Antes da troca, não depois.** O motivo está no `API.md §11.1`:
+assinatura de sandbox que sobrevive no nosso registro vira zumbi —
+`/cancelar-assinatura` chama a Asaas de produção com um id de sandbox,
+leva 404, e a linha que gravaria o status novo nunca roda. O registro
+fica `ativa` para sempre, incancelável pela API.
+
+### Passo 4 — as três variáveis no Northflank
+
+| variável | de | para |
+|---|---|---|
+| `ASAAS_AMBIENTE` | `sandbox` | `producao` |
+| `ASAAS_API_KEY` | a de sandbox | a do passo 1 |
+| `ASAAS_WEBHOOK_TOKEN` | a de sandbox | o token do passo 1.3 |
+
+**Depois** do passo 1, nunca antes: chave de produção sem webhook de
+produção é cobrança que ninguém confirma. O serviço reinicia sozinho.
+
+Nada de código muda. `public/js/utils/api.js` e o `connect-src` do
+`_headers` já apontam para `api.sancocore.com.br` desde 12/09 — trocar de
+host seria trocar o CNAME, não editar arquivo.
+
+### Passo 5 — conferir, e é a parte que a exceção §3 exige
+
+A exceção diz, com estas palavras, que a segunda rodada precisa
+reconferir **os quatro pontos que mudam entre ambientes**, um a um:
+
+1. **identificador de cobrança** — o `pay_…` novo resolve na consulta?
+2. **formato do webhook** — o payload de produção tem os mesmos caminhos?
+3. **assinatura** — o token novo passa pela guarda?
+4. **mensagem de erro** — o texto que a Asaas devolve é o mesmo?
+
+Só um pagamento real de valor baixo responde os quatro. Roteiro no
+`API.md §11.1`, passo 5.
+
+<details>
+<summary>Os 53 eventos, para conferir no painel (medidos em 17/09/2026)</summary>
+
+```
+ACCESS_TOKEN_DELETED
+ACCESS_TOKEN_DISABLED
+ACCESS_TOKEN_EXPIRED
+ACCESS_TOKEN_EXPIRING_SOON
+ACCOUNT_STATUS_BANK_ACCOUNT_INFO_APPROVED
+ACCOUNT_STATUS_BANK_ACCOUNT_INFO_AWAITING_APPROVAL
+ACCOUNT_STATUS_BANK_ACCOUNT_INFO_PENDING
+ACCOUNT_STATUS_BANK_ACCOUNT_INFO_REJECTED
+ACCOUNT_STATUS_COMMERCIAL_INFO_APPROVED
+ACCOUNT_STATUS_COMMERCIAL_INFO_AWAITING_APPROVAL
+ACCOUNT_STATUS_COMMERCIAL_INFO_EXPIRED
+ACCOUNT_STATUS_COMMERCIAL_INFO_EXPIRING_SOON
+ACCOUNT_STATUS_COMMERCIAL_INFO_PENDING
+ACCOUNT_STATUS_COMMERCIAL_INFO_REJECTED
+ACCOUNT_STATUS_DOCUMENT_APPROVED
+ACCOUNT_STATUS_DOCUMENT_AWAITING_APPROVAL
+ACCOUNT_STATUS_DOCUMENT_PENDING
+ACCOUNT_STATUS_DOCUMENT_REJECTED
+ACCOUNT_STATUS_GENERAL_APPROVAL_APPROVED
+ACCOUNT_STATUS_GENERAL_APPROVAL_AWAITING_APPROVAL
+ACCOUNT_STATUS_GENERAL_APPROVAL_PENDING
+ACCOUNT_STATUS_GENERAL_APPROVAL_REJECTED
+BALANCE_VALUE_BLOCKED
+BALANCE_VALUE_UNBLOCKED
+CHECKOUT_CANCELED
+CHECKOUT_EXPIRED
+CHECKOUT_PAID
+PAYMENT_APPROVED_BY_RISK_ANALYSIS
+PAYMENT_AWAITING_CHARGEBACK_REVERSAL
+PAYMENT_AWAITING_RISK_ANALYSIS
+PAYMENT_CHARGEBACK_REQUESTED
+PAYMENT_CHECKOUT_VIEWED
+PAYMENT_CONFIRMED
+PAYMENT_CREDIT_CARD_CAPTURE_REFUSED
+PAYMENT_OVERDUE
+PAYMENT_PARTIALLY_REFUNDED
+PAYMENT_RECEIVED
+PAYMENT_RECEIVED_IN_CASH_UNDONE
+PAYMENT_REFUNDED
+PAYMENT_REFUND_DENIED
+PAYMENT_REFUND_IN_PROGRESS
+PAYMENT_REPROVED_BY_RISK_ANALYSIS
+PAYMENT_SPLIT_CANCELLED
+PAYMENT_SPLIT_DIVERGENCE_BLOCK
+PAYMENT_SPLIT_DIVERGENCE_BLOCK_FINISHED
+PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED
+TRANSFER_BLOCKED
+TRANSFER_CANCELLED
+TRANSFER_CREATED
+TRANSFER_DONE
+TRANSFER_FAILED
+TRANSFER_IN_BANK_PROCESSING
+TRANSFER_PENDING
+```
+
+</details>
 
 ## 7. Mudar schema
 
@@ -265,7 +488,8 @@ Entra na Estação 6 (prontidão operacional), e está em
 - captura de exceção com contexto da requisição;
 - monitor que avise quando a tarefa agendada **não** rodou;
 - alerta de orçamento nas contas pagas;
-- teste de restauração do banco;
+- **cópia periódica** do banco fora do provedor (o *ensaio* de restauração
+  já existe e passou — §6; o que falta é o backup automático em si);
 - tempo de volta ao ar medido numa reversão real;
 - leitura deste arquivo por uma segunda pessoa, que é o teste de que ele
   serve.

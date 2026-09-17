@@ -26,6 +26,7 @@ import { criarLimitadorCriacao, criarLimitadorConsulta } from './middlewares/lim
 import { supabase } from './config/supabase.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
 import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
+import { registrarErro, expurgarErros } from './services/erroService.js';
 import { obterAlertasChaveApi } from './controllers/webhookController.js';
 import rotasPedido from './routes/pedidoRoutes.js';
 import rotasCheckout from './routes/checkoutRoutes.js';
@@ -239,6 +240,19 @@ app.use((erro, requisicao, resposta, proximo) => {
     ? erro.status
     : 500;
 
+  /* O que escapou de todo tratador vira linha em `erros` (Lei 8). Só
+     5xx: corpo JSON malformado é sondagem, não defeito nosso, e contar
+     sondagem como falha apaga o sinal. `originalUrl` fica de fora de
+     propósito — ver `erroService.js`. */
+  if (status >= 500) {
+    void registrarErro(erro, {
+      contexto: 'servidor.naoTratado',
+      rota: requisicao.route?.path ? `${requisicao.baseUrl ?? ''}${requisicao.route.path}` : null,
+      metodo: requisicao.method,
+      status
+    });
+  }
+
   if (resposta.headersSent) return proximo(erro);
   resposta.status(status).json({
     erro: status === 500
@@ -273,4 +287,9 @@ app.listen(PORTA, () => {
   // com um intervalo de 24h ser alcançado.
   expurgarAuditoria();
   setInterval(expurgarAuditoria, UM_DIA_MS).unref();
+
+  // Captura de erro tem retenção própria, mais curta (30 dias): é
+  // diagnóstico, não rastro de cobrança.
+  expurgarErros();
+  setInterval(expurgarErros, UM_DIA_MS).unref();
 });

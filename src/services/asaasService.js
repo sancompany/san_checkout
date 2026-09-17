@@ -106,24 +106,58 @@ async function chamarAsaas(caminho, opcoes = {}) {
 }
 
 /**
- * Dados comerciais da conta-mãe. Só é chamado para explicar uma recusa
- * — não entra em nenhum caminho de cobrança.
+ * O tipo de pessoa da conta-mãe, para explicar uma recusa de subconta.
+ * Não entra em nenhum caminho de cobrança.
  *
- * A leitura é DEFENSIVA de propósito: a documentação da Asaas não
- * publica o schema desta resposta, então depender do nome exato de um
- * campo aqui seria inventar contrato. O que interessa é uma coisa só, e
- * dá para descobrir de dois jeitos independentes: `personType`, se vier,
- * e a contagem de dígitos do documento (11 = CPF, 14 = CNPJ).
+ * ── Lê DOIS endpoints, e a diferença entre eles é o ponto ───────────
+ * A Asaas guarda duas identidades separadas, e elas podem discordar:
+ *
+ *   `/v3/myAccount`                — o REGISTRO da conta
+ *   `/v3/myAccount/commercialInfo` — as informações COMERCIAIS enviadas
+ *
+ * Medido no sandbox em 17/09/2026: o registro vinha `FISICA` com CPF
+ * enquanto o comercial vinha `JURIDICA` com CNPJ, na mesma conta, com
+ * `commercialInfo: APPROVED`. Preencher o CNPJ da empresa nas
+ * informações comerciais **não converte** a conta em pessoa jurídica.
+ *
+ * **A regra de subconta olha o REGISTRO.** Até 17/09 esta função lia só
+ * o comercial, via JURIDICA, e mandava o operador dizer ao suporte que
+ * o tipo de conta não era o problema — quando era exatamente ele. Isso
+ * custou uma investigação inteira no rastro errado
+ * (`docs/erros/2026-09-17-diagnostico-de-subconta-lia-o-endpoint-errado.md`).
+ *
+ * A leitura de cada um continua DEFENSIVA: a doc da Asaas não publica o
+ * schema, então o tipo sai de dois sinais independentes — `personType`,
+ * se vier, e a contagem de dígitos do documento (11 = CPF, 14 = CNPJ).
  */
+function classificar(corpo) {
+  const digitos = String(corpo?.cpfCnpj ?? '').replace(/\D/g, '');
+  if (corpo?.personType === 'FISICA' || digitos.length === 11) return 'fisica';
+  if (corpo?.personType === 'JURIDICA' || digitos.length === 14) return 'juridica';
+  return 'desconhecido';
+}
+
 export async function tipoDaContaMae() {
-  const conta = await chamarAsaas('/v3/myAccount/commercialInfo', { method: 'GET' });
-  const digitos = String(conta?.cpfCnpj ?? '').replace(/\D/g, '');
+  const registro = await chamarAsaas('/v3/myAccount', { method: 'GET' });
 
-  let tipo = 'desconhecido';
-  if (conta?.personType === 'FISICA' || digitos.length === 11) tipo = 'fisica';
-  else if (conta?.personType === 'JURIDICA' || digitos.length === 14) tipo = 'juridica';
+  // O comercial é complemento, não fonte: se falhar, o registro já
+  // responde a pergunta que importa.
+  let comercial = null;
+  try {
+    comercial = await chamarAsaas('/v3/myAccount/commercialInfo', { method: 'GET' });
+  } catch { /* segue com o registro */ }
 
-  return { tipo, companyType: conta?.companyType ?? null };
+  const tipo = classificar(registro);
+  const tipoComercial = comercial ? classificar(comercial) : 'desconhecido';
+
+  return {
+    tipo,
+    tipoComercial,
+    // `divergem` é o que explica a confusão: conta PF com comercial PJ
+    // parece PJ em todo lugar do painel, menos na regra de subconta.
+    divergem: tipo !== 'desconhecido' && tipoComercial !== 'desconhecido' && tipo !== tipoComercial,
+    companyType: comercial?.companyType ?? registro?.companyType ?? null
+  };
 }
 
 /** Busca cliente por CPF/CNPJ; cria se não existir. */

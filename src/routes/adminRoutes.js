@@ -13,7 +13,8 @@ import {
   rotacionarChaveContratante,
   arquivarSubconta,
   listarAuditoriaWebhook,
-  obterResumoWebhook
+  obterResumoWebhook,
+  listarErrosCapturados
 } from '../controllers/adminController.js';
 
 const router = Router();
@@ -40,5 +41,6 @@ router.patch('/subcontas/:id/arquivar', arquivarSubconta);
 router.get('/metricas', obterMetricas);
 router.get('/webhook/eventos', listarAuditoriaWebhook);
 router.get('/webhook/resumo', obterResumoWebhook);
+router.get('/erros', listarErrosCapturados);
 
 export default router;

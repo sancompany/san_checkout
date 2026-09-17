@@ -10,3 +10,9 @@ Claude outputs/
 # Permissão de máquina (quais comandos o Claude Code roda sem perguntar).
 # É de quem opera, não do projeto — não entra no repositório.
 .claude/settings.local.json
+
+# Despejo de dados do banco (scripts/backup-dados.mjs).
+# O anonimizado não tem dado pessoal, mas tem a forma da base; o real tem
+# CPF, e-mail e api_key. Nenhum dos dois entra no repositório.
+*.sql.dump
+backup-dados-*.sql
