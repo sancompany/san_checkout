@@ -31,6 +31,7 @@ const SUITES = [
   'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
+  'src/services/expurgoService.js',  // expurgo de dado pessoal: lista branca do que fica, e o piso do prazo
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
@@ -42,7 +43,8 @@ const SUITES = [
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
   'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
-  'tests/pull-nao-segue-para-onde-quiser.js' // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
+  'tests/pull-nao-segue-para-onde-quiser.js', // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
+  'tests/rotas-http-respondem-como-prometido.js' // a pilha do Express montada de verdade: login por token, guarda, teto, 404
 ];
 
 /**

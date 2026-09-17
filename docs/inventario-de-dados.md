@@ -100,15 +100,37 @@ Exclusão antes do prazo, a pedido do titular (LGPD art. 18), é atendida
 caso a caso — respeitada a guarda legal do que não pode ser apagado
 enquanto o prazo fiscal correr.
 
-> ⚠️ **DUAS PENDÊNCIAS ABERTAS, e elas são diferentes uma da outra:**
+> ✅ **A ROTINA EXISTE DESDE 17/09/2026.** Era a primeira das duas
+> pendências desta seção, e a frase que estava aqui era: *"o prazo está
+> decidido, mas nada apaga nada hoje — enquanto não houver a rotina, o
+> prazo é intenção, não prática."*
 >
-> 1. **A rotina de expurgo não existe.** O prazo está decidido, mas
->    nada apaga nada hoje. Enquanto não houver a rotina, o prazo é
->    intenção, não prática.
-> 2. **Validação jurídica pendente.** Os 5 anos são a escolha mais
->    defensável sem advogado, não um parecer. A skill `legal` fecha isso
->    na Estação 7, antes do lançamento — e é de lá que sai o texto da
->    Política de Privacidade.
+> `src/services/expurgoService.js`, ligada ao ciclo de 24 h do
+> `server.js` junto dos outros dois expurgos, e com porta de mão para o
+> operador em `npm run expurgo` (simula por padrão). Duas funções,
+> porque são duas coisas diferentes: o **prazo** (cinco anos, tudo que
+> passou) e o **pedido do titular** (LGPD art. 18, antes do prazo).
+>
+> **Anonimiza, não apaga** — é o que §6.2 abaixo verificou ser possível
+> na modelagem. E decide por **lista branca do que FICA**, não por lista
+> de o que sai: lista negra falha aberta, e falhar aberta aqui é uma
+> coluna pessoal criada em 2027 sobrevivendo para sempre porque alguém
+> esqueceu de atualizar um arquivo. O autoteste (46 checagens) confere a
+> lista contra as colunas reais do banco, então coluna nova deixa a
+> suíte vermelha até alguém decidir de que lado ela fica.
+>
+> Conferida contra o banco de produção no mesmo dia, em simulação, de
+> dentro do contêiner: o filtro alcança as 10 cobranças e as 3
+> assinaturas que existem (controle positivo com o corte em "agora"), e
+> com o corte real — 2021-09-17 — não alcança nenhuma, porque não existe
+> transação de cinco anos atrás. Ela não faz nada até 2031; o valor de
+> estar ligada agora é não depender de alguém lembrar em 2031.
+>
+> ⚠️ **A SEGUNDA PENDÊNCIA CONTINUA ABERTA: validação jurídica.** Os 5
+> anos são a escolha mais defensável sem advogado, não um parecer. A
+> skill `legal` fecha isso na Estação 7, antes do lançamento — e é de lá
+> que sai o texto da Política de Privacidade. Se o parecer mudar o
+> prazo, muda a constante `ANOS_DE_RETENCAO`, e nada mais.
 >
 > Vale também para a Asaas: o dado que foi enviado a ela segue a
 > retenção **dela**, não a nossa.
@@ -164,8 +186,18 @@ problema é de modelagem. Conferido contra o `supabase/schema.sql`:
 - `subcontas` é dado do operador/parceiro, não do comprador, e tem
   guarda própria enquanto a subconta existir na Asaas.
 
-Ou seja: o que falta é a **rotina**, não a possibilidade. A modelagem
-não precisa mudar para atender a LGPD art. 18.
+Ou seja: o que faltava era a **rotina**, não a possibilidade — e ela foi
+escrita em 17/09/2026 exatamente sobre esta leitura da modelagem. A
+modelagem não precisou mudar para atender a LGPD art. 18.
+
+**Uma consequência que só aparece na hora de executar:** assinatura
+**viva** (ativa ou pausada) não é anonimizada nem a pedido do titular,
+porque o `documento` é a chave com que ele cancela a própria assinatura
+(`API.md` §5.5). Apagar o documento tiraria dele a capacidade de
+cancelar — o oposto do que o pedido quer. E cancelar por conta própria
+seria decidir por outra pessoa algo com consequência financeira. Então a
+rotina **relata** as assinaturas vivas em vez de agir: o titular cancela,
+e o expurgo alcança na rodada seguinte.
 
 ## 7. Log
 

@@ -608,6 +608,21 @@ mensagem de "não foi possível carregar", e o operador vê o motivo no
 diagnóstico; a diferença que importa é que o `502` diz "resposta errada
 do contratante" e o `504` diz "rede fora do ar".
 
+**RN-31 · Dado pessoal vence em cinco anos, e quem decide o que fica é
+uma lista branca.** A rotina anonimiza (não apaga) as colunas pessoais de
+cobranças e de assinaturas canceladas depois do prazo de
+`docs/inventario-de-dados.md` §6, no ciclo de 24 h, e atende pedido do
+titular (LGPD art. 18) respeitando a guarda fiscal — dizendo quantas
+linhas ficaram retidas e quando elas liberam, em vez de responder
+"feito". *Violada:* o prazo declarado sem rotina é intenção, não prática
+— foi o estado do projeto até 17/09/2026. E se a regra fosse uma lista do
+que SAI, uma coluna pessoal criada depois sobreviveria para sempre a cada
+vez que alguém esquecesse de atualizar o arquivo; por isso a lista é do
+que FICA, e o autoteste a confere contra as colunas reais do banco.
+*Quem vê:* ninguém, no dia a dia — é o tipo de regra cuja evidência é o
+autoteste e a simulação, não a tela. `npm run expurgo` mostra o que ela
+faria sem escrever nada.
+
 ---
 
 ## 6. Textos que o sistema diz

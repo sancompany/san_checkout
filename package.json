@@ -13,7 +13,8 @@
     "check": "node scripts/checar.mjs && node tests/executar.js",
     "ensaio-restauracao": "scripts/ensaio-restauracao.sh",
     "acessibilidade": "node scripts/acessibilidade.mjs",
-    "limpar-teste": "node scripts/limpar-registros-de-teste.mjs"
+    "limpar-teste": "node scripts/limpar-registros-de-teste.mjs",
+    "expurgo": "node scripts/expurgo.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

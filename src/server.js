@@ -36,6 +36,7 @@ import rotasEstorno from './routes/refundRoutes.js';
 import rotasAssinatura from './routes/assinaturaRoutes.js';
 import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
+import { expurgarDadoPessoal } from './services/expurgoService.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -90,8 +91,18 @@ app.use('/api/checkout/retomar-assinatura', criarLimitadorCriacao());
    graça, sem nem precisar acertar.
 
    Cinco por minuto é largo para quem sabe a senha (erra, corrige, entra)
-   e estreito para quem não sabe. Tem que vir ANTES do limitador de
-   /api/admin, senão o mais largo casa primeiro. */
+   e estreito para quem não sabe.
+
+   CORRIGIDO EM 17/09/2026: aqui dizia "tem que vir ANTES do limitador de
+   /api/admin, senão o mais largo casa primeiro", e isso é falso. O
+   `app.use` não escolhe UM middleware: ele roda TODOS os que casam o
+   caminho, na ordem de registro. Uma requisição a `/api/admin/sessao`
+   passa pelos dois limitadores de qualquer forma, e o mais apertado é o
+   que barra. Medido com a ordem deliberadamente invertida: a 6ª
+   tentativa continua vindo `429` com `RateLimit-Limit: 5`.
+
+   A ordem daqui é a natural de ler (do específico para o geral) e não
+   depende de nada — quem vier depois não precisa preservá-la por medo. */
 app.use('/api/admin/sessao', rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -263,7 +274,22 @@ app.use((erro, requisicao, resposta, proximo) => {
 
 const UM_DIA_MS = 24 * 60 * 60 * 1000;
 
-app.listen(PORTA, () => {
+/* O `app` sai para o autoteste poder exercitar as ROTAS, e não só os
+   módulos — a Lei 0 pedia isso e `docs/pendencias.md` registrava a
+   falta: nenhuma suíte subia o Express, e o roteiro de login por token
+   só existia como teste feito à mão em 12/09/2026.
+
+   A saída do `listen` é invertida de propósito. O idiomático seria
+   "escuta só se eu for o ponto de entrada", mas errar essa detecção em
+   produção é o serviço no ar sem ouvir porta nenhuma — queda total, e
+   silenciosa. Então o padrão é SEMPRE escutar, e quem não quer diz
+   explicitamente. Nenhuma variável ausente, mal escrita ou renomeada
+   consegue impedir o boot. */
+export { app };
+
+if (process.env.CHECKOUT_SEM_LISTEN === '1') {
+  console.log('[checkout] CHECKOUT_SEM_LISTEN=1 — o app foi montado e NÃO está ouvindo porta (modo de teste).');
+} else app.listen(PORTA, () => {
   console.log(`[checkout] San Checkout v2 ouvindo em http://localhost:${PORTA}`);
   if (!process.env.ASAAS_API_KEY) {
     console.warn('[checkout] ASAAS_API_KEY não encontrada — cobranças vão falhar.');
@@ -292,4 +318,29 @@ app.listen(PORTA, () => {
   // diagnóstico, não rastro de cobrança.
   expurgarErros();
   setInterval(expurgarErros, UM_DIA_MS).unref();
+
+  /* DADO PESSOAL DO COMPRADOR — cinco anos (Lei 10,
+     `docs/inventario-de-dados.md` §6). Até 17/09/2026 o prazo estava
+     decidido e nada apagava nada: era intenção, não prática.
+
+     `simular: false` porque esta é a rotina de verdade, e ela ANONIMIZA
+     em vez de apagar — a linha continua servindo de registro fiscal sem
+     identificar ninguém (§6.2). Não faz nada até 2031, porque não
+     existe transação de cinco anos atrás; o valor de estar ligada agora
+     é não depender de alguém lembrar em 2031.
+
+     Para ver o que ela faria, `npm run expurgo` (simula por padrão). */
+  expurgarDadoPessoal({ simular: false }).then((relatorios) => {
+    const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
+    if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
+  }).catch((erro) => console.error('[expurgo]', erro.message));
+
+  setInterval(() => {
+    expurgarDadoPessoal({ simular: false })
+      .then((relatorios) => {
+        const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
+        if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
+      })
+      .catch((erro) => console.error('[expurgo]', erro.message));
+  }, UM_DIA_MS).unref();
 });
