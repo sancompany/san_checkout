@@ -58,28 +58,33 @@
     <nav class="sidebar" aria-label="Seções do painel">
       <p class="sidebar-label">Gestão</p>
       <button class="nav-item ativo" type="button" data-secao="contratantes">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg>
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/></svg>
         Contratantes
         <span class="nav-contador" id="contador-contratantes">0</span>
       </button>
       <button class="nav-item" type="button" data-secao="subcontas">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
         Subcontas Asaas
         <span class="nav-contador" id="contador-subcontas">0</span>
       </button>
       <button class="nav-item" type="button" data-secao="metricas">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
         Métricas
       </button>
       <button class="nav-item" type="button" data-secao="arquivados">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/></svg>
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/></svg>
         Arquivados
         <span class="nav-contador" id="contador-arquivados">0</span>
       </button>
       <button class="nav-item" type="button" data-secao="webhook">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8"/></svg>
         Webhook
         <span class="nav-contador" id="contador-webhook" hidden>0</span>
+      </button>
+      <button class="nav-item" type="button" data-secao="erros">
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+        <span>Erros</span>
+        <span class="nav-contador" id="contador-erros" hidden>0</span>
       </button>
     </nav>
 
@@ -99,7 +104,7 @@
           </div>
           <div class="secao-header-acoes">
             <button class="btn btn-primario" id="btn-abrir-novo-contratante" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Novo contratante
             </button>
           </div>
@@ -144,7 +149,7 @@
           </div>
           <div class="secao-header-acoes">
             <button class="btn btn-primario" id="btn-abrir-nova-subconta" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               Criar subconta
             </button>
           </div>
@@ -179,6 +184,12 @@
             </select>
           </div>
         </div>
+
+        <!-- "Quantos ontem?" vem antes de tudo: é a pergunta que a
+             prontidão operacional manda a métrica responder, e ela tem
+             de estar legível sem interpretar gráfico. -->
+        <p class="secao-descricao" id="metricas-fuso"></p>
+        <div class="cartoes-metrica" id="metricas-por-dia"></div>
 
         <div class="cartoes-metrica" id="metricas-resumo"></div>
 
@@ -307,7 +318,7 @@
         <div class="faixa-rejeicoes" id="faixa-rejeicoes" hidden>
           <button class="faixa-rejeicoes-topo" type="button" id="btn-expandir-rejeicoes" aria-expanded="false" aria-controls="rejeicoes-detalhe">
             <span class="faixa-rejeicoes-icone" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
             </span>
             <span class="faixa-rejeicoes-texto">
               <strong id="rejeicoes-total">0</strong> tentativas recusadas pela guarda de origem
@@ -367,6 +378,58 @@
           </div>
         </div>
       </section>
+      <section id="secao-erros" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Erros</h2>
+            <p class="secao-descricao">
+              Exceção que o servidor devolveu como 5xx, com o contexto da
+              requisição. Linhas <strong>iguais são somadas</strong>, não
+              repetidas: o número de ocorrências é o que diz se é rajada
+              ou caso isolado. Validação recusada não entra aqui — isso é
+              o sistema funcionando.
+              <br>
+              Nada de pessoa é guardado: a mensagem é raspada antes de
+              gravar (todo número de 4+ dígitos, e-mail e token saem), e
+              corpo, cabeçalho e URL com valores nunca entram. Some
+              sozinho em 30 dias.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <button class="btn btn-secundario" id="btn-recarregar-erros" type="button">Recarregar</button>
+          </div>
+        </div>
+
+        <div class="painel">
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>última vez</th>
+                  <th>onde</th>
+                  <th>erro</th>
+                  <th>mensagem</th>
+                  <th>vezes</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-erros"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="painel" id="vazio-erros" hidden>
+          <div class="vazio">
+            <p class="vazio-titulo">Nenhum erro capturado</p>
+            <p class="vazio-texto">
+              É o estado bom. Esta tela só enche quando o servidor devolve
+              5xx — se você esperava ver algo aqui e não vê, o erro pode
+              ter sido 4xx (validação recusada, que não é defeito nosso)
+              ou ter acontecido há mais de 30 dias.
+            </p>
+          </div>
+        </div>
+      </section>
+
 
     </main>
   </div>
@@ -400,7 +463,7 @@
         <p class="modal-descricao" id="modal-contratante-descricao">A api_key é gerada automaticamente no cadastro.</p>
       </div>
       <button class="modal-fechar" type="button" data-fechar-modal>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
 
@@ -471,13 +534,13 @@
         <p class="modal-descricao">Todos os dados enviados ficam salvos aqui no painel.</p>
       </div>
       <button class="modal-fechar" type="button" data-fechar-modal>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
 
     <div class="modal-corpo">
       <div class="aviso">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
         <span>
           O link de ativação vai para o e-mail informado abaixo — a Asaas
           nunca devolve esse link pela API. Assim que ele chegar, cole na
@@ -584,7 +647,7 @@
         <p class="modal-descricao" id="modal-link-descricao">Cole o link que a Asaas enviou por e-mail.</p>
       </div>
       <button class="modal-fechar" type="button" data-fechar-modal>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
 

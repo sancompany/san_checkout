@@ -483,6 +483,97 @@ olha, mas não avisa ninguém. Detecção de verdade está em
 `docs/proximas-versoes.md`.
 
 
+## 2.5.1 A captura de exceção agrega, e por isso não vira porta de escrita (Leis 7 e 8)
+
+Criada em 16/09/2026 pela migration `0007_captura_de_erro.sql`. É a
+"captura de erro com contexto" que a Lei 8 exige, sem depender de conta
+em serviço externo.
+
+O limite que importa, e o motivo de estar aqui:
+
+- **A chave primária é a impressão digital do erro**
+  (contexto + tipo + primeiro quadro da pilha), não um id por
+  ocorrência. Repetição vira `ocorrencias + 1`. Sem isso, qualquer rota
+  pública que devolvesse 500 seria escrita ilimitada no banco para quem
+  só descobriu a URL — o mesmo risco que a §2.5 já tinha resolvido para
+  as tentativas recusadas do webhook, por outro caminho. **O tamanho da
+  tabela é limitado pelos pontos de erro que existem no código**, não
+  pelo tráfego.
+- **A mensagem não entra na impressão digital.** Se entrasse, o mesmo
+  bug com outro id no texto viraria linha nova e a agregação não
+  agregaria nada. Travado por teste, verificado por sabotagem.
+- **Só 5xx é capturado.** Validação recusada é o sistema funcionando;
+  gravá-la encheria a tabela com tráfego normal e apagaria o sinal.
+- **O incremento é atômico, no banco** (`registrar_erro`, com
+  `search_path = ''` pela regra da 0004). Ler-somar-escrever na
+  aplicação perde contagem em rajada — que é o único momento em que a
+  contagem importa.
+- **A captura nunca derruba a requisição**: não é aguardada e engole a
+  própria falha. Observabilidade que vira defeito deixou de ser
+  observabilidade.
+- **Nada de pessoa entra** — ver `docs/inventario-de-dados.md` §7.2.
+
+## 2.5.2 O processo de produção roda em UTC — data local do servidor é errada (Lei 7)
+
+Medido em 16/09/2026, dentro do contêiner: `node:22-alpine`, `TZ` **não
+definida**, então `Intl.DateTimeFormat().resolvedOptions().timeZone`
+devolve `UTC`. Consequência para qualquer conta por data:
+
+- `getDate()`, `getHours()` e `toLocaleDateString()` **sem fuso
+  explícito** devolvem dia de UTC. Das 21h à meia-noite de Brasília isso
+  já é o dia seguinte — **três horas por dia em que "hoje" está errado**.
+- Toda conta por dia civil passa por `src/utils/diaCivil.js`, que aplica
+  `America/Sao_Paulo` explicitamente. Nada de `-03:00` chumbado: offset
+  fixo é decidir hoje o que vale até a próxima mudança de regra do país.
+
+Medido junto, e é o que torna a solução possível: **o fuso nomeado
+funciona** nesta imagem (ICU completo). Se um dia a imagem passar a ter
+ICU reduzido, `Intl` com fuso nomeado cai para UTC **em silêncio** e a
+métrica fica errada sem avisar — por isso o autoteste de `diaCivil.js`
+falha nesse caso. É a única coisa que impede essa regressão de passar.
+
+Definir `TZ=America/Sao_Paulo` no serviço resolveria o sintoma e é
+**pior**: a data passaria a depender de uma variável de ambiente que
+ninguém vê no código, e log em UTC é o que se quer num serviço. O fuso
+fica explícito onde a conta acontece.
+
+## 2.5.3 Subconta exige que a conta-mãe seja PJ no REGISTRO, não no comercial (Lei 7)
+
+Medido no sandbox em 17/09/2026, com controle positivo.
+
+**A conta-mãe deste projeto não cria subconta**, e o motivo é o tipo de
+pessoa dela. A Asaas guarda duas identidades separadas na mesma conta:
+
+| endpoint | `personType` | documento |
+|---|---|---|
+| `/v3/myAccount` — o **registro** | `FISICA` | CPF |
+| `/v3/myAccount/commercialInfo` — o **comercial** | `JURIDICA` | CNPJ (`LIMITED`) |
+
+Com `commercialInfo`, `general` e `documentation` todos `APPROVED`. A
+conta parece PJ no painel; a regra de subconta olha o **registro**, e
+`POST /v3/accounts` devolve `403`.
+
+**Preencher o CNPJ da empresa nas informações comerciais não converte a
+conta.** Converter o registro é pedido ao suporte da Asaas.
+
+**O documento da subconta é irrelevante enquanto isso valer:** CPF e
+CNPJ levam o **mesmo 403, com a mensagem idêntica** — testado nos dois.
+Sem esse controle positivo a leitura natural do erro (que culpa "contas
+de pessoa física") levaria a concluir que a restrição é sobre a subconta.
+
+**Consequência para o modelo de negócio, e é a que importa:** sem
+subconta não há `wallet_id`, e sem `wallet_id` a cobrança não leva
+`split` — **100% de toda cobrança cai na conta-mãe**, e o repasse ao
+contratante é manual, por fora do sistema. A tabela `subcontas` e a tela
+do painel existem e ficam sem uso. Isso não quebra nada no caminho do
+dinheiro; muda quem recebe primeiro.
+
+**Virou decisão em 17/09/2026, não pendência:** o dono optou por operar
+na conta como ela está. A exceção com o custo escrito está na §3 ("sem
+split: 100% da cobrança cai na conta-mãe"), e a conversão do registro é
+atualização futura (`docs/proximas-versoes.md`), com gatilho no segundo
+contratante.
+
 ## 2.6 Como o painel administrativo é protegido (Lei 4)
 
 Decidido em 11/09/2026, depois de o arranjo anterior quebrar em produção
@@ -856,6 +947,25 @@ retenção, Team 14), e não há rotina própria no repositório.
 plano gratuito do Render — o volume real ainda não começou, e o dado em
 risco hoje é de teste, não histórico financeiro de cliente.
 
+**Metade fechada em 16/09/2026 — a que não custava dinheiro.** O que
+faltava aqui eram duas coisas diferentes, e só uma dependia de plano
+pago: *saber restaurar* e *ter cópia*. A primeira agora existe e foi
+**exercitada**: `npm run ensaio-restauracao` sobe um Postgres da mesma
+major da produção, aplica as migrations, carrega os dados e compara o
+resultado com o que está no ar em cinco níveis — colunas, restrições,
+índices, RLS e contagem. Passou com zero divergência, **RTO de 1 s**, e o
+comparador foi verificado por sabotagem. Registro em `RUNBOOK.md §6`.
+
+Isso também fechou um risco que ninguém tinha olhado: era a primeira vez
+que se provou que `supabase/migrations/` ainda descreve o banco real.
+
+**O que continua aberto é a cópia, e com ela o RPO.** Sem job automático
+de backup, o RPO é **indefinido** — no pior caso, perde-se tudo. O
+despejo do ensaio sai do banco vivo, na hora: é cópia, não backup. Falta
+decidir **onde** a cópia periódica fica, porque a regra 3-2-1-1-0 pede uma
+fora do provedor principal, e Supabase Pro sozinho não atende isso (a
+cópia ficaria no mesmo provedor que se está protegendo).
+
 **O gatilho, que é o que torna isto exceção e não omissão: o primeiro
 pagamento real de terceiro fecha esta exceção.** A partir daí, rodar sem
 backup deixa de ser aceitável — perder o projeto Supabase passaria a
@@ -919,6 +1029,87 @@ entre ambientes — identificador de cobrança, formato do webhook,
 assinatura e mensagem de erro — não passa pelo ciclo na primeira
 rodada. A segunda rodada precisa reconferir esses quatro pontos um a
 um, e é isso que a torna diferente de "repetir o mesmo ciclo".
+
+### Lei 7 · sem split: 100% da cobrança cai na conta-mãe — 17/09/2026
+
+A Lei 7 pede que o limite assumido esteja escrito. Este é o mais
+importante do projeto hoje, e virou decisão em 17/09/2026.
+
+**O motivo não foi escolha de arquitetura, foi bloqueio medido:** a
+conta-mãe da Asaas está **registrada como pessoa física** (`FISICA`,
+CPF, em `/v3/myAccount`), e conta PF não cria subconta — `403` em
+`POST /v3/accounts`, para CPF e para CNPJ igualmente. Sem subconta não há
+`wallet_id`; sem `wallet_id` a cobrança não leva `split`. A medição
+completa e a armadilha do `commercialInfo` estão em §2.5.3.
+
+**Decisão do dono, 17/09/2026: operar na conta como ela está, sem
+subconta e sem split, e tratar a conversão do registro como atualização
+futura** (`docs/proximas-versoes.md`).
+
+**O que a decisão custa, escrito para não virar surpresa:**
+
+- **Todo o dinheiro do contratante passa pela conta da San & Co.** antes
+  de chegar a ele. O repasse é **manual, por fora do sistema** — não há
+  registro, conferência nem alerta de repasse que não aconteceu.
+- Isso é sustentável com **um** contratante e alguém olhando. Com dois,
+  o erro passa a ser silencioso: ninguém confere transferência que não
+  foi feita.
+- A tabela `subcontas`, a tela do painel e o `split` em `asaasService`
+  ficam **sem uso** — existem, funcionam, e não são exercitados. Código
+  que não roda apodrece; quando a conversão vier, ele precisa ser
+  reverificado, não presumido.
+- **A conta que recebe é PF e o operador do contrato é PJ.** Os
+  documentos legais trazem a razão social e o CNPJ da empresa (que
+  existe — é o que está no `commercialInfo`), então o texto não fica
+  falso; mas quem recebe na Asaas e quem assina os Termos deixam de ser
+  a mesma inscrição. O efeito contábil e fiscal disso é decisão do dono,
+  fora do alcance desta sessão — fica registrado porque é consequência
+  da decisão, não porque há veredito aqui.
+
+Revisar no segundo contratante, ou quando o repasse manual passar de um
+punhado de transferências por mês — é o gatilho escrito na entrada de
+`docs/proximas-versoes.md`.
+
+### Lei 10 · os documentos legais identificam PESSOA FÍSICA, em transição — 17/09/2026
+
+Decisão do dono em 17/09/2026: os Termos de Uso e a Política de
+Privacidade passam a identificar o operador como **pessoa física**
+(nome civil + CPF + endereço), e anunciam a **transição para pessoa
+jurídica**. O CNPJ que constava antes saiu dos dois documentos.
+
+É a consequência de documento da decisão vizinha (§3, "sem split"):
+quem recebe na Asaas é a conta de pessoa física, e o documento tem de
+dizer quem recebe — não quem se pretende ser.
+
+**Por que CPF e não omissão:** o Decreto 7.962/2013, art. 2º, exige que
+o fornecedor se identifique com nome e inscrição **no CPF ou no CNPJ**.
+Operando como pessoa física, o CPF é a inscrição exigida. Omitir
+descumpre; publicar parcialmente não identifica.
+
+**O custo, e ele é real:** CPF em página pública é identificador de alto
+valor no Brasil, sujeito a coleta automatizada. Registrado em
+`docs/inventario-de-dados.md` §4.1 como o único dado pessoal do operador
+que este projeto publica. A saída é a conversão para CNPJ, anunciada nos
+próprios documentos e com gatilho em `docs/proximas-versoes.md`.
+
+**Consequência fiscal declarada, não resolvida:** a cláusula da NFS-e
+deixou de afirmar "no CNPJ do operador" e passou a dizer "na inscrição
+fiscal do Operador vigente". Se pessoa física consegue emitir NFS-e do
+serviço tecnológico depende de regra municipal, e isso é pergunta para o
+contador — não para esta sessão. A cláusula também ganhou a distinção
+que faltava: o checkout **não** emite a nota do produto do Lojista
+(§1.9), e agora os Termos dizem isso onde antes se podia ler o
+contrário.
+
+**A v1 (com CNPJ) está arquivada** em `docs/legal-arquivado/`, capturada
+do commit anterior à troca — o arquivo exato que esteve no ar, não uma
+reconstrução. Ela não precisou ser comunicada a ninguém porque **ninguém
+a aceitou**: esteve no ar com o checkout fechado a terceiro, sem
+divulgação, que é o que a lei das estações exige antes da 7. O único
+contratante cadastrado é do mesmo dono, confirmado por ele em 17/09.
+
+Revisar quando a conversão para CNPJ concluir: os dois documentos
+voltam a identificar a pessoa jurídica, com nova data de versão.
 
 ### Lei 1 · `infra/` não existe — 11/09/2026
 Não há infraestrutura como código neste projeto, e por isso a pasta não

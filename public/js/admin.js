@@ -170,16 +170,16 @@ function blocoSegredo(valor, rotulo, { rotacionarId } = {}) {
     <span class="segredo">
       <span class="segredo-valor" data-segredo="${escapar(valor)}">${'•'.repeat(18)}</span>
       <button class="segredo-btn" type="button" data-revelar title="Revelar ${escapar(rotulo)}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
       <button class="segredo-btn" type="button" data-copiar="${escapar(rotulo)}" title="Copiar ${escapar(rotulo)}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       </button>
       ${rotacionarId ? `
       <button class="segredo-btn segredo-btn--trocar" type="button" data-rotacionar="${escapar(rotacionarId)}"
               title="Trocar ${escapar(rotulo)} — a atual para de valer na hora"
               aria-label="Trocar ${escapar(rotulo)} de ${escapar(rotacionarId)}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11A8 8 0 0 0 6.3 6.3L3 9"/><path d="M3 4v5h5"/><path d="M4 13a8 8 0 0 0 13.7 4.7L21 15"/><path d="M21 20v-5h-5"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11A8 8 0 0 0 6.3 6.3L3 9"/><path d="M3 4v5h5"/><path d="M4 13a8 8 0 0 0 13.7 4.7L21 15"/><path d="M21 20v-5h-5"/></svg>
       </button>` : ''}
     </span>
   `;
@@ -446,7 +446,7 @@ async function carregarArquivados() {
 /* ------------------------------------------------------------------
    Navegação entre seções
 ------------------------------------------------------------------ */
-const SECOES = ['contratantes', 'subcontas', 'arquivados', 'metricas', 'webhook'];
+const SECOES = ['contratantes', 'subcontas', 'arquivados', 'metricas', 'webhook', 'erros'];
 
 document.querySelectorAll('.nav-item').forEach((item) => {
   item.addEventListener('click', () => {
@@ -457,6 +457,7 @@ document.querySelectorAll('.nav-item').forEach((item) => {
     if (item.dataset.secao === 'metricas') carregarMetricas();
     if (item.dataset.secao === 'webhook') carregarWebhook();
     if (item.dataset.secao === 'arquivados') carregarArquivados();
+    if (item.dataset.secao === 'erros') carregarErros();
   });
 });
 
@@ -686,7 +687,7 @@ function desenharSubcontas() {
           </p>
           ${temLink
             ? `<a class="btn btn-marca btn-mini" href="${escapar(s.link_ativacao)}" target="_blank" rel="noopener noreferrer">
-                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
+                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
                  Entrar na subconta
                </a>
                <button class="btn btn-secundario btn-mini" type="button" data-link-subconta="${escapar(s.id)}">Trocar link</button>`
@@ -861,6 +862,42 @@ async function carregarMetricas() {
     const vazio = m.total.geradas === 0;
 
     $('vazio-metricas').hidden = !vazio;
+
+    /* "Quantos ontem?" é a pergunta que a prontidão operacional manda a
+       métrica responder, então ela vem PRIMEIRO e por extenso — não
+       escondida num gráfico que alguém precisa interpretar.
+
+       Os dois números são por dia civil de Brasília, contados por
+       `confirmado_em`: quantas cobranças ENTRARAM naquele dia. Não é a
+       mesma coisa que "das geradas naquele dia, quantas pagaram" — isso
+       é o `geradasPorDia`, logo abaixo, e são perguntas diferentes. */
+    const diaHumano = (d) => d.split('-').reverse().slice(0, 2).join('/');
+    const cartaoDia = (dia, rotulo) => dia.foraDaJanela
+      ? ''
+      : `
+      <div class="cartao-metrica${rotulo === 'Ontem' ? ' cartao-metrica--destaque' : ''}">
+        <p class="cartao-metrica-rotulo">${rotulo} · ${escapar(diaHumano(dia.data))}</p>
+        <p class="cartao-metrica-valor">${dia.confirmadas}</p>
+        <p class="cartao-metrica-nota">
+          ${dia.confirmadas === 1 ? 'cobrança confirmada' : 'cobranças confirmadas'}
+          · R$ ${formatarReais(dia.valorPago)}
+        </p>
+      </div>`;
+
+    $('metricas-por-dia').innerHTML = vazio ? '' : `
+      ${cartaoDia(m.ontem, 'Ontem')}
+      ${cartaoDia(m.hoje, 'Hoje')}
+      ${m.confirmadasSemData > 0 ? `
+      <div class="cartao-metrica">
+        <p class="cartao-metrica-rotulo">Sem data de confirmação</p>
+        <p class="cartao-metrica-valor">${m.confirmadasSemData}</p>
+        <p class="cartao-metrica-nota">confirmadas antes de 16/09/2026 — a data não foi registrada</p>
+      </div>` : ''}`;
+
+    $('metricas-fuso').textContent = vazio
+      ? ''
+      : `Dia civil de ${m.fuso.replace('America/Sao_Paulo', 'Brasília')} · janela de ${escapar(diaHumano(m.de))} a ${escapar(diaHumano(m.ate))}`;
+
     $('metricas-resumo').innerHTML = vazio ? '' : `
       <div class="cartao-metrica cartao-metrica--destaque">
         <p class="cartao-metrica-rotulo">Taxa de pagamento</p>
@@ -1045,6 +1082,54 @@ async function carregarWebhook() {
     mostrarToast(erro.message, 'erro');
   }
 }
+
+/* ------------------------------------------------------------------
+   Erros capturados (Lei 8)
+------------------------------------------------------------------ */
+
+function linhaErro(erro) {
+  const onde = [
+    `<code class="badge-id">${escapar(erro.contexto ?? '—')}</code>`,
+    erro.rota ? `<span class="celula-fraca">${escapar(erro.metodo ?? '')} ${escapar(erro.rota)}</span>` : ''
+  ].filter(Boolean).join('<br>');
+
+  const tipo = [
+    escapar(erro.nome ?? '—'),
+    erro.codigo ? `<span class="celula-fraca"> · ${escapar(erro.codigo)}</span>` : '',
+    erro.status ? `<span class="celula-fraca"> · ${escapar(String(erro.status))}</span>` : ''
+  ].join('');
+
+  return `
+    <tr>
+      <td class="celula-principal">${formatarQuando(erro.ultima_vez)}</td>
+      <td>${onde}</td>
+      <td>${tipo}</td>
+      <td>
+        ${escapar(erro.mensagem ?? '—')}
+        ${erro.pilha ? `<br><span class="celula-fraca">${escapar(erro.pilha)}</span>` : ''}
+      </td>
+      <td>${escapar(String(erro.ocorrencias ?? 1))}</td>
+    </tr>`;
+}
+
+async function carregarErros() {
+  try {
+    const { erros } = await admin.get('/erros?limite=100');
+
+    // O contador da barra some quando está zerado: contador em zero
+    // treina a pessoa a ignorar o contador.
+    const contador = $('contador-erros');
+    contador.hidden = erros.length === 0;
+    contador.textContent = String(erros.length);
+
+    $('vazio-erros').hidden = erros.length > 0;
+    $('tabela-erros').innerHTML = erros.map(linhaErro).join('');
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
+$('btn-recarregar-erros').addEventListener('click', carregarErros);
 
 /* ------------------------------------------------------------------
    Login / logout

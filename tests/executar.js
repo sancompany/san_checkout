@@ -28,6 +28,9 @@ const SUITES = [
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
   'src/utils/sessaoAdmin.js',        // token de sessão do admin: forja, adulteração, validade
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
+  'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
+  'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
+  'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra

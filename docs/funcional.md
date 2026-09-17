@@ -157,9 +157,10 @@ autenticar estorno. Reversível em **Arquivados → Restaurar**.
 ### 2.12 Operador confere o que aconteceu
 
 Aba **Métricas** (geradas, pagas, em aberto, perdidas, taxa de pagamento
-e valor pago — total, por método e por contratante) e aba **Webhook**
+e valor pago — total, por método e por contratante), aba **Webhook**
 (todo evento recebido, com o payload redigido, e o contador de tentativas
-recusadas).
+recusadas) e aba **Erros** (toda exceção que virou 5xx, agrupada por
+onde acontece, com quantas vezes aconteceu).
 
 ---
 
@@ -170,7 +171,7 @@ recusadas).
 | Checkout | `/` (`public/index.html`) | comprador | resumo do pedido ou do plano, e o formulário do pagador | escolher método, preencher dados, aceitar termos, gerar cobrança | página de status; ou pop-up da Asaas, no cartão |
 | Status do pagamento | `/status` (`public/status.html`) | comprador | selo e texto do estado atual, dados do Pix ou boleto, rodapé com canais | copiar código, abrir boleto, achar o canal certo | Termos, Privacidade, e-mail dos canais |
 | Fechar pop-up | `/pagamento-popup-fechar.html` | comprador | "pode fechar esta janela" | fechar | volta ao checkout, que atualiza sozinho |
-| Painel administrativo | `/admin` (`public/admin.html`) | operador | cinco seções: Contratantes, Subcontas, Métricas, Arquivados, Webhook | cadastrar, editar, trocar chave, arquivar, criar subconta, ler métrica e log | permanece no painel |
+| Painel administrativo | `/admin` (`public/admin.html`) | operador | seis seções: Contratantes, Subcontas, Métricas, Arquivados, Webhook, Erros | cadastrar, editar, trocar chave, arquivar, criar subconta, ler métrica, log e exceções | permanece no painel |
 | Termos de Uso | `/termos.html` | qualquer um | o contrato de uso da infraestrutura | ler | — |
 | Política de Privacidade | `/privacidade.html` | qualquer um | tratamento de dados e direitos do titular | ler, achar o canal do Encarregado | e-mail do canal |
 | Página não encontrada | `/404` (`public/404.html`) | quem digitou caminho inexistente | "esta página não existe" e o caminho de volta | escrever para o suporte | e-mail do suporte |
@@ -541,6 +542,19 @@ da barra de endereço e entregaria o produto para quem digitasse isso à
 mão. *Quem vê:* ninguém — quem confirma pagamento é o webhook assinado
 ou a consulta autenticada, e o `API.md` §3.1 diz isso em destaque.
 
+**RN-27 · Todo 5xx vira linha, e linha igual soma em vez de repetir.**
+Exceção que o servidor devolve como 5xx é capturada com o contexto da
+requisição e fica 30 dias (`erros`, migration 0007). *Violada:* o erro
+que importa acontece daqui a três semanas, às duas da manhã, num
+webhook — e o log do painel da hospedagem tem retenção curta, então
+quando alguém for procurar já não está lá. *Quem vê:* o operador, na aba
+Erros. Três limites fazem parte da regra: **agrega por impressão
+digital** (senão uma rota pública que dá 500 vira escrita ilimitada no
+banco para quem só descobriu a URL); **só 5xx** (validação recusada é o
+sistema funcionando, e gravá-la apaga o sinal); e **nada de pessoa
+entra** — a mensagem é raspada e corpo, cabeçalho e URL com valores
+nunca entram (`docs/inventario-de-dados.md` §7.2).
+
 ---
 
 ## 6. Textos que o sistema diz
@@ -607,6 +621,7 @@ parada até o outro lado colar a nova.
 | duas cobranças simultâneas do mesmo pedido | a segunda reaproveita a primeira | nada — é o comportamento certo |
 | chave da Asaas expirando ou apagada | evento `ACCESS_TOKEN_*` vira alerta em `/api/saude` | o operador, se olhar a rota |
 | instância sem memória | a fila de derivação impede duas derivações scrypt simultâneas (§2, gargalo 0) | o operador, com login mais lento |
+| **qualquer 5xx, de qualquer rota** | vira linha em `erros`, agrupada por onde acontece; repetição soma em vez de repetir | o operador, na aba **Erros** (RN-27) |
 
 ---
 
@@ -670,6 +685,46 @@ e registrada no spec.
 promete (cobrança que vira dinheiro), sem depender de fechamento
 contábil.
 
+**Ela responde "quantos ontem?" desde 16/09/2026**, e antes disso não
+respondia. `GET /api/admin/metricas` contava as últimas N×24 h, sem
+recorte por dia: às 10h da manhã, "últimas 24 h" mistura metade de hoje
+com metade de ontem — parecido, e não a mesma coisa. Agora a janela é por
+**dia civil de Brasília**, e a aba Métricas mostra "Ontem" e "Hoje" por
+extenso, antes de qualquer gráfico.
+
+Duas coisas tiveram de existir para isso, e as duas são o conteúdo da
+correção:
+
+- **`cobrancas.confirmado_em`** (migration 0008). Não havia coluna
+  nenhuma dizendo quando a cobrança foi confirmada: `criado_em` diz
+  quando foi *gerada*, e `atualizado_em` muda por qualquer motivo —
+  inclusive reparo manual. Sem uma data própria, "confirmadas ontem" era
+  inrespondível, e usar `atualizado_em` daria um número que parece certo
+  e anda sozinho. Linha confirmada antes da migration fica com nulo, e
+  a rota a devolve em `confirmadasSemData` em vez de jogá-la num dia
+  qualquer — **nulo é informação, não falta**.
+- **O dia civil decidido no servidor** (`src/utils/diaCivil.js`).
+  Medido dentro do contêiner em 16/09: o processo de produção roda em
+  **UTC**. Qualquer conta com data local do servidor erraria das 21h à
+  meia-noite de Brasília, três horas por dia. O fuso nomeado funciona na
+  imagem (ICU completo, também medido), e há um teste que fica vermelho
+  se isso deixar de ser verdade — senão `Intl` cai para UTC em silêncio.
+
+**As duas bases de dia, que respondem perguntas diferentes:**
+
+| campo | base | pergunta |
+|---|---|---|
+| `confirmadasPorDia` | `confirmado_em` | **é a métrica** — quantas cobranças entraram naquele dia, independente de quando nasceram |
+| `geradasPorDia` | `criado_em` | coorte — das cobranças nascidas naquele dia, quantas viraram dinheiro; avalia a tela e o link |
+
+Uma cobrança gerada dia 15 e paga dia 16 conta em `geradasPorDia[15]` e
+em `confirmadasPorDia[16]`. **Os dois números estarem diferentes é o
+comportamento certo**, não inconsistência — e é o caso normal de
+assinatura, cujo ciclo nasce num mês e confirma noutro.
+
+Com `dias=1`, `ontem` volta como `foraDaJanela` em vez de zero: zero
+afirmaria que não houve nenhuma, que é diferente de não ter olhado.
+
 ### Os eventos
 
 Nove eventos, nomeados na convenção `categoria:objeto_acao` com verbo no
@@ -709,6 +764,69 @@ vai implementar.
 gravar linha por visita e trariam bot junto. Enquanto a pergunta
 principal for "quantas cobranças confirmadas ontem, e de quem", a
 resposta sai de `cobrancas` sem instrumentação nova.
+
+---
+
+## 11. Acessibilidade — o que foi verificado, e como
+
+Obrigação legal, não opcional: LBI (Lei 13.146/2015, art. 63) e Decreto
+9.405/2018 valem **inclusive para ME, EPP e MEI**. Padrão exigível:
+**WCAG 2.2 nível AA**. Verificado em 17/09/2026.
+
+**Como se reverifica:** `npm run acessibilidade`. Sobe as telas num
+Chromium de verdade (390×844, largura de celular) e roda o axe-core
+contra as regras WCAG 2.2 AA. Falha com código 1 se achar violação.
+
+Navegador de verdade e não jsdom porque **contraste** é um dos itens que
+a lei exige nominalmente, e contraste só se calcula com layout e cor
+computada — em jsdom o axe simplesmente não roda essa checagem, e um
+verificador que pula o item exigido devolve "sem violações" sem ter
+olhado.
+
+### O que foi corrigido para passar
+
+| achado | onde | correção |
+|---|---|---|
+| `--text-muted` dava **2,54:1** sobre branco (mínimo 4,5:1) | 4 telas | escurecido para `#616A7D` — pior caso **4,80:1**, medido contra todas as superfícies, inclusive a mais apertada (`--bg-surface`) |
+| link do 404 dava **3,75:1** | `404.html` | `#806313` — **5,27:1** |
+| as duas páginas legais carregavam **cópia inline da paleta** | `termos.html`, `privacidade.html` | passam a carregar `theme-engine.css`. Era a causa raiz: o token foi corrigido no arquivo central e as cópias não viram |
+| **19 de 20 SVGs** sem `aria-hidden` | checkout e painel | todos são ícones decorativos ao lado de texto, e agora estão escondidos do leitor de tela. O axe não sinaliza isto — foi revisão humana |
+
+Consequência aceita do contraste: "muted" ficou menos muted, e a
+hierarquia visual contra `--text-secondary` comprimiu. É o preço de o
+cinza carregar informação em vez de decoração — se tem texto, tem de ser
+legível. Hierarquia se recupera com tamanho e peso, não com cor mais
+clara.
+
+### O que o verificador cobre
+
+Oito telas, no estado em que o comprador as vê: checkout (pedido avulso
+**e** assinatura, que carregam por endpoints diferentes), status, termos,
+privacidade, 404, fechar pop-up, e o painel do operador. Mais os três
+acordeões de método abertos, e uma passada **só com Tab**, sem mouse, que
+confere foco visível e nome acessível em cada uma das 56 paradas.
+
+**Ele exige provar que auditou a tela certa.** A primeira versão
+reportou "Checkout — 0 violações" auditando a tela de *"Acesso não
+autorizado"*: sem os parâmetros na URL, a página se substitui por ela.
+Zero violação numa tela que não é a tela parece evidência e não é. Agora
+o pedido e o plano são dublados com o formato real da API, e a tela tem
+de mostrar um número mínimo de elementos interativos visíveis, ou o
+verificador reprova. Mesma regra para o teclado: menos de 10 paradas
+reprova, em vez de exibir dois tiques verdes sobre nada medido.
+
+### O que ele NÃO cobre, e fica com revisão humana
+
+**Ordem de foco que faça sentido** — ele confere que cada parada tem
+indicador e nome, não que a sequência siga a leitura da tela. **Qualidade
+do texto alternativo** — confere que existe, não que descreve a imagem
+certa (hoje não há imagem de conteúdo; todo SVG é decorativo).
+**"Nada informado só por cor"** — conferido à mão em 17/09: os selos de
+status trazem a palavra ("Não encontrado", "Pago"), não só a cor.
+
+Estados que dependem de resposta real da Asaas — QR gerado, boleto
+emitido, erro devolvido pelo servidor — não entram no verificador: eles
+exigem cobrança viva. Ficam para a rodada ao vivo no sandbox.
 
 ---
 

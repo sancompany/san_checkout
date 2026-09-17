@@ -26,6 +26,9 @@ import { compararSeguro, documentoValido, emailValido, cepValido } from '../util
 import { senhaConfere } from '../utils/senhaAdmin.js';
 import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
 import { responderErro } from '../utils/erros.js';
+import { listarErros } from '../services/erroService.js';
+import { FUSO, inicioDoDiaCivil, ultimosDiasCivis } from '../utils/diaCivil.js';
+import { agregarMetricas } from '../services/metricaService.js';
 import { criarSubconta as criarSubcontaNaAsaas, tipoDaContaMae } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
 import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
@@ -349,64 +352,76 @@ export async function atualizarContratante(requisicao, resposta) {
  * abaixo já responde a pergunta principal — se e quando isso virar
  * insuficiente, aí vale a tabela.
  */
+/**
+ * GET /api/admin/metricas?dias=N — a métrica de sucesso.
+ *
+ * ── O que mudou em 16/09/2026, e por quê ─────────────────────────────
+ * Até aqui a janela era "as últimas N×24 h" e não havia recorte por dia.
+ * A prontidão operacional exige que a métrica responda literalmente
+ * **"quantos ontem?"**, e "últimas 24 h" às 10h da manhã mistura metade
+ * de hoje com metade de ontem — parecido, e não a mesma coisa.
+ *
+ * Agora a janela é por **dia civil de Brasília**, decidida no servidor
+ * (`src/utils/diaCivil.js`). Isso não é detalhe de fuso: o processo de
+ * produção roda em **UTC** (medido dentro do contêiner em 16/09), então
+ * qualquer conta com data local do servidor erraria das 21h à meia-noite
+ * de Brasília — três horas por dia.
+ *
+ * ── As DUAS bases de dia, e por que as duas existem ──────────────────
+ * A resposta traz dois recortes por dia, com nomes diferentes de
+ * propósito, porque respondem perguntas diferentes e confundi-las é o
+ * jeito mais fácil de ler o número errado:
+ *
+ *   `confirmadasPorDia` — por `confirmado_em`. É **a métrica**: quantas
+ *       cobranças ENTRARAM naquele dia, independente de quando foram
+ *       geradas. É o que responde "quantos ontem?".
+ *
+ *   `geradasPorDia` — por `criado_em`. Visão de **coorte**: das
+ *       cobranças nascidas naquele dia, quantas viraram dinheiro. Serve
+ *       para avaliar a tela e o link, não a entrada de caixa.
+ *
+ * Uma cobrança gerada dia 15 e paga dia 16 conta em `geradasPorDia[15]`
+ * e em `confirmadasPorDia[16]`. Os dois números estarem certos e
+ * diferentes é o comportamento correto, não uma inconsistência.
+ *
+ * ── `confirmadasSemData` ─────────────────────────────────────────────
+ * Linha confirmada ANTES da migration 0008 não tem `confirmado_em`.
+ * Essas não são jogadas num dia qualquer nem escondidas: vão para um
+ * campo próprio. Nulo é informação, não falta.
+ */
 export async function obterMetricas(requisicao, resposta) {
-  const dias = Math.min(Number(requisicao.query.dias) || 30, 365);
-  const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+  const dias = Math.min(Math.max(Number(requisicao.query.dias) || 30, 1), 365);
+
+  const janela = ultimosDiasCivis(dias);
+  const primeiroDia = janela[0];
+  const desde = inicioDoDiaCivil(primeiroDia);
+
+  // Busca por `criado_em` OU `confirmado_em` dentro da janela: uma
+  // cobrança gerada antes da janela e confirmada dentro dela É a métrica
+  // daquele dia, e filtrar só por `criado_em` a perderia — que é
+  // exatamente o caso de assinatura, cujo ciclo nasce e confirma em
+  // momentos diferentes.
+  // Sem milissegundos. Medido em 16/09 contra o PostgREST de produção:
+  // as duas formas funcionam — ele tolera o ponto do `.000Z` dentro do
+  // valor, embora parta `coluna.op.valor` nos dois primeiros pontos. O
+  // corte fica por não depender dessa tolerância, não porque quebrava.
+  // Um segundo de granularidade não muda uma janela de dias.
+  const limite = `${desde.toISOString().slice(0, 19)}Z`;
 
   const { data, error } = await supabase
     .from('cobrancas')
-    .select('contratante_id, metodo_pagamento, status, valor_cobrado, criado_em')
-    .gte('criado_em', desde);
+    .select('contratante_id, metodo_pagamento, status, valor_cobrado, criado_em, confirmado_em')
+    .or(`criado_em.gte.${limite},confirmado_em.gte.${limite}`);
 
   if (error) return responderErro(resposta, error, 'admin.obterMetricas');
 
-  const CONFIRMADOS = ['confirmado'];
-  // Cobrança que ainda pode virar pagamento não conta como perdida —
-  // senão a taxa de hoje sempre pareceria péssima.
-  const EM_ABERTO = ['pendente', 'em_analise'];
-
-  const vazio = () => ({ geradas: 0, pagas: 0, emAberto: 0, perdidas: 0, valorPago: 0 });
-  const porMetodo = {};
-  const porContratante = {};
-  const total = vazio();
-
-  for (const c of data ?? []) {
-    const metodo = c.metodo_pagamento ?? 'desconhecido';
-    const contratante = c.contratante_id ?? 'sem contratante';
-    porMetodo[metodo] ??= vazio();
-    porContratante[contratante] ??= vazio();
-
-    const paga = CONFIRMADOS.includes(c.status);
-    const aberta = EM_ABERTO.includes(c.status);
-
-    for (const alvo of [total, porMetodo[metodo], porContratante[contratante]]) {
-      alvo.geradas += 1;
-      if (paga) { alvo.pagas += 1; alvo.valorPago += Number(c.valor_cobrado ?? 0); }
-      else if (aberta) alvo.emAberto += 1;
-      else alvo.perdidas += 1;
-    }
-  }
-
-  /** Taxa sobre o que já se RESOLVEU (pagas + perdidas). Incluir o que
-   *  ainda está em aberto no denominador faria a taxa parecer pior só
-   *  porque a cobrança é recente. */
-  const comTaxa = (n) => {
-    const resolvidas = n.pagas + n.perdidas;
-    return {
-      ...n,
-      valorPago: Math.round(n.valorPago * 100) / 100,
-      taxaPagamento: resolvidas > 0 ? Math.round((n.pagas / resolvidas) * 1000) / 10 : null
-    };
-  };
-
-  const mapear = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, comTaxa(v)]));
-
+  // A conta mora em `metricaService.agregarMetricas`, que é função pura
+  // e tem autoteste. Aqui só fica o que precisa de banco.
   resposta.json({
+    fuso: FUSO,
     periodoDias: dias,
-    desde,
-    total: comTaxa(total),
-    porMetodo: mapear(porMetodo),
-    porContratante: mapear(porContratante)
+    desde: desde.toISOString(),
+    ...agregarMetricas(data, janela)
   });
 }
 
@@ -488,6 +503,18 @@ export async function arquivarSubconta(requisicao, resposta) {
  * (CNPJ)**. Vale por ambiente: a conta do sandbox é outra conta, e pode
  * ser PF mesmo que a de produção seja PJ.
  *
+ * ⚠️ **Conta PF com informações comerciais de CNPJ parece PJ e não é.**
+ * Medido no sandbox em 17/09/2026: `/v3/myAccount` dizia `FISICA` (CPF)
+ * enquanto `/v3/myAccount/commercialInfo` dizia `JURIDICA` (CNPJ), na
+ * mesma conta, com o comercial aprovado. A regra de subconta olha o
+ * REGISTRO, não o comercial — e preencher o CNPJ da empresa ali não
+ * converte a conta. É a confusão mais provável de quem "já mudou para
+ * PJ" e continua levando 403.
+ *
+ * Até 17/09 esta explicação lia só o comercial e concluía o contrário,
+ * mandando procurar permissão e CNAE quando o problema era o tipo da
+ * conta. Ver `docs/erros/2026-09-17-diagnostico-de-subconta-lia-o-endpoint-errado.md`.
+ *
  * A consulta extra só roda no caminho do erro, nunca no caminho feliz,
  * e falhar nela não pode piorar a mensagem original — por isso o catch
  * devolve string vazia em vez de estourar.
@@ -496,17 +523,31 @@ async function explicarRecusaDeSubconta(erroAsaas) {
   if (erroAsaas.status !== 401 && erroAsaas.status !== 403) return '';
 
   try {
-    const { tipo, companyType } = await tipoDaContaMae();
+    const { tipo, tipoComercial, divergem, companyType } = await tipoDaContaMae();
+
     if (tipo === 'fisica') {
-      return 'sua conta-mãe na Asaas (neste ambiente) está cadastrada como PESSOA FÍSICA (CPF), '
-        + 'e a Asaas só deixa conta pessoa jurídica (CNPJ) criar subconta. '
-        + 'Troque o cadastro da conta para CNPJ no painel da Asaas deste ambiente, ou peça a liberação ao suporte.';
+      const ressalva = divergem
+        ? ' ATENÇÃO: as informações COMERCIAIS desta conta estão como pessoa jurídica'
+          + `${companyType ? ` (${companyType})` : ''}, o que faz a conta parecer PJ no painel — mas a Asaas`
+          + ' aplica a regra de subconta sobre o REGISTRO da conta, e ele é CPF.'
+          + ' Preencher o CNPJ nas informações comerciais não converte a conta.'
+        : '';
+      return 'a conta-mãe na Asaas (neste ambiente) está REGISTRADA como PESSOA FÍSICA (CPF), '
+        + 'e a Asaas só deixa conta pessoa jurídica (CNPJ) criar subconta.'
+        + ressalva
+        + ' O caminho é a Asaas converter o registro da conta para CNPJ — isso se pede ao suporte deles,'
+        + ' e o tipo de documento da SUBCONTA não muda nada (CPF e CNPJ levam o mesmo 403, medido em 17/09).';
     }
+
     if (tipo === 'juridica') {
-      return `a conta-mãe é pessoa jurídica${companyType ? ` (${companyType})` : ''}, então o problema NÃO é o tipo de conta — `
-        + 'restam permissão de subcontas não liberada nesta conta ou CNAE incompatível. Isso se resolve com o suporte da Asaas.';
+      return `a conta-mãe está registrada como pessoa jurídica${companyType ? ` (${companyType})` : ''}`
+        + `${tipoComercial === 'fisica' ? ', embora as informações comerciais estejam como pessoa física' : ''}`
+        + ', então o problema NÃO é o tipo de conta — restam permissão de subcontas não liberada nesta conta'
+        + ' ou CNAE incompatível. Isso se resolve com o suporte da Asaas.';
     }
-    return 'não consegui ler o tipo da conta-mãe para dizer o porquê — confira no painel da Asaas deste ambiente se ela é CNPJ.';
+
+    return 'não consegui ler o tipo da conta-mãe para dizer o porquê — confira em /v3/myAccount (o REGISTRO, '
+      + 'não o commercialInfo) se ela é CNPJ.';
   } catch {
     return '';
   }
@@ -693,5 +734,25 @@ export async function obterResumoWebhook(requisicao, resposta) {
     resposta.json({ periodoDias: dias, naoTratados, ultimoEvento: ultimo, rejeicoes });
   } catch (erro) {
     responderErro(resposta, erro, 'admin.obterResumoWebhook');
+  }
+}
+
+
+/**
+ * GET /api/admin/erros — a captura de exceção da Lei 8, para ler.
+ *
+ * Devolve a linha como está gravada, sem enfeite: ela já nasce raspada
+ * (`erroService.rasparMensagem`) e sem corpo, query, cabeçalho ou URL
+ * com valores. Não há nada a filtrar aqui — se houvesse, o lugar de
+ * filtrar seria a gravação, não a leitura.
+ *
+ * Ordenada por `ultima_vez`: o que está acontecendo agora vem primeiro,
+ * e `ocorrencias` diz se é rajada ou caso isolado.
+ */
+export async function listarErrosCapturados(requisicao, resposta) {
+  try {
+    resposta.json({ erros: await listarErros({ limite: requisicao.query.limite }) });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.listarErrosCapturados');
   }
 }

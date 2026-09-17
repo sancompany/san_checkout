@@ -43,7 +43,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas: main = `acbce0b` servido no Northflank (deploy `6431907099` state success), migrations 0001-0003 aplicadas, árvore limpa |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas na abertura. Estado em 16/09: main = `d793f2e` (PR #16 mesclado) e **é o commit ativo no Northflank**, migrations 0001-0006 aplicadas, árvore limpa |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -256,6 +256,21 @@ Feito em 16/09:
   mais vai cobrar. Corrigido. Tudo travado pelo autoteste novo de
   `cobrancaConsultaController.js` (15 checagens), verificado por
   sabotagem nas quatro regras.
+- **PR #16 mesclado e conferido ao vivo em produção.** `d793f2e` é o
+  commit ativo no Northflank, e a conciliação foi chamada de verdade
+  contra `sub_qut6521d50496vkn`: devolveu `status: cancelada`,
+  `ciclo: YEARLY`, `proximaCobranca: null`. Sem as correções viria
+  `pausada`, `MONTHLY` e `2027-09-16` — as três regras novas provadas de
+  uma vez, no ar, não em teste.
+- **Troca de plano: decidida como atualização futura, não pendência.** O
+  dono perguntou se o checkout atendia as duas aplicações do MostrAí.
+  **Cancelar plano já está pronto** (§7.4, exercitado ao vivo). **Trocar
+  plano não existe** — `valor` e `ciclo` são congelados na criação da
+  assinatura, e isso vem da Asaas, não de escolha nossa. Decisão do
+  dono: o MostrAí segue pela **ideia do pedido avulso**, cobrando a
+  diferença como pedido comum. Registrado em `docs/proximas-versoes.md`
+  com o que faltaria construir (o cálculo proporcional, que não existe
+  em lugar nenhum do sistema, e o token carregando o plano de destino).
 
 Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
 ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
@@ -270,6 +285,7 @@ dele em paralelo.
 - Telas: `public/` · tokens visuais `public/css/theme-engine.css` · componentes `public/css/components/`
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
+- Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - Testes: `tests/` — `npm test` roda as 18 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 

@@ -7,7 +7,20 @@
 
   --text-main: #111827;
   --text-secondary: #4B5563;
-  --text-muted: #9CA3AF;
+  /* Escurecido em 17/09/2026 de #9CA3AF para passar contraste AA.
+     O antigo dava 2,54:1 sobre branco — reprovava em texto (mínimo
+     4,5:1) e o axe pegou em quatro telas. Este valor foi escolhido por
+     número, não por olho: pior caso 4,80:1, medido contra TODAS as
+     superfícies deste arquivo, inclusive `--bg-surface` (#EEF1F6), que
+     é a mais apertada e onde o candidato anterior (#667085) reprovava
+     com 4,39.
+
+     Consequência aceita: "muted" fica menos muted, e a hierarquia
+     visual contra `--text-secondary` comprime. É o preço de o cinza
+     carregar informação em vez de decoração — se tem texto, tem de ser
+     legível. Hierarquia se recupera com tamanho e peso, não com cor
+     mais clara. */
+  --text-muted: #616A7D;
   --text-on-primary: #FFFFFF;
 
   --brand-primary: #B8912A;

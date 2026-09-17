@@ -30,7 +30,11 @@
     img { width: 48px; height: 48px; }
     h1 { font-size: 1.25rem; margin: 20px 0 8px; }
     p { line-height: 1.55; color: #4a4a4a; margin: 0 0 12px; }
-    a { color: #9C7A22; }
+    /* #9C7A22 dava 3,75:1 sobre este fundo — reprovava em texto.
+       Este dá 5,27:1, medido. O sublinhado do navegador fica de
+       propósito: link não pode ser identificável só pela cor (WCAG
+       1.4.1), e esta página não tem outro sinal. */
+    a { color: #806313; }
   </style>
 </head>
 <body>

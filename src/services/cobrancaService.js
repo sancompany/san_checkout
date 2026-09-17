@@ -193,10 +193,29 @@ export async function vincularChargeIdAoCheckout(asaasCheckoutId, chargeId) {
  *  CHECKOUT_PAID/CHECKOUT_CANCELED/CHECKOUT_EXPIRED, que identificam
  *  a sessão, não a cobrança (diferente do webhook de Pix, que já
  *  identifica direto pelo payment/charge_id). */
+/**
+ * `confirmado_em` entra JUNTO da virada para `confirmado`, e só nela.
+ *
+ * Existe porque `atualizado_em` não responde "quando confirmou": ela é
+ * tocada por qualquer mudança da linha, inclusive reparo manual. A
+ * métrica de sucesso é por dia de confirmação (`docs/funcional.md` §9),
+ * e sem uma data própria ela era inrespondível (migration 0008).
+ *
+ * Reconfirmação sobrescreve, e é o certo: se uma cobrança foi estornada
+ * e confirmou de novo, a confirmação que vale é a de agora.
+ */
+function camposDeStatus(status) {
+  return {
+    status,
+    atualizado_em: new Date().toISOString(),
+    ...(status === 'confirmado' ? { confirmado_em: new Date().toISOString() } : {})
+  };
+}
+
 export async function atualizarStatusPorCheckoutId(asaasCheckoutId, status) {
   const { error } = await supabase
     .from('cobrancas')
-    .update({ status, atualizado_em: new Date().toISOString() })
+    .update(camposDeStatus(status))
     .eq('asaas_checkout_id', asaasCheckoutId);
 
   if (error) console.error('[cobrancaService.atualizarStatusPorCheckoutId]', error.message);
@@ -364,7 +383,7 @@ export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
 export async function atualizarStatusCobranca(chargeId, status) {
   const { error } = await supabase
     .from('cobrancas')
-    .update({ status, atualizado_em: new Date().toISOString() })
+    .update(camposDeStatus(status))
     .eq('charge_id', chargeId);
 
   if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);

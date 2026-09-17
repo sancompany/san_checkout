@@ -265,12 +265,25 @@ indisponível, sem nada para clicar. São o terceiro e o quarto lugar da
 mesma classe dos dois erros de total, e ficam anotados como os próximos
 se uma linha vier incompleta.
 
-### 🟡 Métrica · a janela é de 24 h, não de dia civil
-`GET /api/admin/metricas?dias=N` conta as últimas N×24 h. "Quantos
-ontem?" hoje se responde com "nas últimas 24 horas", que é parecido e não
-é a mesma coisa — em dia de pico a diferença aparece. Fechar exige
-janela por data, com fuso de Brasília fixado no servidor, não no
-navegador. Declarado em `docs/funcional.md` §9.
+### 🟢 Métrica · janela por dia civil — CORRIGIDO 16/09
+Era: `GET /api/admin/metricas?dias=N` contava as últimas N×24 h, sem
+recorte por dia. Corrigido com janela por **dia civil de Brasília**
+decidida no servidor (`src/utils/diaCivil.js`), e a aba Métricas
+respondendo "Ontem" e "Hoje" por extenso.
+
+**Fechar exigiu mais do que trocar a janela**, e isso é o que a entrada
+antiga não previa: não existia coluna dizendo QUANDO a cobrança foi
+confirmada. `criado_em` é a geração; `atualizado_em` muda por qualquer
+motivo. Então "confirmadas ontem" era inrespondível por falta de dado,
+não por falta de recorte — migration 0008 (`confirmado_em`).
+
+Dois fatos medidos dentro do contêiner de produção no mesmo dia: o
+processo roda em **UTC** (logo, data local do servidor erraria 3 h por
+dia), e o **fuso nomeado funciona** (ICU completo na imagem alpine).
+O autoteste de `diaCivil.js` fica vermelho se o segundo deixar de valer.
+
+`docs/funcional.md` §9, RN-27 vizinha, `metricaService.js` com 26
+checagens e quatro sabotagens.
 
 ### 🟡 Direitos · não existe ticket de atendimento com auto-resposta
 O canal do titular e o de suporte são e-mail (`juridico@`, `suporte@`),
@@ -381,7 +394,22 @@ custo: plano pago do Supabase dá compute dedicado. **Não fazer nada é
 aceitável** enquanto o painel é de um operador só; vira problema se o
 volume crescer.
 
-### Lei 8 · erro em produção visível — metade de código feita 14/09
+### 🟢 Lei 8 · captura de exceção com contexto — FEITO 16/09
+A Lei 8 pede "captura de erro com contexto da requisição (Sentry ou
+equivalente)". Feito **sem depender de conta em serviço externo**:
+`erros` (migration 0007) + `erroService.js`, exposto na aba **Erros** do
+painel. Todo 5xx vira linha com contexto, rota (padrão, nunca a URL),
+método, status, tipo, código e os quadros de pilha do nosso `src/`.
+
+Agrega por impressão digital em vez de gravar uma linha por ocorrência —
+sem isso, qualquer rota pública que devolvesse 500 seria escrita
+ilimitada no banco para quem só descobriu a URL. `CONSTRAINTS.md`
+§2.5.1, RN-27, `docs/inventario-de-dados.md` §7.2.
+
+**Falta a evidência que fecha o item da prontidão:** forçar uma exceção
+em produção e vê-la na aba. Entra na primeira rodada depois do deploy.
+
+### Lei 8 · alerta de queda — metade de código feita 14/09
 Log de produção legível por conector desde 12/09. **A metade de código do
 alerta de queda entrou em 14/09:** `/api/saude` devolve `503`/`degradado`
 quando o banco não responde (antes era `200 ok` mesmo caído), então um
@@ -446,3 +474,53 @@ sandbox) e limpar as cobranças de teste antes de entrar dinheiro real.
 `public/js/utils/api.js` e o `connect-src` do `_headers` já apontam para
 `api.sancocore.com.br` desde 12/09 — trocar de host é trocar o CNAME, não
 mexer no código.
+
+### 🟢 Acessibilidade WCAG 2.2 AA — VERIFICADO 17/09
+Obrigação legal (LBI art. 63 + Decreto 9.405/2018, valendo inclusive
+para ME/EPP/MEI), cobrada pela skill `legal` na estação 6. Verificado com
+axe-core num Chromium de verdade: `npm run acessibilidade`.
+
+Cinco violações reais achadas e corrigidas — quatro de contraste
+(`--text-muted` dava 2,54:1 contra o mínimo de 4,5:1) e 19 SVGs
+decorativos sem `aria-hidden`, este último fora do alcance do axe.
+A causa raiz do contraste era duplicação: as duas páginas legais
+carregavam **cópia inline da paleta**, então não viram a correção do
+token central. `docs/funcional.md` §11 tem a tabela e o método.
+
+**O que fica declarado, não fechado:**
+
+- **O verificador não roda no CI.** A lei sugere ("verificador
+  automático no CI resolve a maior parte") e faltam duas coisas que só o
+  dono faz: acrescentar o passo em `.github/workflows/ci.yml` e garantir
+  Chromium no runner. Comando pronto abaixo. Hoje roda à mão, e "à mão"
+  significa que uma regressão de contraste passa até alguém lembrar.
+
+  ```yaml
+        - name: Acessibilidade (axe-core, WCAG 2.2 AA)
+          run: |
+            npx playwright install --with-deps chromium
+            CHROMIUM_EXECUTAVEL="$(npx playwright print-api-json 2>/dev/null >/dev/null; echo '')" npm run acessibilidade
+  ```
+  Sem `CHROMIUM_EXECUTAVEL` definida o script usa
+  `/opt/pw-browsers/chromium`; no runner do GitHub o caminho é outro, e é
+  por isso que a variável existe. Em runner com o browser instalado pelo
+  próprio Playwright, basta deixá-la vazia e trocar a linha do `run`
+  por `npm run acessibilidade` depois do `playwright install`.
+
+- **Estados que dependem da Asaas** — QR gerado, boleto emitido, erro
+  devolvido pelo servidor — não são auditados: exigem cobrança viva.
+  Ficam para a rodada ao vivo no sandbox.
+
+- **Ordem de foco** conferida só quanto a indicador e nome em cada
+  parada, não quanto à sequência seguir a leitura da tela.
+
+
+### 🟢 Subconta bloqueada pela conta PF — VIROU DECISÃO 17/09
+Deixou de ser pendência: o dono decidiu **operar na conta como ela está
+(pessoa física)**, sem subconta e sem split, e tratar a conversão do
+registro como atualização futura.
+
+O que ficou: exceção aceita em `CONSTRAINTS.md` §3 (com a consequência
+escrita), entrada em `docs/proximas-versoes.md`, e a medição que provou a
+causa em `CONSTRAINTS.md` §2.5.3 +
+`docs/erros/2026-09-17-diagnostico-de-subconta-lia-o-endpoint-errado.md`.

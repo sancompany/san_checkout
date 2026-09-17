@@ -227,3 +227,70 @@ para um problema que talvez nem exista mais.
   a partir do segundo, a janela fecha e a migração passa a ter de ser
   feita com um contratante em produção no ar. É a entrada deste arquivo
   com prazo de validade mais curto.
+
+## Trocar de plano numa assinatura já ativa
+
+- **O quê** — um caminho de "upgrade/downgrade" que leve o assinante do
+  plano A para o plano B mantendo o vínculo: cobrar a diferença (ou
+  creditar), e emendar os ciclos seguintes no valor novo, sem o
+  assinante precisar cancelar e assinar de novo do zero.
+- **Por que** — `valor` e `ciclo` são **congelados na criação** da
+  assinatura (`API.md` §4.2), e isso não é limitação nossa: é como a
+  assinatura existe na Asaas. Hoje a única saída é cancelar a antiga e
+  criar outra, o que significa o assinante digitando o cartão de novo,
+  perda do histórico de vínculo, e uma janela em que ele não tem nem uma
+  assinatura nem a outra. A infraestrutura mais próxima que existe é a
+  **renovação** (`API.md` §7.3): ela já sabe criar a nova e encerrar a
+  antiga **só depois** que a nova confirma, com token HMAC para ninguém
+  mexer na assinatura alheia (RN-25). Trocar de plano é a mesma coreografia
+  com plano de destino diferente — o que falta é o dinheiro no meio
+  (proporcional do que já foi pago, e o que fazer com uma troca no meio
+  de um trimestre).
+- **De onde veio** — o dono, em 16/09/2026, perguntando se o checkout já
+  atendia as duas aplicações que o MostrAí vai ter: cancelar plano e
+  trocar plano. **Cancelar já está pronto** (§7.4, exercitado ao vivo).
+  Trocar, não. Decisão dele na mesma conversa: **o MostrAí segue pela
+  ideia do pedido avulso** — cobra a diferença como pedido comum e
+  resolve o resto do lado dele. Então isto não bloqueia ninguém hoje, e
+  é justamente por isso que fica aqui e não em `docs/pendencias.md`.
+- **O que toca** — `asaasCheckoutController.js` (a mesma porta da
+  renovação), `tokenRenovacao.js` (o token precisaria carregar o plano
+  de DESTINO, não só o de origem, senão um token de renovação vira um
+  token de troca), `encerrarAssinaturaSubstituida`, a tabela
+  `assinaturas` (de qual plano veio), e o cálculo proporcional, que hoje
+  não existe em lugar nenhum do sistema. Caminho de dinheiro: exige
+  autorização.
+- **Quando vale a pena** — quando algum contratante tiver assinantes
+  suficientes para a troca ser rotina, e não exceção que se resolve na
+  mão. Antes disso, o pedido avulso que o MostrAí escolheu é mais
+  simples e não constrói cálculo proporcional para dois casos por mês.
+
+## Converter o registro da conta Asaas para CNPJ, e ligar o split
+
+- **O quê** — pedir ao suporte da Asaas a conversão do **registro** da
+  conta-mãe de pessoa física para pessoa jurídica, e a partir daí criar
+  subconta por contratante e ligar o `split` nas cobranças.
+- **Por que** — hoje **100% de toda cobrança cai na conta-mãe** e o
+  repasse ao contratante é manual, por fora do sistema. Funciona com um
+  contratante e alguém olhando; deixa de funcionar quando o volume
+  crescer ou o segundo contratante existir, porque o repasse manual erra
+  em silêncio e ninguém confere transferência que não foi feita. O
+  `split` existe exatamente para o dinheiro do terceiro nunca passar
+  pela nossa mão.
+- **De onde veio** — 17/09/2026. A criação de subconta devolvia 403, e a
+  medição mostrou a causa: `/v3/myAccount` reporta a conta como `FISICA`
+  (CPF) enquanto `/v3/myAccount/commercialInfo` reporta `JURIDICA`
+  (CNPJ) — a regra de subconta olha o registro, e preencher o CNPJ no
+  comercial não converte a conta. Decisão do dono no mesmo dia: operar
+  na conta como está e deixar o jurídico de lado por agora.
+- **O que toca** — nada de código: `criarSubconta`, a tabela `subcontas`,
+  a tela do painel e o `split` em `asaasService` **já existem e já
+  funcionam**; estão sem uso porque a conta não permite. O que toca é o
+  cadastro da conta na Asaas, por ambiente (a de produção precisa ser
+  conferida em `/v3/myAccount` separadamente), e depois preencher o
+  `wallet_id` de cada contratante.
+- **Quando vale a pena** — **no segundo contratante, ou no primeiro mês
+  em que o repasse manual passar de um punhado de transferências.** Antes
+  disso, converter registro de conta de pagamento no meio de uma
+  integração em andamento troca um custo conhecido (repasse na mão) por
+  um desconhecido.

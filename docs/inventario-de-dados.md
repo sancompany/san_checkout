@@ -55,6 +55,28 @@ ambiente do Render. Não há tabela de usuários, não há senha no banco e a
 senha em texto puro não é guardada em lugar nenhum — o que fica no Render
 é o hash scrypt (N=2^17), envelopado em base64.
 
+### 4.1 O CPF do operador é PUBLICADO, e é obrigação legal
+
+Desde 17/09/2026 os Termos e a Política identificam o operador como
+**pessoa física**: nome civil, **CPF** e endereço, em página pública.
+
+| dado | onde | por quê |
+|---|---|---|
+| nome civil | `public/termos.html` §1.1, `public/privacidade.html` (contatos e rodapé) | Decreto 7.962/2013, art. 2º: o fornecedor identifica-se com nome e inscrição **no CPF ou no CNPJ** |
+| CPF | idem | operando como pessoa física, o CPF **é** a inscrição exigida |
+| endereço físico | idem | mesmo artigo: endereço físico e eletrônico em destaque |
+
+**A exposição é consciente, não descuido.** CPF em página pública é
+identificador de alto valor no Brasil e fica sujeito a coleta
+automatizada. Não há alternativa legal enquanto a operação for de pessoa
+física: omitir a inscrição descumpre o Decreto, e publicar parcialmente
+não identifica. **A saída é a transição para CNPJ** — que os próprios
+documentos anunciam, e que está em `docs/proximas-versoes.md` com
+gatilho. Quando concluída, o CPF sai daqui.
+
+Este é o único dado pessoal **do operador** que o projeto publica. Nada
+de titular de terceiro é publicado em lugar nenhum.
+
 ---
 
 ## 5. Onde os dados ficam
@@ -182,3 +204,33 @@ Estas tabelas são diagnóstico, **não herdam os 5 anos da seção 6** — e
 a rotina que as expurga é a primeira rotina de expurgo que este projeto
 tem de fato. A da seção 6, sobre o dado do comprador, continua
 pendente.
+
+## 7.2 Tabela da captura de exceção
+
+Criada pela migration `0007_captura_de_erro.sql`, em 16/09/2026.
+
+| Tabela | Dado pessoal | Retenção |
+|---|---|---|
+| `erros` | **Nenhum, por construção** — contexto, padrão da rota, método, status, tipo e código do erro, quadros de pilha do nosso `src/`, e a mensagem **raspada** | 30 dias, pela rotina `expurgarErros` (boot e a cada 24h, `server.js`) |
+
+**O que nunca entra:** corpo da requisição, query string, cabeçalho, IP,
+e a URL real. `rota` guarda o **padrão** do Express
+(`/api/checkout/status/:contratanteId/:pedidoId`), nunca a URL chamada —
+a URL carrega o `pedidoId`, que por desenho é imprevisível
+(`exigirIdImprevisivel`) e portanto é credencial, não identificador.
+
+**A mensagem é o único texto livre, e é raspada antes de gravar.** Lista
+branca não se aplica a texto livre, e a §2.5 proíbe lista negra porque
+lista negra falha aberta. A saída foi inverter a pergunta: em vez de
+enumerar o que remover, enumerar **o que sobrevive** — letras, pontuação
+e números curtos. Toda corrida de 4+ dígitos sai, em qualquer formatação;
+e-mail, token longo e query string também. É o que mata CPF, CNPJ,
+telefone, CEP e cartão sem depender de acertar o formato, porque o que
+identifica pessoa é número e o que se depura é palavra.
+
+O autoteste de `erroService.js` prova isso: se um CPF (em quatro
+formatações), e-mail, telefone, CEP ou chave sobreviver, a suíte falha.
+Verificado por sabotagem em 16/09.
+
+Diagnóstico como as de 7.1 — **não herda os 5 anos da seção 6**, e tem
+retenção ainda mais curta que os 90 dias do webhook.
