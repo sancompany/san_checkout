@@ -173,6 +173,44 @@ meio que o checkout usa) e de boleto, com fixtures descartáveis:
 pedido avulso** mantendo a assinatura — que é a decisão do dono para o
 MostrAí, tomada em 16/09/2026.
 
+#### Se o MostrAí for cobrar a diferença, a conta é do lado dele — e tem uma armadilha
+
+O checkout **não calcula proporcional**, e a **Asaas também não**: medido
+em 17/09, `updatePendingPayments: true` põe na cobrança pendente o valor
+novo **cheio**, não um rateio. Então quem calcula a diferença é o
+MostrAí, e a cobra como pedido avulso comum.
+
+A fórmula que funciona **também entre ciclos diferentes** proporcionaliza
+os dois lados, não a diferença:
+
+```
+dias_restantes = vencimento_atual − hoje
+credito        = valor_PAGO_do_periodo × (dias_restantes ÷ dias_do_ciclo_atual)
+debito         = valor_do_plano_novo  × (dias_restantes ÷ dias_do_ciclo_novo)
+cobra_agora    = debito − credito     (se ≤ 0, não cobra nada)
+```
+
+Com 15 dias restantes de um mensal de R$ 100:
+
+| troca para | crédito | débito | cobra agora |
+|---|---|---|---|
+| mensal R$ 160 | 50,00 | 80,00 | **R$ 30,00** |
+| trimestral R$ 270 | 50,00 | 45,00 | **nada** (dá −5) |
+| anual R$ 2.400 | 50,00 | 98,63 | **R$ 48,63** |
+
+**A armadilha é a linha do meio.** "Diferença entre os planos" daria
+R$ 270 − R$ 100 = **R$ 170 por 15 dias** de um plano que custa R$ 90/mês.
+Um plano mais caro no total pode ser **mais barato por dia** — e aí a
+troca não gera acerto nenhum.
+
+E três limites que valem para o pedido avulso do acerto:
+
+- **piso de R$ 5,00 por parcela**: acerto de R$ 3,00 é recusado pela
+  Asaas. Decida antes o que fazer (absorver é o mais simples);
+- **valor zero é vetado** em qualquer caminho de cobrança;
+- se o assinante tem **cobrança pendente não paga**, não existe crédito
+  de período que não foi pago — a conta acima não se aplica.
+
 > Essa decisão foi tomada sobre uma premissa **falsa** que eu havia
 > escrito: que a Asaas não permitia alterar valor. Ela permite. A
 > decisão pode continuar valendo — o pedido avulso é mais simples e não

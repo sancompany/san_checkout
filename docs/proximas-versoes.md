@@ -323,6 +323,91 @@ para um problema que talvez nem exista mais.
   valendo (o avulso é mais simples e não constrói cálculo proporcional
   para dois casos por mês); o que não pode é continuar valendo por um
   motivo que não existe.
+- **A regra de proporcional que o dono descreveu em 17/09/2026, e a
+  matemática que ela exige.** Ele enunciou assim: *na troca para plano
+  mais caro, cobra agora só a diferença até o vencimento do plano atual;
+  na troca para mais barato, não devolve nada — espera o fim do período
+  pago e passa a cobrar o preço novo a partir dali.* É o modelo padrão
+  de SaaS (proporcional na subida, rebaixamento no fim do período), e é
+  defensável. O que falta é a aritmética, e ela **não é "a diferença
+  entre os planos"** quando os ciclos são diferentes.
+
+  **Primeiro, o que a Asaas NÃO faz** (medido em 17/09): ela não tem
+  proporcional nenhum. `updatePendingPayments: true` põe na cobrança
+  pendente o valor novo **cheio**, não um rateio (R$ 20 → R$ 42 na
+  medição). Então o "acerto" é sempre **uma cobrança avulsa nossa**
+  (seção 4.1 do `API.md`), calculada por nós.
+
+  **A fórmula que sobrevive a ciclos diferentes** — proporcionaliza os
+  dois lados, e não a diferença:
+
+  ```
+  dias_restantes  = vencimento_atual − hoje
+  credito         = valor_PAGO_do_periodo × (dias_restantes ÷ dias_do_ciclo_atual)
+  debito          = valor_do_plano_novo  × (dias_restantes ÷ dias_do_ciclo_novo)
+  acerto_agora    = debito − credito        (se ≤ 0, não cobra e não devolve)
+  ```
+
+  O crédito sai do valor **pago**, não do valor atual da assinatura —
+  senão dá para alterar o valor antes de trocar e farmar crédito.
+
+  **Três exemplos, com 15 dias restantes de um mensal de R$ 100 (ciclo
+  de 30 dias):**
+
+  | troca para | crédito | débito | cobra agora | no vencimento |
+  |---|---|---|---|---|
+  | mensal R$ 160 | 100 × 15/30 = **50** | 160 × 15/30 = **80** | **R$ 30** | R$ 160, mensal |
+  | trimestral R$ 270 (R$ 90/mês) | **50** | 270 × 15/90 = **45** | **nada** (−5) | R$ 270, trimestral |
+  | anual R$ 2.400 (R$ 200/mês) | **50** | 2400 × 15/365 = **98,63** | **R$ 48,63** | R$ 2.400, anual |
+
+  A linha do meio é o motivo de a fórmula ser essa: "diferença entre os
+  planos" daria R$ 270 − R$ 100 = **R$ 170 cobrados por 15 dias** de um
+  plano que custa R$ 90/mês. Absurdo, e é o erro natural de quem escreve
+  a regra de cabeça. Um trimestral mais caro no total pode ser **mais
+  barato por dia** — e aí a troca é um upgrade de compromisso, não de
+  preço, e não gera acerto.
+
+  **A data não se move, e isso é medido:** trocar o `cycle` **não altera
+  o `nextDueDate`**. Então o desenho natural é *alinhar no vencimento que
+  já existe*: o acerto cobre os dias restantes, e na data que já era do
+  assinante entra o plano novo inteiro, com o ciclo novo contando dali.
+  Nenhuma data muda, nenhuma cobrança é perdida.
+
+  **O rebaixamento é o caso fácil, e sai quase de graça:** um `PUT` com o
+  valor menor, **sem** `updatePendingPayments`. Medido: a cobrança
+  pendente já gerada fica no valor antigo, e a assinatura passa a cobrar
+  o valor novo no ciclo seguinte. É exatamente "espera o fim e cobra
+  menos", sem código de proporcional e sem devolução.
+
+  **As sete decisões que a regra ainda não responde**, e nenhuma é
+  técnica:
+
+  1. **Acerto abaixo do piso de R$ 5,00.** A Asaas recusa a cobrança
+     (medido: `400 invalid_value`). Absorve e sobe só no vencimento?
+     Arredonda para R$ 5,00? Acumula? *Sugestão: absorver — nunca cobrar
+     mais do que o devido, e a perda é de centavos.*
+  2. **Acerto negativo** (o caso do trimestral acima). Pela regra dele,
+     não devolve — então não cobra nada e segue. Confirmar que é isso.
+  3. **Assinante com cobrança pendente não paga.** Não existe crédito de
+     período que não foi pago. *Sugestão: recusar a troca até resolver.*
+  4. **Duas trocas no mesmo período.** O crédito da segunda é do que foi
+     pago no período, já descontado o acerto da primeira — ou cada troca
+     recalcula do zero? Sem regra, dá para ganhar crédito trocando.
+  5. **Base de dias.** Mês comercial de 30 e ano de 365, ou os dias
+     reais do calendário entre vencimentos? Muda centavos, e muda o que
+     o cliente confere na mão.
+  6. **O acerto estornado.** Ele é pedido avulso: se for estornado ou
+     contestado, a troca já aconteceu. Reverte o plano? Mantém?
+  7. **Consentimento (CDC).** Upgrade pedido pelo assinante é
+     consentimento dele. **Aumento que ele não pediu não é** — e aí o
+     caminho honesto é cancelar e assinar de novo, onde ele autoriza o
+     valor novo ao pagar.
+
+  **Nada disso existe em código hoje** — nem o cálculo, nem a rota, nem a
+  cobrança do acerto amarrada à troca. A entrada continua aqui e não em
+  `docs/pendencias.md` porque o MostrAí segue pelo pedido avulso por
+  decisão de 16/09.
+
 - **As duas coreografias possíveis, agora que o `PUT` está medido.** A
   escolha é de produto, não técnica, e as duas exigem autorização
   (caminho de dinheiro):
