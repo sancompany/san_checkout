@@ -410,7 +410,15 @@ export async function obterMetricas(requisicao, resposta) {
 
   const { data, error } = await supabase
     .from('cobrancas')
-    .select('contratante_id, metodo_pagamento, status, valor_cobrado, criado_em, confirmado_em')
+    /* `ambiente` e `e_teste` entram aqui porque o filtro de negócio
+       (RN-33) mora no agregador: coluna que não vem no `select` chega
+       como `undefined`, e `undefined !== 'producao'` excluiria TODA
+       cobrança em silêncio — hoje daria o número certo por coincidência
+       (é tudo sandbox) e erraria para sempre depois da troca. */
+    .select(
+      'contratante_id, metodo_pagamento, status, valor_cobrado, criado_em, ' +
+      'confirmado_em, ambiente, e_teste'
+    )
     .or(`criado_em.gte.${limite},confirmado_em.gte.${limite}`);
 
   if (error) return responderErro(resposta, error, 'admin.obterMetricas');

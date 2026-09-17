@@ -654,6 +654,32 @@ pública. Achado em 17/09/2026 pelo ciclo da skill `revisar`, enquanto se
 escrevia a rotina de expurgo, que precisava casar documento para
 atender pedido de titular.
 
+**RN-33 · A métrica conta negócio, e uso interno não é negócio.** Toda
+cobrança nasce com `ambiente` (de qual ambiente da Asaas ela veio) e
+`e_teste` (marcação de uso interno), e a métrica de sucesso só soma a
+linha em que `ambiente = 'producao'` **e** `e_teste = false`. O
+`ambiente` vem da configuração do processo (`src/config/asaas.js`),
+nunca do corpo da requisição — quem paga não escolhe em que ambiente a
+própria cobrança nasceu. E `e_teste` é de **mão única**: vai de teste
+para real e não volta, travado por gatilho no banco
+(`supabase/migrations/0009_ambiente_e_teste.sql`), porque o caminho
+inverso apagaria da conta um resultado de negócio já contado, e
+apagaria em silêncio. *Violada:* o pagamento que o dono faz para
+exercitar o fluxo entra na conta como cobrança confirmada de verdade —
+e a métrica de sucesso do projeto, que é "quantas confirmadas ontem,
+por contratante" (seção 9), passa a medir a própria casa. Depois da
+troca para produção, com dinheiro real entrando no mesmo banco das
+cobranças de teste, o número erraria no primeiro dia e não haveria como
+saber de quanto. *Quem vê:* o operador, na aba Métricas do painel — que
+mostra o que ficou de fora num cartão próprio ("Fora da conta"), porque
+exclusão silenciosa é indistinguível de dado que não existe: com dez
+cobranças de sandbox no banco, "Nenhuma cobrança no período" seria uma
+frase falsa. Por isso a aba tem **dois vazios diferentes**: "não houve
+cobrança" e "houve, e nenhuma era de negócio". A soma confere — entrou
+mais excluído é igual ao lido do banco, conferido por autoteste e
+medido contra o banco de produção em 17/09/2026 (10 linhas lidas, 10
+excluídas, 0 de negócio).
+
 ---
 
 ## 6. Textos que o sistema diz
@@ -843,26 +869,44 @@ emitidos **no servidor**, nunca no navegador.
 | `assinatura:assinatura_cancela` | servidor, no cancelamento | `contratante_id`, `plano_id`, `motivo_cancelamento` | quanto tempo uma assinatura dura? |
 | `webhook:entrada_rejeita` | servidor, na guarda de token do webhook | `rota_alvo`, `janela_hora` | alguém está tentando forjar webhook? |
 
-**Uso interno filtrado:** o contratante de teste (`testemaster`) produz
-cobrança confirmada de mentira. A migration 0004 já prevê `e_teste` em
-contratantes, de mão única — sem essa coluna, o teste de ponta a ponta
-contamina a métrica.
+**Uso interno filtrado, desde 17/09/2026:** o contratante de teste
+(`testemaster`) produz cobrança confirmada de mentira, e o sandbox
+inteiro também. As duas colunas que resolvem isso estavam desenhadas na
+migration 0004 e nunca foram escritas; entraram na **0009**, e em
+`cobrancas` — não em contratantes, como a 0004 previa, porque a marcação
+é da cobrança: o contratante real pode ter uma linha de teste, e o
+contratante de teste pode ser arquivado sem levar o histórico embora. A
+regra inteira é a RN-33, e o que ela exclui aparece no painel em vez de
+desaparecer.
 
 **O que existe hoje, e o que falta.** Nenhum destes nove é gravado como
 linha de evento: a métrica é **derivada de `cobrancas`**, por
 `GET /api/admin/metricas?dias=N` → `porContratante[id].pagas`,
 `.valorPago`, `.taxaPagamento`. Isso responde "quantos ontem?" com
-número, que é o que a estação 6 exige, com uma ressalva medida:
-`dias=N` conta as últimas N×24 h, **não dias civis**. A tabela
-`eventos(usuario_id, nome, propriedades, criado_em)` e o recorte por
-data são trabalho da estação 6, e os nomes acima são o contrato que ela
-vai implementar.
+número, que é o que a estação 6 exige — e responde **por dia civil de
+Brasília** desde 16/09/2026, como o começo desta seção descreve. Este
+parágrafo trazia a ressalva de que `dias=N` contava as últimas N×24 h:
+era verdade até aquele dia, e ficou aqui depois de deixar de ser, com a
+correção escrita quinze linhas acima. A tabela
+`eventos(usuario_id, nome, propriedades, criado_em)` **não existe, e não
+está em pendência nenhuma** — o que a estação 6 cobra é a pergunta
+respondida com número, e ela é respondida sem a tabela. Os nomes acima
+seguem sendo o contrato de quando alguma pergunta exigir linha por
+evento; nesse dia a tabela entra como trabalho novo, não como dívida
+antiga.
 
 **Dois eventos que não existem de propósito:** `checkout:pagina_abre` e
 `checkout:pedido_indisponivel_ve`. Ambos são do navegador, exigiriam
 gravar linha por visita e trariam bot junto. Enquanto a pergunta
 principal for "quantas cobranças confirmadas ontem, e de quem", a
 resposta sai de `cobrancas` sem instrumentação nova.
+
+---
+
+## 10. O que fica fora desta versão
+
+A lista é do `CONSTRAINTS.md` §1 (vetado e fora de escopo) e do
+`docs/proximas-versoes.md` (adiado com gatilho) — sem repetição aqui.
 
 ---
 
@@ -926,13 +970,6 @@ status trazem a palavra ("Não encontrado", "Pago"), não só a cor.
 Estados que dependem de resposta real da Asaas — QR gerado, boleto
 emitido, erro devolvido pelo servidor — não entram no verificador: eles
 exigem cobrança viva. Ficam para a rodada ao vivo no sandbox.
-
----
-
-## 10. O que fica fora desta versão
-
-A lista é do `CONSTRAINTS.md` §1 (vetado e fora de escopo) e do
-`docs/proximas-versoes.md` (adiado com gatilho) — sem repetição aqui.
 
 ---
 

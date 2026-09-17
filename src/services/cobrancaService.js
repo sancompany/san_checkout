@@ -2,12 +2,22 @@
  * SAN CHECKOUT v2 — src/services/cobrancaService.js
  * Registra cada cobrança criada, liga com o contratante/pedido de
  * origem, e serve de consulta pro webhook e pro estorno.
+ *
+ * **Toda** inserção aqui grava `ambiente` (migration 0009, RN-33): em
+ * que ambiente da Asaas a cobrança nasceu. Vem de `ambienteAsaas()`,
+ * nunca do corpo da requisição — é fato do servidor, e deixá-lo entrar
+ * de fora seria a mesma classe do valor que o comprador escolhe. A
+ * métrica de sucesso exclui `sandbox`, e esquecer a coluna numa
+ * inserção nova conta a métrica para BAIXO em silêncio: o autoteste de
+ * `metricaService` varre este arquivo justamente por isso.
  */
 
 import { supabase } from '../config/supabase.js';
+import { ambienteAsaas } from '../config/asaas.js';
 
 export async function registrarCobranca(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     charge_id: dados.chargeId,
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId,
@@ -47,6 +57,7 @@ export async function registrarCobranca(dados) {
  */
 export async function registrarCobrancaPendentePopup(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     asaas_checkout_id: dados.asaasCheckoutId,
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId ?? null,
@@ -121,6 +132,7 @@ export async function registrarCobrancaPendentePopup(dados) {
  */
 export async function registrarCicloAssinatura(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     charge_id: dados.chargeId,
     asaas_subscription_id: dados.asaasSubscriptionId,
     contratante_id: dados.contratanteId,

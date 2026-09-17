@@ -349,11 +349,18 @@ npm run limpar-teste          # mostra o que apagaria, não apaga
 npm run limpar-teste -- --apagar --confirmo-que-e-sandbox
 ```
 
-A segunda bandeira não é burocracia. O script **não tem como saber** se
-o banco já tem dinheiro real: `ASAAS_AMBIENTE` vive no contêiner e
-nenhuma coluna marca "esta cobrança é real". Em vez de fingir um guarda,
-ele exige que você afirme — e recusa com código 1 se a bandeira faltar.
-Confira a lista que ele imprime antes de confirmar.
+O script tem **dois guardas, nessa ordem**. O primeiro é automático e
+não tem como ser contornado: desde a migration 0009, `cobrancas.ambiente`
+diz de onde cada cobrança veio (RN-33), e havendo **uma** linha de
+produção ele recusa apagar qualquer coisa, inclusive com as duas
+bandeiras. O segundo é a bandeira `--confirmo-que-e-sandbox`, que
+continua exigida porque as outras quatro tabelas não têm a coluna e
+apagar histórico de cobrança não tem volta.
+
+Até 17/09/2026 só existia o segundo, e este parágrafo dizia que o script
+"não tem como saber" — era verdade enquanto nenhuma coluna marcasse a
+origem. Ele imprime a quebra por ambiente antes de perguntar qualquer
+coisa; confira essa lista e a das assinaturas antes de confirmar.
 
 **Antes da troca, não depois.** O motivo está no `API.md §11.1`:
 assinatura de sandbox que sobrevive no nosso registro vira zumbi —

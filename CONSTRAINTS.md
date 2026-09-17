@@ -911,6 +911,51 @@ domínio hostil redireciona para lá. Não é open redirect — é parte
 confiável abusando do próprio cadastro, feito pelo dono no painel, de
 alguém que já recebe dinheiro e já tem `api_key`.
 
+## 2.9 A origem da cobrança é do processo, nunca da requisição (Lei 7)
+
+Desde 17/09/2026 (migration 0009), toda linha de `cobrancas` nasce com
+duas marcas, e a métrica de sucesso só conta a cobrança em que
+`ambiente = 'producao'` **e** `e_teste = false` — a regra inteira é a
+RN-33 de `docs/funcional.md`.
+
+Os limites que este arquivo registra, porque são o que impede a marca de
+virar mentira:
+
+- **`ambiente` vem de `src/config/asaas.js`, nunca do corpo da
+  requisição.** Se viesse de fora, quem paga escolheria em que ambiente
+  a própria cobrança nasceu, e a métrica de sucesso passaria a ser
+  escrita por terceiro. É a mesma razão do `valor` ser puxado do
+  contratante em vez de aceito do navegador.
+- **`e_teste` é de mão única, travada no BANCO.** O gatilho
+  `cobrancas_e_teste_mao_unica` permite `true → false` (promover teste a
+  real, que é corrigir marcação) e recusa `false → true` — marcar como
+  teste uma cobrança real é esconder receita da métrica. Não é guarda de
+  aplicação, porque guarda de aplicação vale só para quem passa pela
+  aplicação, e migration, painel do Supabase e script avulso não passam.
+  O caminho inverso apagaria da conta um resultado já contado, e
+  apagaria calado.
+- **`ambiente` é conjunto fechado** (`sandbox`/`producao`), por check
+  constraint — valor novo é recusado pelo banco em vez de virar uma
+  terceira categoria que o filtro da métrica não conhece.
+- **A exclusão é relatada, nunca silenciosa.** A rota devolve
+  `excluidas: { sandbox, teste, total }` e o painel mostra num cartão
+  próprio, porque exclusão calada é indistinguível de dado que não
+  existe: com dez cobranças de sandbox no banco, "nenhuma cobrança no
+  período" seria uma frase falsa.
+- **O filtro é aplicado em JS, não no SQL, e isso é deliberado.** A
+  rota lê as linhas da janela e o agregador separa — porque o relatório
+  precisa CONTAR o que excluiu, e `where ambiente = 'producao'` no banco
+  devolveria as excluídas como se não existissem. Consequência a
+  declarar: o índice parcial `idx_cobrancas_metrica_real`, criado pela
+  0009, **não é usado pela consulta de hoje**; ele só passa a valer se
+  algum dia o corte descer para o SQL. Fica como está — migration
+  aplicada é imutável (§2.1), e índice não usado custa escrita, não
+  leitura.
+- **O que a marca NÃO faz:** ela não separa assinatura. `assinaturas`
+  não tem `ambiente`, e é a assinatura de sandbox que vira zumbi depois
+  da troca (`RUNBOOK.md` §6.2, passo 3) — a limpeza antes da troca
+  continua sendo passo obrigatório, não faxina posterior.
+
 ## 3. Exceções de conformidade registradas
 
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção

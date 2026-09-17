@@ -231,10 +231,14 @@
           </div>
         </div>
 
+        <!-- Dois estados vazios, porque são duas situações diferentes e
+             confundi-las é mentir. "Nenhuma cobrança" havendo dez de
+             sandbox é falso; o texto é escolhido pelo admin.js a partir
+             de `excluidas`. -->
         <div class="painel" id="vazio-metricas" hidden>
           <div class="vazio">
-            <p class="vazio-titulo">Nenhuma cobrança no período</p>
-            <p class="vazio-texto">Assim que houver cobranças, os números aparecem aqui.</p>
+            <p class="vazio-titulo" id="vazio-metricas-titulo">Nenhuma cobrança no período</p>
+            <p class="vazio-texto" id="vazio-metricas-texto">Assim que houver cobranças, os números aparecem aqui.</p>
           </div>
         </div>
       </section>

@@ -863,6 +863,35 @@ async function carregarMetricas() {
 
     $('vazio-metricas').hidden = !vazio;
 
+    /* ZERO DE NEGÓCIO NÃO É "NÃO HOUVE NADA".
+
+       A métrica exclui sandbox e cobrança marcada como teste (migration
+       0009), e enquanto o checkout está em sandbox isso zera o número —
+       corretamente. Mas o texto "Nenhuma cobrança no período" seria
+       falso havendo dez cobranças exercitadas: quem lesse concluiria que
+       o fluxo não funcionou.
+
+       Os dois casos ganham texto próprio. É a mesma regra do travessão
+       no lugar do `R$ 0,00`: ausência de resultado e ausência de
+       medição não se escrevem igual. */
+    const excluidas = m.excluidas ?? { total: 0, sandbox: 0, teste: 0 };
+    /* Plural de verdade nos dois lugares que falam de exclusão: o vazio
+       e o cartão. "marcada(s)" é o jeito de não escolher, e a tela do
+       operador não é lugar de não escolher. */
+    const so = (n, s1, s2) => `${n} ${n === 1 ? s1 : s2}`;
+    if (vazio) {
+      $('vazio-metricas-titulo').textContent = excluidas.total > 0
+        ? 'Nenhuma cobrança de negócio no período'
+        : 'Nenhuma cobrança no período';
+      $('vazio-metricas-texto').textContent = excluidas.total > 0
+        ? `Houve ${so(excluidas.total, 'cobrança', 'cobranças')}, e nenhuma conta como resultado: `
+          + [
+            excluidas.sandbox > 0 ? `${so(excluidas.sandbox, 'é de sandbox', 'são de sandbox')}` : null,
+            excluidas.teste > 0 ? `${so(excluidas.teste, 'está marcada como teste', 'estão marcadas como teste')}` : null
+          ].filter(Boolean).join(' e ') + '.'
+        : 'Assim que houver cobranças, os números aparecem aqui.';
+    }
+
     /* "Quantos ontem?" é a pergunta que a prontidão operacional manda a
        métrica responder, então ela vem PRIMEIRO e por extenso — não
        escondida num gráfico que alguém precisa interpretar.
@@ -892,6 +921,17 @@ async function carregarMetricas() {
         <p class="cartao-metrica-rotulo">Sem data de confirmação</p>
         <p class="cartao-metrica-valor">${m.confirmadasSemData}</p>
         <p class="cartao-metrica-nota">confirmadas antes de 16/09/2026 — a data não foi registrada</p>
+      </div>` : ''}
+      ${excluidas.total > 0 ? `
+      <div class="cartao-metrica">
+        <p class="cartao-metrica-rotulo">Fora da conta</p>
+        <p class="cartao-metrica-valor">${excluidas.total}</p>
+        <p class="cartao-metrica-nota">
+          ${escapar([
+            excluidas.sandbox > 0 ? `${excluidas.sandbox} de sandbox` : null,
+            excluidas.teste > 0 ? so(excluidas.teste, 'marcada como teste', 'marcadas como teste') : null
+          ].filter(Boolean).join(' · '))}
+        </p>
       </div>` : ''}`;
 
     $('metricas-fuso').textContent = vazio

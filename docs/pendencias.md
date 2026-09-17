@@ -614,7 +614,7 @@ positivo. RN-31, `docs/inventario-de-dados.md` §6.
 **A validação jurídica continua aberta e é da Estação 7** — os 5 anos são
 a escolha mais defensável sem advogado, não um parecer.
 
-### Migration 0004 — search_path feito; colunas ainda não
+### 🟢 Migration 0004 — search_path e as colunas de `cobrancas` — FEITO 17/09
 A **correção de `search_path`** das duas funções da 0002 que o linter
 acusava foi aplicada em 14/09 (`supabase/migrations/0004_search_path_funcoes.sql`,
 `alter function ... set search_path = public`) — o advisor de segurança
@@ -622,10 +622,35 @@ não acusa mais o WARN, só o INFO de RLS-sem-policy, que é o default-deny
 intencional (backend usa service_key; anon/publishable leem zero linha,
 conferido).
 
-Ainda desenhadas e não escritas: `desativado_em` em contratantes,
-`e_teste` (de mão única: só vai de teste para real) e `ambiente` em
-cobranças. Entram quando o modo de teste por contratante
-(`docs/proximas-versoes.md`) ou a troca para produção pedirem.
+As **duas colunas de `cobrancas`** entraram em 17/09, na migration
+**0009** — `ambiente` (conjunto fechado `sandbox`/`producao`, por check
+constraint) e `e_teste` (de mão única, travada por gatilho no banco, não
+por código de aplicação). O gatilho da 0009 foi a troca para produção: a
+métrica de sucesso contaria o pagamento de teste do dono como resultado
+de negócio no primeiro dia de dinheiro real. A regra é a RN-33
+(`docs/funcional.md`), e o filtro está em `metricaService`, que relata o
+que excluiu em vez de excluir calado.
+
+Aplicada e conferida no banco de produção no mesmo dia: colunas com
+`not null` e default, a constraint recusando `ambiente = 'homologacao'`,
+o gatilho recusando real→teste com a mensagem escrita, e as 10 cobranças
+existentes corretamente em `sandbox`/`false`. As duas regras foram
+provadas ao vivo com uma cobrança descartável, que foi apagada depois.
+
+Uma ressalva que a própria migration não diz: o comentário dela chama
+`idx_cobrancas_metrica_real` de "índice sobre o que a consulta de fato
+lê", e isso não é verdade hoje — o corte de negócio acontece em JS,
+porque o relatório precisa contar o que excluiu. O índice só passa a
+valer se o corte descer para o SQL. A migration fica como está (§2.1,
+imutável); a verdade está no `CONSTRAINTS.md` §2.9.
+
+**Ainda desenhada e não escrita:** `desativado_em` em contratantes. Ela
+não tem gatilho hoje — entra com o modo de teste por contratante
+(`docs/proximas-versoes.md`), se ele vier. Note que a 0004 previa
+`e_teste` em **contratantes**, e a 0009 o pôs em **cobranças**: a
+marcação é da cobrança, porque o contratante real pode ter uma linha de
+teste e o contratante de teste pode ser arquivado sem levar o histórico
+embora.
 
 ### Quando ligar o proxy laranja do Cloudflare ou outro salto
 O `app.set('trust proxy', 1)` confia em **um** proxy. Verificado em

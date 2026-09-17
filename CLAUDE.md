@@ -84,7 +84,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 17/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, migrations 0001-0008 aplicadas, árvore limpa |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 17/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, migrations 0001-0009 aplicadas, árvore limpa |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -395,6 +395,27 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
   de item errado desde que foi escrito, então a linha de item nunca
   havia sido exercitada.
+- **A métrica de sucesso parou de contar uso interno** (RN-33, migration
+  0009). As colunas `ambiente` e `e_teste` em `cobrancas` estavam
+  desenhadas na 0004 e nunca foram escritas — sem elas, o pagamento de
+  teste do dono entraria na conta como resultado de negócio no primeiro
+  dia de dinheiro real, e é este o número que mede o projeto. `ambiente`
+  vem da configuração do processo, nunca do corpo da requisição;
+  `e_teste` é de **mão única**, travada por gatilho no banco em vez de
+  por código de aplicação. As duas regras foram provadas ao vivo contra
+  produção com uma cobrança descartável, apagada depois, e a métrica nova
+  rodou **dentro do contêiner** (nenhum dado pessoal desceu para disco):
+  10 lidas, 0 de negócio, 10 excluídas, soma conferindo. O painel mostra
+  o excluído num cartão próprio e tem dois vazios diferentes — "não
+  houve cobrança" e "houve, e nenhuma era de negócio" —, porque com dez
+  cobranças de sandbox no banco a frase antiga seria falsa.
+  **O ciclo de revisão da própria mudança achou um furo nela:** o
+  `select` da rota não trazia as duas colunas novas, e coluna ausente
+  chega `undefined` — o filtro excluiria TODA cobrança, para sempre,
+  dando hoje o número certo por coincidência. Corrigido, e travado por
+  uma checagem geral: todo campo que o agregador lê de uma linha tem de
+  estar no `select` da rota
+  (`docs/erros/2026-09-17-o-filtro-dependia-de-coluna-que-a-consulta-nao-trazia.md`).
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
