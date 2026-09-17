@@ -141,6 +141,75 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟡 Prontidão item 6 · o RUNBOOK ficou completo na forma, e falta o que só o dono tem — 17/09
+As sete seções que a prontidão operacional exige e que **não existiam**
+foram escritas em 17/09: inventário de contas (§1.1), segredos e como
+rotacionar cada um (§1.2), alerta → significado → primeira ação (§6.3),
+incidente com dado pessoal e os prazos da ANPD (§8.1), dependências
+externas e o que cada queda derruba (§9), contatos (§10) e como desligar
+tudo com segurança (§11). Deploy, reversão e restauração já existiam.
+
+O que **só o dono preenche**, e está marcado `⬜` no próprio arquivo:
+e-mail de login de cada conta, onde a senha e o segundo fator moram,
+qual cartão paga o quê, e o contato direto dele. Sem isso as seções
+descrevem a forma e não servem na hora — que é o oposto do objetivo.
+
+**O item só fecha com a pessoa número dois**, e o teste é o da própria
+prontidão: ela, com o runbook e sem falar com quem construiu, faz um
+deploy trivial, reverte, e acha a data de vencimento do domínio. Onde
+travar, o arquivo está incompleto. **Não existe pessoa número dois
+hoje.**
+
+Medido no dia, e escrito no arquivo: domínio `sancocore.com.br` vence
+**31/08/2027** (RDAP do registro.br); projeto Supabase
+`zacuaroarelaqnzjjlcz` em `sa-east-1`; Northflank publica de `main`; e
+os dois workflows do CI **não usam segredo de repositório** nenhum.
+
+### 🟠 A zona `sancocore.com.br` não tem registro SPF, e o DMARC é `p=reject` — MEDIDO 17/09
+Conferido em dois resolvedores independentes (Cloudflare e Google): a
+zona tem DKIM (seletor `google`) e `_dmarc` com `v=DMARC1; p=reject`, e
+**nenhum registro `v=spf1`**.
+
+Por que passou pela conferência do item 1 da prontidão: com DKIM
+válido, o DMARC passa por alinhamento de DKIM, então o e-mail enviado
+pelo Workspace chega — e chegou. O que o SPF ausente custa é o resto:
+receptor que pesa SPF vê `none`, e **qualquer caminho que quebre a
+assinatura DKIM** (encaminhamento, provedor transacional novo amanhã)
+cai em `p=reject` — rejeição, não caixa de spam. Para um endereço que é
+**canal legal do titular** (`juridico@`), silêncio é descumprimento.
+
+A correção é um registro TXT na zona, e **mudar DNS é da lista curta**
+— é do dono. O valor a publicar sai do painel do Workspace (é o
+`include` do Google); não o escrevo aqui de cabeça para não colar um
+registro errado num domínio que já rejeita.
+
+### 🟡 Rotação do token de webhook não tem janela sem risco — DECLARADO 17/09
+O receptor aceita **um** `ASAAS_WEBHOOK_TOKEN` por vez. Trocando
+primeiro no Northflank, a Asaas entrega com o valor velho e leva 503;
+trocando primeiro na Asaas, o mesmo pelo outro lado. Qualquer ordem
+acumula falha, e 15 seguidas pausam a fila da conta (`CONSTRAINTS.md`
+§2.3). Hoje o procedimento é "trocar nos dois lugares em sequência, em
+tráfego baixo, e conferir a aba Webhook" (`RUNBOOK` §1.2).
+
+Aceitar dois tokens durante a virada resolve, e é pouco código — mas é
+código no caminho do dinheiro, e a troca para produção já vai rotacionar
+esse token uma vez sob acompanhamento. Fica declarado, não construído às
+pressas.
+
+### 🟡 A chave de sandbox da Asaas apareceu na saída de um comando — 17/09
+`northflank get service` imprime o `runtimeEnvironment` **com os
+valores**. Rodei o comando para levantar o inventário de contas do
+RUNBOOK, e com ele saíram a `ASAAS_API_KEY` de sandbox (a de homologação, pelo prefixo) e
+o `ASAAS_WEBHOOK_TOKEN` de sandbox na saída da sessão.
+
+Não é chave de produção e os dois valores serão substituídos no passo 4
+da troca (`RUNBOOK` §6.2) — que é a rotação. Mas o registro fica, e o
+aviso entrou no `RUNBOOK` §1.2 com o comando que lista **só os nomes**
+das variáveis. A regra que eu já seguia para a chave de produção ("ela
+não sai do contêiner") valia igual para esta, e eu não a apliquei ao
+comando de inventário.
+
+
 ### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09
 Achado em 15/09/2026, auditando o caminho da assinatura. O
 `CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos

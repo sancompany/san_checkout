@@ -395,6 +395,17 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
   de item errado desde que foi escrito, então a linha de item nunca
   havia sido exercitada.
+- **As sete seções que faltavam no `RUNBOOK`** (item 6 da prontidão:
+  "outra pessoa consegue operar"). Inventário de contas, segredos e como
+  rotacionar cada um, alerta → significado → primeira ação, incidente
+  com dado pessoal **com os prazos da ANPD lidos na fonte da skill
+  `legal`** (nunca de cabeça: prazo legal chutado é prazo perdido),
+  dependências externas e o que cada queda derruba, contatos, e como
+  desligar tudo sem deixar assinatura cobrando. Medido no dia, não
+  suposto: o domínio vence **31/08/2027** (RDAP), o CI **não usa segredo
+  de repositório** nenhum, e a zona **não tem SPF** com `p=reject` no
+  DMARC — achado novo, e a correção é DNS, que é do dono. O que só o
+  dono tem ficou marcado `⬜` no arquivo em vez de inventado.
 - **A métrica de sucesso parou de contar uso interno** (RN-33, migration
   0009). As colunas `ambiente` e `e_teste` em `cobrancas` estavam
   desenhadas na 0004 e nunca foram escritas — sem elas, o pagamento de
@@ -423,6 +434,12 @@ assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
 gatilho escrito da exceção de backup (§3). Tudo isso vem depois da troca
 da Asaas para produção, que é do dono e que fecha a 5 sem ressalva. O
 MostrAí retesta o lado dele em paralelo.
+
+Mais três, do item 6, que também só o dono fecha: os campos `⬜` do
+inventário de contas e dos contatos (`RUNBOOK` §1.1 e §10); o **registro
+SPF** na zona; e a **pessoa número dois**, que é o teste do item — ela,
+com o runbook e sem falar comigo, faz um deploy trivial, reverte e acha
+a data de vencimento do domínio.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
@@ -458,6 +475,11 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   payload real para ser decidida (`CONSTRAINTS.md` §2.2).
 - **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
   da exceção de backup (`CONSTRAINTS.md` §3).
+- **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` do
+  inventário de contas e dos contatos (`RUNBOOK` §1.1 e §10), o
+  **registro SPF** na zona (medido ausente, com `p=reject` no DMARC), e
+  a **pessoa número dois** — que é o teste que fecha o item, não um
+  contato a mais na lista.
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

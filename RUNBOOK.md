@@ -24,6 +24,81 @@ runbook é pior que ausência.
 Aplicação e banco na mesma região — medido em 13/09/2026 do navegador do
 operador: rota sem banco 20-29 ms, rota com uma consulta 70-295 ms.
 
+## 1.1 Inventário de contas
+
+**Por que esta seção existe:** quem construiu tem tudo na cabeça até o
+dia em que o cartão do registrador expira e o domínio cai. A tabela
+abaixo é para outra pessoa conseguir operar sem falar com quem
+construiu.
+
+O que a sessão **mediu** em 17/09/2026 está escrito; o que **só o dono
+sabe** está marcado `⬜` e continua pendência até ele preencher —
+inventar aqui seria pior que deixar em branco.
+
+| conta | para que | identificadores medidos | login | senha e 2º fator | renovação / quem paga |
+|---|---|---|---|---|---|
+| **registro.br** | domínio `sancocore.com.br` | registrado 31/08/2026, **vence 31/08/2027** (RDAP, medido) | ⬜ | ⬜ | **31/08/2027** · cartão ⬜ |
+| **Cloudflare** | DNS da zona, Pages (`san-checkout`), Access (equipe `fancy-dawn-740a`) | zona `sancocore.com.br` | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
+| **Northflank** | backend | projeto/serviço `san-checkout`, branch `main`, build `nf-compute-400-16`, runtime `nf-compute-50` | ⬜ | ⬜ | mensal ⬜ · cartão ⬜ |
+| **Supabase** | banco | org `fphbzkrzgijqzpqzvshh`, projeto `San_Checkout` ref `zacuaroarelaqnzjjlcz`, `sa-east-1`, Postgres 17.6 | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
+| **Asaas** | pagamento | conta **pessoa física, em transição** (`CONSTRAINTS.md` §3); hoje `sandbox` | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
+| **GitHub** | repositório e CI | `sancompany/san_checkout`; **os dois workflows não usam segredo de repositório** (medido) | ⬜ | ⬜ | plano ⬜ |
+| **Google Workspace** | e-mail `@sancocore.com.br` | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject` — **sem registro SPF** (medido em dois resolvedores) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
+| **cron-job.org** | ping de 10 min em `/api/saude` | mantém o Supabase acordado | ⬜ | ⬜ | gratuito ⬜ |
+
+**Como reconferir o vencimento do domínio** (é o item que mais cai, e o
+único aqui que ninguém avisa):
+
+```bash
+curl -s https://rdap.registro.br/domain/sancocore.com.br \
+  | python3 -c "import sys,json;[print(e['eventAction'],e['eventDate']) for e in json.load(sys.stdin)['events']]"
+```
+
+**O SPF ausente é achado, não detalhe.** Com DKIM e `p=reject`, o
+e-mail enviado pelo Google passa por alinhamento de DKIM — e foi por
+isso que a conferência do item 1 da prontidão deu "chega". Mas
+receptor que pesa SPF vê `none`, e qualquer caminho futuro que quebre a
+assinatura DKIM (encaminhamento, provedor transacional novo) é
+**rejeitado**, não classificado como spam. A correção é um registro TXT
+na zona — e mudar DNS é da lista curta, então é do dono
+(`docs/pendencias.md`).
+
+## 1.2 Segredos: onde moram e como rotacionar
+
+**Regra:** aqui vai o *ponteiro*, nunca o segredo. Nenhum valor desta
+tabela é escrito neste arquivo, em commit, em issue ou em log.
+
+| segredo | onde mora | quem usa | como rotacionar | o que a rotação invalida |
+|---|---|---|---|---|
+| `ASAAS_API_KEY` | variável do serviço no Northflank | backend, em toda chamada à Asaas | painel da Asaas → chaves de API: gerar nova, colar no Northflank (o serviço reinicia), **revogar a antiga só depois** | nada nosso; cobrança em andamento não é afetada |
+| `ASAAS_WEBHOOK_TOKEN` | Northflank **e** painel da Asaas (Integrações → Webhooks) | receptor de webhook | trocar nos **dois** lugares, com o mesmo valor | ver o aviso abaixo |
+| `SUPABASE_SERVICE_KEY` | Northflank | backend, todo acesso ao banco | painel do Supabase → API keys → rotate | todo backend que usa a chave, na hora |
+| `CHECKOUT_ADMIN_USER` / `CHECKOUT_ADMIN_PASS_HASH` | Northflank | login do `/admin` | `node scripts/gerar-hash-admin.js` e trocar o hash | **todas as sessões abertas**, por construção |
+| Token pessoal do Supabase (`SUPABASE_ACCESS_TOKEN`) | ambiente de quem opera, nunca no serviço | `npm run limpar-teste`, `npm run ensaio-restauracao`, `npm run expurgo` | conta do Supabase → Access tokens | os scripts de operação, não o sistema no ar |
+| Credencial do Cloudflare | ambiente de quem opera | DNS, Pages, Access | painel do Cloudflare → API tokens | **é a conta inteira** — exceção registrada em `CONSTRAINTS.md` §3 |
+| GitHub | — | CI | — | **não há segredo de repositório** (medido: nenhum `secrets.` nos dois workflows) |
+
+**A rotação do token de webhook não tem janela sem risco, e é melhor
+saber antes:** o código aceita **um** token por vez. Trocado primeiro no
+Northflank, a Asaas entrega com o token velho e leva `503`; trocado
+primeiro na Asaas, o mesmo pelo outro lado. Qualquer das ordens acumula
+falha, e **15 seguidas pausam a fila da conta** (`CONSTRAINTS.md` §2.3).
+Então: trocar nos dois lugares em sequência imediata, em horário de
+tráfego baixo, e conferir a aba Webhook do painel logo depois. Aceitar
+dois tokens durante a virada resolveria — não está construído, e está
+declarado em `docs/pendencias.md`.
+
+> ⚠️ **`northflank get service` imprime os valores das variáveis.**
+> Rodar isso numa sessão ou num terminal compartilhado vaza a chave da
+> Asaas inteira na saída — aconteceu em 17/09/2026, com a chave de
+> sandbox, e ela entrou na fila de rotação por isso. Para ver só os
+> nomes:
+>
+> ```bash
+> northflank get service --project san-checkout --service san-checkout \
+>   | grep -oE '^ +[A-Z][A-Z0-9_]+:' | sort -u
+> ```
+
 ## 2. Está no ar?
 
 ```
@@ -457,6 +532,25 @@ TRANSFER_PENDING
 
 </details>
 
+## 6.3 Alerta → o que significa → primeira ação
+
+A pergunta que esta tabela responde é a única que importa às 3 da manhã:
+**chegou um aviso, e agora?**
+
+| o aviso | de onde vem | o que significa | primeira ação |
+|---|---|---|---|
+| e-mail da Asaas: falha na entrega de webhook | Asaas, a cada falha | nossa URL recusou ou não respondeu | conferir **qual URL** o e-mail cita: pode ser hospedagem antiga ainda cadastrada (§6.2, passo 2). Sendo a atual, seguir §8 |
+| a fila de webhook pausou | Asaas (e o sintoma: pagamento pago e não confirmado) | 15 falhas seguidas | reativar no painel e **conciliar** (`API.md` §5.2 e §5.3) |
+| `/api/saude` devolvendo 503 | curl, ou o ping de 10 min do cron-job.org | banco inalcançável | §6.1, item 3 e 4; se for o Supabase, §6 (restaurar) só depois de confirmar que não é rede |
+| aba **Erros** do painel crescendo | captura de exceção (migration 0007) | 5xx acontecendo agora | `ocorrencias` + `ultima_vez` dizem se é rajada; §6.1 |
+| build ou deploy vermelho | Northflank / GitHub Actions | o que está no ar continua o commit anterior | §3 e §4; CI vermelho **não** publica |
+
+**O que NÃO existe, e é decisão registrada:** alerta que acorda alguém.
+O canal é o e-mail de falha da Asaas, escolhido pelo dono em 17/09/2026,
+**com a ressalva escrita de que tráfego zero não dispara nada** — um
+sistema parado sem cobrança nenhuma não gera aviso. `docs/pendencias.md`
+e `CONSTRAINTS.md` §3.
+
 ## 7. Mudar schema
 
 Pelo **editor do Supabase**, e a mudança vira migration numerada nova em
@@ -502,17 +596,190 @@ se perde é o aviso, e a conciliação (`API.md` §5.2) é o caminho de volta.
 reescrever histórico não alcança clone, fork nem cache de quem já
 baixou.
 
-## 9. O que este runbook ainda não tem
+## 8.1 Incidente com dado pessoal
 
-Entra na Estação 6 (prontidão operacional), e está em
-`docs/pendencias.md`:
+Isto é diferente de "o sistema caiu": aqui há prazo legal correndo, e o
+relógio começa **no conhecimento do incidente**, não na correção dele.
+Anotar a hora em que se soube é o primeiro ato, antes de qualquer
+conserto.
 
-- alerta externo de "caiu" que chegue ao celular;
-- captura de exceção com contexto da requisição;
-- monitor que avise quando a tarefa agendada **não** rodou;
-- alerta de orçamento nas contas pagas;
-- **cópia periódica** do banco fora do provedor (o *ensaio* de restauração
-  já existe e passou — §6; o que falta é o backup automático em si);
-- tempo de volta ao ar medido numa reversão real;
-- leitura deste arquivo por uma segunda pessoa, que é o teste de que ele
-  serve.
+**Assumir que todo incidente de confidencialidade aqui é comunicável.**
+O checkout trata dado **financeiro** e **de autenticação** (`api_key` de
+contratante, hash de senha do admin, CPF/CNPJ, e-mail), e essas são
+exatamente as categorias que tornam o risco "relevante" na Resolução
+CD/ANPD nº 15/2024. Não gastar tempo discutindo se comunica.
+
+**1. Quem decide:** o dono, como controlador. **Não há encarregado
+indicado** — pequeno porte é dispensado, com a contrapartida de manter
+canal publicado ao titular, que é o `juridico@sancocore.com.br` do
+rodapé. Indicar encarregado é ato formal escrito, e não foi feito.
+
+**2. Como isolar,** na ordem que para o sangramento sem destruir prova:
+
+1. **Revogar o que dá acesso**, não o que dá sintoma: `api_key` do
+   contratante afetado (painel `/admin` → trocar chave), ou
+   `SUPABASE_SERVICE_KEY` se o vazamento é do backend (§1.2), ou a senha
+   do admin — que invalida todas as sessões abertas.
+2. **Não apagar nada.** Log, linha de `erros`, evento de webhook e o
+   histórico do repositório são a prova de extensão e de causa raiz, e a
+   comunicação à ANPD exige as duas. Apagar para "limpar" é o erro que
+   transforma incidente em incidente mal comunicado.
+3. Só então corrigir o furo, e registrar a hora de cada passo.
+
+**3. Como contar afetados.** A conta é por titular, não por linha, e o
+titular aqui é identificado por `documento` — que desde 17/09/2026 é uma
+chave só, em dígitos (RN-32), justamente para esta conta não sair
+dobrada. As tabelas com dado pessoal estão em
+`docs/inventario-de-dados.md` §6, e a mesma lista branca da rotina de
+expurgo serve de mapa (`src/services/expurgoService.js`). Para o escopo
+mais comum — um contratante comprometido:
+
+```sql
+select count(distinct documento) as titulares, count(*) as cobrancas
+from cobrancas where contratante_id = '<id>';
+```
+
+Contar com `count(*)` em vez de `count(distinct documento)` infla o
+número na comunicação, e número inflado depois corrigido é o que a ANPD
+lê como "o controlador não sabia o que tinha".
+
+**4. Quem escreve, e por onde.** O dono, pelo **peticionamento
+eletrônico da ANPD**, com conta gov.br. Sem encarregado, assina o
+próprio controlador (ou procurador com procuração assinada). **A conta
+gov.br precisa existir e ter sido testada antes** — testar no dia do
+incidente é perder o prazo. Está na lista de pré-lançamento da skill
+`legal`, e é do dono.
+
+**5. Os prazos.** Fonte: `san-co:legal`,
+`references/obrigacoes-brasil.md` (LGPD art. 48; Resoluções CD/ANPD nº
+15/2024, nº 2/2022), lido na fonte em 17/09/2026 — não de memória.
+
+| o que | prazo | dobrado para pequeno porte |
+|---|---|---|
+| comunicar à **ANPD** | **3 dias úteis** do conhecimento | 6 dias úteis |
+| comunicar aos **titulares** | **3 dias úteis**, em linguagem simples e individualizada (e-mail serve) | 6 dias úteis |
+| **complementar** o que faltava | **20 dias úteis** | — |
+| confirmação e acesso ao titular, formato simplificado | **imediatamente** | — |
+| declaração completa ao titular | **15 dias** | 30 dias |
+
+> **Usar a coluna do meio, não a dobrada** — até que a validação
+> jurídica da Estação 7 diga o contrário. O regime flexibilizado é
+> autoenquadramento de ME, EPP e startup, e este projeto está
+> **pessoa física, em transição** (`CONSTRAINTS.md` §3): assumir o dobro
+> e estar errado é perder prazo legal, e prazo perdido não volta.
+> Assumir o curto e estar errado não custa nada.
+
+Se a comunicação individual ao titular for inviável, o substituto é
+aviso no site por **no mínimo três meses**.
+
+**6. O que a comunicação precisa dizer** (ANPD e titulares, o mesmo
+conteúdo, linguagem diferente): natureza dos dados; número de titulares
+afetados; medidas de segurança antes e depois; riscos; motivo de
+eventual demora; mitigação; **data do incidente e data do
+conhecimento**; identificação do controlador, com a declaração de
+pequeno porte se ela se aplicar; identificação do operador (aqui:
+Asaas, Supabase, Northflank, Cloudflare, Google); descrição e causa
+raiz. Pode-se comunicar preliminarmente e completar depois — o que não
+se pode é deixar o prazo passar em silêncio.
+
+
+## 9. Dependências externas, e o que quebra se cada uma cair
+
+Nenhuma delas é nossa, e cada uma derruba uma coisa diferente. A coluna
+que importa é a última.
+
+| se cair | o que para | o que continua | como perceber | o que fazer enquanto |
+|---|---|---|---|---|
+| **Asaas — API** | criar cobrança, estornar, cancelar assinatura | tela, banco, cobrança já criada | tela do comprador erra ao gerar; `/api/saude` acusa a chave | esperar; nada a conciliar, porque nada nasceu |
+| **Asaas — webhook** | a **confirmação** de pagamento | o pagamento em si, que acontece de qualquer jeito | aba Webhook vazia, pedido pago e `pendente` | conciliar (`API.md` §5.2 e §5.3); é o caminho de volta, e ele existe |
+| **Supabase** | tudo | nada | `/api/saude` 503 | §6; RTO medido de 1 s para restaurar noutro Postgres, **mas sem cópia externa hoje** (exceção §3) |
+| **Northflank** | a API inteira | as telas (Cloudflare Pages) continuam servindo — e isso é pior que cair junto: o comprador vê a página e ela não funciona | `/api/saude` sem resposta | §4 (reverter) só resolve se a causa é o nosso commit |
+| **Cloudflare — DNS** | `api.` e `checkout.` deixam de resolver | nada | nada resolve, de nenhum lugar | é a única dependência sem plano B: o registro aponta para lá |
+| **Cloudflare — Access** | o `/admin` | o checkout do comprador, inteiro | login do admin não abre | por desenho: falha fechada. Painel Zero Trust, sem dependência circular |
+| **Cloudflare — Pages** | as telas do comprador | a API — contratante integrado por API sente menos | página não carrega | o link de cobrança fica inútil até voltar |
+| **Google Workspace** | `juridico@` e `suporte@` | o sistema | e-mail devolvido | **é canal legal do titular** (LGPD): indisponibilidade prolongada é problema de conformidade, não só de suporte |
+| **registro.br** | o domínio, e com ele tudo | nada | ninguém avisa — é o motivo da data em §1.1 | **31/08/2027**; renovar antes |
+| **cron-job.org** | o ping que mantém o Supabase acordado | tudo | primeira requisição do dia lenta | nada urgente |
+| **GitHub** | publicar versão nova | o que está no ar | push falha | o ar não depende do GitHub depois do deploy |
+| **npm / registro de imagem** | o build | o que está no ar | build vermelho | não forçar deploy; o ar está bom |
+
+## 10. Contatos
+
+| quem | para que | como |
+|---|---|---|
+| **o dono** (Bruno) | tudo que é decisão: dinheiro, DNS, segredo, legal | ⬜ telefone/e-mail direto |
+| **pessoa número dois** | operar sem o dono: deploy, reversão, ler este arquivo | ⬜ **não existe hoje** — e é o teste que fecha o item 6 da prontidão |
+| titular de dado (LGPD) | acesso, correção, exclusão | `juridico@sancocore.com.br` — publicado no rodapé e nos documentos legais |
+| problema na página | comprador | `suporte@sancocore.com.br` |
+| Asaas | fila pausada, chave, conta | painel → suporte; o e-mail de falha de webhook é do mesmo canal |
+| Supabase, Northflank, Cloudflare | conta e infraestrutura | suporte pelo painel de cada um (⬜ plano contratado define se há resposta com prazo) |
+
+**A pessoa número dois é o item aberto, e a prontidão operacional é
+explícita sobre como fechá-lo:** ela, com este arquivo e sem falar com
+quem construiu, faz um deploy trivial, reverte, e acha a data de
+vencimento do domínio. Onde ela travar, este arquivo está incompleto.
+Uma vez por semestre basta.
+
+## 11. Desligar tudo com segurança
+
+A ordem é o conteúdo desta seção. Invertida, alguém paga e ninguém
+confirma.
+
+1. **Parar de nascer cobrança nova.** Arquivar os contratantes no painel
+   `/admin` — o cadastro e o histórico ficam, e o link antigo para de
+   cobrar. Não apagar contratante: `CONSTRAINTS.md` §1.10 veta exclusão
+   física, e o caminho é arquivar.
+2. **Encerrar o que ainda cobra sozinho:** cancelar as assinaturas
+   ativas (`API.md` §7.4). Assinatura viva depois do desligamento cobra
+   o comprador sem ninguém do outro lado — é o pior desfecho possível.
+3. **Esperar as cobranças pendentes resolverem** (Pix e boleto vencem
+   sozinhos) e **conciliar** (`API.md` §5.2 e §5.3). Aqui o receptor de
+   webhook ainda precisa estar de pé: desligá-lo antes deste passo é
+   pagamento entrando e não sendo confirmado — e 15 falhas pausam a fila
+   da conta.
+4. **Só então desativar o webhook** no painel da Asaas. Deixá-lo
+   apontando para um serviço morto acumula falha (§2.3 do
+   `CONSTRAINTS.md`), e foi exatamente isso que gerou a penalidade de
+   17/09/2026 com a URL antiga do Render.
+5. **Exportar o banco e guardar a cópia fora do provedor**, conferida
+   por restauração (§6 diz como, e o ensaio é a conferência). A guarda
+   fiscal de 5 anos não deixa simplesmente apagar (Lei 10, RN-31), e o
+   dado de cobrança é o que se precisa ter para responder a titular e a
+   fisco depois de tudo desligado.
+6. **Desligar a infraestrutura**, nesta ordem: escalar o serviço do
+   Northflank para zero instância; pausar o projeto Supabase; manter a
+   zona do Cloudflare e o **domínio ativo** enquanto houver contrato ou
+   prazo legal correndo — domínio expirado é e-mail do titular voltando,
+   o que é descumprimento, não economia.
+7. **Nunca apagar o projeto Supabase antes de o dump ter sido
+   restaurado com sucesso em outro lugar.** Backup não conferido não é
+   backup, e aqui não há cópia externa automática (exceção §3).
+
+## 12. O que este runbook ainda não tem
+
+Lista reescrita em 17/09/2026, quando as seções 1.1, 1.2, 6.3, 8.1, 9,
+10 e 11 foram escritas. Três itens que estavam aqui **saíram porque
+foram feitos ou decididos**, não porque envelheceram: a captura de
+exceção existe (migration 0007, aba Erros, §6.1), e o alerta externo de
+queda e o alerta de orçamento viraram decisão do dono em 17/09 —
+`CONSTRAINTS.md` §3 e `docs/pendencias.md`.
+
+O que falta de verdade:
+
+- **os campos `⬜` das seções 1.1 e 10** — e-mail de login de cada
+  conta, onde senha e segundo fator moram, qual cartão paga o quê, e o
+  contato direto do dono. Só ele preenche, e sem isso as duas seções
+  descrevem a forma sem servir na hora;
+- **a pessoa número dois**, que é ao mesmo tempo o contato que falta e o
+  teste que fecha o item 6 da prontidão (§10);
+- **SPF na zona** `sancocore.com.br` (§1.1): medido ausente, e com
+  `p=reject` no DMARC isso é risco de rejeição, não de spam. Mudar DNS é
+  do dono;
+- **rotação sem janela do token de webhook** (§1.2): o código aceita um
+  token por vez, e qualquer ordem de troca acumula falha;
+- **cópia periódica** do banco fora do provedor — o *ensaio* de
+  restauração existe e passou (§6); o que falta é o backup automático em
+  si, e ele tem gatilho escrito (`CONSTRAINTS.md` §3);
+- **monitor que avise quando a tarefa agendada não rodou**;
+- **tempo de volta ao ar medido numa reversão real** — §4 descreve o
+  caminho, e ninguém cronometrou.
