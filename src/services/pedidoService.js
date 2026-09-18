@@ -7,6 +7,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { puxarDoContratante, RespostaRecusada } from '../utils/puxarDoContratante.js';
+import { exigirIdNoTeto } from '../utils/validadores.js';
 
 const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuita
 
@@ -85,6 +86,10 @@ function exigirMetodoHabilitado(contratante, metodoRequerido) {
 const MINIMO_DIGITOS_ID = 8;
 
 function exigirIdImprevisivel(id, rotulo) {
+  // Teto primeiro: id gigante não é id, e nem chega a ser pergunta de
+  // previsibilidade. Ver `exigirIdNoTeto` em `utils/validadores.js`.
+  exigirIdNoTeto(id, rotulo);
+
   const texto = String(id ?? '');
   const soDigitos = /^\d+$/.test(texto);
   if (!soDigitos || texto.length >= MINIMO_DIGITOS_ID) return;

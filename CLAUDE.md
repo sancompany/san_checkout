@@ -84,7 +84,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 17/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, migrations 0001-0009 aplicadas, árvore limpa |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 18/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, árvore limpa. **O banco está UMA migration à frente do código no ar:** a 0010 (troca de plano) está aplicada em produção e o código que a usa está na branch `claude/nifty-meitner-4ffp9s`, não na main — é a ordem que a lei manda (a coluna nova existe ANTES do código que a lê), e as três colunas são aditivas, então nada no ar as toca |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -516,7 +516,7 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   uma checagem geral: todo campo que o agregador lê de uma linha tem de
   estar no `select` da rota
   (`docs/erros/2026-09-17-o-filtro-dependia-de-coluna-que-a-consulta-nao-trazia.md`).
-- **Troca de plano, construída NESTA versão por ordem do dono**
+- **Troca de plano, construída NESTA versão por ordem do dono** — ⚠️ **na branch `claude/nifty-meitner-4ffp9s`, ainda NÃO na main nem no ar** (o que está no ar é `b57df2b`); só a migration 0010 já está aplicada no banco, de propósito
   (`POST /api/checkout/trocar-plano`, `API.md` §5.6, RN-35 e RN-36,
   migration 0010). Ela nasceu de uma pergunta dele — "no Asaas não é
   possível fazer uma alteração de preço nos planos já contratados?" —
@@ -587,7 +587,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 34 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 35 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Conformidade

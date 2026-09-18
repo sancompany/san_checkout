@@ -15,6 +15,7 @@
 import { supabase } from '../config/supabase.js';
 import { ambienteAsaas } from '../config/asaas.js';
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
+import { exigirIdNoTeto } from '../utils/validadores.js';
 
 export async function registrarCobranca(dados) {
   const { error } = await supabase.from('cobrancas').insert({
@@ -433,6 +434,10 @@ export async function atualizarSituacaoSubconta(asaasAccountId, situacao) {
  * boleto deve conseguir o boleto.
  */
 export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
+  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
+  // rota autenticada de contratante, mas id sem teto é carga sem teto.
+  exigirIdNoTeto(pedidoId, 'pedidoId');
+
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
@@ -450,6 +455,10 @@ export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, me
 }
 
 export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
+  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
+  // rota autenticada de contratante, mas id sem teto é carga sem teto.
+  exigirIdNoTeto(pedidoId, 'pedidoId');
+
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')

@@ -31,7 +31,15 @@ const TETOS = {
   email: 254,
   documento: 32,
   telefone: 32,
-  cep: 16
+  cep: 16,
+  /* IDENTIFICADOR DE PEDIDO E DE PLANO — 128.
+     Eles não vinham com teto nenhum, e é o caso da lição nº 24 (teto
+     mora no validador, não em cada controlador): entram por parâmetro
+     de URL e por corpo, viram caminho de uma requisição HTTP ao
+     contratante e literal de consulta no banco. 128 é folgado para o
+     que existe de verdade — UUID tem 36, hash SHA-256 em hex tem 64 —,
+     e o que passa disso não é id: é carga. */
+  id: 128
 };
 
 /** Longo demais é recusa, não truncamento: truncar aceitaria um dado
@@ -332,6 +340,29 @@ export function cepValido(valor) {
 export function nomeValido(valor) {
   const nome = String(valor ?? '').trim();
   return nome.length >= 2 && nome.length <= TETOS.nome;
+}
+
+/**
+ * Recusa id fora do teto — usado nas TRÊS portas por onde um id de
+ * pedido ou de plano entra no sistema: os resolvedores que chamam a API
+ * do contratante (`pedidoService`), a busca de assinatura
+ * (`assinaturaService`) e a busca de cobrança por pedido
+ * (`cobrancaService`).
+ *
+ * Mora aqui, e a guarda fica nas funções compartilhadas em vez de em
+ * cada controlador, por duas razões: a skill `construir` manda corrigir
+ * na raiz ("uma guarda na função compartilhada é um diff menor que uma
+ * guarda em cada chamador, e não deixa os chamadores irmãos quebrados"),
+ * e chamador novo nasce coberto.
+ *
+ * Lança com `.status` para `utils/erros.js` devolver 400 e a mensagem —
+ * ela é segura de mostrar, e ajuda quem integra a entender a recusa.
+ */
+export function exigirIdNoTeto(id, rotulo) {
+  if (passaNoTeto(id, TETOS.id)) return;
+  const erro = new Error(`O ${rotulo} excede o tamanho máximo de ${TETOS.id} caracteres.`);
+  erro.status = 400;
+  throw erro;
 }
 
 export { TETOS as TETOS_DE_CAMPO };

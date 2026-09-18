@@ -208,6 +208,38 @@ try {
     foraDaApi.cabecalhos.get('cache-control') !== 'no-store',
     `controle positivo: fora de /api o no-store não é aplicado (veio "${foraDaApi.cabecalhos.get('cache-control')}")`
   );
+  /* ---- ID GIGANTE É RECUSADO NA FRONTEIRA, COM 400 ------------------
+     `pedidoId` e `planoId` não tinham teto de tamanho até 18/09/2026 —
+     achado no ciclo de revisão do projeto inteiro. Eles entram por
+     parâmetro de URL e por corpo, viram CAMINHO de uma requisição HTTP ao
+     servidor do contratante e literal de consulta no banco; teto de campo
+     mora no validador (lição nº 24), e agora mora nas três funções
+     compartilhadas por onde todo id passa.
+
+     Este caso prova a recusa na pilha montada de verdade, e prova que ela
+     acontece ANTES de qualquer ida ao banco (o resolvedor confere o id na
+     primeira linha) — por isso o teste funciona mesmo com o Supabase
+     falso desta suíte. */
+  {
+    const idGigante = 'x'.repeat(200);
+    /* A rota de RESOLUÇÃO do pedido, e não uma de criação: a de criação
+       valida o corpo antes de olhar o id, e o 400 que voltaria seria
+       "nome é obrigatório" — que não prova nada sobre o teto. */
+    const gigante = await chamar(`/api/checkout/pedido/contratante/${idGigante}`);
+    igual(gigante.http, 400, 'id de 200 caracteres é recusado com 400');
+    ok(
+      /tamanho máximo/.test(gigante.corpo?.erro ?? ''),
+      `e a mensagem diz o motivo, veio "${gigante.corpo?.erro}"`
+    );
+
+    /* CONTROLE POSITIVO: um id normal passa do teto. Sem este par, um
+       teto de zero recusaria tudo e os dois de cima ficariam verdes. */
+    const normal = await chamar('/api/checkout/pedido/contratante/ped-550e8400-e29b-41d4-a716-446655440000');
+    ok(
+      !/tamanho máximo/.test(normal.corpo?.erro ?? ''),
+      `id de tamanho normal não pode bater no teto, veio "${normal.corpo?.erro}"`
+    );
+  }
 } finally {
   servidor.close();
 }

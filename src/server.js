@@ -88,7 +88,16 @@ app.use('/api', (_req, resposta, proximo) => {
 });
 
 app.use(cors({ origin: process.env.ORIGEM_FRONTEND || 'http://127.0.0.1:5501' }));
-app.use(express.json());
+/* Teto do CORPO explícito, e não o default da biblioteca.
+   O Express já limita a 100 kB por padrão, e o efeito prático não muda;
+   o que muda é a garantia. A lei do projeto diz que "propriedade de
+   segurança que depende de variável de ambiente é propriedade não
+   garantida", e default de biblioteca é a mesma classe de dependência
+   invisível: ele pode mudar numa atualização e ninguém percebe, porque
+   nada quebra — só passa a aceitar mais. Escrito, o número é nosso.
+   100 kB é folgado para o maior corpo real (o payload da Asaas e a
+   lista de itens de um pedido). */
+app.use(express.json({ limit: '100kb' }));
 
 // pix e boleto NÃO entram aqui por prefixo — ver src/middlewares/limitadores.js
 // (checkoutRoutes.js monta o limitador por rota, pra não pegar o
@@ -301,6 +310,67 @@ app.use((erro, requisicao, resposta, proximo) => {
 });
 
 const UM_DIA_MS = 24 * 60 * 60 * 1000;
+
+/* ---------------------------------------------------------------------
+   O QUE NÃO PASSA POR ROTA NENHUMA — Lei 8, o pedaço que faltava
+
+   A captura de exceção (`erroService`) pega o que passa pelo
+   `responderErro` de um controlador ou pelo tratador de erro do Express.
+   Fica de fora exatamente o que mata o processo:
+
+     - **promessa rejeitada sem `catch`** (`unhandledRejection`), e o
+       projeto tem fire-and-forget deliberado no caminho do dinheiro —
+       aviso ao contratante, auditoria do webhook, expurgo, retentativa
+       de notificação agendada por `setTimeout`. Todos têm `catch` hoje;
+       o próximo que alguém escrever pode não ter.
+     - **exceção fora de requisição** (`uncaughtException`): um callback
+       de `setInterval`, um `setTimeout`, o topo de um módulo.
+
+   Sem estes dois tratadores, o Node imprime no stderr e **encerra o
+   processo** — e como o log do Northflank só se lê pelo painel
+   (`RUNBOOK` §7), o que sobra é um serviço reiniciando sem nenhuma linha
+   em `erros` e sem ninguém sabendo por quê. Gravar antes de morrer é a
+   diferença entre "caiu" e "caiu por isto".
+
+   **O processo continua morrendo, de propósito.** Registrar um tratador
+   faz o Node NÃO encerrar mais, e seguir de pé depois de uma rejeição
+   não observada é seguir num estado que ninguém sabe qual é — no
+   caminho do dinheiro isso é pior que reiniciar. Então: grava, loga e
+   sai com código 1, que é o que o orquestrador entende como "me
+   reinicie".
+
+   A ordem entre gravar e sair custou uma iteração, e o motivo exato
+   importa porque a primeira explicação que escrevi aqui estava errada.
+   A primeira versão agendava a saída com `setTimeout(..., 500).unref()`
+   e não esperava a gravação. Medido: o processo saiu com código **0**.
+   `unref()` não segura o event loop, e a escrita em `erros` falha
+   rápido contra um banco inalcançável — então o loop esvaziava antes de
+   o timer disparar, e o Node encerrava sozinho, limpo. Perdia-se o
+   código de saída, não a gravação: e código 0 é o que o orquestrador lê
+   como "desligou de propósito" — sem reinício, sem alarme.
+
+   Agora quem dispara o `exit` é o `finally` da gravação, e o timer é
+   só o teto para o caso de ela pendurar. Ele fica REFERENCIADO de
+   propósito: medido, um timer com `unref()` ainda dispara quando outra
+   coisa mantém o loop vivo (o socket pendurado, no caso do banco mudo),
+   mas depender disso é depender de coincidência. Referenciado, a
+   garantia é do timer, não do acaso.
+--------------------------------------------------------------------- */
+const TETO_PARA_GRAVAR_ANTES_DE_MORRER_MS = 2000;
+
+function morrerContando(rotulo, motivo) {
+  const erro = motivo instanceof Error ? motivo : new Error(`${rotulo}: ${String(motivo)}`);
+  console.error(`[checkout] ${rotulo} — o processo vai encerrar:`, erro);
+
+  const sair = () => process.exit(1);
+  const teto = setTimeout(sair, TETO_PARA_GRAVAR_ANTES_DE_MORRER_MS);
+
+  registrarErro(erro, { contexto: `processo.${rotulo}`, status: 500 })
+    .finally(() => { clearTimeout(teto); sair(); });
+}
+
+process.on('unhandledRejection', (motivo) => morrerContando('unhandledRejection', motivo));
+process.on('uncaughtException', (erro) => morrerContando('uncaughtException', erro));
 
 /* O `app` sai para o autoteste poder exercitar as ROTAS, e não só os
    módulos — a Lei 0 pedia isso e `docs/pendencias.md` registrava a
