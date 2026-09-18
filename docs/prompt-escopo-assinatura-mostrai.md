@@ -10,13 +10,26 @@ afirmação minha ("não é possível alterar preço de plano já
 contratado?"). Tudo que está marcado como **medido** foi medido no
 sandbox naquele dia; o que é decisão está marcado como decisão.
 
+**Atualizado em 18/09/2026**, e a mudança é grande o suficiente para
+merecer destaque: a **troca de plano passou a existir**
+(`POST /trocar-plano`, seção 5). Ela não existia quando a primeira
+versão deste escopo foi escrita, e a decisão de 16/09 — o MostrAí
+resolver troca de preço por pedido avulso — foi tomada quando não
+existia. Continua válida se o dono do MostrAí quiser; só deixou de ser
+a única saída.
+
+⚠️ E uma consequência que quebra integração em silêncio: **depois de uma
+troca, o `planoId` do assinante é o NOVO.** Cancelar, pausar, retomar,
+conciliar e gerar link de renovação passam a usar o plano novo; mandar o
+antigo responde `404`.
+
 **Como usar:** copie tudo abaixo da linha e cole na sessão do MostrAí.
 
 ---
 
 Você é a sessão do **MostrAí**, um projeto que consome o **San Checkout**
 como motor de pagamento. Recebeu abaixo o escopo de assinatura do
-checkout, atualizado em 17/09/2026 e **medido contra a Asaas no
+checkout, atualizado em 18/09/2026 e **medido contra a Asaas no
 sandbox**, não escrito de memória.
 
 **Sua tarefa:** conferir a documentação e o código do MostrAí contra
@@ -335,4 +348,4 @@ envelheceu:
 - `docs/ciclo-assinatura-mapa.md` — o ciclo de assinatura etapa por
   etapa, com todo erro já encontrado catalogado contra a etapa onde
   vive (a T12 é a alteração de preço direto na Asaas).
-- `docs/funcional.md` — as regras de negócio numeradas (RN-15 a RN-34).
+- `docs/funcional.md` — as regras de negócio numeradas (a última é a RN-36; as de assinatura vão da RN-15 em diante).
