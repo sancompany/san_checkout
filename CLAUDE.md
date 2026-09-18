@@ -697,6 +697,29 @@ essas coisas, o que tá esperando?"):
   todo erro de `relatorio.erros`, fechando o mesmo buraco de visibilidade
   para qualquer coluna futura.
   `docs/erros/2026-09-18-a-migration-que-acrescentou-coluna-not-null-nao-atualizou-a-lista-branca-do-expurgo.md`.
+- **Revisão dos cinco métodos de pagamento, exercitados AO VIVO contra o
+  sandbox** (pedido direto do dono: "verifique se todos estão
+  funcionais"). Pix e Boleto confirmados (o Boleto ainda reaproveitou
+  uma cobrança pendente de um teste anterior — a idempotência
+  funcionando). **Cartão avulso quebrado, achado no ato**: `POST
+  /api/checkout/cartao/testemaster/ped_completo` devolveu 400 "O campo
+  name só pode conter no máximo 30 caracteres" — `items[0].name` do
+  `POST /v3/checkouts` da Asaas levava `pedido.descricao` cru (41
+  caracteres em `ped_completo`), dado do CONTRATANTE, nunca validado
+  como se fosse dado de fronteira. Assinatura por cartão testada junto
+  não quebrou só porque `plano_anual` tem nome curto — a mesma falha
+  esperava um plano com nome mais longo. Corrigido com
+  `nomeItemAsaas()` (corta em 30, com reticências) nos dois lugares;
+  o texto INTEIRO continua indo em `items[].description`, que a Asaas
+  aceita sem teto (medido: 100+ caracteres passou). No mesmo teste,
+  `customerData.name` (dado do PAGADOR, que passa pela nossa validação)
+  foi confirmado SEM teto de tamanho — o que a Asaas recusa lá é string
+  toda do mesmo caractere repetido, controle negativo de que não há um
+  segundo teto escondido. Assinatura por Pix Automático confirmada
+  degradando corretamente (403, não 500) quando o método não está
+  habilitado — é o estado esperado, já que está desligada nesta conta
+  (`CONSTRAINTS.md` §2.4).
+  `docs/erros/2026-09-18-descricao-do-contratante-sem-teto-quebrava-cartao-por-inteiro.md`.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
@@ -738,7 +761,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 35 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 36 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada
