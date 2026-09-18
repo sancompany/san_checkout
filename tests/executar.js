@@ -51,7 +51,8 @@ const SUITES = [
   'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
-  'tests/o-processo-nao-morre-calado.js' // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
+  'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
+  'tests/nome-do-item-nao-passa-do-teto-da-asaas.js' // items[].name > 30 caracteres quebrava Cartão/Assinatura por inteiro
 ];
 
 /**

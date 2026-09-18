@@ -29,6 +29,17 @@
  * schema oficial `CheckoutSessionCustomerDataDTO`). O front resolve
  * esse código a partir do CEP via ViaCEP (ver
  * public/js/utils/cep.js) e manda pronto como `cidadeIbge`.
+ *
+ * ⚠️ CONFIRMADO EM SANDBOX (terceira rodada, 18/09/2026, verificando se
+ * os métodos de pagamento continuavam funcionais): `items[].name` tem
+ * teto de 30 caracteres (400 "O campo name só pode conter no máximo 30
+ * caracteres.") — e `pedido.descricao`/`plano.nome`, que vêm do
+ * CONTRATANTE, iam pra lá sem teto nenhum. Ver `nomeItemAsaas()` abaixo.
+ * `customerData.name`, por outro lado, NÃO tem teto de tamanho — o que
+ * ele recusa é string toda do mesmo caractere repetido (antifraude,
+ * medido com 150 "A"s recusado e um nome realista de 206 caracteres
+ * aceito); `nomeValido()` em `utils/validadores.js` já não deixa passar
+ * esse tipo de entrada de qualquer forma.
  */
 
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
@@ -61,6 +72,34 @@ export const CICLOS_VALIDOS = [
   'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'BIMONTHLY',
   'QUARTERLY', 'SEMIANNUALLY', 'YEARLY'
 ];
+
+/**
+ * TETO DO NOME DO ITEM NO CHECKOUT DA ASAAS — 30 caracteres.
+ *
+ * MEDIDO em 18/09/2026, ao vivo contra o sandbox: `POST /v3/checkouts`
+ * com `items[0].name` de 41 caracteres (a descrição real de
+ * `ped_completo`) devolveu 400 "O campo name só pode conter no máximo
+ * 30 caracteres." — achado verificando se os métodos de pagamento
+ * continuavam funcionais, a pedido do dono.
+ *
+ * `pedido.descricao`/`plano.nome` vêm do CONTRATANTE, nunca do pagador,
+ * e nunca tinham teto: qualquer descrição de produto ou nome de plano
+ * um pouco mais longo — nada incomum — quebrava Cartão avulso ou
+ * Assinatura por cartão POR INTEIRO, para TODOS os compradores daquele
+ * contratante, com um erro de campo que não diz o que houve (o
+ * `criador.corpoAsaas` só vai pro `console.error`).
+ *
+ * Cortar não perde a informação: `items[].description` aceita o texto
+ * inteiro sem teto (medido: 100+ caracteres passaram) — é onde o nome
+ * completo vai, e `name` leva a versão curta que a Asaas exige.
+ */
+const TETO_NOME_ITEM_ASAAS = 30;
+
+export function nomeItemAsaas(texto) {
+  const t = String(texto ?? '').trim();
+  if (t.length <= TETO_NOME_ITEM_ASAAS) return t;
+  return `${t.slice(0, TETO_NOME_ITEM_ASAAS - 1)}…`;
+}
 
 export async function criarCheckoutCartao(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
@@ -143,7 +182,8 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       billingTypes: ['CREDIT_CARD'],
       chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
       itens: [{
-        name: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
+        name: nomeItemAsaas(pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine'),
+        description: pedido.descricao ?? undefined,
         quantity: 1,
         value: valorCobrado
       }],
@@ -328,7 +368,8 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       billingTypes: ['CREDIT_CARD'],
       chargeTypes: ['RECURRENT'],
       itens: [{
-        name: plano.nome ?? 'Assinatura via SAN & CO. Pay Engine',
+        name: nomeItemAsaas(plano.nome ?? 'Assinatura via SAN & CO. Pay Engine'),
+        description: plano.nome ?? undefined,
         quantity: 1,
         value: valor
       }],
