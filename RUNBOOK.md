@@ -222,7 +222,10 @@ só para os módulos carregarem, e nenhuma suíte toca banco, rede ou
 relógio. Não precisa de `.env`.
 
 **A porta é o CI verde, não uma pessoa.** Dois workflows: `testes`
-(`npm test`) e `Segurança` (dependências, segredos, análise estática).
+(roda `npm run check` — a mesma linha do passo 2, análise de sintaxe de
+todo JS e depois as suítes; até 18/09/2026 rodava só `npm test`, e o
+código de `public/js/` ficava fora do portão) e `Segurança`
+(dependências, segredos, análise estática).
 Onde olhar se ficou verde:
 
 - **https://github.com/sancompany/san_checkout/actions** — é a única
