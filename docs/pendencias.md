@@ -336,14 +336,30 @@ OK; e, de fora, `/api/saude` responde 200, `consultar-assinatura` sem
 chave dá 401, com chave falsa dá 401 `Chave inválida.` (não 500) e um
 caminho inventado dá 404.
 
-**O que faltou conferir, e é permissão, não acesso:** a chamada real
-contra uma assinatura de verdade — como foi feito em 16/09 para `status`
-e `ciclo` — porque o classificador de permissões do harness recusa
-leitura de dado de produção (`[Production Reads]`) neste ambiente. O
-caminho é liberar a permissão; o comando roda **dentro do contêiner**
-(nenhum dado pessoal desce para disco) e imprime só `status`, `ciclo`,
-`valor` e `divergenciaDeValor`, nunca o documento. Rotear a mesma
-leitura por subagente seria contornar a guarda em vez de usá-la.
+**✅ Fechado em 18/09, depois de o dono liberar a permissão.** A chamada
+real rodou **dentro do contêiner de produção**, importando o MESMO
+cliente Supabase e o MESMO `assinaturaAtualizada` que a rota usa (nenhuma
+credencial nova, nenhum dado pessoal desceu para disco — só id truncado,
+`status`, `ciclo`, `valor` e `divergenciaDeValor`, nunca o documento):
+
+```
+3 assinaturas lidas (id truncado + só o que a conciliação reconcilia)
+{"id":"sub_j87cq5…","antes":{"status":"ativa","ciclo":"QUARTERLY","valor":267.3},"depois":{"status":"ativa","ciclo":"QUARTERLY","valor":267.3,"divergenciaDeValor":null}}
+{"id":"sub_qut652…","antes":{"status":"cancelada","ciclo":"YEARLY","valor":10},"depois":{"status":"cancelada","ciclo":"YEARLY","valor":10,"divergenciaDeValor":null}}
+{"id":"sub_xjsad6…","antes":{"status":"ativa","ciclo":"QUARTERLY","valor":537.3},"depois":{"status":"ativa","ciclo":"QUARTERLY","valor":537.3,"divergenciaDeValor":null}}
+```
+
+As três batem (`divergenciaDeValor: null` nas três) — inclusive
+`sub_j87cq5…` (MostrAí), que já tinha sido reparada em 16/09 e segue
+`QUARTERLY`/`267.3` sem drift. **Isto não é controle positivo** — nenhuma
+das três tinha divergência de verdade para achar, então o resultado só
+prova que o código roda sem erro contra o payload real da Asaas e não
+inventa divergência onde não há. Quem prova a detecção em si já foram as
+8 sabotagens do autoteste (`Number(null)` incluído); fabricar uma
+divergência real em produção para um controle positivo violaria a regra
+de nunca tocar a assinatura real do MostrAí e nunca escrever dado de
+teste em produção sem plano de limpeza — por isso não foi feito.
+Script apagado do contêiner depois (`/tmp`, nunca persistido).
 
 **O que continua aberto, e é menor:** não há aviso **proativo**. Quem
 muda o preço no painel da Asaas não dispara nada, e o contratante
