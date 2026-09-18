@@ -32,16 +32,20 @@ import {
   alterarStatusAssinatura
 } from '../services/asaasService.js';
 import { notificarAssinaturaCancelada } from './webhookController.js';
-import { documentoValido } from '../utils/validadores.js';
+import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 export async function cancelarAssinatura(requisicao, resposta) {
   const chave = requisicao.get('X-Checkout-Key');
-  const { planoId, documento } = requisicao.body ?? {};
+  let { planoId, documento } = requisicao.body ?? {};
 
   if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
   if (!planoId || !documento) return resposta.status(400).json({ erro: 'planoId e documento são obrigatórios.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
 
   try {
     const contratante = await buscarContratantePorChave(chave);
@@ -102,11 +106,14 @@ export async function cancelarAssinatura(requisicao, resposta) {
 function criarHandlerDeStatus({ statusAsaas, statusLocal, statusAceitos, jaEstaAssim }) {
   return async function handler(requisicao, resposta) {
     const chave = requisicao.get('X-Checkout-Key');
-    const { planoId, documento } = requisicao.body ?? {};
+    let { planoId, documento } = requisicao.body ?? {};
 
     if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
     if (!planoId || !documento) return resposta.status(400).json({ erro: 'planoId e documento são obrigatórios.' });
     if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+    // Dígitos, como no `cancelarAssinatura` acima — ver a nota lá.
+    documento = normalizarDocumento(documento);
 
     try {
       const contratante = await buscarContratantePorChave(chave);

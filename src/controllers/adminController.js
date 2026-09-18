@@ -22,7 +22,7 @@
 import { randomBytes } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import { gerarApiKey } from '../utils/chaveContratante.js';
-import { compararSeguro, documentoValido, emailValido, cepValido } from '../utils/validadores.js';
+import { compararSeguro, documentoValido, emailValido, cepValido, normalizarDocumento } from '../utils/validadores.js';
 import { senhaConfere } from '../utils/senhaAdmin.js';
 import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
 import { responderErro } from '../utils/erros.js';
@@ -410,7 +410,15 @@ export async function obterMetricas(requisicao, resposta) {
 
   const { data, error } = await supabase
     .from('cobrancas')
-    .select('contratante_id, metodo_pagamento, status, valor_cobrado, criado_em, confirmado_em')
+    /* `ambiente` e `e_teste` entram aqui porque o filtro de negócio
+       (RN-33) mora no agregador: coluna que não vem no `select` chega
+       como `undefined`, e `undefined !== 'producao'` excluiria TODA
+       cobrança em silêncio — hoje daria o número certo por coincidência
+       (é tudo sandbox) e erraria para sempre depois da troca. */
+    .select(
+      'contratante_id, metodo_pagamento, status, valor_cobrado, criado_em, ' +
+      'confirmado_em, ambiente, e_teste'
+    )
     .or(`criado_em.gte.${limite},confirmado_em.gte.${limite}`);
 
   if (error) return responderErro(resposta, error, 'admin.obterMetricas');
@@ -555,7 +563,12 @@ async function explicarRecusaDeSubconta(erroAsaas) {
 
 export async function criarSubconta(requisicao, resposta) {
   const corpo = requisicao.body ?? {};
-  const documentoDigitos = String(corpo.documento ?? '').replace(/\D/g, '');
+  /* A MESMA função que as fronteiras do comprador usam, não uma cópia
+     do mesmo `replace`. A regra "documento é uma chave só, em dígitos"
+     (RN-32) tem de ter um dono; repetida em dois lugares, um dia vale
+     em um. É o mesmo argumento dos tetos de campo em
+     `utils/validadores.js`. */
+  const documentoDigitos = normalizarDocumento(corpo.documento);
   const cepDigitos = String(corpo.cep ?? '').replace(/\D/g, '');
   const faturamento = Number(corpo.faturamento);
   const ehPessoaFisica = documentoDigitos.length === 11;

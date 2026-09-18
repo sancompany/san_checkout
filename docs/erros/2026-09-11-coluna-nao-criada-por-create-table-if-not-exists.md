@@ -18,7 +18,9 @@ tratado como "libera tudo" — o fallback mascarou a ausência.
 
 **Correção.** `alter table contratantes add column if not exists
 metodos_habilitados text[] not null default array[...]` no corpo
-executável do `supabase/schema.sql`, logo abaixo do `create table`, no
+executável do `supabase/schema.sql` (arquivo que existia na época; o
+schema hoje são as migrations numeradas de `supabase/migrations/`), logo
+abaixo do `create table`, no
 mesmo padrão das outras três tabelas.
 
 **Guarda.** O `not null default` preenche as linhas existentes na mesma

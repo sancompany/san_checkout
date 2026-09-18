@@ -23,11 +23,11 @@
 | 4.2 — Payload | 4.3.3 — Payload de pedido avulso |
 | 4.3 — Novas tentativas | 4.3.6 — Política de novas tentativas |
 | 4.4 — Consulta própria | 5.2 — Consultar uma cobrança |
-| 4.5 — Página de status | 5.6 — Página pública de status |
+| 4.5 — Página de status | 5.7 — Página pública de status |
 | 4.6 — Compatibilidade | 10 — Compatibilidade e versionamento |
 | 5 — Moeda | 5.1 — Convenções gerais |
 | 6 — Combinado manualmente | 2 — Antes de começar |
-| 6.1 — Assinatura | 4.2 (plano), 7 (detalhes), 5.5 (cancelar/pausar), 7.5 (o que ela não faz) |
+| 6.1 — Assinatura | 4.2 (plano), 7 (detalhes), 5.5 (cancelar/pausar), 7.5 (mudar preço de quem já assinou), 7.6 (o que ela não faz) |
 | 6.2 — Pix Automático | 7.2 — Assinatura por Pix Automático |
 | 7 — Estorno | 5.4 — Estornar |
 | 8 — Taxas e split | 8 — Taxas, split e o valor cobrado |
@@ -41,9 +41,21 @@ assinatura (5.3, rota nova) e a referência rápida de todas as rotas (12).
 
 Acrescentado em 14/09/2026: **os dois endereços do checkout** (2.1 — a
 tela de pagamento e a API são domínios diferentes) e **o que a
-assinatura não faz** (7.5 — carência, mês grátis, desconto e mudança de
-plano em assinante existente; leia antes de prometer benefício a
-assinante).
+assinatura não faz** (agora 7.6 — carência, mês grátis, desconto; leia
+antes de prometer benefício a assinante).
+
+Acrescentado em 17/09/2026: **mudar o preço de quem já assinou**
+(7.5) — a Asaas permite aumentar, diminuir e trocar o ciclo de uma
+assinatura ativa, medido no sandbox; e o `valor` da conciliação (5.3)
+sai do nosso registro, não da Asaas. Se você mudar preço direto no
+painel da Asaas, o número que nós devolvemos fica errado em silêncio.
+
+Acrescentado ainda em 17/09/2026: **trocar de plano** (5.6, rota nova
+`POST /trocar-plano`) — upgrade e downgrade mantendo o vínculo, com o
+acerto proporcional cobrado no cartão já salvo, e o evento
+`plano_trocado` (4.3.4). A conta do acerto está em 7.5. Esta linha
+substitui a anterior, que dizia que "o checkout não expõe rota" para
+isso: era verdade até o dono autorizar a construção, no mesmo dia.
 
 > **Este arquivo não descreve comportamento.** Ele só redireciona. Se
 > uma linha daqui discordar do `API.md`, o `API.md` está certo e esta

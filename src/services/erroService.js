@@ -348,5 +348,34 @@ if (process.argv[1]?.endsWith('erroService.js')) {
   conferir(montarLinha({}).nome === 'object', 'erro que não é Error ainda vira linha');
   conferir(pilhaNossa({}) === null, 'sem pilha devolve null');
 
+  /* --- A `cause` NÃO ENTRA NA LINHA ---
+     Em 17/09/2026 o `pedidoService` passou a anexar `erro.cause` quando
+     o pull recusa a resposta do contratante (redirect para outra origem,
+     corpo acima do teto). A `cause` carrega texto de FORA — `Location`
+     que o contratante respondeu, endereço interno que ele tentou —, e
+     nada disso tem lugar no diagnóstico.
+     Hoje `montarLinha` só lê `message` e `stack`, e nenhum dos dois
+     inclui a cadeia de causa em Node. Isto não corrige um vazamento:
+     trava o que hoje está certo, para o dia em que alguém "melhorar" o
+     log juntando a causa e não perceber o que veio junto. */
+  {
+    const dentro = new Error('http://169.254.169.254/latest/meta-data/iam/credenciais');
+    const fora = new Error('Não foi possível carregar os dados do pedido, tente novamente.');
+    fora.cause = dentro;
+    fora.status = 502;
+
+    const linha = montarLinha(fora, { contexto: 'pedidoService.resolverPedido', rota: '/api/checkout/pedido', metodo: 'GET', status: 502 });
+    const tudo = JSON.stringify(linha);
+
+    conferir(!tudo.includes('169.254'), `o endereço da causa entrou na linha: ${tudo.slice(0, 200)}`);
+    conferir(!tudo.includes('meta-data'), 'nem o caminho dela');
+    conferir(!tudo.includes('credenciais'), 'nem o resto da mensagem da causa');
+    conferir(!/cause/i.test(tudo), 'e a palavra "cause" não aparece em campo nenhum');
+    conferir(
+      linha.mensagem?.includes('carregar os dados do pedido'),
+      'controle positivo: a mensagem de FORA, que é nossa e é segura, continua sendo gravada'
+    );
+  }
+
   console.log(`erroService: ${checagens} checagens OK`);
 }

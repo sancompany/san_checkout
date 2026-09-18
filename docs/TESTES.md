@@ -1,8 +1,17 @@
 # San Checkout — como testar (local, sem gastar nada)
 
-Guia de copiar-e-colar. Todo comando é PowerShell (`curl.exe`, não o
-`curl`/`Invoke-WebRequest` padrão do PowerShell — evita problema de
-aspas). Rode cada bloco na ordem.
+Guia de copiar-e-colar do teste MANUAL, no navegador e no terminal. Todo
+comando é PowerShell (`curl.exe`, não o `curl`/`Invoke-WebRequest` padrão
+do PowerShell — evita problema de aspas). Rode cada bloco na ordem.
+
+> **Isto não é a suíte automática.** Os testes que rodam sozinhos são
+> `npm test` (as suítes) e `npm run check` (análise de sintaxe de todo
+> JS, inclusive `public/js/`, e depois as suítes) — ver o `README.md`.
+> Este guia é para exercitar o fluxo do comprador à mão, que é o que
+> nenhuma suíte alcança.
+>
+> Os caminhos abaixo dizem `D:\san-checkout-v2` porque o guia nasceu na
+> máquina do dono; em qualquer outro lugar, é a raiz do repositório.
 
 ## 0. Preparar (uma vez só)
 
@@ -14,11 +23,22 @@ npm install
 No `.env` (não no `.env.example`), preencha pelo menos:
 - `ASAAS_API_KEY` — chave do **sandbox** da Asaas (sem ela, os passos 3 e 5 abaixo falham com erro 502)
 - `SUPABASE_URL` e `SUPABASE_SERVICE_KEY`
-- `CHECKOUT_ADMIN_USER` e `CHECKOUT_ADMIN_PASS` — qualquer usuário/senha, é só sua
+- `CHECKOUT_ADMIN_USER` e `CHECKOUT_ADMIN_PASS_HASH` — a senha do admin
+  não é guardada em texto: o que vai no `.env` é o hash scrypt, gerado
+  por `node scripts/gerar-hash-admin.js` (não existe atalho de `npm run`
+  para ele). Ele **pergunta a senha no prompt** e não a ecoa na tela nem
+  no histórico — então roda no terminal, não em script
 
-`SMTP_*` e `GOOGLE_*` podem ficar em branco pros testes — sem eles o
-e-mail de confirmação e o arquivamento de nota fiscal só são pulados
-(um aviso no log), nada quebra.
+A lista completa é o `.env.example`, que é a fonte: ele tem onze
+variáveis, e nenhuma a mais.
+
+> ⚠️ Este parágrafo dizia, até 18/09/2026, que `SMTP_*` e `GOOGLE_*`
+> podiam ficar em branco "pros testes" porque sem eles "o e-mail de
+> confirmação e o arquivamento de nota fiscal só são pulados". **As três
+> coisas são falsas**: as variáveis não existem mais no `.env.example`, e
+> e-mail ao comprador e nota fiscal foram **removidos do escopo em
+> 08/09/2026** (`CONSTRAINTS.md` §1.9). Documento que promete recurso
+> removido faz quem lê procurar defeito onde há decisão.
 
 ## 1. Subir os dois servidores
 

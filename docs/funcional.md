@@ -117,6 +117,9 @@ Nenhum dos três é botão, e o porquê de cada um está na seção 8.
 4. Recebe o webhook de saída, assinado com a `api_key` dele.
 5. Quando decide devolver, chama `POST /checkout/estornar` com a chave
    dele — a decisão de estornar é do lojista, a execução é nossa.
+6. Quando o assinante muda de plano, chama
+   `POST /checkout/trocar-plano` — e **avisa o assinante por e-mail e no
+   site dele** (RN-35: o checkout não fala com o pagador).
 
 ### 2.8 Principal — o operador cadastra um contratante
 
@@ -199,6 +202,7 @@ escrito, nunca omitido.
 | Sucesso (pronto) | resumo, total, métodos habilitados, formulário |
 | Vazio | **não se aplica** — a tela é sempre de um pedido só; sem pedido ela é "indisponível", não vazia |
 | **Erro / Indisponível** | contratante ou pedido não resolvido, **ou resposta sem valor cobrável** (ausente, zero, negativo ou acima do teto): total como **`R$ —`**, nunca `R$ 0,00`, e **nenhum botão de pagamento visível** |
+| **Abaixo do valor mínimo** | total cobrável, mas **abaixo do piso de R$ 5,00 da Asaas**: a tela diz o mínimo e manda pedir um link novo ao vendedor, e o formulário não aparece (RN-28) |
 | Pedido encerrado | pedido já pago ou cancelado na origem: mensagem de encerrado; não deixa cobrar de novo |
 | Reserva expirada | `expiraEm` no passado: o cronômetro zera e a tela diz "Esta reserva expirou." |
 | Resultado Pix | QR, copia-e-cola e link permanente de status |
@@ -226,6 +230,14 @@ preço:
   deixar `R$ 0,00` aparecer com o botão de assinar ligado.
 
 Protegido por `tests/total-nao-confiavel-nao-vira-tela-compravel.js`.
+
+**Item sem preço mostra travessão, não `R$ 0,00`.** A linha de item do
+resumo era o terceiro lugar da mesma família: `?? 0` transformava "não
+sei o preço" em "o preço é zero", e zero numa linha de item lê como
+brinde. O total continua sendo o do servidor — a linha é só o detalhe —,
+então um item sem preço não derruba a tela; ele apenas para de afirmar
+um valor que ninguém informou. O quarto lugar era a tela de status
+(§4.2), corrigido junto.
 
 ### 4.2 Status (`/status`)
 
@@ -555,6 +567,203 @@ sistema funcionando, e gravá-la apaga o sinal); e **nada de pessoa
 entra** — a mensagem é raspada e corpo, cabeçalho e URL com valores
 nunca entram (`docs/inventario-de-dados.md` §7.2).
 
+**RN-28 · O piso de R$ 5,00 é dito ao abrir a tela, não no clique.**
+A Asaas recusa qualquer cobrança abaixo de R$ 5,00 no valor cobrado —
+medido em 17/09/2026 nos seis caminhos de criação, com controle positivo
+em R$ 5,00 exato (`API.md` §9.1). Quem decide é o servidor, nas duas
+rotas que abrem tela (`GET /pedido/…` e `GET /plano/…`), que passam a
+devolver `bloqueio` com a frase pronta; as cinco rotas que criam cobrança
+repetem o guarda, porque a tela não é a única porta. *Violada:* o
+comprador preenche nome, e-mail, CPF, telefone — e, no cartão, endereço
+inteiro, que a Asaas exige por antifraude — para receber no fim um erro
+escrito em linguagem de provedor sobre um link que nunca ia funcionar.
+*Quem vê:* o comprador, na abertura da tela. O texto do piso mora no
+servidor e não é repetido no front de propósito: duplicado, um dia o
+número muda num lugar só e a tela passa a mentir.
+
+**E o piso vale POR PARCELA no cartão** — achado no ciclo 5 da revisão,
+porque a primeira medição tinha sido feita só com uma parcela. R$ 24,00
+em 12x dá R$ 2,00 por parcela e a Asaas recusa a cobrança; mas a
+**sessão** da pop-up é aceita, então sem correção a recusa só apareceria
+lá dentro, com o cartão já digitado. A correção **não recusa a venda:
+oferta menos parcelas** (R$ 24,00 fecha em R$ 26,15 e sai em até 5x de
+R$ 5,23), e a taxa cobrada passa a ser a da faixa ofertada, não a da
+pedida — capar depois da taxa seria pior que não capar, porque o
+comprador pagaria a faixa de 7-12x podendo usar só 5x. E a **tela
+também corta a lista**, com o número que o servidor manda
+(`maxParcelas`): sem isso ele escolheria 12x aqui e veria 5x na pop-up.
+`taxaService.taxaComParcelasQueCabem`, `API.md` §9.1.
+
+**RN-29 · O telefone é recusado pela regra MEDIDA da Asaas, não pela
+suposta.** `docs/pendencias.md` dizia que a Asaas recusa "número de
+dígito repetido"; 24 combinações medidas em 17/09/2026 mostram que não —
+`11988888888` e `11911111111` passam. As regras reais são DDD ≥ 11,
+celular começando em 9, e a parte depois do DDD não ser um único dígito
+repetido (`API.md` §9.2). *Violada:* de um lado, `11999999999` atravessa
+o checkout e só a Asaas recusa, no clique; do outro, um validador escrito
+contra a frase errada recusaria números legítimos no caminho do dinheiro.
+*Quem vê:* o comprador, no campo de telefone. O que a Asaas aceita e o
+Brasil não (DDD `20`, prefixo de fixo `1` ou `6`) **passa aqui também** —
+recusar o que o provedor aprova é bloquear comprador de verdade.
+
+**RN-30 · A resposta do contratante não pode virar o alvo, nem encher a
+memória.** O pull revalida cada redirecionamento (só mesma origem, no
+máximo 3 saltos) e lê o corpo com teto de 1 MiB, contando o que chega em
+vez de acreditar no `Content-Length`. *Violada:* o `fetch` seguia
+redirect sozinho, então um contratante malicioso ou comprometido
+responderia `302` para `http://169.254.169.254/…` e o checkout buscaria a
+credencial da nuvem — a checagem de cadastro (RN-14) não vê isso, porque
+o endereço cadastrado continua público e https; quem trocou o alvo foi a
+resposta. E como a requisição leva a `X-Checkout-Key` do contratante,
+seguir para outra origem entregaria a credencial de consulta e estorno
+dele a quem respondeu o `Location`. Do outro lado, `resposta.json()` lia
+até o fim: um corpo de alguns giga derrubaria a instância de 512 MiB e,
+com ela, a confirmação de pagamento de TODOS os contratantes — o mesmo
+dano do `fetch` sem timeout de 15/09. *Quem vê:* o comprador vê a mesma
+mensagem de "não foi possível carregar", e o operador vê o motivo no
+diagnóstico; a diferença que importa é que o `502` diz "resposta errada
+do contratante" e o `504` diz "rede fora do ar".
+
+**RN-31 · Dado pessoal vence em cinco anos, e quem decide o que fica é
+uma lista branca.** A rotina anonimiza (não apaga) as colunas pessoais de
+cobranças e de assinaturas canceladas depois do prazo de
+`docs/inventario-de-dados.md` §6, no ciclo de 24 h, e atende pedido do
+titular (LGPD art. 18) respeitando a guarda fiscal — dizendo quantas
+linhas ficaram retidas e quando elas liberam, em vez de responder
+"feito". *Violada:* o prazo declarado sem rotina é intenção, não prática
+— foi o estado do projeto até 17/09/2026. E se a regra fosse uma lista do
+que SAI, uma coluna pessoal criada depois sobreviveria para sempre a cada
+vez que alguém esquecesse de atualizar o arquivo; por isso a lista é do
+que FICA, e o autoteste a confere contra as colunas reais do banco.
+*Quem vê:* ninguém, no dia a dia — é o tipo de regra cuja evidência é o
+autoteste e a simulação, não a tela. `npm run expurgo` mostra o que ela
+faria sem escrever nada.
+
+**RN-32 · O documento é UMA chave só: dígitos.** Toda fronteira que
+aceita `documento` normaliza para dígitos logo depois de validar, e daí
+para baixo só existe essa forma. *Violada:* `552.085.198-01` e
+`55208519801` são o mesmo CPF e passam os dois na validação — gravados
+como vêm, viram duas chaves diferentes. Como a assinatura é localizada
+por `contratante_id + plano_id + documento` (`API.md` §5.5), quem
+assinasse mandando o CPF pontuado e depois pedisse cancelamento mandando
+só dígitos receberia `404`: assinatura que existe, está cobrando, e não
+pode mais ser cancelada pela API — o mesmo desfecho do furo de "pausar
+era porta de mão única", por outra porta, e valendo nos dois sentidos.
+*Quem vê:* quem tenta cancelar e não consegue; e o operador, no
+suporte, sem pista do motivo. Passava despercebido porque a máscara do
+front tira a pontuação antes de enviar — as 13 linhas em produção eram
+todas só dígitos, medido —, mas a máscara é do navegador e a API é
+pública. Achado em 17/09/2026 pelo ciclo da skill `revisar`, enquanto se
+escrevia a rotina de expurgo, que precisava casar documento para
+atender pedido de titular.
+
+**RN-33 · A métrica conta negócio, e uso interno não é negócio.** Toda
+cobrança nasce com `ambiente` (de qual ambiente da Asaas ela veio) e
+`e_teste` (marcação de uso interno), e a métrica de sucesso só soma a
+linha em que `ambiente = 'producao'` **e** `e_teste = false`. O
+`ambiente` vem da configuração do processo (`src/config/asaas.js`),
+nunca do corpo da requisição — quem paga não escolhe em que ambiente a
+própria cobrança nasceu. E `e_teste` é de **mão única**: vai de teste
+para real e não volta, travado por gatilho no banco
+(`supabase/migrations/0009_ambiente_e_teste.sql`), porque o caminho
+inverso apagaria da conta um resultado de negócio já contado, e
+apagaria em silêncio. *Violada:* o pagamento que o dono faz para
+exercitar o fluxo entra na conta como cobrança confirmada de verdade —
+e a métrica de sucesso do projeto, que é "quantas confirmadas ontem,
+por contratante" (seção 9), passa a medir a própria casa. Depois da
+troca para produção, com dinheiro real entrando no mesmo banco das
+cobranças de teste, o número erraria no primeiro dia e não haveria como
+saber de quanto. *Quem vê:* o operador, na aba Métricas do painel — que
+mostra o que ficou de fora num cartão próprio ("Fora da conta"), porque
+exclusão silenciosa é indistinguível de dado que não existe: com dez
+cobranças de sandbox no banco, "Nenhuma cobrança no período" seria uma
+frase falsa. Por isso a aba tem **dois vazios diferentes**: "não houve
+cobrança" e "houve, e nenhuma era de negócio". A soma confere — entrou
+mais excluído é igual ao lido do banco, conferido por autoteste e
+medido contra o banco de produção em 17/09/2026 (10 linhas lidas, 10
+excluídas, 0 de negócio).
+
+**RN-34 · O valor de uma assinatura pode mudar na Asaas, e hoje nada
+nos conta.** A Asaas **aceita** alterar `value` e `cycle` de uma
+assinatura ativa — aumentar, diminuir e trocar o ciclo —, medido no
+sandbox em 17/09/2026 em assinatura de cartão e de boleto. O checkout
+passou a expor **troca de PLANO** no mesmo dia (RN-35), o que cobre o
+caso legítimo — o assinante vai do plano A para o plano B, e o preço sai
+do plano B. O que esta regra descreve continua valendo para o caso que
+não passa por nós: alteração feita **pelo painel da Asaas** ou por API
+direta. O checkout **não recebe aviso quando isso acontece**: nenhum evento chegou
+ao receptor em toda a bateria de alterações, porque `SUBSCRIPTION_*`
+não está entre os 53 eventos configurados e `PAYMENT_UPDATED` está
+desmarcado de propósito (`CONSTRAINTS.md` §2.2). *Violada:* mudado o
+preço no painel da Asaas, ela passa a cobrar o valor novo e
+`assinaturas.valor` aqui continua o antigo — a conciliação
+(`API.md` §5.3) reconfere `status`, `ciclo` e `proximaCobranca` contra a
+Asaas, **e não reconfere `valor`**. O contratante que confia nesse campo
+mostra ao assinante um preço que não é o cobrado, para sempre e sem
+sintoma. É a MESMA família do bug do `ciclo` de 15/09 (dado local que
+divergiu da fonte e ninguém reparava) por outra porta: a correção de
+16/09 fechou `ciclo` e deixou `valor` aberto. *Quem vê:* ninguém, até
+alguém comparar a fatura com a tela. Por isso o `API.md` §5.3 passou a
+dizer, na cara do integrador, que `valor` não é preço vigente — o que é
+verdade é `ultimaCobranca.valorCobrado`, que é histórico de cobrança
+real. **Declarado, não corrigido às cegas:** reconciliar `valor` é
+mudança no caminho do dinheiro e depende de decisão do dono (é a Asaas
+que passa a mandar no número, inclusive quando a alteração de lá foi um
+erro humano) — `docs/pendencias.md`.
+
+**RN-35 · Trocar de plano cobra a diferença antes de trocar, e avisar o
+assinante é obrigação do contratante.** Autorizada pelo dono em
+17/09/2026, com as sete regras do acerto decididas por ele.
+`POST /api/checkout/trocar-plano` (`API.md` §5.6) leva o assinante do
+plano A para o plano B **mantendo o vínculo**, e a ordem é a regra:
+o plano de destino é **puxado da API do contratante** (valor e ciclo
+nunca vêm do corpo da requisição); o acerto proporcional é **cobrado no
+cartão já salvo**; e **o plano só muda se o acerto for aprovado**. Para
+baixo não cobra e **não devolve** — o preço novo vale no vencimento que
+já estava marcado, que a Asaas não move nem quando o ciclo muda
+(medido). Acerto abaixo do piso de R$ 5,00 é **absorvido**, nunca
+arredondado para cima. *Violada de um jeito:* alterar o plano antes de
+cobrar daria o plano caro de graça a quem tem cartão recusado. *Violada
+do outro:* confiar no `200` do `PUT` gravaria "trocou" no nosso banco
+sobre uma alteração que a Asaas ignorou em silêncio — ela responde `200`
+para campo que não conhece, medido, e por isso a assinatura é **relida**
+depois. *Quem vê:* o contratante, no `evento: 'plano_trocado'` e na
+resposta, que traz crédito, débito e dias restantes. **O assinante não é
+avisado por nós:** o checkout não fala com o pagador (não há biblioteca
+de e-mail no `src/`), e mudar o valor que um cartão salvo vai cobrar
+exige concordância dele (CDC) — então avisar por **e-mail e por aviso no
+site** é obrigação de cada projeto contratante, decisão do dono, escrita
+em `API.md` §5.6 e no checklist da §11.
+
+**RN-35.1 · Depois da troca, quem manda é a assinatura, não o plano.**
+A troca tira do `plano_id` a estabilidade que todo o resto do sistema
+assumia (é a chave de cancelar, pausar, retomar, conciliar e do webhook
+de assinatura, `API.md` §4.3.4). Três lugares dependiam disso e foram
+corrigidos na revisão, antes de ir ao ar: a segunda troca dentro do mesmo
+período (o ciclo pago está sob o plano antigo), o ciclo seguinte à troca
+(que se monta copiando a cobrança anterior e nasceria com o plano velho —
+para sempre, porque cada ciclo copia do anterior) e a conciliação (que
+diria "nenhuma cobrança" para uma assinatura que já cobrou). Todos
+passaram a ancorar no **id da assinatura**. *Violada:* o contratante
+credita o plano que o assinante deixou de ter, a cada cobrança, sem
+sintoma. *Quem vê:* ninguém, até alguém comparar o acesso com a fatura.
+`docs/erros/2026-09-17-uma-chave-que-era-estavel-deixou-de-ser.md`.
+
+**RN-36 · Duas trocas simultâneas não cobram o acerto duas vezes.** A
+troca reivindica um arrendamento na própria linha da assinatura
+(`assinaturas.trocando_em`, migration 0010) antes de cobrar, com um
+`update` condicional — que é atômico no Postgres. *Violada:* sem ele, as
+duas chamadas leem "não trocou ainda", as duas cobram, e desfazer é
+estorno no cartão de uma pessoa real. *Quem vê:* a segunda chamada, com
+`409` e **nada cobrado**. Medido dentro do contêiner em 17/09/2026: 1ª
+reivindicação ganha, 2ª não ganha, e um arrendamento de dez minutos
+atrás volta a poder — o prazo curto existe para que um processo que morra
+no meio não tranque a assinatura para sempre. O acerto também **não conta
+como "última cobrança da assinatura"** na conciliação (`API.md` §5.3):
+ele carrega o mesmo `plano_id` e nasce depois do ciclo, e sem o filtro de
+método o contratante leria o acerto de R$ 30 como se fosse o preço do
+plano — medido com as duas consultas lado a lado.
+
 ---
 
 ## 6. Textos que o sistema diz
@@ -744,26 +953,44 @@ emitidos **no servidor**, nunca no navegador.
 | `assinatura:assinatura_cancela` | servidor, no cancelamento | `contratante_id`, `plano_id`, `motivo_cancelamento` | quanto tempo uma assinatura dura? |
 | `webhook:entrada_rejeita` | servidor, na guarda de token do webhook | `rota_alvo`, `janela_hora` | alguém está tentando forjar webhook? |
 
-**Uso interno filtrado:** o contratante de teste (`testemaster`) produz
-cobrança confirmada de mentira. A migration 0004 já prevê `e_teste` em
-contratantes, de mão única — sem essa coluna, o teste de ponta a ponta
-contamina a métrica.
+**Uso interno filtrado, desde 17/09/2026:** o contratante de teste
+(`testemaster`) produz cobrança confirmada de mentira, e o sandbox
+inteiro também. As duas colunas que resolvem isso estavam desenhadas na
+migration 0004 e nunca foram escritas; entraram na **0009**, e em
+`cobrancas` — não em contratantes, como a 0004 previa, porque a marcação
+é da cobrança: o contratante real pode ter uma linha de teste, e o
+contratante de teste pode ser arquivado sem levar o histórico embora. A
+regra inteira é a RN-33, e o que ela exclui aparece no painel em vez de
+desaparecer.
 
 **O que existe hoje, e o que falta.** Nenhum destes nove é gravado como
 linha de evento: a métrica é **derivada de `cobrancas`**, por
 `GET /api/admin/metricas?dias=N` → `porContratante[id].pagas`,
 `.valorPago`, `.taxaPagamento`. Isso responde "quantos ontem?" com
-número, que é o que a estação 6 exige, com uma ressalva medida:
-`dias=N` conta as últimas N×24 h, **não dias civis**. A tabela
-`eventos(usuario_id, nome, propriedades, criado_em)` e o recorte por
-data são trabalho da estação 6, e os nomes acima são o contrato que ela
-vai implementar.
+número, que é o que a estação 6 exige — e responde **por dia civil de
+Brasília** desde 16/09/2026, como o começo desta seção descreve. Este
+parágrafo trazia a ressalva de que `dias=N` contava as últimas N×24 h:
+era verdade até aquele dia, e ficou aqui depois de deixar de ser, com a
+correção escrita quinze linhas acima. A tabela
+`eventos(usuario_id, nome, propriedades, criado_em)` **não existe, e não
+está em pendência nenhuma** — o que a estação 6 cobra é a pergunta
+respondida com número, e ela é respondida sem a tabela. Os nomes acima
+seguem sendo o contrato de quando alguma pergunta exigir linha por
+evento; nesse dia a tabela entra como trabalho novo, não como dívida
+antiga.
 
 **Dois eventos que não existem de propósito:** `checkout:pagina_abre` e
 `checkout:pedido_indisponivel_ve`. Ambos são do navegador, exigiriam
 gravar linha por visita e trariam bot junto. Enquanto a pergunta
 principal for "quantas cobranças confirmadas ontem, e de quem", a
 resposta sai de `cobrancas` sem instrumentação nova.
+
+---
+
+## 10. O que fica fora desta versão
+
+A lista é do `CONSTRAINTS.md` §1 (vetado e fora de escopo) e do
+`docs/proximas-versoes.md` (adiado com gatilho) — sem repetição aqui.
 
 ---
 
@@ -827,13 +1054,6 @@ status trazem a palavra ("Não encontrado", "Pago"), não só a cor.
 Estados que dependem de resposta real da Asaas — QR gerado, boleto
 emitido, erro devolvido pelo servidor — não entram no verificador: eles
 exigem cobrança viva. Ficam para a rodada ao vivo no sandbox.
-
----
-
-## 10. O que fica fora desta versão
-
-A lista é do `CONSTRAINTS.md` §1 (vetado e fora de escopo) e do
-`docs/proximas-versoes.md` (adiado com gatilho) — sem repetição aqui.
 
 ---
 

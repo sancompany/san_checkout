@@ -492,7 +492,16 @@ export async function consultarAssinaturaNaAsaas(subscriptionId) {
     // Quem cobra é a Asaas: se o `ciclo` do nosso registro divergir
     // deste, o errado é o nosso (foi o caso das assinaturas nascidas
     // antes da correção de 15/09, gravadas como MONTHLY).
-    ciclo: corpo?.cycle ?? null
+    ciclo: corpo?.cycle ?? null,
+    /* LER não é RECONCILIAR, e a diferença é deliberada: a conciliação
+       corrige `status`, `ciclo` e `proximaCobranca` pelo que a Asaas
+       diz, e **não** corrige `valor` — isso é declaração aberta, do
+       dono (RN-34, `API.md` §7.5), porque preço mudado no painel da
+       Asaas pode ser erro humano de lá. O campo entra aqui porque a
+       troca de plano precisa RECONFERIR que o `PUT` pegou: a Asaas
+       responde `200` e ignora em silêncio campo que não conhece
+       (medido em 17/09), então o único jeito de saber é ler de volta. */
+    valor: corpo?.value ?? null
   };
 }
 
@@ -513,6 +522,148 @@ export async function alterarStatusAssinatura(subscriptionId, status) {
     body: JSON.stringify({ status })
   });
 }
+
+/**
+ * Troca o PLANO de uma assinatura viva — `PUT /v3/subscriptions/{id}`
+ * com `value` e `cycle`.
+ *
+ * ⚠️ **`value` não está na documentação pública do `PUT`, e FUNCIONA** —
+ * medido no sandbox em 17/09/2026, dentro do contêiner. O que a medição
+ * estabeleceu, e por que cada pedaço desta função é assim:
+ *
+ *   - aumentar (30 → 45) e **diminuir** (45 → 12) funcionam, e o `GET`
+ *     de volta confirma o valor novo;
+ *   - **a Asaas responde `200` e ignora em silêncio campo que não
+ *     conhece** — então status não prova nada aqui, e quem prova é o
+ *     `GET` depois. É por isso que quem chama esta função reconfere;
+ *   - **o piso de R$ 5,00 vale no `PUT` também**: abaixo dele vem
+ *     `400 invalid_value` com mensagem por meio de pagamento. Validar
+ *     antes de chamar (`valorCobradoAceitavel`), senão o erro do
+ *     provedor chega ao contratante sem contexto;
+ *   - **`cycle` novo NÃO move `nextDueDate`** — a data que o assinante
+ *     já tinha continua valendo, e o desenho da troca vive disso: o
+ *     acerto cobre os dias restantes e o plano novo inteiro entra na
+ *     data que já existia;
+ *   - **nenhum evento chega ao nosso receptor** em nenhuma dessas
+ *     operações (§2.2: o grupo `SUBSCRIPTION_*` não existe para nós).
+ *     Ou seja: quem altera **escreve no nosso banco na mesma operação**,
+ *     porque nada vai contar depois.
+ *
+ * `updatePendingPayments: true` é deliberado, e é o que faz a regra do
+ * dono acontecer: a cobrança do próximo vencimento passa a valer o
+ * preço novo. Sem ele, medido, a pendente fica no valor ANTIGO e o
+ * preço novo só entraria um ciclo depois — para o rebaixamento isso
+ * seria um mês de graça, e para o upgrade, um mês cobrado a menos
+ * depois de já ter cobrado o acerto.
+ *
+ * @param {string} subscriptionId
+ * @param {{valor: number, ciclo: string}} plano
+ */
+export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
+  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      value: valor,
+      cycle: ciclo,
+      updatePendingPayments: true
+    })
+  });
+}
+
+/**
+ * O que a assinatura tem para COBRAR com — o cliente na Asaas e o
+ * cartão já tokenizado.
+ *
+ * Existe separada de `consultarAssinaturaNaAsaas` de propósito, e o
+ * motivo é de segurança, não de organização: `creditCardToken` autoriza
+ * cobrança naquele cartão. A função de conciliação alimenta a resposta
+ * que vai para o contratante (`API.md` §5.3); um token que passasse por
+ * ali dependeria de ninguém nunca acrescentar um espalhamento no
+ * payload. Aqui ele só é lido por quem vai cobrar.
+ *
+ * Medido em 17/09/2026: a assinatura por cartão devolve
+ * `creditCard: { creditCardNumber, creditCardBrand, creditCardToken }`
+ * tanto na criação quanto no `GET`, e `POST /v3/payments` com esse
+ * token e **nenhum dado de cartão** devolve `200` com status
+ * `CONFIRMED` na hora. Controle negativo: `tok_inventado_000` →
+ * `400 invalid_creditCard`.
+ *
+ * Assinatura por Pix Automático não tem cartão, e aqui isso aparece
+ * como `cartaoToken: null` — quem chama recusa a troca em vez de
+ * inventar um caminho de cobrança.
+ *
+ * **O custo dessa separação é uma segunda ida ao `GET` da mesma
+ * assinatura**, e ele é pago de propósito: acontece só quando há acerto
+ * a cobrar (a troca sem acerto nem chama esta função), e a alternativa
+ * era fazer o token passar pela função que alimenta a resposta ao
+ * contratante.
+ *
+ * @returns {Promise<{clienteId: string|null, cartaoToken: string|null}|null>}
+ *   `null` quando a assinatura não existe (404) — mesma convenção de
+ *   `consultarAssinaturaNaAsaas`.
+ */
+export async function dadosDeCobrancaDaAssinatura(subscriptionId) {
+  let corpo;
+  try {
+    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+
+  return {
+    clienteId: corpo?.customer ?? null,
+    cartaoToken: corpo?.creditCard?.creditCardToken ?? null
+  };
+}
+
+/**
+ * Cobra um valor no cartão QUE JÁ ESTÁ SALVO na assinatura, sem o
+ * assinante digitar nada — `POST /v3/payments` com `creditCardToken`.
+ *
+ * É o que torna a troca de plano uma operação só: sem isto, o acerto
+ * proporcional exigiria uma pop-up nova e a troca ganharia um estado
+ * intermediário ("trocado, acerto pendente") que ninguém pediu.
+ *
+ * ⚠️ O status de volta é o que importa, não o HTTP: medido em 17/09, um
+ * cartão de teste devolve `200` com `status: "CONFIRMED"` imediatamente,
+ * mas cartão recusado também responde com status próprio. Quem chama
+ * exige a confirmação antes de mexer no plano — é o fail-closed da
+ * troca.
+ *
+ * @param {{clienteId: string, cartaoToken: string, valor: number,
+ *   descricao: string, referenciaExterna?: string, split?: object[]}} dados
+ * @returns {Promise<{chargeId: string, status: string, valor: number}>}
+ */
+export async function cobrarNoCartaoSalvo({
+  clienteId, cartaoToken, valor, descricao, referenciaExterna, split
+}) {
+  const cobranca = await chamarAsaas('/v3/payments', {
+    method: 'POST',
+    body: JSON.stringify({
+      customer: clienteId,
+      billingType: 'CREDIT_CARD',
+      value: valor,
+      dueDate: dataDeHoje(),
+      description: descricao,
+      ...(referenciaExterna ? { externalReference: referenciaExterna } : {}),
+      creditCardToken: cartaoToken,
+      ...(split ? { split } : {})
+    })
+  });
+
+  return {
+    chargeId: cobranca?.id ?? null,
+    status: cobranca?.status ?? null,
+    valor: cobranca?.value ?? null
+  };
+}
+
+/** Status da Asaas que significam "o dinheiro do acerto entrou".
+ *  `CONFIRMED` é o que o cartão devolve na hora (medido); `RECEIVED` é
+ *  o mesmo dinheiro depois de liquidado. Qualquer outro — recusado,
+ *  pendente de análise, estornado — NÃO autoriza a troca. */
+export const STATUS_ACERTO_PAGO = ['CONFIRMED', 'RECEIVED'];
 
 /* ------------------------------------------------------------------
    Pix Automático — recorrência SEM cartão

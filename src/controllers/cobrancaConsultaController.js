@@ -37,6 +37,7 @@ import { buscarContratantePorChave } from '../services/pedidoService.js';
 import {
   buscarCobrancaPorPedido,
   buscarUltimaCobrancaDaAssinatura,
+  buscarCobrancaPorSubscriptionId,
   atualizarStatusCobranca
 } from '../services/cobrancaService.js';
 import {
@@ -50,10 +51,17 @@ import {
   consultarStatus,
   consultarAssinaturaNaAsaas
 } from '../services/asaasService.js';
-import { documentoValido } from '../utils/validadores.js';
+import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 /** Status locais em que ainda faz sentido mostrar como pagar. */
+/* ⚠️ A MESMA lista existe em `services/metricaService.js`, com o nome
+   `EM_ABERTO`. As duas ficam separadas de propósito: aqui a pergunta é
+   "vale reconsultar a Asaas?", lá é "conta como aberta na métrica?" —
+   são decisões que podem divergir (um status novo pode contar como
+   aberto sem valer uma ida à Asaas). O ponteiro existe para quem mexer
+   numa OLHAR a outra, que é o que faltava: valores iguais sem nada
+   ligando os dois lugares dessincronizam calados. */
 const STATUS_AINDA_PAGAVEL = ['pendente', 'em_analise'];
 
 /**
@@ -307,11 +315,15 @@ const STATUS_ASSINATURA_TODOS = ['ativa', 'pausada', 'cancelada'];
 
 export async function consultarAssinatura(requisicao, resposta) {
   const chave = requisicao.get('X-Checkout-Key');
-  const { planoId, documento } = requisicao.body ?? {};
+  let { planoId, documento } = requisicao.body ?? {};
 
   if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
   if (!planoId || !documento) return resposta.status(400).json({ erro: 'planoId e documento são obrigatórios.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
 
   try {
     const contratante = await buscarContratantePorChave(chave);
@@ -320,7 +332,25 @@ export async function consultarAssinatura(requisicao, resposta) {
     const assinatura = await buscarAssinaturaAtiva(
       contratante.id, planoId, documento, STATUS_ASSINATURA_TODOS
     );
-    const ultima = await buscarUltimaCobrancaDaAssinatura(contratante.id, planoId, documento);
+    /* A última cobrança sai pela ASSINATURA quando ela existe, e só cai
+       na busca por plano+documento quando não existe.
+
+       O motivo é a troca de plano (17/09/2026): as cobranças ficam
+       gravadas sob o plano que valia na época, então logo depois de uma
+       troca a busca por `planoId` não acha nada e esta rota responderia
+       `ultimaCobranca: null` para uma assinatura que já cobrou — e é
+       justamente `ultimaCobranca.valorCobrado` que o `API.md` §5.3 manda
+       o contratante usar como valor de verdade (RN-34).
+
+       A busca por plano+documento continua atrás, e não só quando falta
+       a linha em `assinaturas`: ela é a rede para o caso em que o
+       vínculo ficou pela metade — `atualizarSubscriptionIdDaCobranca`
+       apenas registra o erro e segue, então uma falha passageira do
+       banco pode deixar a assinatura criada e a cobrança sem o id dela,
+       para sempre. É também o caso para que essa busca nasceu: um
+       pagamento cujo webhook se perdeu, visível só em `cobrancas`. */
+    const ultima = (assinatura ? await buscarCobrancaPorSubscriptionId(assinatura.id) : null)
+      ?? await buscarUltimaCobrancaDaAssinatura(contratante.id, planoId, documento);
 
     // As duas buscas, e não só a primeira: a linha em `assinaturas` só
     // nasce quando a 1ª cobrança confirma. Uma tentativa que ficou
@@ -480,6 +510,32 @@ if (process.argv[1]?.endsWith('cobrancaConsultaController.js')) {
   /* --- 7. sem assinatura local não explode --- */
   r = await assinaturaAtualizada(null, costura(null).deps);
   conferir(r.status === null && r.ciclo === null, 'sem linha local devolve nulos, não estoura');
+
+  /* --- 8. a última cobrança segue a ASSINATURA, não o plano ------
+     Achado no ciclo 4 da revisão da troca de plano: as cobranças ficam
+     gravadas sob o plano que valia na época, então logo depois de uma
+     troca a busca por `planoId` não acha nada — e esta rota responderia
+     `ultimaCobranca: null` para uma assinatura que já cobrou, bem no
+     campo que o `API.md` §5.3 manda o contratante usar como valor de
+     verdade (RN-34).
+
+     A checagem é no texto-fonte, como a de `sem-consulta-repetida.js` e
+     pelo mesmo motivo: exercitar o handler inteiro exigiria banco;
+     provar que a âncora não voltou a ser o plano não exige nada. */
+  {
+    const { readFileSync } = await import('node:fs');
+    const fonte = readFileSync(new URL('./cobrancaConsultaController.js', import.meta.url), 'utf8');
+    const trecho = fonte.slice(fonte.indexOf('export async function consultarAssinatura'));
+
+    conferir(
+      /assinatura \? await buscarCobrancaPorSubscriptionId\(assinatura\.id\) : null/.test(trecho),
+      'havendo assinatura, a última cobrança tem que ser procurada pelo id dela — o plano muda, a assinatura não'
+    );
+    conferir(
+      /\?\?\s*await buscarUltimaCobrancaDaAssinatura\(/.test(trecho),
+      'e a busca por plano+documento fica ATRÁS, como rede: sem ela, um vínculo pela metade viraria "nenhuma cobrança"'
+    );
+  }
 
   console.log(`cobrancaConsultaController: ${checagens} checagens OK`);
 }

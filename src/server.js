@@ -36,6 +36,7 @@ import rotasEstorno from './routes/refundRoutes.js';
 import rotasAssinatura from './routes/assinaturaRoutes.js';
 import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
+import { expurgarDadoPessoal } from './services/expurgoService.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -62,8 +63,41 @@ app.use((_req, resposta, proximo) => {
   resposta.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
   proximo();
 });
+/* NADA que esta API responde pode ser guardado — e o item 5 da
+   prontidão operacional ("a conta não surpreende") pede `Cache-Control`
+   em toda resposta que pode ser cacheada. Aqui a resposta certa é a
+   oposta: **nenhuma pode**.
+
+   O que passa por estas rotas é pedido de uma pessoa (nome, documento,
+   valor), status de pagamento que muda de segundo a segundo, e painel
+   administrativo autenticado. Sem o header, quem decide guardar é o
+   navegador e qualquer intermediário no caminho, pelo palpite dele: o
+   botão "voltar" pode repintar um pedido já pago como pendente, e um
+   proxy compartilhado pode servir o pedido de um comprador para outro.
+
+   `no-store` e não `no-cache`: `no-cache` autoriza guardar e só exige
+   revalidar — a cópia fica no disco de quem passou por aqui. Não há
+   exceção a abrir depois: resposta cacheável desta API não existe, e o
+   `/api/saude` não é exceção (ele responde exatamente o estado de
+   AGORA, que é o motivo de existir). O front estático tem política
+   própria, no `public/_headers`, e é outra coisa: lá o que se guarda é
+   HTML, CSS e JS, e a regra é revalidar sempre. */
+app.use('/api', (_req, resposta, proximo) => {
+  resposta.setHeader('Cache-Control', 'no-store');
+  proximo();
+});
+
 app.use(cors({ origin: process.env.ORIGEM_FRONTEND || 'http://127.0.0.1:5501' }));
-app.use(express.json());
+/* Teto do CORPO explícito, e não o default da biblioteca.
+   O Express já limita a 100 kB por padrão, e o efeito prático não muda;
+   o que muda é a garantia. A lei do projeto diz que "propriedade de
+   segurança que depende de variável de ambiente é propriedade não
+   garantida", e default de biblioteca é a mesma classe de dependência
+   invisível: ele pode mudar numa atualização e ninguém percebe, porque
+   nada quebra — só passa a aceitar mais. Escrito, o número é nosso.
+   100 kB é folgado para o maior corpo real (o payload da Asaas e a
+   lista de itens de um pedido). */
+app.use(express.json({ limit: '100kb' }));
 
 // pix e boleto NÃO entram aqui por prefixo — ver src/middlewares/limitadores.js
 // (checkoutRoutes.js monta o limitador por rota, pra não pegar o
@@ -83,6 +117,10 @@ app.use('/api/checkout/cancelar-assinatura', criarLimitadorCriacao());
 // aqui não é sobre volume de uso, é sobre força bruta na chave.
 app.use('/api/checkout/pausar-assinatura', criarLimitadorCriacao());
 app.use('/api/checkout/retomar-assinatura', criarLimitadorCriacao());
+
+// Troca de plano cobra dinheiro (o acerto proporcional): teto de
+// criação, não de consulta.
+app.use('/api/checkout/trocar-plano', criarLimitadorCriacao());
 /* A ROTA DE LOGIN É O ÚNICO LUGAR CARO QUE SOBROU, e por isso tem o
    teto mais apertado do projeto. Cada tentativa custa ~830 ms de CPU no
    scrypt: a 10/min, um atacante consumiria 8,3 s de CPU por minuto numa
@@ -90,8 +128,18 @@ app.use('/api/checkout/retomar-assinatura', criarLimitadorCriacao());
    graça, sem nem precisar acertar.
 
    Cinco por minuto é largo para quem sabe a senha (erra, corrige, entra)
-   e estreito para quem não sabe. Tem que vir ANTES do limitador de
-   /api/admin, senão o mais largo casa primeiro. */
+   e estreito para quem não sabe.
+
+   CORRIGIDO EM 17/09/2026: aqui dizia "tem que vir ANTES do limitador de
+   /api/admin, senão o mais largo casa primeiro", e isso é falso. O
+   `app.use` não escolhe UM middleware: ele roda TODOS os que casam o
+   caminho, na ordem de registro. Uma requisição a `/api/admin/sessao`
+   passa pelos dois limitadores de qualquer forma, e o mais apertado é o
+   que barra. Medido com a ordem deliberadamente invertida: a 6ª
+   tentativa continua vindo `429` com `RateLimit-Limit: 5`.
+
+   A ordem daqui é a natural de ler (do específico para o geral) e não
+   depende de nada — quem vier depois não precisa preservá-la por medo. */
 app.use('/api/admin/sessao', rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -263,7 +311,83 @@ app.use((erro, requisicao, resposta, proximo) => {
 
 const UM_DIA_MS = 24 * 60 * 60 * 1000;
 
-app.listen(PORTA, () => {
+/* ---------------------------------------------------------------------
+   O QUE NÃO PASSA POR ROTA NENHUMA — Lei 8, o pedaço que faltava
+
+   A captura de exceção (`erroService`) pega o que passa pelo
+   `responderErro` de um controlador ou pelo tratador de erro do Express.
+   Fica de fora exatamente o que mata o processo:
+
+     - **promessa rejeitada sem `catch`** (`unhandledRejection`), e o
+       projeto tem fire-and-forget deliberado no caminho do dinheiro —
+       aviso ao contratante, auditoria do webhook, expurgo, retentativa
+       de notificação agendada por `setTimeout`. Todos têm `catch` hoje;
+       o próximo que alguém escrever pode não ter.
+     - **exceção fora de requisição** (`uncaughtException`): um callback
+       de `setInterval`, um `setTimeout`, o topo de um módulo.
+
+   Sem estes dois tratadores, o Node imprime no stderr e **encerra o
+   processo** — e como o log do Northflank só se lê pelo painel
+   (`RUNBOOK` §7), o que sobra é um serviço reiniciando sem nenhuma linha
+   em `erros` e sem ninguém sabendo por quê. Gravar antes de morrer é a
+   diferença entre "caiu" e "caiu por isto".
+
+   **O processo continua morrendo, de propósito.** Registrar um tratador
+   faz o Node NÃO encerrar mais, e seguir de pé depois de uma rejeição
+   não observada é seguir num estado que ninguém sabe qual é — no
+   caminho do dinheiro isso é pior que reiniciar. Então: grava, loga e
+   sai com código 1, que é o que o orquestrador entende como "me
+   reinicie".
+
+   A ordem entre gravar e sair custou uma iteração, e o motivo exato
+   importa porque a primeira explicação que escrevi aqui estava errada.
+   A primeira versão agendava a saída com `setTimeout(..., 500).unref()`
+   e não esperava a gravação. Medido: o processo saiu com código **0**.
+   `unref()` não segura o event loop, e a escrita em `erros` falha
+   rápido contra um banco inalcançável — então o loop esvaziava antes de
+   o timer disparar, e o Node encerrava sozinho, limpo. Perdia-se o
+   código de saída, não a gravação: e código 0 é o que o orquestrador lê
+   como "desligou de propósito" — sem reinício, sem alarme.
+
+   Agora quem dispara o `exit` é o `finally` da gravação, e o timer é
+   só o teto para o caso de ela pendurar. Ele fica REFERENCIADO de
+   propósito: medido, um timer com `unref()` ainda dispara quando outra
+   coisa mantém o loop vivo (o socket pendurado, no caso do banco mudo),
+   mas depender disso é depender de coincidência. Referenciado, a
+   garantia é do timer, não do acaso.
+--------------------------------------------------------------------- */
+const TETO_PARA_GRAVAR_ANTES_DE_MORRER_MS = 2000;
+
+function morrerContando(rotulo, motivo) {
+  const erro = motivo instanceof Error ? motivo : new Error(`${rotulo}: ${String(motivo)}`);
+  console.error(`[checkout] ${rotulo} — o processo vai encerrar:`, erro);
+
+  const sair = () => process.exit(1);
+  const teto = setTimeout(sair, TETO_PARA_GRAVAR_ANTES_DE_MORRER_MS);
+
+  registrarErro(erro, { contexto: `processo.${rotulo}`, status: 500 })
+    .finally(() => { clearTimeout(teto); sair(); });
+}
+
+process.on('unhandledRejection', (motivo) => morrerContando('unhandledRejection', motivo));
+process.on('uncaughtException', (erro) => morrerContando('uncaughtException', erro));
+
+/* O `app` sai para o autoteste poder exercitar as ROTAS, e não só os
+   módulos — a Lei 0 pedia isso e `docs/pendencias.md` registrava a
+   falta: nenhuma suíte subia o Express, e o roteiro de login por token
+   só existia como teste feito à mão em 12/09/2026.
+
+   A saída do `listen` é invertida de propósito. O idiomático seria
+   "escuta só se eu for o ponto de entrada", mas errar essa detecção em
+   produção é o serviço no ar sem ouvir porta nenhuma — queda total, e
+   silenciosa. Então o padrão é SEMPRE escutar, e quem não quer diz
+   explicitamente. Nenhuma variável ausente, mal escrita ou renomeada
+   consegue impedir o boot. */
+export { app };
+
+if (process.env.CHECKOUT_SEM_LISTEN === '1') {
+  console.log('[checkout] CHECKOUT_SEM_LISTEN=1 — o app foi montado e NÃO está ouvindo porta (modo de teste).');
+} else app.listen(PORTA, () => {
   console.log(`[checkout] San Checkout v2 ouvindo em http://localhost:${PORTA}`);
   if (!process.env.ASAAS_API_KEY) {
     console.warn('[checkout] ASAAS_API_KEY não encontrada — cobranças vão falhar.');
@@ -292,4 +416,25 @@ app.listen(PORTA, () => {
   // diagnóstico, não rastro de cobrança.
   expurgarErros();
   setInterval(expurgarErros, UM_DIA_MS).unref();
+
+  /* DADO PESSOAL DO COMPRADOR — cinco anos (Lei 10,
+     `docs/inventario-de-dados.md` §6). Até 17/09/2026 o prazo estava
+     decidido e nada apagava nada: era intenção, não prática.
+
+     `simular: false` porque esta é a rotina de verdade, e ela ANONIMIZA
+     em vez de apagar — a linha continua servindo de registro fiscal sem
+     identificar ninguém (§6.2). Não faz nada até 2031, porque não
+     existe transação de cinco anos atrás; o valor de estar ligada agora
+     é não depender de alguém lembrar em 2031.
+
+     Para ver o que ela faria, `npm run expurgo` (simula por padrão). */
+  const rodarExpurgo = () => expurgarDadoPessoal({ simular: false })
+    .then((relatorios) => {
+      const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
+      if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
+    })
+    .catch((erro) => console.error('[expurgo]', erro.message));
+
+  rodarExpurgo();
+  setInterval(rodarExpurgo, UM_DIA_MS).unref();
 });

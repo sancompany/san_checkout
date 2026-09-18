@@ -6,6 +6,8 @@
  */
 
 import { supabase } from '../config/supabase.js';
+import { puxarDoContratante, RespostaRecusada } from '../utils/puxarDoContratante.js';
+import { exigirIdNoTeto } from '../utils/validadores.js';
 
 const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuita
 
@@ -18,6 +20,36 @@ const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuit
  * comprador.
  */
 export const METODOS_VALIDOS = ['pix', 'boleto', 'cartao', 'assinatura', 'assinatura_pix'];
+
+/**
+ * Os dois métodos que significam "esta cobrança é de uma assinatura".
+ *
+ * Mora aqui, junto de `METODOS_VALIDOS`, porque três lugares precisam da
+ * MESMA lista e ela vinha declarada dentro do `webhookController`: o
+ * webhook (para escolher o vocabulário de evento), a conciliação (para
+ * achar o último CICLO, e não qualquer cobrança que compartilhe o plano)
+ * e a troca de plano. Três cópias dessincronizam no dia em que um
+ * terceiro método de assinatura nascer.
+ */
+export const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
+
+/**
+ * O acerto proporcional de uma troca de plano — `POST /trocar-plano`.
+ *
+ * Tem método PRÓPRIO, e não `cartao`, por dois motivos que não são
+ * cosméticos:
+ *
+ *  1. **O webhook da Asaas chega para ele.** O acerto é uma cobrança
+ *     avulsa de verdade, então `PAYMENT_CONFIRMED` (e um eventual
+ *     `PAYMENT_REFUNDED`) batem no nosso receptor. Sem um método que o
+ *     identifique, o receptor o trataria como pedido avulso e mandaria
+ *     ao contratante a confirmação de um pedido com `pedidoId: null` —
+ *     uma venda que não existe, no caminho do dinheiro.
+ *  2. **A métrica fica legível.** O acerto é dinheiro confirmado e
+ *     entra na conta, mas não é venda nova: num balde próprio ninguém
+ *     o confunde com uma.
+ */
+export const METODO_ACERTO_TROCA = 'acerto_troca';
 
 /** `metodos_habilitados` nulo (linha antiga, antes da migração) libera
  *  tudo — mesmo default do `create table` novo, só reforçado aqui pra
@@ -54,6 +86,10 @@ function exigirMetodoHabilitado(contratante, metodoRequerido) {
 const MINIMO_DIGITOS_ID = 8;
 
 function exigirIdImprevisivel(id, rotulo) {
+  // Teto primeiro: id gigante não é id, e nem chega a ser pergunta de
+  // previsibilidade. Ver `exigirIdNoTeto` em `utils/validadores.js`.
+  exigirIdNoTeto(id, rotulo);
+
   const texto = String(id ?? '');
   const soDigitos = /^\d+$/.test(texto);
   if (!soDigitos || texto.length >= MINIMO_DIGITOS_ID) return;
@@ -129,16 +165,27 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_MS);
 
+  /* Quem vai à rede é `puxarDoContratante`: ele revalida cada
+     redirecionamento e lê o corpo com teto. O `fetch` cru que estava
+     aqui seguia redirect sem perguntar (SSRF pela resposta, não pelo
+     cadastro) e lia o corpo inteiro (OOM na instância de 512 MiB) —
+     ver a nota no topo daquele arquivo. */
   let resposta;
   try {
-    resposta = await fetch(`${contratante.api_base_url}/pedido/${pedidoId}`, {
-      method: 'GET',
-      headers: { 'X-Checkout-Key': contratante.api_key },
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/pedido/${pedidoId}`, {
+      chave: contratante.api_key,
       signal: controlador.signal
     });
   } catch (erroFetch) {
+    /* Redirect para fora, cadeia longa demais e corpo acima do teto são
+       resposta ERRADA do contratante, não rede fora do ar: `502`, como
+       qualquer outra resposta que não dá para usar. Só a falha de rede
+       de verdade continua `504`. A mensagem ao comprador é a mesma nos
+       dois casos de propósito — ele não tem o que fazer com a diferença,
+       e o motivo fica no log pelo `erro.cause`. */
     const erro = new Error('Não foi possível carregar os dados do pedido, tente novamente.');
-    erro.status = 504;
+    erro.status = erroFetch instanceof RespostaRecusada ? 502 : 504;
+    erro.cause = erroFetch;
     throw erro;
   } finally {
     clearTimeout(timeoutId);
@@ -150,13 +197,13 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
     throw erro;
   }
 
-  if (!resposta.ok) {
+  if (resposta.status < 200 || resposta.status >= 300 || resposta.corpo === null) {
     const erro = new Error('Não foi possível carregar os dados do pedido, tente novamente.');
     erro.status = 502;
     throw erro;
   }
 
-  const pedido = await resposta.json();
+  const pedido = resposta.corpo;
 
   if (pedido.status === 'pago' || pedido.status === 'cancelado') {
     const erro = new Error(`Este pedido já está com status "${pedido.status}".`);
@@ -181,10 +228,30 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
  * é um pedido com ciclo de vida, é só a definição de um produto
  * recorrente).
  */
-export async function resolverPlano(contratanteId, planoId, { metodoRequerido } = {}) {
+export async function resolverPlano(contratanteId, planoId, { metodoRequerido, contratante: jaCarregado } = {}) {
   exigirIdImprevisivel(planoId, 'planoId');
 
-  const contratante = await buscarContratante(contratanteId);
+  /* `contratante` já carregado entra por parâmetro em vez de ser buscado
+     de novo — quem autentica por `X-Checkout-Key` (a troca de plano) já
+     tem a linha inteira em mãos, e cada ida ao banco custou 213 ms
+     medidos em 12/09/2026 (`tests/sem-consulta-repetida.js`). Sem isto,
+     a troca faria duas leituras da MESMA linha.
+
+     A guarda existe porque o atalho poderia calar a discordância: com um
+     `contratante` de um lado e um `contratanteId` de outro, quem passasse
+     a valer seria o objeto — o método habilitado e a `api_base_url`
+     consultada seriam de OUTRO contratante, e o `contratanteId` viraria
+     enfeite. Isso é um furo entre inquilinos esperando um segundo
+     chamador desatento, e custa três linhas fechar agora. */
+  if (jaCarregado && jaCarregado.id !== contratanteId) {
+    /* SEM `.status` de propósito: isto é erro de programação, não
+       validação de entrada, e `utils/erros.js` só devolve a mensagem
+       crua ao cliente quando o `.status` está lá. Assim a frase fica no
+       log e na tabela `erros`, e quem chamou recebe o genérico. */
+    throw new Error('Contratante carregado não corresponde ao contratanteId pedido.');
+  }
+
+  const contratante = jaCarregado ?? await buscarContratante(contratanteId);
   if (!contratante) {
     const erro = new Error('Contratante não encontrado.');
     erro.status = 404;
@@ -195,16 +262,17 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_MS);
 
+  // Mesma troca do `resolverPedido` — ver a nota lá.
   let resposta;
   try {
-    resposta = await fetch(`${contratante.api_base_url}/plano/${planoId}`, {
-      method: 'GET',
-      headers: { 'X-Checkout-Key': contratante.api_key },
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/plano/${planoId}`, {
+      chave: contratante.api_key,
       signal: controlador.signal
     });
-  } catch {
+  } catch (erroFetch) {
     const erro = new Error('Não foi possível carregar os dados do plano, tente novamente.');
-    erro.status = 504;
+    erro.status = erroFetch instanceof RespostaRecusada ? 502 : 504;
+    erro.cause = erroFetch;
     throw erro;
   } finally {
     clearTimeout(timeoutId);
@@ -216,13 +284,13 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
     throw erro;
   }
 
-  if (!resposta.ok) {
+  if (resposta.status < 200 || resposta.status >= 300 || resposta.corpo === null) {
     const erro = new Error('Não foi possível carregar os dados do plano, tente novamente.');
     erro.status = 502;
     throw erro;
   }
 
-  const plano = await resposta.json();
+  const plano = resposta.corpo;
   return { contratante, plano };
 }
 
@@ -236,7 +304,21 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido } 
    ser construído — nada aqui chega a consultar o banco.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('pedidoService.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const recusa = (id) => {
     try { exigirIdImprevisivel(id, 'pedidoId'); return false; } catch { return true; }
@@ -260,6 +342,28 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
   // vazio/nulo não é tratado aqui (a rota do Express nem casa sem o
   // parâmetro) — só não pode explodir
   assert.ok(!recusa(undefined), 'undefined não estoura');
+
+  /* O atalho de `resolverPlano` não pode calar uma discordância entre o
+     `contratante` passado e o `contratanteId` pedido: se calasse, quem
+     valeria seria o objeto, e a rota trabalharia com a `api_base_url` e
+     os métodos habilitados de OUTRO inquilino. */
+  let recusouDivergencia = false;
+  try {
+    await resolverPlano('contratante-a', 'plano-x', { contratante: { id: 'contratante-b' } });
+  } catch (erro) {
+    recusouDivergencia = /não corresponde/.test(erro.message);
+  }
+  assert.ok(recusouDivergencia, 'contratante carregado de OUTRO id tem de ser recusado, não aceito em silêncio');
+
+  /* Controle positivo: com os dois iguais, o atalho vale e a função
+     segue (aqui ela falha na rede, que é depois da guarda). */
+  let passouDaGuarda = false;
+  try {
+    await resolverPlano('contratante-a', 'plano-x', { contratante: { id: 'contratante-a', api_base_url: 'https://exemplo.test' } });
+  } catch (erro) {
+    passouDaGuarda = !/não corresponde/.test(erro.message);
+  }
+  assert.ok(passouDaGuarda, 'mesmo id passa da guarda — senão a guarda recusaria tudo');
 
   // método habilitado: lista ausente libera tudo (contratante antigo)
   assert.ok(metodoHabilitado({}, 'pix'), 'sem lista libera');
@@ -290,5 +394,5 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
     );
   }
 
-  console.log('pedidoService: 15 checagens OK');
+  console.log(`pedidoService: ${checagens} checagens OK`);
 }

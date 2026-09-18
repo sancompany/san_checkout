@@ -2,12 +2,24 @@
  * SAN CHECKOUT v2 — src/services/cobrancaService.js
  * Registra cada cobrança criada, liga com o contratante/pedido de
  * origem, e serve de consulta pro webhook e pro estorno.
+ *
+ * **Toda** inserção aqui grava `ambiente` (migration 0009, RN-33): em
+ * que ambiente da Asaas a cobrança nasceu. Vem de `ambienteAsaas()`,
+ * nunca do corpo da requisição — é fato do servidor, e deixá-lo entrar
+ * de fora seria a mesma classe do valor que o comprador escolhe. A
+ * métrica de sucesso exclui `sandbox`, e esquecer a coluna numa
+ * inserção nova conta a métrica para BAIXO em silêncio: o autoteste de
+ * `metricaService` varre este arquivo justamente por isso.
  */
 
 import { supabase } from '../config/supabase.js';
+import { ambienteAsaas } from '../config/asaas.js';
+import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
+import { exigirIdNoTeto } from '../utils/validadores.js';
 
 export async function registrarCobranca(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     charge_id: dados.chargeId,
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId,
@@ -47,6 +59,7 @@ export async function registrarCobranca(dados) {
  */
 export async function registrarCobrancaPendentePopup(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     asaas_checkout_id: dados.asaasCheckoutId,
     contratante_id: dados.contratanteId,
     pedido_id: dados.pedidoId ?? null,
@@ -121,6 +134,7 @@ export async function registrarCobrancaPendentePopup(dados) {
  */
 export async function registrarCicloAssinatura(dados) {
   const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
     charge_id: dados.chargeId,
     asaas_subscription_id: dados.asaasSubscriptionId,
     contratante_id: dados.contratanteId,
@@ -156,6 +170,51 @@ export async function registrarCicloAssinatura(dados) {
   if (error?.code === '23505') return { duplicado: true };
   if (error) console.error('[cobrancaService.registrarCicloAssinatura]', error.message);
   return { duplicado: false };
+}
+
+/**
+ * Registra o ACERTO PROPORCIONAL de uma troca de plano — a cobrança
+ * avulsa que a rota `/trocar-plano` faz no cartão já salvo.
+ *
+ * Nasce já `confirmado`: quem chama só grava depois de a Asaas devolver
+ * `CONFIRMED`/`RECEIVED` (é o fail-closed da troca — o plano só muda com
+ * o dinheiro dentro). Por isso `confirmado_em` vai preenchido aqui, e
+ * não esperando webhook: o dado é conhecido neste instante, e a métrica
+ * conta por ele (migration 0008).
+ *
+ * `metodo_pagamento` é `acerto_troca`, nunca `cartao` — o porquê está em
+ * `METODO_ACERTO_TROCA` (`pedidoService.js`), e não é cosmético: com
+ * `cartao`, o `PAYMENT_CONFIRMED` que a Asaas manda para esta cobrança
+ * viraria uma confirmação de pedido com `pedidoId: null` no webhook do
+ * contratante.
+ *
+ * `plano_id` é o plano NOVO: o acerto é o que o assinante pagou para
+ * passar a ter aquele plano nos dias que faltavam. De onde ele veio fica
+ * em `assinaturas.plano_anterior_id` (migration 0010).
+ */
+export async function registrarAcertoDeTroca(dados) {
+  const { error } = await supabase.from('cobrancas').insert({
+    ambiente: ambienteAsaas(),
+    charge_id: dados.chargeId,
+    asaas_subscription_id: dados.asaasSubscriptionId,
+    contratante_id: dados.contratanteId,
+    plano_id: dados.planoId,
+    documento: dados.documento,
+    valor_cheio: dados.valor,
+    valor_com_desconto: dados.valor,
+    taxa_asaas: 0,
+    taxa_propria: 0,
+    taxa_isenta: true,
+    valor_cobrado: dados.valor,
+    metodo_pagamento: METODO_ACERTO_TROCA,
+    parcelas: 1,
+    ciclo: dados.ciclo ?? null,
+    status: 'confirmado',
+    confirmado_em: new Date().toISOString()
+  });
+
+  if (error) console.error('[cobrancaService.registrarAcertoDeTroca]', error.message);
+  return { registrado: !error };
 }
 
 /** Busca pelo id da SESSÃO (asaas_checkout_id) — é o que o front tem
@@ -242,6 +301,20 @@ export async function buscarCobrancaPorSubscriptionId(subscriptionId) {
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
+    /* CICLO, não "qualquer cobrança ligada a esta assinatura" — e aqui o
+       filtro conserta dois usos de uma vez:
+
+       1. como **molde** do ciclo seguinte (`registrarNovoCicloAssinatura`,
+          webhookController), esta consulta entrega a linha de onde saem
+          contratante, plano, documento, telefone e endereço. O acerto de
+          uma troca de plano (17/09/2026) também aponta para a assinatura
+          e nasce DEPOIS do último ciclo: sem o filtro, ele viraria o
+          molde, e como ele não guarda telefone nem endereço, o ciclo
+          seguinte nasceria sem esses campos — e o erro se propagaria
+          para sempre, porque cada ciclo copia do mais recente.
+       2. como **último ciclo pago** (`/trocar-plano`), é daqui que sai o
+          valor que o assinante realmente pagou pelo período em curso. */
+    .in('metodo_pagamento', METODOS_DE_ASSINATURA)
     .eq('asaas_subscription_id', subscriptionId)
     .order('criado_em', { ascending: false })
     .limit(1)
@@ -287,6 +360,17 @@ export async function buscarUltimaCobrancaDaAssinatura(contratanteId, planoId, d
     .eq('contratante_id', contratanteId)
     .eq('plano_id', planoId)
     .eq('documento', documento)
+    /* Ciclo de assinatura, não "qualquer cobrança que compartilhe o
+       plano". O filtro nasceu em 17/09/2026 junto da troca de plano: o
+       acerto proporcional é uma cobrança avulsa que carrega o MESMO
+       `plano_id` e nasce depois do último ciclo, então sem isto ele
+       viraria a "última cobrança" da assinatura — e `API.md` §5.3 manda
+       o contratante ler `ultimaCobranca.valorCobrado` como o valor que
+       está sendo cobrado, justamente porque `valor` não é reconciliado
+       (RN-34). O contratante veria o acerto de R$ 30 como se fosse o
+       preço do plano. Hoje é no-op (toda linha com `plano_id` é
+       `assinatura`); a partir da troca, não. */
+    .in('metodo_pagamento', METODOS_DE_ASSINATURA)
     .or('substitui_assinatura_id.is.null,status.not.in.(pendente,cancelado,expirado)')
     .order('criado_em', { ascending: false })
     .limit(1)
@@ -350,6 +434,10 @@ export async function atualizarSituacaoSubconta(asaasAccountId, situacao) {
  * boleto deve conseguir o boleto.
  */
 export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
+  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
+  // rota autenticada de contratante, mas id sem teto é carga sem teto.
+  exigirIdNoTeto(pedidoId, 'pedidoId');
+
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
@@ -367,6 +455,10 @@ export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, me
 }
 
 export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
+  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
+  // rota autenticada de contratante, mas id sem teto é carga sem teto.
+  exigirIdNoTeto(pedidoId, 'pedidoId');
+
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')

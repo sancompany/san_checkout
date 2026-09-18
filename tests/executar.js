@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SUITES = [
+  'tests/ajudantes.js',              // os ajudantes das suítes também são código, e um já teve bug
+  'tests/o-que-os-documentos-afirmam.js', // os números que os documentos afirmam, conferidos contra a realidade
   'src/utils/validadores.js',        // tetos de campo e comparação de credencial
   'src/utils/alvoDeRede.js',         // https + host público para alvo de saída (anti-SSRF)
   'src/utils/retornoSeguro.js',      // returnUrl: allowlist por origem (anti open redirect)
@@ -31,8 +33,11 @@ const SUITES = [
   'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
+  'src/services/proporcionalService.js', // o acerto da troca de plano: as sete regras do dono, em aritmética
+  'src/services/expurgoService.js',  // expurgo de dado pessoal: lista branca do que fica, e o piso do prazo
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas
+  'src/controllers/trocaPlanoController.js', // troca de plano: cobra o acerto ANTES de alterar, e relê o que a Asaas fez
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
   'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login
@@ -40,7 +45,13 @@ const SUITES = [
   'tests/retorno-nao-vira-open-redirect.js', // returnUrl: quem decide o destino é o servidor, e continua sendo
   'tests/nenhuma-chamada-de-saida-sem-teto.js', // fetch sem signal espera para sempre: varre src/ inteiro
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
-  'tests/renovacao-exige-token-nao-so-documento.js' // renovar não pode confiar só no documento do body
+  'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
+  'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
+  'tests/pull-nao-segue-para-onde-quiser.js', // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
+  'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
+  'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
+  'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
+  'tests/o-processo-nao-morre-calado.js' // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
 ];
 
 /**

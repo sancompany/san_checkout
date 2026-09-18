@@ -47,17 +47,22 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
    - 5.3 [Conciliar uma assinatura](#53-conciliar-uma-assinatura)
    - 5.4 [Estornar](#54-estornar)
    - 5.5 [Cancelar, pausar e retomar assinatura](#55-cancelar-pausar-e-retomar-assinatura)
-   - 5.6 [Página pública de status do comprador](#56-página-pública-de-status-do-comprador)
-   - 5.7 [Saúde do serviço](#57-saúde-do-serviço)
+   - 5.6 [Trocar de plano (upgrade e downgrade)](#56-trocar-de-plano-upgrade-e-downgrade)
+   - 5.7 [Página pública de status do comprador](#57-página-pública-de-status-do-comprador)
+   - 5.8 [Saúde do serviço](#58-saúde-do-serviço)
 6. [Métodos de pagamento](#6-métodos-de-pagamento)
 7. [Assinaturas em detalhe](#7-assinaturas-em-detalhe)
    - 7.1 [Ciclos aceitos](#71-ciclos-aceitos)
    - 7.2 [Assinatura por Pix Automático](#72-assinatura-por-pix-automático)
    - 7.3 [Renovação — cartão vencido ou troca de cartão](#73-renovação--cartão-vencido-ou-troca-de-cartão)
    - 7.4 [Ciclo de vida completo](#74-ciclo-de-vida-completo)
-   - 7.5 [O que a assinatura NÃO faz — leia antes de prometer benefício](#75-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
+   - 7.5 [Mudar o preço de quem já assinou](#75-mudar-o-preço-de-quem-já-assinou--o-que-dá-o-que-não-dá-e-o-que-o-checkout-não-faz)
+   - 7.6 [O que a assinatura NÃO faz — leia antes de prometer benefício](#76-o-que-a-assinatura-não-faz--leia-antes-de-prometer-benefício)
 8. [Taxas, split e o valor cobrado](#8-taxas-split-e-o-valor-cobrado)
 9. [Limites e validações do sistema](#9-limites-e-validações-do-sistema)
+   - 9.0 [A resposta da sua API: redirecionamento e tamanho](#90-a-resposta-da-sua-api-redirecionamento-e-tamanho)
+   - 9.1 [O piso de R$ 5,00](#91-o-piso-de-r-500--e-por-que-ele-não-é-o-mesmo-que-o-valor-do-pedido)
+   - 9.2 [O que o telefone precisa ter](#92-o-que-o-telefone-precisa-ter)
 10. [Compatibilidade e versionamento](#10-compatibilidade-e-versionamento)
 11. [Checklist de integração](#11-checklist-de-integração)
     - 11.1 [A troca de sandbox para produção — o que NÃO atravessa](#111-a-troca-de-sandbox-para-produção--o-que-não-atravessa)
@@ -472,10 +477,23 @@ próprios dados.
 > valor e prefill específicos por anunciante. O checkout não impõe
 > formato; só chama `GET /plano/{o que vier}`.
 
-> **`valor` e `ciclo` são congelados na criação da assinatura.** Os
-> ciclos seguintes cobram o que foi combinado naquele momento — o
-> checkout **não reconsulta** `/plano/{id}` a cada cobrança. Para mudar o
-> preço de um assinante, cancele e crie uma assinatura nova.
+> **`valor` e `ciclo` são congelados NO CHECKOUT, e isso não é limite do
+> provedor.** Os ciclos seguintes cobram o que foi combinado no momento
+> da assinatura — o checkout **não reconsulta** `/plano/{id}` a cada
+> cobrança. Mudar o que um assinante paga é um ato explícito: **trocar de
+> plano** (seção 5.6), que relê o plano de destino na hora.
+>
+> Este parágrafo já esteve errado duas vezes no mesmo dia, e as duas
+> correções ficam registradas porque a diferença entre elas é a lição.
+> Primeiro ele dizia que o congelamento vinha da **Asaas** — falso,
+> medido no sandbox em 17/09/2026: ela aceita `PUT /v3/subscriptions/{id}`
+> alterando `value` e `cycle`, e com `updatePendingPayments: true` altera
+> até a cobrança pendente já gerada. Corrigido, ele passou a dizer que
+> **não existia rota nossa** — verdade naquela hora, e falso no fim do
+> mesmo dia, quando o dono autorizou construí-la. "Não existe rota
+> nossa" e "o provedor não permite" são afirmações diferentes, e só uma
+> delas eu podia ter feito sem medir
+> (`docs/erros/2026-09-17-declarei-limite-do-provedor-sem-ter-medido.md`).
 
 ---
 
@@ -686,15 +704,48 @@ O payload de pedido **não tem** o campo `tipo`.
 | `cobranca_falhou` | Um ciclo não entrou — cartão recusado ou cobrança vencida. **Mande o link de renovação** (seção 7.3) |
 | `cobranca_estornada` | Um ciclo foi estornado |
 | `cobranca_contestada` | Chargeback num ciclo — **suspenda o acesso** |
+| `plano_trocado` | O assinante passou para outro plano (seção 5.6) |
 | `cancelada` | Assinatura encerrada |
 
 O par `planoId` + `documento` é a chave: é por ele que você localiza o
 assinante do seu lado, e é ele que você manda ao cancelar, pausar ou
 retomar.
 
+> **O `documento` chega SEMPRE em dígitos**, sem ponto, barra ou traço —
+> `11144477735`, nunca `111.444.777-35`. Vale desde 17/09/2026 e é o
+> mesmo formato nas duas direções: você pode mandar pontuado nas rotas
+> de §5.5 (o checkout normaliza), e o que sai daqui é sempre dígitos.
+> **Se você compara esse campo com um valor guardado do seu lado, tire a
+> pontuação do seu antes de comparar** — é a única coisa que muda para
+> quem já integra, e só muda para quem guarda o CPF pontuado.
+
 > O payload de assinatura **não carrega valores** de propósito: o valor é
 > o do plano que você já tem cadastrado. Se precisar do valor exato de um
 > ciclo específico, ele está no painel da Asaas.
+>
+> **`plano_trocado` é a única exceção, e por necessidade:** nele o
+> `planoId` que você conhece *acabou de mudar*, então o payload leva
+> quatro campos a mais — `planoAnterior` (sem ele você não acha o
+> próprio registro), `valor`, `ciclo` e `acertoCobrado`. Os três últimos
+> existem porque **avisar o assinante da mudança de preço é obrigação
+> sua** (RN-35), e um aviso sem o número novo não serve:
+>
+> ```json
+> {
+>   "versao": 1,
+>   "tipo": "assinatura",
+>   "planoId": "plano-vitrina-pro-3a81",
+>   "planoAnterior": "plano-vitrina-9f2c",
+>   "documento": "11144477735",
+>   "evento": "plano_trocado",
+>   "valor": 160.00,
+>   "ciclo": "MONTHLY",
+>   "acertoCobrado": 30.00
+> }
+> ```
+>
+> `acertoCobrado` vem `0` quando não houve cobrança (rebaixamento, ou
+> acerto absorvido por ser menor que R$ 5,00).
 
 > **Assinatura paga por Pix Automático usa exatamente estes mesmos
 > eventos.** Para você é a mesma assinatura; muda só como o assinante
@@ -940,15 +991,29 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > forte para o "rode uma vez por dia" da 5.3.
 >
 > **`ciclo` passou a ser reconferido junto, desde 16/09/2026.** Ele
-> continua congelado na criação — o que mudou é de onde a resposta o lê:
+> continua congelado **pelo nosso fluxo** (a Asaas aceitaria alterá-lo —
+> seção 4.2) — o que mudou é de onde a resposta o lê:
 > quem cobra é a Asaas, então se o nosso registro divergir do dela, o
 > errado é o nosso, e esta rota corrige o registro. Isso existe por causa
 > de um rastro real: as assinaturas criadas antes de 15/09/2026 foram
 > gravadas como `MONTHLY` independentemente do plano (o código lia um
 > campo de webhook que não existe). A correção na origem só valeu para as
 > novas — **para as antigas, é esta rota que repara**. Se você guardou o
-> `ciclo` do seu lado antes desta data, vale reconciliar. `valor`
-> continua vindo do registro local.
+> `ciclo` do seu lado antes desta data, vale reconciliar.
+>
+> ⚠️ **`valor` é o único campo desta resposta que NÃO é reconferido.**
+> Ele sai do nosso banco, e não da Asaas. Isso tem consequência prática
+> desde 17/09/2026, quando foi medido que **a Asaas aceita alterar o
+> valor de uma assinatura ativa** (seção 7.5): mudado o preço lá — pelo
+> painel ou por API —, a Asaas passa a cobrar o novo e **nós continuamos
+> devolvendo o antigo aqui, para sempre**, porque nada nos avisa
+> (`SUBSCRIPTION_*` não está entre os eventos configurados e
+> `PAYMENT_UPDATED` está desmarcado de propósito).
+>
+> Então: **não use `valor` como "o preço que está sendo cobrado"**. Para
+> isso existe `ultimaCobranca.valorCobrado`, que é histórico de cobrança
+> real e por isso é verdade. O `valor` diz o que foi combinado na
+> criação, do nosso lado.
 
 | Campo | Descrição |
 |---|---|
@@ -1082,7 +1147,139 @@ separadamente.
 
 ---
 
-### 5.6 Página pública de status do comprador
+### 5.6 Trocar de plano (upgrade e downgrade)
+
+Leva um assinante do plano A para o plano B **mantendo o vínculo**: sem
+cancelar, sem ele digitar cartão de novo, e sem janela em que ele fica
+sem assinatura.
+
+```http
+POST {BASE}/api/checkout/trocar-plano
+X-Checkout-Key: {sua chave}
+Content-Type: application/json
+
+{
+  "planoId": "plano-vitrina-9f2c",
+  "planoNovoId": "plano-vitrina-pro-3a81",
+  "documento": "11144477735"
+}
+```
+
+**O preço e o ciclo do plano novo NÃO vão no corpo.** O checkout puxa os
+dois do **seu** `GET /plano/{planoNovoId}` (seção 4.2), como faz na
+criação da assinatura. É a mesma regra do valor de um pedido: quem paga
+não escolhe quanto paga.
+
+**Resposta 200 — troca para um plano mais caro:**
+
+```json
+{
+  "assinaturaId": "sub_000123456789",
+  "planoId": "plano-vitrina-pro-3a81",
+  "planoAnterior": "plano-vitrina-9f2c",
+  "valor": 160.00,
+  "ciclo": "MONTHLY",
+  "proximaCobranca": "2026-10-10",
+  "acerto": {
+    "cobrado": true,
+    "valor": 30.00,
+    "chargeId": "pay_000987654321",
+    "credito": 50.00,
+    "debito": 80.00,
+    "diasRestantes": 15,
+    "motivo": "cobra o acerto"
+  }
+}
+```
+
+#### O que acontece, na ordem
+
+1. **O acerto proporcional é calculado** (a conta está na seção 7.5).
+2. **Se houver acerto, ele é cobrado AGORA, no cartão que já está
+   salvo** — o assinante não digita nada.
+3. **O plano só muda se o acerto for aprovado.** Cartão recusado
+   responde `402` e **nada** é alterado.
+4. A assinatura passa a valer `valor` e `ciclo` do plano novo, e a
+   **data de vencimento não se move**: o plano novo inteiro entra na data
+   que o assinante já tinha.
+5. Você recebe `evento: "plano_trocado"` no webhook (seção 4.3.4).
+
+#### Os campos de `acerto`, e por que eles vão abertos
+
+| campo | o que é |
+|---|---|
+| `cobrado` | `true` se uma cobrança foi feita agora |
+| `valor` | quanto foi cobrado (`0` quando não houve) |
+| `chargeId` | id da cobrança do acerto na Asaas, ou `null` |
+| `credito` | a parte **não usada** do que ele já pagou |
+| `debito` | o que o plano novo custaria nos dias que faltam |
+| `diasRestantes` | dias até o vencimento que já estava marcado |
+| `motivo` | por que cobrou, ou por que não cobrou |
+
+Eles vão abertos porque **explicar a cobrança ao assinante é
+responsabilidade sua** — por e-mail e por aviso no seu site (decisão do
+dono em 17/09/2026; `docs/funcional.md` RN-35). O checkout não fala com
+o pagador: ele não manda e-mail, não manda WhatsApp, não mostra tela.
+Sem `credito`, `debito` e `diasRestantes`, o seu aviso seria "cobramos
+R$ 30" sem dizer de onde saiu o número.
+
+#### Quando NÃO há cobrança, e a troca acontece do mesmo jeito
+
+- **Plano mais barato** (downgrade): não cobra e **não devolve nada**. O
+  preço novo passa a valer no vencimento que já existia. `acerto.cobrado`
+  vem `false`.
+- **Plano mais caro no total, mais barato por dia**: também não cobra —
+  um trimestral de R$ 270 custa menos por dia que um mensal de R$ 100.
+  A seção 7.5 explica por que "a diferença entre os planos" é a conta
+  errada.
+- **Acerto abaixo de R$ 5,00**: absorvido. A Asaas não aceita cobrança
+  menor que isso, e arredondar para cima seria cobrar mais do que o
+  devido. `motivo` vem começando com `absorvido:`.
+
+#### Códigos
+
+| Código | Significa |
+|---|---|
+| `200` | Trocado. Leia `acerto.cobrado` para saber se houve cobrança |
+| `400` | Campos ausentes, CPF/CNPJ inválido, `planoNovoId` igual ao `planoId`, ou o plano novo com valor abaixo de R$ 5,00 / ciclo fora dos sete (seção 7.1) |
+| `401` | Chave ausente ou inválida |
+| `402` | **O acerto não foi aprovado no cartão salvo. O plano NÃO foi alterado** |
+| `404` | Nenhuma assinatura `ativa` ou `pausada` nesse plano/documento, ou o plano novo não existe na sua API |
+| `409` | Ver a tabela abaixo |
+| `502` | A alteração não foi confirmada pela Asaas. **O plano NÃO foi alterado** — se `acerto.chargeId` vier preenchido, o acerto FOI cobrado e precisa de tratamento manual |
+
+Os `409` são as recusas deliberadas, e cada uma tem motivo:
+
+| Situação | Por que recusa |
+|---|---|
+| **A cobrança do período em curso não está confirmada** | Não existe crédito de um período que não foi pago. Resolva o pagamento antes |
+| **Já existe uma troca em andamento** | Duas chamadas simultâneas cobrariam o acerto duas vezes. A segunda é recusada sem cobrar nada |
+| **A assinatura não tem cartão salvo** | É o caso do Pix Automático: sem cartão não há como cobrar o acerto sem interação do assinante |
+| **A assinatura está encerrada na Asaas** | Não há plano a trocar. O caminho é assinar de novo |
+| **Não foi possível calcular o acerto** | Vem com `motivo`. Significa dado incoerente (ciclo desconhecido, vencimento mais longe que o ciclo inteiro) — e aqui o checkout **recusa em vez de dar a troca de graça** |
+
+> **Só o seu projeto aciona**, como em cancelar/pausar/retomar. O
+> assinante não troca de plano sozinho pelo checkout: quem decide (e
+> quem cobra o consentimento dele) é você. Isso importa: mudar o valor
+> que um cartão salvo vai cobrar **exige concordância do assinante**
+> (CDC). Um upgrade que ele pediu é uma coisa; um aumento que ele não
+> pediu é outra, e a segunda não se resolve com API.
+
+> ⚠️ **Depois da troca, o `planoId` do assinante é o NOVO.** Cancelar,
+> pausar, retomar, conciliar (seção 5.5 e 5.3) e gerar link de renovação
+> (seção 7.3) passam a usar `planoNovoId`. Continuar mandando o antigo
+> responde `404` — a assinatura não está mais lá. É por isso que o evento
+> `plano_trocado` carrega `planoAnterior`: é com ele que você acha o seu
+> próprio registro para atualizar.
+
+> **Uma troca por vez, e o crédito não acumula.** Cada troca recalcula
+> sobre os dias que restam naquele momento, a partir do valor **pago**
+> do período — o crédito da troca anterior não sobrevive (decisão do
+> dono; a aritmética está na seção 7.5).
+
+---
+
+### 5.7 Página pública de status do comprador
 
 Toda cobrança de Pix ou Boleto tem uma página permanente:
 
@@ -1130,7 +1327,7 @@ boleto. **Não há autenticação aqui** — por isso nada de pessoal trafega.
 
 ---
 
-### 5.7 Saúde do serviço
+### 5.8 Saúde do serviço
 
 ```http
 GET {BASE}/api/saude
@@ -1385,7 +1582,151 @@ não um erro que trava o pagador.
                                           (definitivo)
 ```
 
-### 7.5 O que a assinatura NÃO faz — leia antes de prometer benefício
+### 7.5 Mudar o preço de quem já assinou — o que dá, o que não dá, e o que o checkout não faz
+
+**Resumo em três linhas.** A Asaas **permite** aumentar e diminuir o
+valor de uma assinatura ativa, e trocar o ciclo dela. **O San Checkout
+expõe isso desde 17/09/2026, como troca de PLANO**: `POST
+/trocar-plano` (seção 5.6) — o preço vem do plano de destino cadastrado
+na sua API, nunca solto. O que continua valendo: se alguém mudar o preço
+**pelo painel da Asaas**, nada nos avisa, e o `valor` da seção 5.3
+continua sendo **o nosso registro**.
+
+Tudo abaixo foi **medido no sandbox em 17/09/2026**, em assinatura de
+**cartão** (o meio que o checkout usa) e também em boleto, com fixtures
+descartáveis apagadas no fim. Até aquele dia este documento afirmava que
+valor e ciclo eram congelados pela Asaas — era falso, e o registro do
+erro está em
+`docs/erros/2026-09-17-declarei-limite-do-provedor-sem-ter-medido.md`.
+
+#### O que a Asaas faz, medido
+
+| o que eu tentei | resposta | conferido no `GET` depois |
+|---|---|---|
+| **aumentar**: R$ 30 → R$ 45 (cartão) | `200` | `value: 45` |
+| **diminuir**: R$ 45 → R$ 12 (cartão) | `200` | `value: 12` |
+| **abaixo do piso**: R$ 12 → R$ 3 | **`400 invalid_value`** — "O valor mínimo para cobranças via cartão de crédito é R$ 5,00." | continuou `12`: nada mudou |
+| **trocar o ciclo**: `MONTHLY` → `YEARLY` | `200` | `cycle: YEARLY`, e **`nextDueDate` NÃO se moveu** |
+| **em assinatura PAUSADA** (`INACTIVE`) | `200` | `value: 77`, `status: INACTIVE` — pausada aceita mudança de preço |
+| alterar **a cobrança pendente já gerada** | só com `updatePendingPayments: true` | sem a bandeira, a pendente fica no valor antigo; com ela, a pendente muda (mesmo id, mesmo vencimento) |
+| **controle negativo**: mandar um campo que não existe | `200`, **sem erro** | nada mudou |
+
+Três coisas que essa tabela ensina, e que valem para qualquer integração
+com a Asaas:
+
+1. **O piso de R$ 5,00 vale na alteração também**, não só na criação — e
+   a mensagem de erro é **por meio de pagamento** ("via cartão de
+   crédito" × "via Boleto Bancário", as duas medidas). Quem alterar
+   preço precisa validar antes, senão a recusa aparece na cara do
+   operador sem explicação.
+2. **Ciclo novo não mexe na data já marcada.** Trocar `MONTHLY` por
+   `YEARLY` mantém o `nextDueDate`; o ciclo novo passa a contar **a
+   partir** daquela data. Quem espera "virou anual, então a próxima é em
+   um ano" vai errar por onze meses.
+3. **`200` não prova nada nesta API.** O controle negativo devolveu
+   `200` sem erro para um campo inventado: a Asaas **ignora em silêncio
+   o que não conhece**. Portanto mandar `valor` em vez de `value`, ou
+   `amount`, é aceito e não faz nada. Quem alterar preço confere lendo
+   de volta, nunca pelo código HTTP.
+
+> **Uma ressalva de estabilidade:** `value` **não aparece no schema
+> documentado** do `PUT` de assinatura da Asaas (a documentação lista
+> `cycle`, `nextDueDate`, `billingType`, `updatePendingPayments`,
+> `status`, `description`, `discount`, `interest`, `fine`, `split`,
+> `callback`, `endDate`, `externalReference`). Funciona — medido —, mas
+> é comportamento **não documentado**, e comportamento não documentado
+> pode mudar sem aviso.
+
+#### O que o San Checkout faz — e o que continua por sua conta
+
+> ⚠️ Esta seção dizia **"nada, e é isto que você precisa saber"** até
+> 17/09/2026, e estava certa naquele dia: a rota não existia. O dono
+> autorizou construí-la no mesmo dia, depois de decidir as sete regras do
+> acerto. O que segue abaixo é o estado atual.
+
+- **Existe rota nossa**: `POST /trocar-plano` (seção 5.6), que troca o
+  plano de um assinante cobrando o acerto proporcional no cartão já
+  salvo. As rotas de assinatura passaram a ser cinco: criar (pelo link),
+  cancelar, pausar, retomar (seção 5.5) e trocar de plano.
+- **Ela não aceita preço solto.** Você troca o assinante de um plano
+  para OUTRO PLANO seu; o valor e o ciclo saem do
+  `GET /plano/{planoNovoId}`. Não há como mandar "cobre R$ 45 deste
+  assinante" — para isso, o caminho continua sendo o pedido avulso.
+- **Ela não mexe em assinatura sem cartão salvo** (Pix Automático) quando
+  há acerto a cobrar: responde `409`.
+- **Nada nos avisa se o valor mudar na Asaas.** Medido: nenhum evento
+  chegou ao nosso receptor em toda a bateria acima — criar, aumentar,
+  diminuir, trocar ciclo, pausar e apagar a assinatura. Isso é
+  **configuração**, não incapacidade: o grupo `SUBSCRIPTION_*` não está
+  entre os 53 eventos marcados nesta conta, e `PAYMENT_UPDATED` está
+  desmarcado de propósito (`CONSTRAINTS.md` §2.2).
+- **Consequência direta, e é a parte que te afeta:** na seção 5.3, os
+  campos `status`, `ciclo` e `proximaCobranca` são reconferidos contra a
+  Asaas a cada chamada — **`valor` não é**. Ele sai do nosso banco. Se
+  alguém alterar o preço pelo painel da Asaas, ou por API, **o `valor`
+  que você lê de nós fica errado, e fica errado para sempre.**
+
+  Não trate `valor` da seção 5.3 como preço vigente na operadora. O
+  número que o seu sistema deve considerar cobrado é o
+  `ultimaCobranca.valorCobrado` — esse é histórico, e é verdade.
+
+#### Então como se muda o preço de um assinante hoje
+
+Três caminhos, e o primeiro é o novo:
+
+0. **Trocar de plano** (`POST /trocar-plano`, seção 5.6). É o caminho
+   normal quando o preço novo é **outro plano seu**: mantém o vínculo,
+   cobra só a diferença proporcional dos dias que faltam, e não pede
+   cartão de novo. Rebaixamento não devolve nada — o preço novo vale do
+   vencimento em diante.
+1. **Cancelar e assinar de novo** (`POST /cancelar-assinatura`, depois um
+   link novo com o plano de valor diferente). Custo: o assinante digita
+   o cartão outra vez, o vínculo antigo morre, e existe uma janela em
+   que ele não tem nem uma assinatura nem a outra.
+2. **Cobrar a diferença como pedido avulso** (seção 4.1), mantendo a
+   assinatura como está. É o caminho que o dono escolheu para o MostrAí
+   em 16/09/2026. Não mexe em nada recorrente.
+
+#### A conta do acerto proporcional
+
+A Asaas **não tem proporcional nenhum** — medido: `updatePendingPayments`
+põe na cobrança pendente o valor novo **cheio**, não um rateio. O acerto
+é conta nossa, e é esta:
+
+```
+dias_restantes = vencimento_que_já_estava_marcado − hoje
+credito        = valor_PAGO_do_período × (dias_restantes ÷ dias_do_ciclo_atual)
+debito         = valor_do_plano_novo   × (dias_restantes ÷ dias_do_ciclo_novo)
+acerto         = debito − credito       (≤ 0 → não cobra e não devolve)
+```
+
+**Mês comercial de 30 dias, ano de 360** (decisão do dono). O crédito sai
+do valor **pago**, nunca do valor atual da assinatura — senão daria para
+alterar o valor antes de trocar e farmar crédito.
+
+**Por que os dois lados são proporcionalizados, e não a diferença.** Com
+15 dias restantes de um mensal de R$ 100:
+
+| troca para | crédito | débito | cobra agora | no vencimento |
+|---|---|---|---|---|
+| mensal R$ 160 | 100 × 15/30 = **50** | 160 × 15/30 = **80** | **R$ 30** | R$ 160, mensal |
+| trimestral R$ 270 (R$ 90/mês) | **50** | 270 × 15/90 = **45** | **nada** (−5) | R$ 270, trimestral |
+| anual R$ 2.400 (R$ 200/mês) | **50** | 2400 × 15/360 = **100** | **R$ 50** | R$ 2.400, anual |
+
+A linha do meio é o motivo: "a diferença entre os planos" daria
+R$ 270 − R$ 100 = **R$ 170 cobrados por 15 dias** de um plano que custa
+R$ 90/mês. Um plano mais caro no total pode ser **mais barato por dia** —
+e aí a troca é upgrade de compromisso, não de preço, e não gera acerto.
+
+Os números acima saem de `src/services/proporcionalService.js`, que é o
+mesmo código que a rota usa, com autoteste próprio.
+
+**Se você mudar o preço direto no painel da Asaas**, saiba o que
+acontece: a Asaas passa a cobrar o valor novo, e nós continuamos
+dizendo o antigo na seção 5.3. Não é proibido — é inconsistente, e a
+inconsistência é silenciosa.
+
+### 7.6 O que a assinatura NÃO faz — leia antes de prometer benefício
 
 Esta seção existe porque promessa feita ao assinante e não cumprida pelo
 motor vira cobrança indevida, e cobrança indevida não volta com redeploy.
@@ -1397,7 +1738,8 @@ motor vira cobrança indevida, e cobrança indevida não volta com redeploy.
 | **Pular ou adiar um ciclo** | Os ciclos seguintes caem exatamente a cada `ciclo`, contados da primeira cobrança. Não há "este mês não cobra" |
 | **Desconto, cupom ou promoção no plano** | O campo `desconto` existe **só no pedido avulso** (seção 4.1). A assinatura cobra `valor` exatamente como veio do seu `GET /plano/{id}` |
 | **Ciclo de 4, 5 ou 8 meses** | Só os sete da seção 7.1. Não há quadrimestral |
-| **Mudar valor, ciclo ou data de um assinante existente** | `valor` e `ciclo` são congelados na criação (seção 4.2). Para mudar, cancele e crie outra |
+| **Mudar o valor de um assinante para um número solto** | Trocar de PLANO existe (seção 5.6): o assinante vai do plano A para o plano B, e o preço sai do plano B. O que não existe é "cobre R$ 45 deste assinante" sem plano por trás — para isso, pedido avulso |
+| **Mover a data de vencimento de um assinante** | Não existe rota nossa. Trocar de plano mantém a data de propósito (a Asaas não move o `nextDueDate` nem quando o ciclo muda — medido) |
 
 #### Como modelar "pague 3, leve 4" mesmo assim
 
@@ -1502,10 +1844,11 @@ direto não contorna nada.
 |---|---|---|
 | Valor da cobrança | R$ 0,01 a **R$ 100.000,00** | `400` "Valor do pedido inválido" |
 | Valor do plano | idem | `400` "Valor do plano inválido" |
+| **Valor COBRADO** (pedido + taxa) | mínimo **R$ 5,00** | `400` "O valor mínimo para pagamento é de R$ 5,00…" |
 | Parcelas no cartão | 1 a 12 | `400` |
 | CPF | 11 dígitos, com dígito verificador conferido | `400` "CPF/CNPJ inválido" |
 | CNPJ | 14 dígitos, com dígito verificador conferido | `400` idem |
-| Telefone | 10 ou 11 dígitos | `400` "Telefone inválido" |
+| Telefone | 10 ou 11 dígitos, DDD ≥ 11, celular começando em 9 | `400` "Telefone inválido" |
 | CEP | 8 dígitos | `400` "CEP inválido" |
 | `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
 | Timeout da sua API | 45 segundos | `504` |
@@ -1525,6 +1868,108 @@ o teto de 30/min existe porque essa rota toca o banco.
 
 CPF e CNPJ dividem o mesmo campo `documento` — o checkout detecta qual é
 pelo tamanho.
+
+**Você pode mandar `documento` pontuado ou em dígitos: dá no mesmo.** O
+checkout normaliza para dígitos assim que valida, e é essa forma que ele
+guarda e busca. Isso importa nas rotas que localizam uma assinatura por
+`planoId` + `documento` (§5.5): até 17/09/2026 assinar com
+`552.085.198-01` e cancelar com `55208519801` dava `404`, porque as duas
+formas viravam chaves diferentes. Não dá mais, e **você não precisa
+mudar nada** — se sua integração já manda sempre a mesma forma, ela
+continua funcionando igual.
+
+### 9.0 A resposta da sua API: redirecionamento e tamanho
+
+O checkout resolve pedido e plano ligando de volta para a **sua** API
+(§1). Duas regras valem para o que ela responde, e as duas são novas:
+
+- **Redirecionamento só na mesma origem.** `302`/`301` para outro
+  caminho do mesmo `https://host:porta` é seguido normalmente (barra
+  final, caminho movido). Para **outra origem**, é recusado, e o
+  checkout responde `502`. O motivo não é só SSRF: a requisição leva a
+  sua `X-Checkout-Key` no cabeçalho, e seguir o `Location` entregaria
+  essa chave — que autoriza consulta e **estorno** — a quem respondeu
+  o redirecionamento. Se a sua API mudou de endereço, **cadastre o
+  endereço final** em vez de redirecionar. No máximo 3 saltos.
+
+- **Corpo de até 1 MiB.** O checkout para de ler ao passar disso e
+  responde `502`. Um pedido ou plano em JSON tem alguns KB; o teto
+  existe porque um corpo sem fim derrubaria o processo e, com ele, a
+  confirmação de pagamento de todos os contratantes. O `Content-Length`
+  é usado só para recusar cedo — quem conta de verdade é o que chega.
+
+### 9.1 O piso de R$ 5,00 — e por que ele não é o mesmo que o valor do pedido
+
+A Asaas **recusa qualquer cobrança abaixo de R$ 5,00**. Medido em
+17/09/2026 contra o sandbox, nos seis caminhos, com controle positivo em
+R$ 5,00 exato (que passa em todos):
+
+| caminho | R$ 2,50 | R$ 5,00 |
+|---|---|---|
+| `POST /v3/payments` Pix | `400` | `200` |
+| `POST /v3/payments` Boleto | `400` | `200` |
+| `POST /v3/payments` Cartão | `400` | `200` |
+| `POST /v3/payments` "pergunte ao cliente" | `400` | `200` |
+| `POST /v3/subscriptions` | `400` | `200` |
+| `POST /v3/checkouts` (pop-up) | `400` | `200` |
+
+**O piso é sobre o valor COBRADO, não sobre o valor do pedido.** Como a
+taxa entra por cima (§8), um pedido de R$ 4,00 fecha em R$ 5,53 e passa;
+um de R$ 2,00 fecha em R$ 3,48 e não passa. Em **assinatura** não há taxa
+nossa, então o piso bate direto no `valor` do plano, **por ciclo**.
+
+**E no cartão o piso vale POR PARCELA.** Medido no mesmo dia, e é a parte
+que quase passou:
+
+| chamada | parcela | resultado |
+|---|---|---|
+| `POST /v3/payments` total R$ 10,00 em 12x | R$ 0,83 | `400` |
+| `POST /v3/payments` total R$ 24,00 em 12x | R$ 2,00 | `400` |
+| `POST /v3/payments` total R$ 60,00 em 12x | R$ 5,00 | `200` |
+| `POST /v3/checkouts` (pop-up) total R$ 24,00 em 12x | R$ 2,00 | **`200`** |
+
+A última linha é o problema: a **sessão** da pop-up é aceita, então a
+recusa só apareceria lá dentro, depois de o comprador escolher 12x e
+digitar o cartão.
+
+**O checkout não recusa por isso — ele oferta menos parcelas.** Se você
+manda `parcelas: 12` num pedido cuja parcela ficaria abaixo de R$ 5,00, a
+pop-up abre oferecendo o máximo que cabe (R$ 24,00 fecha em R$ 26,15 e
+sai em 5x de R$ 5,23), e **a taxa
+cobrada é a da faixa das parcelas ofertadas, não a da faixa pedida** —
+senão o comprador pagaria a taxa de 7-12x podendo usar só 4x. Recusar a
+venda seria jogar fora um pagamento que a Asaas faz sem reclamar.
+
+**Você descobre isso na hora de abrir a tela, não no clique.** Se o
+total ficar abaixo do piso:
+
+- `GET /api/checkout/pedido/...` responde `200` com um campo novo
+  `bloqueio: { codigo: "valor_abaixo_do_piso", mensagem: "…" }`, e `taxa`
+  continua preenchida (o total é aquele mesmo — o que muda é que a tela
+  nasce sem formulário, com o motivo escrito);
+- `GET /api/checkout/plano/...` traz o mesmo objeto em `_checkout.bloqueio`;
+- as rotas que criam cobrança respondem `400` com a mesma mensagem.
+
+`bloqueio` é **campo acrescentado**, nunca renomeado: pela regra do §10,
+uma integração que o ignore volta ao comportamento anterior, não a um
+comportamento pior.
+
+### 9.2 O que o telefone precisa ter
+
+Medido contra a Asaas em 17/09/2026, 24 combinações. Três regras, e
+**"dígito repetido" não é uma delas** — `11988888888` e `11911111111`
+são aceitos:
+
+1. 10 ou 11 dígitos;
+2. DDD (os dois primeiros) **≥ 11** — `10`, `01` e `00` são recusados;
+3. com 11 dígitos, o dígito seguinte ao DDD tem de ser **`9`**;
+4. a parte depois do DDD não pode ser **um único dígito repetido** —
+   `11999999999` e `1111111111` caem aqui.
+
+O checkout **não** recusa o que a Asaas aceita: DDD que não existe no
+Brasil (`20`) e prefixo de fixo que não existe (`1`, `6`) passam, porque
+recusar comprador legítimo no caminho do dinheiro é pior do que aceitar
+um número estranho que o provedor aprova.
 
 ---
 
@@ -1570,6 +2015,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Mandar `pagador.documento` e `pagador.telefone` para poupar digitação
 - [ ] Incluir o link de `status.html` no seu e-mail de confirmação de pedido
 - [ ] (Opcional) mandar `returnUrl` no link e combinar as origens com quem administra o checkout — e **nunca** tratar a volta como prova de pagamento (seção 3.1)
+- [ ] (Recorrência) se você oferece upgrade/downgrade, tratar **`plano_trocado`** (§4.3.4): ele é o ÚNICO evento de assinatura cujo `planoId` mudou, e o `planoAnterior` vem junto para você achar o próprio registro. E **avisar o assinante da mudança de preço é sua obrigação** — e-mail e aviso no site (RN-35)
 - [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
 - [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar={token}` — gerando o token você mesmo (seção 7.3), nunca `&renovar=1`
 
@@ -1671,8 +2117,9 @@ só não conte com nenhum `sub_…` ou `pay_…` sobrevivendo à virada.
 | `POST /api/checkout/cancelar-assinatura` | `X-Checkout-Key` | 5.5 |
 | `POST /api/checkout/pausar-assinatura` | `X-Checkout-Key` | 5.5 |
 | `POST /api/checkout/retomar-assinatura` | `X-Checkout-Key` | 5.5 |
-| `GET /api/checkout/status/{contratanteId}/{pedidoId}` | pública | 5.6 |
-| `GET /api/saude` | pública | 5.7 |
+| `POST /api/checkout/trocar-plano` | `X-Checkout-Key` | 5.6 |
+| `GET /api/checkout/status/{contratanteId}/{pedidoId}` | pública | 5.7 |
+| `GET /api/saude` | pública | 5.8 |
 
 **Rotas internas do checkout** — usadas pela própria tela de pagamento,
 documentadas aqui só para quem for auditar o tráfego. Não as chame

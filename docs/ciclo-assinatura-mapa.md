@@ -162,6 +162,63 @@ seguidas de cobrança.
 |---|---|
 | Grupo de eventos `SUBSCRIPTION_*` não é tratado nem marcado no painel — nunca chega por aviso | **[MEDIDO 16/09, ainda aberto]** — `GET /v3/webhooks` de dentro do container: **zero `SUBSCRIPTION_*` entre os 53 eventos configurados**. Não era ambiguidade: a Asaas de fato nunca nos avisa. **Mitigado por T10**: a conciliação detecta e corrige o estado real, então a divergência deixou de ser permanente — mas continua chegando por *pull*, com o atraso de quem concilia |
 
+## T12 — Preço ou ciclo alterado direto na Asaas (etapa nova, 17/09)
+
+Esta etapa é a alteração feita **fora do nosso fluxo**: pelo painel da
+Asaas, ou por API direta. A troca de plano pedida pelo contratante ganhou
+etapa própria (T13, mais abaixo) no fim de 17/09 — até então esta seção
+dizia "não existe rota nossa", que era verdade naquela hora do dia. Medido no sandbox
+em 17/09/2026, em assinatura de cartão e de boleto, com fixtures
+descartáveis: `PUT /v3/subscriptions/{id}` aceita `value` para cima
+(30 → 45) e para baixo (45 → 12), aceita `cycle` novo, e aceita as duas
+coisas até em assinatura **pausada**. Recusa só abaixo do piso de
+R$ 5,00 (`400 invalid_value`, com mensagem por meio de pagamento).
+
+| Erro | Status |
+|---|---|
+| Alteração de `value` na Asaas não chega por evento nenhum, e a conciliação (T10) **não reconfere `valor`** — só `status`, `ciclo` e `proximaCobranca`. O registro local fica errado para sempre | **[DECLARADO 17/09]** — RN-34. É a mesma família do bug de T5 (`ciclo` divergindo sem reparo), e a correção de 16/09 fechou `ciclo` e deixou `valor` aberto. Não corrigido às cegas: é caminho de dinheiro e a decisão de deixar a Asaas mandar no número é do dono |
+| `cycle` novo **não move** `nextDueDate` — o ciclo novo conta a partir da data já marcada | **[MEDIDO 17/09]**, sem dano: é o comportamento do provedor, e está escrito no `API.md` §7.5 para o integrador não errar por onze meses |
+| A cobrança pendente já gerada só muda com `updatePendingPayments: true` | **[MEDIDO 17/09]** nas duas formas: sem a bandeira fica no valor antigo, com ela muda mantendo id e vencimento |
+| `value` **não está no schema documentado** do `PUT`, e funciona | **[DECLARADO 17/09]** — comportamento não documentado pode mudar sem aviso; quem construir precisa de teste que fique vermelho nesse dia |
+
+**A armadilha que essa etapa revelou, e vale para toda a integração:** a
+Asaas responde `200` e **ignora em silêncio** campo que não conhece
+(controle negativo com um nome inventado: `200`, sem erro, nada mudou).
+Status HTTP não prova alteração nesta API — quem prova é o `GET` de
+volta.
+
+## T13 — Troca de plano pedida pelo contratante (etapa nova, 17/09, fim do dia)
+
+**Rota:** `POST /trocar-plano` (`API.md` §5.6). Autorizada pelo dono no
+mesmo dia, com as sete regras do acerto decididas por ele. A ordem é a
+regra inteira, e cada passo dela existe por um erro possível:
+
+1. plano de destino **puxado da API do contratante** — valor e ciclo
+   nunca vêm do corpo (`tests/valor-vem-do-servidor.js` é a mesma regra
+   no pedido avulso);
+2. recusa cedo o que a Asaas recusaria (piso de R$ 5,00, ciclo fora dos
+   sete) e o que não dá para calcular (período não pago, dado
+   incoerente);
+3. **arrendamento** (`assinaturas.trocando_em`) antes de cobrar;
+4. acerto **cobrado no cartão salvo**, e o plano só muda se confirmar;
+5. `PUT` e **releitura** — status HTTP não prova alteração nesta API
+   (a armadilha que T12 revelou, agora usada a favor);
+6. o nosso banco escrito na mesma operação (nada vai contar depois:
+   zero eventos `SUBSCRIPTION_*`, T11);
+7. `evento: 'plano_trocado'` para o contratante. O assinante é avisado
+   **por ele** — RN-35.
+
+| Erro possível | Status |
+|---|---|
+| Alterar o plano antes de cobrar o acerto daria o plano caro de graça a quem tem cartão recusado | **[COBERTO]** ordem travada por autoteste, verificada por sabotagem (inverter a ordem reprova) |
+| Duas chamadas simultâneas cobrariam o mesmo acerto duas vezes | **[COBERTO]** RN-36, arrendamento medido ao vivo dentro do contêiner (1ª ganha, 2ª não, expirado volta a poder) |
+| O acerto carrega o mesmo `plano_id` e nasce depois do ciclo: sem filtro de método viraria a "última cobrança da assinatura" de T10, e `API.md` §5.3 manda ler `ultimaCobranca.valorCobrado` como o valor cobrado | **[COBERTO]** medido com as duas consultas lado a lado: sem o filtro vinha o acerto de R$ 30, com o filtro vem o ciclo de R$ 160 |
+| O webhook `PAYMENT_CONFIRMED` do acerto chegaria ao receptor e, tratado como pedido avulso, anunciaria ao contratante a confirmação de um pedido com `pedidoId: null` | **[COBERTO]** método próprio (`acerto_troca`) e guarda explícita no receptor: grava o status, não notifica |
+| O rebaixamento não gera cobrança nenhuma — trocaria o plano sem rastro no nosso banco | **[COBERTO]** `plano_anterior_id` e `trocado_em` (migration 0010) |
+| `PUT` que a Asaas ignora em silêncio deixaria o nosso banco dizendo "trocou" | **[COBERTO]** releitura; se não pegou, `502`, nada gravado, erro registrado, e o `chargeId` do acerto vai na resposta para tratamento manual |
+| Assinatura sem cartão salvo (Pix Automático) com acerto a cobrar | **[RECUSADO por desenho]** `409` — sem cartão não há como cobrar sem interação, e inventar um caminho aqui seria pior |
+| Acerto estornado ou contestado DEPOIS da troca | **[DECLARADO]** a troca não é revertida. O status da cobrança do acerto é atualizado (o receptor grava), mas nada desfaz o plano — reverter sozinho tiraria o plano de quem já está usando. Decisão de operação, não de código |
+
 ## T-PixAuto — variante sem cartão (Pix Automático)
 
 Caminho paralelo — mesmo vocabulário de webhook, sem pop-up, sem
@@ -187,6 +244,8 @@ não tem o furo de T1).
 
 1. **[MEDIDO, ainda aberto]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook, e agora isso é fato medido, não suspeita: **zero eventos `SUBSCRIPTION_*` entre os 53 configurados** (`GET /v3/webhooks`, 16/09). **Mitigado em parte**: a conciliação (T10, RN-26) reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
 2. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
+2b. **[DECLARADO 17/09]** T12 — `valor` não é reconciliado contra a Asaas, que **aceita** alterá-lo (medido). Preço mudado no painel da Asaas deixa o nosso registro errado para sempre, e nada avisa. RN-34, `docs/pendencias.md`.
+2c. **[DECLARADO 17/09]** T13 — acerto estornado depois da troca não reverte o plano. Nenhum dano ativo (a troca já aconteceu e o assinante está usando o plano novo); é decisão de operação.
 3. **Falta confirmar ao vivo** (não muda comportamento): qual dos dois formatos a Asaas usa pra uma assinatura deletada — objeto com `deleted: true` ou `404`. O código trata os dois; medir só permitiria simplificar.
 
 O achado grave de T1/T4 (renovação sem autenticação permitindo
@@ -200,3 +259,7 @@ adotar a nova fórmula de token antes de continuar mandando esses links.
 
 Nada mais foi encontrado nesta passada — o ciclo inteiro, etapa por
 etapa, código lido de novo do zero.
+
+**Adendo de 17/09/2026, fim do dia:** o mapa ganhou **T13** (troca de
+plano), e com ela o ciclo passou a ter **13 etapas mais a variante Pix
+Automático**. T12 continua sendo o caso de fora do nosso fluxo.

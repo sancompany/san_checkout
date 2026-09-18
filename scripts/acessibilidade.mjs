@@ -34,6 +34,14 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
+/* As duas coisas que este dublê NÃO copia à mão, e não pode copiar: a
+   frase do piso e quantas parcelas cabem. Copiadas, elas viram a mentira
+   do dia seguinte — o número muda no código e o dublê continua afirmando
+   o antigo, com a auditoria verde por cima. Importar do dono é o que faz
+   o dublê acompanhar sozinho. */
+import { MENSAGEM_PISO_ASAAS } from '../src/utils/validadores.js';
+import { taxaComParcelasQueCabem } from '../src/services/taxaService.js';
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLICO = join(RAIZ, 'public');
 
@@ -55,15 +63,81 @@ const PEDIDO_DUBLE = {
   pedido: {
     tipo: 'produto',
     descricao: 'Camiseta preta — tamanho M',
-    itens: [{ descricao: 'Camiseta preta M', quantidade: 1, valor: 89.9 }],
+    /* `nome` e `valorUnitario`, como o contrato manda (`API.md` §4.1).
+       Este dublê dizia `{ descricao, valor }`, que NÃO é o contrato — e
+       o front lê `item.nome`/`item.valorUnitario`. Resultado: a linha de
+       item era auditada em branco, e a auditoria nunca exercitou o que
+       o comprador vê de verdade. Dublê que não bate com o contrato
+       audita a tela errada, que é o mesmo erro do "0 violações" sobre a
+       tela de acesso não autorizado, num campo só. */
+    itens: [
+      { nome: 'Camiseta preta M', quantidade: 1, valorUnitario: 79.9 },
+      { nome: 'Meia par avulso', quantidade: 2, valorUnitario: 5 }
+    ],
     valorCheio: 89.9,
     desconto: 0,
     valorComDesconto: 89.9,
     frete: 0
   },
   taxa: { taxaAsaas: 1.99, taxaPropria: 2.7, taxasTotais: 4.69, valorCobrado: 94.59 },
+  maxParcelas: 12,
   retornoUrl: null
 };
+
+/* ESTADOS NOVOS DE 17/09/2026, e a razão de estarem aqui: os dois
+   nasceram nesta data e nenhum navegador os tinha visto. Auditar só o
+   caminho felz é como o verificador reportou "0 violações" sobre a tela
+   de "Acesso não autorizado" — parece evidência e não é. */
+
+/** Pedido abaixo do piso de valor do provedor: a tela existe, diz o
+ *  motivo, e NÃO tem formulário de pagamento (RN-28). */
+const PEDIDO_ABAIXO_DO_PISO = {
+  ...PEDIDO_DUBLE,
+  pedido: { ...PEDIDO_DUBLE.pedido, valorCheio: 2, valorComDesconto: 2 },
+  taxa: { taxaAsaas: 1.99, taxaPropria: 0.52, taxasTotais: 2.51, valorCobrado: 4.51 },
+  maxParcelas: 1,
+  bloqueio: { codigo: 'valor_abaixo_do_piso', mensagem: MENSAGEM_PISO_ASAAS }
+};
+
+/** Item sem preço: mostra travessão, nunca "R$ 0,00" — zero numa linha
+ *  de item lê como brinde. */
+const PEDIDO_COM_ITEM_SEM_PRECO = {
+  ...PEDIDO_DUBLE,
+  pedido: {
+    ...PEDIDO_DUBLE.pedido,
+    itens: [
+      { nome: 'Camiseta preta M', quantidade: 1, valorUnitario: 79.9 },
+      { nome: 'Brinde surpresa (sem preço informado)', quantidade: 1 }
+    ]
+  }
+};
+
+/** Pedido barato, mas pagável: a lista de parcelas tem de encurtar.
+ *  A taxa e o `maxParcelas` vêm da MESMA função que o servidor usa — não
+ *  de números que eu escrevi aqui olhando o resultado de uma vez. */
+const BASE_POUCO_PARCELAVEL = 24;
+const CABEM = taxaComParcelasQueCabem(BASE_POUCO_PARCELAVEL, 12, false);
+const PEDIDO_POUCO_PARCELAVEL = {
+  ...PEDIDO_DUBLE,
+  pedido: {
+    ...PEDIDO_DUBLE.pedido,
+    valorCheio: BASE_POUCO_PARCELAVEL,
+    valorComDesconto: BASE_POUCO_PARCELAVEL
+  },
+  taxa: CABEM.taxa,
+  maxParcelas: CABEM.parcelas
+};
+
+/* E o dublê só serve se o cenário for o que se quer testar: se um dia a
+   taxa mudar de tal forma que R$ 24,00 passe a caber em 12x, este estado
+   deixa de exercitar o corte — e passaria verde sem testar nada. */
+if (CABEM.parcelas >= 12) {
+  console.error(
+    `A base de R$ ${BASE_POUCO_PARCELAVEL},00 passou a caber em ${CABEM.parcelas}x: ` +
+    'o estado "lista cortada" deixou de exercitar o corte. Baixe a base.'
+  );
+  process.exit(1);
+}
 
 /* A tela de ASSINATURA é outra tela, e carrega por outro endpoint
    (`/api/checkout/plano/:c/:id`, parâmetro `?assinatura=`). Sem ela a
@@ -218,6 +292,71 @@ for (const id of metodos) {
   totalViolacoes += violations.length;
 }
 
+/* --- OS ESTADOS NOVOS DE 17/09, em navegador de verdade -------------
+   Cada um abre numa aba própria, com o seu dublê, e é auditado E
+   CONFERIDO: não basta "0 violações", o estado tem de ter ACONTECIDO.
+   Zero violação sobre uma tela que não é a tela é o erro que este
+   script já cometeu uma vez. */
+for (const estado of [
+  {
+    nome: 'Checkout · abaixo do valor mínimo (RN-28)',
+    duble: PEDIDO_ABAIXO_DO_PISO,
+    conferir: async (p) => {
+      const titulo = await p.textContent('#order-title');
+      const total = await p.textContent('#order-amount');
+      const formulario = await p.$('.checkout-panel--form:not(.hidden)');
+      if (!/valor mínimo/i.test(titulo ?? '')) return `o motivo não apareceu na tela (título: "${titulo}")`;
+      if (!/—/.test(total ?? '')) return `o total devia ser travessão, veio "${total}"`;
+      if (formulario) return 'o formulário de pagamento continuou visível numa compra que não pode acontecer';
+      return null;
+    }
+  },
+  {
+    nome: 'Checkout · item sem preço mostra travessão',
+    duble: PEDIDO_COM_ITEM_SEM_PRECO,
+    conferir: async (p) => {
+      const valores = await p.$$eval('.order-item-value', (es) => es.map((e) => e.textContent.trim()));
+      if (valores.length < 2) return `esperava 2 linhas de item, vi ${valores.length}`;
+      if (!valores.includes('—')) return `o item sem preço devia mostrar travessão, vi ${JSON.stringify(valores)}`;
+      if (valores.some((v) => /R\$ 0,00/.test(v))) return `alguma linha mostrou "R$ 0,00": ${JSON.stringify(valores)}`;
+      return null;
+    }
+  },
+  {
+    nome: 'Checkout · lista de parcelas cortada pelo servidor',
+    duble: PEDIDO_POUCO_PARCELAVEL,
+    conferir: async (p) => {
+      await p.click('#method-cartao');
+      await p.waitForTimeout(250);
+      const opcoes = await p.$$eval('#cartao-parcelas option', (es) => es.map((e) => Number(e.value)));
+      if (opcoes.length === 0) return 'a lista de parcelas ficou vazia';
+      const maximo = Math.max(...opcoes);
+      if (maximo !== PEDIDO_POUCO_PARCELAVEL.maxParcelas) {
+        return `a lista devia terminar em ${PEDIDO_POUCO_PARCELAVEL.maxParcelas}x, terminou em ${maximo}x`;
+      }
+      return null;
+    }
+  }
+]) {
+  const aba = await contexto.newPage();
+  await aba.route('**/api/checkout/pedido/**', (rota) =>
+    rota.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(estado.duble) }));
+  await aba.goto(`${base}/index.html?c=testemaster&pedido=ped_auditoria_a11y`, { waitUntil: 'load' });
+  await aba.waitForTimeout(900);
+
+  const problema = await estado.conferir(aba);
+  if (problema) {
+    extras.push({ nome: estado.nome, violations: [], naoAconteceu: problema });
+    totalViolacoes += 1;
+  } else {
+    await aba.addScriptTag({ content: axeFonte });
+    const { violations } = await aba.evaluate((r) => window.axe.run(document, r), REGRAS);
+    extras.push({ nome: estado.nome, violations });
+    totalViolacoes += violations.length;
+  }
+  await aba.close();
+}
+
 /* --- foco visível e alcance por teclado ---------------------------
    Percorre a página só com Tab, como quem não usa mouse. Para cada
    parada: o elemento tem de ser identificável E tem de mostrar que
@@ -290,6 +429,12 @@ for (const { tela, violations, errosDeConsole } of relatorio) {
 console.log('');
 console.log('--- estados do checkout ---');
 for (const e of extras) {
+  /* `naoAconteceu` é mais grave que violação: significa que o estado
+     não apareceu, e auditar o que não apareceu devolve verde falso. */
+  if (e.naoAconteceu) {
+    console.log(`✗ ${e.nome} — NÃO AUDITADO: ${e.naoAconteceu}`);
+    continue;
+  }
   console.log(`${e.violations.length === 0 ? '✓' : '✗'} ${e.nome} — ${e.violations.length} violação(ões)`);
   for (const v of e.violations) {
     console.log(`    [${v.impact}] ${v.id}: ${v.help}`);

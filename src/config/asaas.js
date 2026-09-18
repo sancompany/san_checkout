@@ -12,7 +12,15 @@ const API_PRODUCAO = 'https://api.asaas.com';
 const CHECKOUT_SANDBOX = 'https://sandbox.asaas.com';
 const CHECKOUT_PRODUCAO = 'https://asaas.com';
 
-function obterAmbiente() {
+/**
+ * `sandbox` | `producao`. Exportado porque virou dado GRAVADO, não só
+ * decisão de URL: cada cobrança registra em que ambiente nasceu
+ * (migration 0009), para a métrica de sucesso não contar teste como
+ * receita. Um lugar só — ler `process.env.ASAAS_AMBIENTE` em dois
+ * arquivos é duas respostas para a mesma pergunta no dia em que alguém
+ * mudar a regra do default.
+ */
+export function ambienteAsaas() {
   return process.env.ASAAS_AMBIENTE === 'producao' ? 'producao' : 'sandbox';
 }
 
@@ -22,7 +30,7 @@ export function getConfigAsaas() {
     throw new Error('ASAAS_API_KEY não configurada no .env.');
   }
 
-  const ambiente = obterAmbiente();
+  const ambiente = ambienteAsaas();
 
   return {
     baseUrl: ambiente === 'producao' ? API_PRODUCAO : API_SANDBOX,
@@ -35,7 +43,7 @@ export function getConfigAsaas() {
 
 /** Monta a URL da pop-up a partir do id retornado por POST /v3/checkouts. */
 export function montarUrlCheckoutSession(asaasCheckoutId) {
-  const dominio = obterAmbiente() === 'producao' ? CHECKOUT_PRODUCAO : CHECKOUT_SANDBOX;
+  const dominio = ambienteAsaas() === 'producao' ? CHECKOUT_PRODUCAO : CHECKOUT_SANDBOX;
   return `${dominio}/checkoutSession/show?id=${asaasCheckoutId}`;
 }
 

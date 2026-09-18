@@ -34,8 +34,25 @@ async function copiarCampo(idCampo, rotulo) {
   }
 }
 
+/* Valor que não dá para formatar vira travessão, NUNCA "R$ 0,00" — a
+   mesma regra de `status.js`, pelo mesmo motivo (`?? 0` transforma "não
+   sei" em "é zero", e zero num preço lê como grátis).
+
+   Os dois usos daqui são o valor do plano, e ele já é barrado antes em
+   `assinaturaHandler.resolverAssinatura` — então isto não corrige um
+   bug ativo, fecha uma armadilha: a função é genérica, e o próximo uso
+   dela pode não ter guarda nenhuma acima. */
 function formatarMoeda(valor) {
-  return Number(valor ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return null;
+  return numero.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** `formatarMoeda` com o travessão já resolvido, para quem só quer
+ *  escrever na tela. */
+function moedaOuTravessao(valor) {
+  const formatado = formatarMoeda(valor);
+  return formatado === null ? '—' : formatado;
 }
 
 function preencherCamposPagador(pagador) {
@@ -347,16 +364,23 @@ async function iniciarModoAssinatura() {
   document.getElementById('payment-methods').classList.add('hidden');
   document.getElementById('subscription-action').classList.remove('hidden');
 
+  /* O fieldset de endereço aparece ANTES da ida à rede, e a ordem é o
+     conserto: ele não depende da resposta (assinatura é sempre cartão,
+     `INTEGRACAO.md` 6.1), e revelá-lo depois empurrava meia tela para
+     baixo justamente quando o comprador já estava lendo.
+
+     Medido em 17/09/2026 (`npm run desempenho`): CLS de **0,409** nesta
+     tela, com teto de 0,1 — e o deslocamento é do bloco de pagamento,
+     que é onde ele custa caro, porque o dedo já está indo no botão. */
+  const endereco = document.getElementById('endereco-fieldset');
+  endereco?.classList.remove('hidden');
+
   const resultado = await resolverAssinatura();
   const falhou = !resultado || resultado.erro;
 
   const form = document.getElementById('checkout-form');
   ligarMascaras(form);
   ligarBuscaCep();
-
-  // Assinatura é sempre cartão (ver INTEGRACAO.md 6.1) — endereço fica
-  // visível direto, sem depender de seleção de método.
-  document.getElementById('endereco-fieldset')?.classList.remove('hidden');
 
   // Pix Automático é alternativa ao cartão neste mesmo modo. Aparece só
   // se o contratante tiver o método habilitado — ele depende de a Asaas
@@ -425,6 +449,11 @@ async function iniciarModoAssinatura() {
   });
 
   if (falhou) {
+    /* Aqui o endereço volta a se esconder: formulário que não pode ser
+       enviado não fica na tela pedindo CEP. O deslocamento que isso
+       causa acontece só no caminho de erro, onde a tela já mudou de
+       assunto — é o oposto de deslocar quem estava pagando. */
+    endereco?.classList.add('hidden');
     document.getElementById('order-title').textContent = resultado?.erro ?? 'Link de assinatura inválido.';
     mostrarToast(resultado?.erro ?? 'Link de assinatura inválido ou incompleto.', 'erro');
     return;
@@ -434,8 +463,8 @@ async function iniciarModoAssinatura() {
 
   document.getElementById('order-category').textContent = 'Assinatura';
   document.getElementById('order-title').textContent = plano.nome ?? 'Plano';
-  document.getElementById('order-subtotal').textContent = `R$ ${formatarMoeda(plano.valor)}`;
-  document.getElementById('order-amount').textContent = formatarMoeda(plano.valor);
+  document.getElementById('order-subtotal').textContent = `R$ ${moedaOuTravessao(plano.valor)}`;
+  document.getElementById('order-amount').textContent = moedaOuTravessao(plano.valor);
   document.getElementById('order-desconto').textContent = 'R$ 0,00';
   document.getElementById('order-taxa').textContent = 'R$ 0,00';
 

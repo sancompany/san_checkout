@@ -1,5 +1,10 @@
 /**
- * mock/servidor-mock-pedido.js
+ * tests/servidor-mock-pedido.js
+ *
+ * FERRAMENTA DE USO MANUAL, não suíte: não tem assertiva nenhuma e não
+ * entra em `npm test`. Quem a roda é uma pessoa, num terminal separado.
+ * (Este cabeçalho dizia `mock/servidor-mock-pedido.js` — pasta que não
+ * existe. Ponteiro envelhece calado, e agora há teste conferindo.)
  *
  * Simula a API que a Trimundi (ou qualquer projeto) vai expor de
  * verdade um dia — devolve um pedido/plano fixo pra QUALQUER id, e
@@ -7,7 +12,7 @@
  * checkout sem precisar de nenhum serviço externo.
  *
  * COMO USAR (num terminal SEPARADO do backend de verdade):
- *   node mock/servidor-mock-pedido.js
+ *   node tests/servidor-mock-pedido.js
  *   → fica ouvindo em http://localhost:4000
  *
  * No Supabase (ou via public/admin.html), o contratante de teste

@@ -178,7 +178,21 @@ export async function senhaConfere(senha, armazenadoBase64) {
    derivação a N=2^17 custa ~800 ms, e isso é o recurso funcionando.
 ------------------------------------------------------------------ */
 if (process.argv[1]?.endsWith('senhaAdmin.js')) {
-  const { strict: assert } = await import('node:assert');
+  const { strict: assertReal } = await import('node:assert');
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const hash = await gerarHashSenha('senha-de-teste-123');
 
@@ -238,5 +252,5 @@ if (process.argv[1]?.endsWith('senhaAdmin.js')) {
     assert.equal(await umaDerivacaoPorVez(async () => 'seguinte'), 'seguinte', 'a fila sobrevive à falha anterior');
   }
 
-  console.log('senhaAdmin: 22 checagens OK');
+  console.log(`senhaAdmin: ${checagens} checagens OK`);
 }

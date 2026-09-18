@@ -26,7 +26,21 @@ export function gerarApiKey() {
 /* ------------------------------------------------------------------ */
 
 if (process.argv[1]?.endsWith('chaveContratante.js')) {
-  const { default: assert } = await import('node:assert/strict');
+  const { default: assertReal } = await import('node:assert/strict');
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const chave = gerarApiKey();
 
@@ -41,5 +55,5 @@ if (process.argv[1]?.endsWith('chaveContratante.js')) {
   const amostras = new Set(Array.from({ length: 500 }, () => gerarApiKey()));
   assert.equal(amostras.size, 500, 'nenhuma chave se repete em 500 gerações');
 
-  console.log('chaveContratante: 3 checagens OK');
+  console.log(`chaveContratante: ${checagens} checagens OK`);
 }

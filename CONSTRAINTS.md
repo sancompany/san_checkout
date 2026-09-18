@@ -911,10 +911,97 @@ domínio hostil redireciona para lá. Não é open redirect — é parte
 confiável abusando do próprio cadastro, feito pelo dono no painel, de
 alguém que já recebe dinheiro e já tem `api_key`.
 
+## 2.9 A origem da cobrança é do processo, nunca da requisição (Lei 7)
+
+Desde 17/09/2026 (migration 0009), toda linha de `cobrancas` nasce com
+duas marcas, e a métrica de sucesso só conta a cobrança em que
+`ambiente = 'producao'` **e** `e_teste = false` — a regra inteira é a
+RN-33 de `docs/funcional.md`.
+
+Os limites que este arquivo registra, porque são o que impede a marca de
+virar mentira:
+
+- **`ambiente` vem de `src/config/asaas.js`, nunca do corpo da
+  requisição.** Se viesse de fora, quem paga escolheria em que ambiente
+  a própria cobrança nasceu, e a métrica de sucesso passaria a ser
+  escrita por terceiro. É a mesma razão do `valor` ser puxado do
+  contratante em vez de aceito do navegador.
+- **`e_teste` é de mão única, travada no BANCO.** O gatilho
+  `cobrancas_e_teste_mao_unica` permite `true → false` (promover teste a
+  real, que é corrigir marcação) e recusa `false → true` — marcar como
+  teste uma cobrança real é esconder receita da métrica. Não é guarda de
+  aplicação, porque guarda de aplicação vale só para quem passa pela
+  aplicação, e migration, painel do Supabase e script avulso não passam.
+  O caminho inverso apagaria da conta um resultado já contado, e
+  apagaria calado.
+- **`ambiente` é conjunto fechado** (`sandbox`/`producao`), por check
+  constraint — valor novo é recusado pelo banco em vez de virar uma
+  terceira categoria que o filtro da métrica não conhece.
+- **A exclusão é relatada, nunca silenciosa.** A rota devolve
+  `excluidas: { sandbox, teste, total }` e o painel mostra num cartão
+  próprio, porque exclusão calada é indistinguível de dado que não
+  existe: com dez cobranças de sandbox no banco, "nenhuma cobrança no
+  período" seria uma frase falsa.
+- **O filtro é aplicado em JS, não no SQL, e isso é deliberado.** A
+  rota lê as linhas da janela e o agregador separa — porque o relatório
+  precisa CONTAR o que excluiu, e `where ambiente = 'producao'` no banco
+  devolveria as excluídas como se não existissem. Consequência a
+  declarar: o índice parcial `idx_cobrancas_metrica_real`, criado pela
+  0009, **não é usado pela consulta de hoje**; ele só passa a valer se
+  algum dia o corte descer para o SQL. Fica como está — migration
+  aplicada é imutável (§2.1), e índice não usado custa escrita, não
+  leitura.
+- **O que a marca NÃO faz:** ela não separa assinatura. `assinaturas`
+  não tem `ambiente`, e é a assinatura de sandbox que vira zumbi depois
+  da troca (`RUNBOOK.md` §6.2, passo 3) — a limpeza antes da troca
+  continua sendo passo obrigatório, não faxina posterior.
+
 ## 3. Exceções de conformidade registradas
 
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
 esquecida não é conformidade.
+
+### Lei 4 · o acerto da troca de plano é cobrado no cartão salvo SEM reconfirmação de CVV — 17/09/2026
+
+A skill `seguranca-san` diz, sem ressalva: **"cartão salvo pede
+reconfirmação de CVV antes de pagar"**. A rota `POST /trocar-plano`
+(`API.md` §5.6) cobra o acerto proporcional no cartão tokenizado da
+assinatura **sem CVV e sem nenhuma interação do assinante**. É desvio da
+regra, e fica registrado aqui em vez de virar silêncio.
+
+**Por que não dá para cumprir como escrito.** Reconfirmar CVV exige
+receber CVV, e receber CVV é exatamente o que a arquitetura deste
+projeto veta: os dados de cartão só existem dentro da pop-up hospedada
+da Asaas, e é isso que mantém o checkout fora do escopo PCI
+(`API.md` §6.2, e o veto de §1.2 acima pela mesma razão). O caminho
+técnico também não existe: `POST /v3/payments` com `creditCardToken`
+substitui os dados do cartão pelo token — não há campo de CVV a
+preencher. Cumprir a letra da regra significaria construir um formulário
+de cartão nosso, que é uma piora de segurança, não uma melhora.
+
+**A compensação, e é ela que torna o desvio aceitável:**
+
+1. **O pagador não dispara isto.** A rota exige a `X-Checkout-Key` do
+   contratante — a mesma credencial de cancelar, pausar e estornar. Não
+   há caminho público, nem tela, nem link.
+2. **Quem dispara não escolhe o valor.** O acerto é calculado pelo
+   servidor a partir do plano de destino **puxado da API do
+   contratante** e do valor efetivamente pago no ciclo (RN-35). O corpo
+   da requisição não carrega valor nenhum; mandar um é ignorado, e há
+   teste que reprova se isso mudar.
+3. **É o MESMO cartão que a assinatura já cobra sem CVV todo ciclo.**
+   A recorrência inteira funciona assim, por desenho do provedor: o
+   acerto não abre uma porta nova, usa a que o assinante autorizou ao
+   assinar.
+4. **Não cobra duas vezes:** arrendamento por linha de assinatura
+   (RN-36), medido.
+5. **Teto de rota** de criação (10/min por IP), como as outras rotas que
+   cobram.
+
+**Revisar no dia em que** o acerto passar a ser disparado por uma tela do
+assinante (aí o consentimento dele volta a ser o assunto, e o caminho é
+a pop-up, não um campo de CVV nosso), ou em que a Asaas passar a aceitar
+CVV junto do token sem que os dados do cartão toquem o nosso servidor.
 
 ### Lei 3 · a credencial do Cloudflare no ambiente é a conta inteira — 14/09/2026
 
@@ -966,14 +1053,29 @@ decidir **onde** a cópia periódica fica, porque a regra 3-2-1-1-0 pede uma
 fora do provedor principal, e Supabase Pro sozinho não atende isso (a
 cópia ficaria no mesmo provedor que se está protegendo).
 
-**O gatilho, que é o que torna isto exceção e não omissão: o primeiro
-pagamento real de terceiro fecha esta exceção.** A partir daí, rodar sem
-backup deixa de ser aceitável — perder o projeto Supabase passaria a
-significar perder o histórico financeiro de todos os contratantes, sem
-cópia em lugar nenhum. A ação nesse dia é Supabase Pro (backup diário,
-7 dias, com Point-in-Time Recovery disponível), junto do plano pago do
-Render que já está decidido. Backup só conta como feito depois de uma
-restauração testada pelo menos uma vez.
+**DECISÃO DO DONO EM 17/09/2026 sobre a cópia: a Asaas é o backup.**
+Todo dado de cobrança e de assinatura que importa existe também lá, e a
+conciliação já sabe reconstruir status, ciclo e próxima cobrança a partir
+dela (`API.md` §5.2 e §5.3) — exercitado ao vivo em 16/09, reparando três
+linhas erradas com valores medidos na Asaas. A cópia periódica fora do
+provedor virou atualização futura (`docs/proximas-versoes.md`).
+
+**O que essa decisão NÃO cobre, e fica escrito aqui para não ser
+descoberto na hora errada:** a Asaas não guarda o que é só nosso — o
+cadastro de contratantes (inclusive `api_key`, `webhook_url` e os
+domínios de retorno), o log de auditoria do webhook, a captura de erro,
+e o vínculo entre a cobrança na Asaas e o `pedidoId` do contratante.
+Perder o projeto Supabase significa recadastrar contratante à mão e
+perder a conciliação com o lado do lojista, mesmo com a Asaas inteira.
+Com um contratante isso é uma tarde; com dez, não é.
+
+**O gatilho continua valendo, e é o que torna isto exceção e não
+omissão: o primeiro pagamento real de terceiro reabre esta decisão.** A
+partir daí o que se perde deixa de ser recadastro e passa a ser
+histórico financeiro de terceiro. A ação nesse dia é Supabase Pro
+(backup diário, 7 dias, com Point-in-Time Recovery disponível). Backup
+só conta como feito depois de uma restauração testada pelo menos uma vez
+— e essa metade já está feita e continua rodando.
 
 ### Lei 3 · scrypt no lugar de Argon2id — 13/09/2026
 
@@ -1118,7 +1220,11 @@ morar nela:
 
 - **Cloudflare Pages** exige o `_headers` dentro do diretório publicado —
   por isso ele é `public/_headers`, e não `infra/_headers`.
-- **Render** é configurado pelo painel, sem arquivo no repositório.
+- **Northflank** é configurado pelo painel, sem arquivo no repositório
+  (esta linha dizia "Render" até 17/09/2026 — a hospedagem mudou em
+  12/09 e o texto ficou para trás). O provedor tem descrição versionada
+  própria (*templates*), e é ela que fecharia esta exceção; nada disso
+  existe hoje.
 
 Revisar esta exceção no dia em que houver Terraform, Pulumi ou qualquer
 descrição versionada de infraestrutura.

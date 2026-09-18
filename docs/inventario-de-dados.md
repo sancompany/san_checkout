@@ -83,10 +83,12 @@ de titular de terceiro é publicado em lugar nenhum.
 
 | Onde | O quê | Observação |
 |---|---|---|
-| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role` |
-| Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador |
-| Render | Logs da aplicação | Ver seção 7 |
-| Cloudflare Pages | Nada — front estático | Não recebe dado pessoal em repouso |
+| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil** |
+| Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador. Provedor brasileiro |
+| Northflank | Logs da aplicação | Ver seção 7. Região `southamerica-east` — **Brasil**, medido pela API do provedor em 17/09/2026. **Esta linha dizia "Render" até 17/09/2026**, e o Render deixou de ser usado em 12/09: inventário que nomeia o fornecedor errado aponta a transferência internacional errada, que é o pior lugar para estar desatualizado |
+| Cloudflare Pages | Nada em repouso — front estático | Não recebe dado pessoal em repouso. Mas trata **dado técnico de conexão em trânsito** (IP, agente do navegador, metadados), porque é ela que entrega a página |
+| Cloudflare Web Analytics | Métrica de desempenho da página, agregada | **Ativo desde 01/09/2026**, e descoberto em 17/09 só porque a CSP o liberava: a Cloudflare injeta o beacon sozinha (`auto_install`) nas páginas que ela serve, então ele **não aparece no HTML do repositório**. Coleta o mínimo para tempos de carregamento; **sem cookie** e sem perfil, e a Cloudflare declara não rastrear usuário final entre sites de clientes. Base legal: legítimo interesse. Guarda: definida pela Cloudflare — a documentação pública consultada não declara prazo, e não inventamos um. Declarado na política, §15.5 a 15.9 |
+| Cloudflare Access | Identidade do operador no login administrativo | Camada de borda do `/admin`; trata o e-mail do operador para autorizar |
 | Contratante | Payload do webhook e da conciliação | Não inclui endereço; inclui `pedidoId`, valores e, em assinatura, `documento` |
 | Contratante (navegação de volta) | Só o `pedidoId`, na URL de retorno | Desde 15/09/2026. O `returnUrl` leva o comprador de volta à loja depois de pagar e carrega **um** parâmetro, `pedido` — um id que o próprio contratante gerou e já conhece. Nenhum dado pessoal, e nenhum status de pagamento, viaja por aí (`API.md` §3.1). O destino é sempre origem do próprio contratante, conferida no servidor |
 
@@ -100,15 +102,37 @@ Exclusão antes do prazo, a pedido do titular (LGPD art. 18), é atendida
 caso a caso — respeitada a guarda legal do que não pode ser apagado
 enquanto o prazo fiscal correr.
 
-> ⚠️ **DUAS PENDÊNCIAS ABERTAS, e elas são diferentes uma da outra:**
+> ✅ **A ROTINA EXISTE DESDE 17/09/2026.** Era a primeira das duas
+> pendências desta seção, e a frase que estava aqui era: *"o prazo está
+> decidido, mas nada apaga nada hoje — enquanto não houver a rotina, o
+> prazo é intenção, não prática."*
 >
-> 1. **A rotina de expurgo não existe.** O prazo está decidido, mas
->    nada apaga nada hoje. Enquanto não houver a rotina, o prazo é
->    intenção, não prática.
-> 2. **Validação jurídica pendente.** Os 5 anos são a escolha mais
->    defensável sem advogado, não um parecer. A skill `legal` fecha isso
->    na Estação 7, antes do lançamento — e é de lá que sai o texto da
->    Política de Privacidade.
+> `src/services/expurgoService.js`, ligada ao ciclo de 24 h do
+> `server.js` junto dos outros dois expurgos, e com porta de mão para o
+> operador em `npm run expurgo` (simula por padrão). Duas funções,
+> porque são duas coisas diferentes: o **prazo** (cinco anos, tudo que
+> passou) e o **pedido do titular** (LGPD art. 18, antes do prazo).
+>
+> **Anonimiza, não apaga** — é o que §6.2 abaixo verificou ser possível
+> na modelagem. E decide por **lista branca do que FICA**, não por lista
+> de o que sai: lista negra falha aberta, e falhar aberta aqui é uma
+> coluna pessoal criada em 2027 sobrevivendo para sempre porque alguém
+> esqueceu de atualizar um arquivo. O autoteste (46 checagens) confere a
+> lista contra as colunas reais do banco, então coluna nova deixa a
+> suíte vermelha até alguém decidir de que lado ela fica.
+>
+> Conferida contra o banco de produção no mesmo dia, em simulação, de
+> dentro do contêiner: o filtro alcança as 10 cobranças e as 3
+> assinaturas que existem (controle positivo com o corte em "agora"), e
+> com o corte real — 2021-09-17 — não alcança nenhuma, porque não existe
+> transação de cinco anos atrás. Ela não faz nada até 2031; o valor de
+> estar ligada agora é não depender de alguém lembrar em 2031.
+>
+> ⚠️ **A SEGUNDA PENDÊNCIA CONTINUA ABERTA: validação jurídica.** Os 5
+> anos são a escolha mais defensável sem advogado, não um parecer. A
+> skill `legal` fecha isso na Estação 7, antes do lançamento — e é de lá
+> que sai o texto da Política de Privacidade. Se o parecer mudar o
+> prazo, muda a constante `ANOS_DE_RETENCAO`, e nada mais.
 >
 > Vale também para a Asaas: o dado que foi enviado a ela segue a
 > retenção **dela**, não a nossa.
@@ -149,7 +173,12 @@ enquanto o prazo fiscal correr.
 
 A skill `legal` trata isto como decisão de arquitetura, não de texto: se
 o modelo não permitir apagar sem quebrar histórico ou guarda fiscal, o
-problema é de modelagem. Conferido contra o `supabase/schema.sql`:
+problema é de modelagem. Conferido contra o schema — que hoje são as
+**migrations numeradas** em `supabase/migrations/` (a `0001_baseline.sql`
+tem os `create table`), e não mais um arquivo de schema único — ele
+deixou de existir quando a regra de migrations imutáveis entrou
+(`CONSTRAINTS.md` §2.1). Este parágrafo apontava para o arquivo antigo
+até 18/09/2026:
 
 - Em `cobrancas`, o dado pessoal (`documento`, `email`, `telefone`, os
   oito campos de endereço, `itens`) está em colunas **separadas** do
@@ -164,8 +193,18 @@ problema é de modelagem. Conferido contra o `supabase/schema.sql`:
 - `subcontas` é dado do operador/parceiro, não do comprador, e tem
   guarda própria enquanto a subconta existir na Asaas.
 
-Ou seja: o que falta é a **rotina**, não a possibilidade. A modelagem
-não precisa mudar para atender a LGPD art. 18.
+Ou seja: o que faltava era a **rotina**, não a possibilidade — e ela foi
+escrita em 17/09/2026 exatamente sobre esta leitura da modelagem. A
+modelagem não precisou mudar para atender a LGPD art. 18.
+
+**Uma consequência que só aparece na hora de executar:** assinatura
+**viva** (ativa ou pausada) não é anonimizada nem a pedido do titular,
+porque o `documento` é a chave com que ele cancela a própria assinatura
+(`API.md` §5.5). Apagar o documento tiraria dele a capacidade de
+cancelar — o oposto do que o pedido quer. E cancelar por conta própria
+seria decidir por outra pessoa algo com consequência financeira. Então a
+rotina **relata** as assinaturas vivas em vez de agir: o titular cancela,
+e o expurgo alcança na rodada seguinte.
 
 ## 7. Log
 

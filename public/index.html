@@ -43,7 +43,7 @@
       <div class="checkout-panel checkout-panel--summary">
       <header class="brand-header">
         <div class="brand-logos-row" id="brand-logos-row">
-          <img class="brand-logo brand-logo--operator" src="assets/logo-sanco.png" alt="SAN & CO." />
+          <img class="brand-logo brand-logo--operator" src="assets/logo-sanco-192.png" width="192" height="192" alt="SAN & CO." />
           <svg aria-hidden="true" class="brand-logos-arrows" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 7h10M17 7l-3-3M17 7l-3 3"/>
             <path d="M17 17H7M7 17l3 3M7 17l3-3"/>
@@ -226,10 +226,22 @@
           </div>
 
           <!-- Cartão de Crédito — o pagamento em si acontece na pop-up
-               hospedada pela Asaas (Asaas Checkout); aqui só escolhemos
-               quantas parcelas ANTES de abrir, porque a Asaas cobra o
-               valor fechado que mandamos, não deixa escolher parcela lá
-               dentro. BACKEND AINDA NÃO EXISTE pra este método. -->
+               hospedada pela Asaas (Asaas Checkout), que é o que mantém
+               este projeto fora do escopo PCI: número e CVV nunca passam
+               pelo nosso servidor.
+
+               DUAS AFIRMAÇÕES FALSAS FORAM REMOVIDAS DAQUI EM 17/09/2026.
+               Dizia "BACKEND AINDA NÃO EXISTE pra este método" — existe
+               desde a leva da pop-up, e foi exercitado ao vivo. E dizia
+               que a Asaas "não deixa escolher parcela lá dentro" — deixa:
+               o backend manda `installment.maxInstallmentCount` e quem
+               escolhe dentro da pop-up é o comprador. O que se escolhe
+               AQUI é o TETO de parcelas, não a parcela final.
+
+               A lista abaixo é o teto da nossa regra (12). O servidor
+               corta as opções que a Asaas recusaria, porque o piso de
+               R$ 5,00 dela vale POR PARCELA — ver `maxParcelas` em
+               `pedidoController.js` e API.md §9.1. -->
           <div class="payment-method" data-method="cartao">
             <button type="button" class="method-row" id="method-cartao" aria-expanded="false">
               <span class="method-radio" aria-hidden="true"></span>
@@ -319,8 +331,15 @@
         <!-- Modo Assinatura — só aparece quando a URL tem ?assinatura=
              em vez de ?pedido=. app.js decide qual bloco mostrar; o
              resumo (título/valor) reaproveita os mesmos elementos do
-             order-summary lá em cima, só troca o conteúdo. BACKEND
-             AINDA NÃO EXISTE pro endpoint que esse botão chama. -->
+             order-summary lá em cima, só troca o conteúdo.
+
+             Dizia "BACKEND AINDA NÃO EXISTE pro endpoint que esse botão
+             chama", e isso era falso em 17/09/2026: o caminho da
+             assinatura existe inteiro, foi auditado etapa por etapa
+             (`docs/ciclo-assinatura-mapa.md`) e a primeira assinatura de
+             verdade foi paga no sandbox em 16/09. Segundo comentário
+             desta página a dizer que um backend que existe não existe —
+             o outro era o do cartão. -->
         <div class="payment-methods hidden" id="subscription-action" aria-label="Assinatura">
           <button type="button" class="btn-primary" id="btn-assinar">
             <span>Assinar Agora</span>

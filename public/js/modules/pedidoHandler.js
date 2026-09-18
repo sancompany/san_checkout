@@ -85,7 +85,49 @@ function marcarPedidoIndisponivel(mensagem) {
   document.querySelector('.checkout-panel--form')?.classList.add('hidden');
 }
 
-function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
+/* A LISTA DE PARCELAS É CORTADA PELO SERVIDOR.
+
+   O provedor tem um piso de valor POR PARCELA, e o backend manda em
+   `maxParcelas` quantas cabem neste pedido — o número do piso mora só lá
+   (`utils/validadores.js`), e não é repetido aqui nem em comentário:
+   número duplicado envelhece, e a suíte do piso recusa a duplicação de
+   propósito.
+
+   Sem cortar, o comprador de um pedido barato escolhe 12x nesta tela e a
+   pop-up da Asaas abre oferecendo menos — duas telas discordando sobre a
+   mesma compra, na hora de digitar o cartão.
+
+   Só REMOVE opções, nunca acrescenta: o `<select>` do HTML é o teto (12,
+   que é o limite da nossa própria regra), e o servidor só pode apertar.
+   Se `maxParcelas` não vier — cliente antigo, resposta sem o campo — a
+   lista fica como está e o comportamento é o de antes. */
+function cortarParcelas(maxParcelas) {
+  const seletor = document.getElementById('cartao-parcelas');
+  const maximo = Number(maxParcelas);
+  if (!seletor || !Number.isFinite(maximo) || maximo < 1) return;
+
+  for (const opcao of [...seletor.options]) {
+    if (Number(opcao.value) > maximo) opcao.remove();
+  }
+  // Se a seleção corrente foi removida, o navegador cai na primeira —
+  // mas deixar explícito evita depender disso.
+  if (!seletor.value) seletor.selectedIndex = 0;
+}
+
+function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio, maxParcelas }) {
+  /* BLOQUEIO DECIDIDO NO SERVIDOR.
+
+     Quem sabe o piso da Asaas é o backend, e ele manda a frase pronta.
+     Cair aqui derruba o carregamento inteiro pelo mesmo caminho do
+     total indisponível: o `catch` de `resolverContexto` escreve a
+     mensagem na tela, esconde o formulário e devolve `null`, e o
+     `app.js` sai antes de ligar qualquer botão.
+
+     A mensagem vem do servidor em vez de ser escrita aqui de propósito:
+     duplicar o texto no front significa que um dia o piso muda num
+     lugar só e a tela passa a mentir o número. */
+  if (bloqueio?.mensagem) throw new Error(bloqueio.mensagem);
+
   document.getElementById('order-category').textContent = ROTULOS_TIPO[pedido.tipo] ?? contratanteNome ?? 'Produto / Serviço';
   document.getElementById('order-title').textContent = pedido.descricao ?? 'Pedido';
 
@@ -99,8 +141,17 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
       const linha = document.createElement('div');
       linha.className = 'order-item-row';
 
+      /* Item sem preço mostra travessão, não "R$ 0,00".
+
+         Este era o terceiro lugar da família dos dois bugs de total
+         (`docs/pendencias.md`): `?? 0` transforma "não sei o preço" em
+         "o preço é zero", e zero numa linha de item lê como brinde. O
+         total continua sendo o do servidor — esta linha é só o detalhe
+         —, então um item sem preço não derruba a tela; ele só para de
+         afirmar um valor que ninguém informou. */
       const quantidade = Number(item.quantidade ?? 1);
-      const valorItem = quantidade * Number(item.valorUnitario ?? 0);
+      const unitario = Number(item.valorUnitario);
+      const valorItem = Number.isFinite(unitario) ? quantidade * unitario : null;
 
       const label = document.createElement('span');
       label.className = 'order-item-label';
@@ -111,7 +162,7 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
 
       const valor = document.createElement('span');
       valor.className = 'order-item-value';
-      valor.textContent = `R$ ${formatarMoeda(valorItem)}`;
+      valor.textContent = valorItem === null ? '—' : `R$ ${formatarMoeda(valorItem)}`;
 
       linha.append(label, valor);
       lista.appendChild(linha);
@@ -144,6 +195,8 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa }) {
   if (!Number.isFinite(total) || total <= 0) {
     throw new Error('Não foi possível calcular o valor desta compra. Recarregue a página ou peça um link novo ao vendedor.');
   }
+
+  cortarParcelas(maxParcelas);
 
   const taxasTotais = Number(taxa.taxasTotais ?? 0);
 

@@ -23,7 +23,11 @@ import {
   recuperarCobrancaBoleto
 } from '../services/asaasService.js';
 import { registrarCobranca, buscarCobrancaPendenteDoPedido } from '../services/cobrancaService.js';
-import { documentoValido, emailValido, valorValido, nomeValido } from '../utils/validadores.js';
+import {
+  documentoValido, emailValido, valorValido, nomeValido,
+  normalizarDocumento,
+  valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
+} from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 function gerarReferenciaExterna(documento) {
@@ -60,13 +64,20 @@ async function reaproveitarCobrancaPendente({ contratanteId, pedidoId, metodo, r
 
 export async function gerarPix(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
-  const { nome, email, documento, telefone } = requisicao.body ?? {};
+  let { nome, email, documento, telefone } = requisicao.body ?? {};
 
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
   if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  /* O documento vira DÍGITOS aqui, e daqui para baixo é só esta forma.
+     `552.085.198-01` e `55208519801` são o mesmo CPF, passam os dois na
+     validação, e sem isto viram duas chaves diferentes no banco — a
+     assinatura criada com uma forma responde 404 para quem cancela com a
+     outra. Ver `normalizarDocumento` em `utils/validadores.js`. */
+  documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
@@ -105,6 +116,14 @@ export async function gerarPix(requisicao, resposta) {
       1,
       Boolean(pedido.isentarTaxa)
     );
+
+    // O piso é sobre o valor COBRADO, então só dá para conferir depois
+    // da taxa. A tela já barra isto ao abrir (`pedidoController`); aqui
+    // é a mesma regra do lado que não dá para pular chamando a API
+    // direto, e ela evita uma ida à Asaas que volta 400.
+    if (!valorCobradoAceitavel(valorCobrado)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
+    }
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 
@@ -165,13 +184,17 @@ export async function statusPix(requisicao, resposta) {
  */
 export async function gerarBoleto(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
-  const { nome, email, documento, telefone } = requisicao.body ?? {};
+  let { nome, email, documento, telefone } = requisicao.body ?? {};
 
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
   }
   if (!nomeValido(nome)) return resposta.status(400).json({ erro: 'Nome inválido.' });
   if (!documentoValido(documento)) return resposta.status(400).json({ erro: 'CPF/CNPJ inválido.' });
+
+  // Dígitos, e daqui para baixo é só esta forma (RN-32) — a explicação
+  // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
+  documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
 
   try {
@@ -212,6 +235,14 @@ export async function gerarBoleto(requisicao, resposta) {
       1,
       Boolean(pedido.isentarTaxa)
     );
+
+    // O piso é sobre o valor COBRADO, então só dá para conferir depois
+    // da taxa. A tela já barra isto ao abrir (`pedidoController`); aqui
+    // é a mesma regra do lado que não dá para pular chamando a API
+    // direto, e ela evita uma ida à Asaas que volta 400.
+    if (!valorCobradoAceitavel(valorCobrado)) {
+      return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
+    }
 
     const clienteId = await buscarOuCriarCliente({ nome, email, documento });
 

@@ -13,9 +13,10 @@
  * gravaria o status novo — nunca roda. O registro fica `ativa` para
  * sempre, incancelável pela API.
  *
- * Depois da troca não há como distinguir com segurança o que era de
- * teste do que é real. Por isso a limpeza é passo 3 do `RUNBOOK.md §6.2`,
- * e não faxina posterior.
+ * Desde a migration 0009, `cobrancas.ambiente` distingue a cobrança de
+ * sandbox da real (RN-33) — mas `assinaturas` não tem a coluna, e é ela
+ * que vira zumbi. Por isso a limpeza continua sendo o passo 3 do
+ * `RUNBOOK.md §6.2`, antes da troca, e não faxina posterior.
  *
  * ── O padrão é NÃO apagar ───────────────────────────────────────────
  * Sem `--apagar`, lista o que apagaria e sai. Apagar dado de cobrança é
@@ -49,13 +50,16 @@ async function sql(query) {
 /* O que é "de teste": tudo que existe hoje, porque hoje o checkout só
    rodou em sandbox (`CONSTRAINTS.md` §3).
 
-   ⚠️ Isso deixa de ser verdade no instante em que a primeira cobrança
-   real entrar, e **este script não tem como saber sozinho** se já
-   entrou: o `ASAAS_AMBIENTE` vive no contêiner, não aqui, e nenhuma
-   coluna marca "esta cobrança é real". Em vez de fingir um guarda, ele
-   exige que quem roda afirme — `--confirmo-que-e-sandbox`. O guarda é a
-   pessoa, e o script diz isso em voz alta em vez de sugerir proteção
-   que não tem. */
+   Este comentário dizia, até 17/09/2026, que o script **não tinha como
+   saber sozinho** se o banco já tinha dinheiro real — e era verdade
+   enquanto nenhuma coluna marcasse a origem da cobrança. A migration
+   0009 passou a gravar `cobrancas.ambiente` na criação, a partir da
+   configuração do processo (RN-33), e com ela o guarda deixou de ser só
+   a pessoa: havendo UMA linha de produção, este script recusa apagar
+   qualquer coisa, inclusive com a bandeira. A bandeira continua exigida
+   — as outras quatro tabelas não têm a coluna, e apagar histórico de
+   cobrança não tem volta —, mas agora ela é a segunda tranca, não a
+   única. */
 const CONFIRMOU_SANDBOX = process.argv.includes('--confirmo-que-e-sandbox');
 
 const contagens = await sql(`
@@ -80,6 +84,22 @@ for (const c of contagens) {
 console.log('\n  mantém  contratantes         (cadastro, não cobrança — apagar quebraria a integração)');
 console.log('  mantém  subcontas            (idem)');
 
+/* A quebra por ambiente é o que responde "já entrou dinheiro real?".
+   Vale para `cobrancas` só: as outras quatro tabelas não têm a coluna. */
+const porAmbiente = await sql(`
+  select ambiente, e_teste, count(*) as linhas
+  from public.cobrancas group by 1, 2 order by 1, 2`);
+
+console.log('\n=== cobrancas por ambiente (RN-33) ===');
+if (!porAmbiente.length) console.log('  (nenhuma cobrança no banco)');
+for (const a of porAmbiente) {
+  console.log(`  ${String(a.ambiente).padEnd(10)} e_teste=${String(a.e_teste).padEnd(5)} ${a.linhas}`);
+}
+
+const DE_PRODUCAO = porAmbiente
+  .filter((a) => a.ambiente === 'producao')
+  .reduce((soma, a) => soma + Number(a.linhas), 0);
+
 const detalhe = await sql(`
   select a.id, a.contratante_id, a.plano_id, a.status, a.ciclo
   from public.assinaturas a order by a.criado_em desc`);
@@ -100,11 +120,24 @@ if (!APAGAR) {
   process.exit(0);
 }
 
+/* Guarda de verdade, e ele vem ANTES da bandeira: bandeira é afirmação
+   de quem roda, e afirmação errada sobre dinheiro real não tem desfazer.
+   Recusa fechada — dado de produção presente, não apaga nada. */
+if (DE_PRODUCAO > 0) {
+  console.error('\n--- RECUSADO (guarda automático) ---');
+  console.error(`Existem ${DE_PRODUCAO} cobrança(s) com ambiente = 'producao' neste banco.`);
+  console.error('Isto não é banco de sandbox, e a limpeza é passo ANTES da troca');
+  console.error('(RUNBOOK §6.2, passo 3). Apagar aqui destruiria histórico real.');
+  console.error('Nenhuma bandeira passa por cima disto: se a intenção é outra,');
+  console.error('ela precisa ser escrita como procedimento próprio, não como flag.');
+  process.exit(1);
+}
+
 if (!CONFIRMOU_SANDBOX) {
   console.error('\n--- RECUSADO ---');
   console.error('Isto apaga TODO histórico de cobrança e assinatura, e não há volta.');
-  console.error('Este script não sabe dizer se o banco já tem dinheiro real: o');
-  console.error('ASAAS_AMBIENTE vive no contêiner, e nenhuma coluna marca "é real".');
+  console.error('O guarda automático (cobrancas.ambiente) já conferiu que não há');
+  console.error('linha de produção — mas as outras quatro tabelas não têm a coluna.');
   console.error('Quem confirma é você, e só depois de conferir a lista acima:');
   console.error('  npm run limpar-teste -- --apagar --confirmo-que-e-sandbox');
   process.exit(1);

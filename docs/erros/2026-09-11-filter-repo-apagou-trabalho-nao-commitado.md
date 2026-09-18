@@ -20,7 +20,8 @@ existiam fora do repositório. Nada se perdeu de forma definitiva, mas só
 porque havia cópia — não havia garantia nenhuma de que houvesse.
 
 **Guarda.** A detecção não veio de erro nenhum, veio da reverificação: ao
-conferir se `supabase/schema.sql` tinha saído do repositório, a árvore do
+conferir se `supabase/schema.sql` tinha saído do repositório (o arquivo
+existia na época; hoje o schema são as migrations numeradas), a árvore do
 GitHub ainda mostrava o arquivo e o último commit continuava sendo o
 anterior. No disco, os seis arquivos tinham todos a **mesma data de
 modificação** e o `schema.sql` tinha voltado 250 bytes maior — exatamente

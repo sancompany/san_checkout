@@ -11,6 +11,47 @@ por baixo. Segue as leis do plugin `san-co`.
 > Sem o plugin carregado, clonar `sancompany/Plugin_san-co` e ler de lá
 > antes de fechar qualquer coisa.
 
+## Antes de agir: existe uma skill para isto?
+
+**Procure a skill que corresponde à FUNÇÃO que você está exercendo, e
+rode-a.** Não é sugestão e não depende de o dono pedir: pedir uma skill
+que existe para a tarefa em curso é trabalho dele fazer duas vezes.
+
+Regra escrita em 17/09/2026 porque o dono tinha pedido `revisar` várias
+vezes e ela só rodou naquele dia — e quando rodou, achou dois bugs
+graves pré-existentes no caminho do dinheiro em onze ciclos. O custo de
+não ter rodado antes é medível: os dois furos ficaram no ar por dias.
+
+A tabela abaixo é **índice, não regra** — pela mesma razão do aviso no
+topo deste arquivo: o `description` de cada skill é a fonte, e esta
+paráfrase não é. Ela serve para achar a skill certa em um olhar; achada,
+lê-se o `SKILL.md` dela. Índice que vira regra é como uma estação foi
+fechada errado em 13/09.
+
+| a função que você está exercendo | a skill |
+|---|---|
+| escrever, refatorar, escolher biblioteca | `construir` |
+| revisar mudança antes de commit, merge ou deploy | `revisar` |
+| qualquer coisa que toque cobrança, senha, documento, admin, Asaas | `seguranca-san` |
+| algo quebrou, teste falhou, comportamento não bate | `depurar` |
+| abrir/fechar estação, estrutura, prontidão, subir para produção | `leis` |
+| dado novo, integração de terceiro, texto legal, ir ao ar | `legal` |
+| onde uma capacidade mora, banco compartilhado ou separado | `classificar` |
+| integrar um projeto ao San Checkout | `checkout` |
+| ideia nova, escopo de projeto novo | `novo-projeto` |
+
+São **nove** skills no plugin em 17/09/2026, e as nove estão na tabela —
+se um dia a contagem não bater, a tabela envelheceu e o plugin manda.
+
+Duas ou mais se aplicando ao mesmo trabalho, rodam todas — `revisar`
+manda explicitamente chamar `seguranca-san` quando a mudança toca
+dinheiro ou dado de cliente.
+
+E o aviso do topo vale aqui com força: **`ListPlugins` vazio significa
+trabalhar de segunda mão.** Sem o plugin carregado, clonar
+`sancompany/Plugin_san-co` e ler o `SKILL.md` da fonte — foi assim que a
+`revisar` foi lida em 17/09.
+
 ## Antes de propor ou escrever qualquer coisa, leia
 - `CONSTRAINTS.md` — o que NÃO se faz aqui, os limites e as exceções
 - `docs/funcional.md` — o que o sistema faz, tela por tela. Comportamento alterado se reescreve ali, na mesma tarefa
@@ -43,7 +84,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). As três condições de `varredura-final.md` conferidas na abertura. Estado em 16/09: main = `d793f2e` (PR #16 mesclado) e **é o commit ativo no Northflank**, migrations 0001-0006 aplicadas, árvore limpa |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 18/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, árvore limpa. **O banco está UMA migration à frente do código no ar:** a 0010 (troca de plano) está aplicada em produção e o código que a usa está na branch `claude/nifty-meitner-4ffp9s`, não na main — é a ordem que a lei manda (a coluna nova existe ANTES do código que a lê), e as três colunas são aditivas, então nada no ar as toca |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -265,19 +306,338 @@ Feito em 16/09:
 - **Troca de plano: decidida como atualização futura, não pendência.** O
   dono perguntou se o checkout atendia as duas aplicações do MostrAí.
   **Cancelar plano já está pronto** (§7.4, exercitado ao vivo). **Trocar
-  plano não existe** — `valor` e `ciclo` são congelados na criação da
-  assinatura, e isso vem da Asaas, não de escolha nossa. Decisão do
-  dono: o MostrAí segue pela **ideia do pedido avulso**, cobrando a
-  diferença como pedido comum. Registrado em `docs/proximas-versoes.md`
-  com o que faltaria construir (o cálculo proporcional, que não existe
-  em lugar nenhum do sistema, e o token carregando o plano de destino).
+  plano não existe** — e o motivo que eu dei aqui estava **errado**: eu
+  escrevi que `valor` e `ciclo` são congelados pela Asaas, "não por
+  escolha nossa". ⚠️ **Corrigido em 17/09/2026 por medição** — a Asaas
+  aceita `PUT /v3/subscriptions/{id}` mudando `value` e `cycle`, e com
+  `updatePendingPayments: true` muda até a cobrança pendente já gerada.
+  O congelamento é **do nosso fluxo**. Decisão do dono na conversa de
+  16/09: o MostrAí segue pela **ideia do pedido avulso** — decisão que
+  volta a ser dele, porque foi tomada sobre a premissa falsa. Tudo em
+  `docs/proximas-versoes.md`, com a tabela da medição e o **controle
+  negativo** que dá sentido a ela: a Asaas responde `200` e ignora em
+  silêncio campo que não conhece, então status não prova nada — quem
+  prova é o `GET` de volta.
+  **Segunda rodada, no meio que importa (cartão), respondendo o que
+  faltava:** aumentar (30→45) e **diminuir** (45→12) funcionam; **abaixo
+  do piso de R$ 5,00 a Asaas recusa** com `400 invalid_value` e mensagem
+  por meio de pagamento; `cycle` novo **não move** `nextDueDate`;
+  assinatura **pausada aceita** mudança de preço; e **nenhum evento
+  chegou** ao nosso receptor em nenhuma das operações — o que é
+  configuração (§2.2), não incapacidade, mas dá no mesmo: quem alterar
+  tem de escrever no nosso banco na mesma operação.
+  **E isso escancarou um furo que já existia:** a conciliação reconfere
+  `status`, `ciclo` e `proximaCobranca` contra a Asaas e **não
+  reconfere `valor`** — preço mudado no painel dela deixa o nosso
+  registro errado para sempre, sem sintoma. Mesma família do bug do
+  `ciclo` de 15/09, e a correção de 16/09 fechou um e deixou o outro.
+  RN-34, T12 do mapa, e **declarado em vez de corrigido às cegas**:
+  reconciliar `valor` é deixar a Asaas mandar no número inclusive quando
+  a alteração de lá foi erro humano, e a escolha entre isso e "denunciar
+  a divergência" é do dono. Documentado em `API.md` §7.5 (nova) e no
+  aviso da §5.3, `INTEGRACAO.md`, `docs/funcional.md` RN-34,
+  `docs/ciclo-assinatura-mapa.md` T12 e `docs/pendencias.md`.
 
-Falta para fechar a 6 (gated no dono / MostrAí / troca para produção):
-ciclo de assinatura pago; ligar o monitor externo no `/api/saude`;
-backup+restauração (amarrado ao 1º pagamento real, §3); e os demais itens
-de prontidão adiados (`docs/pendencias.md`). A troca da Asaas para
-produção vem depois e fecha a 5 sem ressalva. O MostrAí retesta o lado
-dele em paralelo.
+Feito em 17/09, tudo no ar (`b57df2b`):
+- **Restauração ensaiada** (`npm run ensaio-restauracao`): Postgres da
+  mesma major da produção, migrations, dados, e comparação em cinco
+  níveis com o banco no ar. Zero divergência, **RTO 1 s**. É o primeiro
+  lugar que PROVA que as migrations descrevem o banco real — e já
+  acusou as 0007 e 0008 antes de aplicadas. Fecha metade da exceção da
+  Lei 6; falta a cópia periódica fora do provedor.
+- **Captura de exceção** (Lei 8), sem serviço externo: tabela `erros`
+  (0007), aba no painel. Agrega por impressão digital, senão rota
+  pública que dá 500 vira escrita ilimitada no banco.
+- **Métrica por dia civil de Brasília**: exigiu `confirmado_em` (0008),
+  que não existia — "confirmadas ontem" era inrespondível por falta de
+  dado, não de recorte. O processo roda em **UTC**, medido no contêiner.
+- **Acessibilidade WCAG 2.2 AA** (`npm run acessibilidade`): cinco
+  violações reais corrigidas; a causa raiz era paleta duplicada nas
+  páginas legais.
+- **Troca para produção preparada**: `API.md` §11.1 (nada de sandbox
+  atravessa), `RUNBOOK` §6.2, e `npm run limpar-teste`. A URL do webhook
+  é `/api/webhooks/asaas` **plural** — o singular dá 404, conferido.
+- **Pessoa física, em transição**: documentos legais reidentificados, v1
+  arquivada. Subconta é bloqueio da Asaas (conta PF no registro), virou
+  atualização futura — sem split, 100% na conta-mãe, exceção §3.
+
+> Três coisas quase passaram por prova nesta rodada, e a lição é a
+> mesma: **evidência sem controle não é evidência.** Um RPO falso no
+> RUNBOOK (media tráfego, não backup); um verificador de acessibilidade
+> reportando "0 violações" sobre a tela de *"Acesso não autorizado"*; e
+> um teste que só pegou a sabotagem depois de eu corrigir o próprio
+> teste. Todas caíram por controle positivo.
+
+Ainda em 17/09, a segunda metade do dia — o dono pediu para eu fechar
+tudo que era meu, e estas eram as pendências que restavam do meu lado:
+- **Recusar cedo o que a Asaas recusa** (RN-28, RN-29). O piso de
+  R$ 5,00 no valor cobrado, medido nos seis caminhos de criação com
+  controle positivo em R$ 5,00 exato; e a regra do telefone, que **não
+  era a que estava escrita na pendência** — "dígito repetido" é falso,
+  `11988888888` passa. 24 combinações medidas para achar a regra real
+  antes de escrever validador: errar aqui recusa comprador legítimo no
+  caminho do dinheiro, que é pior que o bug original.
+- **SSRF residual do pull fechado** (RN-30): redirect revalidado a cada
+  salto, só mesma origem, e corpo com teto de 1 MiB contado no fluxo. A
+  regra de mesma origem não é só anti-SSRF — a requisição leva a
+  `X-Checkout-Key` do contratante, que autoriza estorno.
+- **O Express passou a subir no teste** (Lei 0). O roteiro de login por
+  token, exercitado à mão em 12/09, virou suíte contra a pilha montada
+  de verdade. Uma sabotagem dela passou e revelou um **comentário falso**
+  no `server.js` sobre ordem de limitadores — medido e corrigido.
+- **A rotina de expurgo de dado pessoal existe** (Lei 10, RN-31), por
+  lista branca do que fica, conferida em simulação contra o banco de
+  produção com controle positivo.
+- **Três decisões do dono registradas**: o canal de alerta é o e-mail de
+  falha da Asaas (com a ressalva de que tráfego zero não dispara nada);
+  alerta de orçamento e cópia periódica fora do provedor viraram
+  atualizações futuras — a Asaas é a cópia, e o que ela NÃO cobre está
+  escrito em `CONSTRAINTS.md` §3.
+- **Documentos falsos corrigidos**: esta seção dizia "Estação 6 não
+  iniciada"; o mapa dizia 18 suítes; `docs/pendencias.md` pedia um ciclo
+  de segurança que rodou em 14/09, e declarava uma regra de validação de
+  telefone que a medição desmentiu.
+- **A skill `revisar` rodou pela primeira vez sobre este código** — era
+  pendência da Lei 0, e a entrada dela no `pendencias.md` era um título
+  sem corpo. Onze ciclos, parando no primeiro limpo. Achou dívida em dez
+  das onze voltas, e **dois bugs graves pré-existentes no caminho do
+  dinheiro**: o `documento` gravado cru fazia `552.085.198-01` e
+  `55208519801` virarem duas chaves para a mesma pessoa, deixando
+  assinatura incancelável pela API (RN-32); e o piso da Asaas é **por
+  parcela**, que a minha primeira medição não viu porque mediu só com
+  uma — R$ 24,00 em 12x é recusado, e a sessão da pop-up é aceita, então
+  a recusa só apareceria lá dentro com o cartão já digitado. A correção
+  oferta menos parcelas em vez de recusar a venda, e a tela corta a
+  lista com o número que o servidor manda.
+- **`seguranca-san` junto**, e ela fechou a lição nº 23: a lista de
+  rotas limitadas passou a ser conferida por teste contra a lista de
+  rotas montadas, em vez de a olho — a contagem de rotas e prefixos sai
+  do próprio teste quando ele roda, e por isso não está escrita aqui
+  (ela já estava velha em 18/09: dizia 33 e 17 quando eram 34 e 18).
+- **Oito autotestes tinham contador de checagens chumbado**, três deles
+  mentindo — `validadores` dizia 40 e tinha 91, e `senhaAdmin` dizia 22
+  e tinha 20, superestimando. Todos passaram a contar.
+- **Os três estados novos do checkout foram auditados em navegador de
+  verdade** (`npm run acessibilidade`), com checagem de que o estado
+  ACONTECEU antes de auditar — e o dublê do pedido estava com o formato
+  de item errado desde que foi escrito, então a linha de item nunca
+  havia sido exercitada.
+- **O RUNBOOK foi TESTADO, e o teste achou oito furos** — inclusive dois
+  que eu havia escrito horas antes. O dono mandou resolver as pendências
+  sem ele; como não existe pessoa número dois, o teste do item 6 rodou
+  com um **agente sem nenhum contexto**, podendo ler só o `RUNBOOK.md` e
+  proibido de escrever. Ele respondeu "está no ar" e achou o vencimento
+  do domínio sozinho; **não conseguiu publicar**, porque não havia
+  caminho escrito de uma branch até a `main`, nem forma de saber **qual
+  commit está no ar** (e a §4 pedia `git revert <sha-ruim>`). Os quatro
+  com consequência real: as migrations `0001…0006` quando existem nove;
+  o comando "seguro" que listava 10 de 11 variáveis e comia a
+  `ASAAS_AMBIENTE`; a conferência do webhook sem o método (com `GET` o
+  certo e o errado dão 404 igual — só `POST` distingue); e a reversão
+  sem o sha. Tudo corrigido e conferido, tabela em `RUNBOOK` §10, e a
+  regra nova: **depois de editar o RUNBOOK, rodar um leitor sem
+  contexto.** A lição que fica é mais dura que os furos: **comando
+  escrito e não rodado é comando falso** — dois dos oito eram meus, de
+  poucas horas antes.
+- **A política de privacidade nomeava o Render, que não é mais usado**
+  (`docs/erros/2026-09-17-a-politica-de-privacidade-nomeava-um-fornecedor-que-nao-existia-mais.md`).
+  Fui escrever o aviso do Web Analytics e achei coisa pior ao lado: o
+  documento que declara **para onde os dados do titular vão** apontava o
+  fornecedor errado, e afirmava transferência internacional onde ela
+  não acontece mais (a Northflank roda em região brasileira, medido). E
+  prometia comunicação transacional ao Pagador que o sistema **não
+  faz** — não há biblioteca de e-mail no `src/`, e as notificações da
+  Asaas ao comprador nascem desligadas. Política na **v3**, v2
+  arquivada, inventário de dados corrigido, e a Cloudflare finalmente
+  declarada como fornecedora (Pages, DNS, Access e Web Analytics, este
+  com `auto_install` confirmado pela API). Migração de hospedagem é
+  troca de subprocessador: termina no inventário e na política, não no
+  deploy verde.
+- **Desempenho medido, e a medição achou defeito** (item 4:
+  `npm run desempenho`). Chromium de verdade num funil de celular (CPU
+  4x mais lenta, 1600 kbps, 150 ms), cinco telas do comprador, orçamento
+  que falha com código 1. A tela de **assinatura tinha CLS de 0,409**,
+  quatro vezes o teto: o fieldset de endereço era revelado depois da ida
+  à rede e empurrava o bloco de pagamento, o aceite e o botão para
+  baixo — deslocamento na parte da tela onde o dedo já está indo. Como
+  ele não depende da resposta, passou a aparecer antes do `await`:
+  **0,409 → 0,033**, reconferido, e provado por sabotagem (desfazer a
+  correção reprova a tela). O número é de laboratório e o "p75" é sobre
+  as rodadas, não sobre usuários — está escrito no script, porque
+  chamar isso de p75 de campo seria mentira. E uma frase minha do mesmo
+  dia estava errada: eu escrevi que "o projeto não tem analytics de
+  terceiro". Tem — o **Web Analytics da Cloudflare**, injetado pela
+  própria Cloudflare (por isso não aparece no HTML), sem cookie e sem
+  perfil, e é ele que vai ter o p75 de **campo** quando houver
+  visitante. Consequência achada junto: a política de privacidade não o
+  menciona, e pela orientação da ANPD analytics sem cookie dispensa
+  banner mas **não** dispensa o aviso — virou pendência da Estação 7,
+  porque documento legal não se reescreve por conta própria.
+- **O logo pesava 127 KB para aparecer com 32 px de altura** (item 5,
+  "imagens otimizadas"): PNG de 1378x1378 na primeira tela do comprador,
+  em dado móvel. Virou um de 192 px e **8,9 KB**, com o grande mantido
+  só no `og:image`. Travado por orçamento de 30 KB por imagem no
+  `npm run desempenho` — porque a forma de isso voltar não é um bug
+  novo, é alguém apontando o `src` de volta.
+- **`Cache-Control: no-store` em toda resposta de `/api`** (item 5). Não
+  existia nenhum: quem decidia guardar era o navegador e qualquer
+  intermediário, pelo palpite dele — botão "voltar" repintando pedido
+  pago como pendente, e proxy compartilhado podendo servir o pedido de
+  um comprador para outro. Coberto por teste na pilha montada, **com
+  controle positivo de que fora de `/api` o header NÃO é aplicado** —
+  senão a correção mataria o cache do front sem ninguém ver.
+- **As sete seções que faltavam no `RUNBOOK`** (item 6 da prontidão:
+  "outra pessoa consegue operar"). Inventário de contas, segredos e como
+  rotacionar cada um, alerta → significado → primeira ação, incidente
+  com dado pessoal **com os prazos da ANPD lidos na fonte da skill
+  `legal`** (nunca de cabeça: prazo legal chutado é prazo perdido),
+  dependências externas e o que cada queda derruba, contatos, e como
+  desligar tudo sem deixar assinatura cobrando. Medido no dia, não
+  suposto: o domínio vence **31/08/2027** (RDAP), o CI **não usa segredo
+  de repositório** nenhum, e a zona **não tem SPF** com `p=reject` no
+  DMARC — achado novo, e a correção é DNS, que é do dono. O que só o
+  dono tem ficou marcado `⬜` no arquivo em vez de inventado.
+- **A métrica de sucesso parou de contar uso interno** (RN-33, migration
+  0009). As colunas `ambiente` e `e_teste` em `cobrancas` estavam
+  desenhadas na 0004 e nunca foram escritas — sem elas, o pagamento de
+  teste do dono entraria na conta como resultado de negócio no primeiro
+  dia de dinheiro real, e é este o número que mede o projeto. `ambiente`
+  vem da configuração do processo, nunca do corpo da requisição;
+  `e_teste` é de **mão única**, travada por gatilho no banco em vez de
+  por código de aplicação. As duas regras foram provadas ao vivo contra
+  produção com uma cobrança descartável, apagada depois, e a métrica nova
+  rodou **dentro do contêiner** (nenhum dado pessoal desceu para disco):
+  10 lidas, 0 de negócio, 10 excluídas, soma conferindo. O painel mostra
+  o excluído num cartão próprio e tem dois vazios diferentes — "não
+  houve cobrança" e "houve, e nenhuma era de negócio" —, porque com dez
+  cobranças de sandbox no banco a frase antiga seria falsa.
+  **O ciclo de revisão da própria mudança achou um furo nela:** o
+  `select` da rota não trazia as duas colunas novas, e coluna ausente
+  chega `undefined` — o filtro excluiria TODA cobrança, para sempre,
+  dando hoje o número certo por coincidência. Corrigido, e travado por
+  uma checagem geral: todo campo que o agregador lê de uma linha tem de
+  estar no `select` da rota
+  (`docs/erros/2026-09-17-o-filtro-dependia-de-coluna-que-a-consulta-nao-trazia.md`).
+- **Troca de plano, construída NESTA versão por ordem do dono** — ⚠️ **na branch `claude/nifty-meitner-4ffp9s`, ainda NÃO na main nem no ar** (o que está no ar é `b57df2b`); só a migration 0010 já está aplicada no banco, de propósito
+  (`POST /api/checkout/trocar-plano`, `API.md` §5.6, RN-35 e RN-36,
+  migration 0010). Ela nasceu de uma pergunta dele — "no Asaas não é
+  possível fazer uma alteração de preço nos planos já contratados?" —
+  cuja resposta minha, escrita em quatro lugares, era **falsa**; medida,
+  a Asaas permite. Ele decidiu as sete regras do acerto, e elas moram no
+  cabeçalho de `src/services/proporcionalService.js`, que é quem faz a
+  conta (42 checagens). **O que a rota acrescenta é a ordem**, que é
+  onde o dinheiro se perde: plano de destino puxado da API do
+  contratante (valor e ciclo nunca do corpo), recusa cedo do que a Asaas
+  recusaria depois, **acerto cobrado no cartão já salvo antes de o plano
+  mudar**, e **releitura** depois do `PUT` — porque a Asaas responde
+  `200` e ignora em silêncio campo que não conhece. 72 checagens de
+  coreografia, com dependências injetadas, verificadas por **nove
+  sabotagens** (inverter a ordem, tirar a releitura, ler o valor do
+  corpo, devolver arrendamento de outra chamada).
+  Duas guardas que a medição provou serem necessárias, não teóricas:
+  **duas chamadas simultâneas cobrariam o acerto duas vezes** (o
+  arrendamento em `assinaturas.trocando_em`, exercitado dentro do
+  contêiner: 1ª ganha, 2ª não, expirado volta a poder); e **o acerto
+  virava a "última cobrança da assinatura"** na conciliação — com as
+  duas consultas lado a lado, sem o filtro de método vinha o acerto de
+  R$ 30 onde o integrador lê o preço do plano (`API.md` §5.3), com o
+  filtro vem o ciclo de R$ 160. O acerto também tem método próprio
+  (`acerto_troca`) porque o `PAYMENT_CONFIRMED` dele chega ao nosso
+  receptor: como `cartao`, anunciaria ao contratante a confirmação de um
+  pedido com `pedidoId: null`.
+  **Avisar o assinante é obrigação do contratante** — e-mail e aviso no
+  site, decisão do dono (RN-35): o checkout não fala com o pagador, e é
+  por isso que a resposta e o evento `plano_trocado` levam crédito,
+  débito e dias restantes em vez de só o valor.
+
+Feito em 18/09 — **ciclo de `revisar` sobre o projeto INTEIRO**, a
+pedido do dono (43 arquivos de `src/`, o front, as suítes, os 11 scripts
+e os 54 documentos). Três ciclos: o primeiro achou em todas as quatro
+varreduras, o segundo achou um, o terceiro fechou limpo. Tudo na branch,
+nada no ar ainda.
+
+- **O processo morria calado** (Lei 8, o pedaço que faltava). A captura
+  de exceção pega o que passa por rota; ficava de fora o que MATA o
+  processo — promessa rejeitada sem `catch` e exceção fora de
+  requisição —, e este projeto tem fire-and-forget deliberado no caminho
+  do dinheiro. Sem tratador, o Node encerra e não sobra linha nenhuma em
+  `erros`: um serviço reiniciando sem motivo conhecido, com o log só no
+  painel do Northflank. Agora grava, loga e continua morrendo com código
+  1, de propósito — seguir de pé depois de uma rejeição não observada é
+  seguir num estado que ninguém sabe qual é. Suíte nova em processo
+  FILHO (não dá para provar de dentro), e **a primeira versão dela
+  passou sabotada**; e o comentário que eu havia escrito sobre a
+  iteração anterior estava errado, corrigido contra medição: o que se
+  perdia era o código de saída (saía **0**, que o orquestrador lê como
+  desligamento limpo), não a gravação.
+- **`pedidoId` e `planoId` não tinham teto de tamanho** — lição nº 24, e
+  a guarda foi para as três funções compartilhadas por onde todo id
+  passa, não para cada controlador. `express.json()` passou a declarar o
+  limite em vez de herdar o default da biblioteca.
+- **A guarda do `/api/admin` era provada em UMA rota das treze** — a
+  ordem do `router.use` era a garantia do resto, e rota nova escrita
+  acima dela nasceria pública em silêncio. É a lição nº 23 por outra
+  porta; agora a suíte chama todas sem token.
+- **O portão do CI não era o que os documentos prometiam**: `ci.yml`
+  rodava `npm test`, e o `RUNBOOK` dizia `npm run check` — a diferença é
+  a análise de sintaxe de `public/js/`, que **suíte nenhuma alcança**.
+  Erro de sintaxe na tela de pagamento passava pelo portão que autoriza
+  o deploy. Aqui o documento estava certo e o CI é que não era, que é a
+  direção rara.
+- **Documentos que mentiam**, e o pior deles não era de código:
+  `docs/TESTES.md` mandava configurar `SMTP_*`/`GOOGLE_*` e prometia
+  e-mail ao comprador e nota fiscal — variáveis que não existem e
+  recursos **removidos do escopo em 08/09** (§1.9); o arquivo de schema
+  único, que deixou de existir quando as migrations numeradas entraram,
+  ainda citado por caminho em três documentos — um deles o inventário de
+  dados, que é documento legal;
+  `docs/plano-execucao.md` descrevendo o que fazer sem dizer que já foi
+  feito; e o `RUNBOOK` dizendo 32 suítes quando eram 35. **E ao corrigir
+  o `TESTES.md` eu escrevi dois nomes que não existem** (`npm run
+  hash-admin`, `CHECKOUT_ADMIN_HASH`) — conferidos contra o
+  `package.json` e o `.env.example` e corrigidos antes de ficar.
+- **As duas checagens que teriam pego isso sozinhas, generalizadas**:
+  ponteiro quebrado passou a valer para TODO documento vivo (registro de
+  erro e arquivo arquivado ficam de fora, porque descrevem o mundo de
+  quando foram escritos), e "N suítes" passou a ser conferido em
+  qualquer documento vivo, não em duas frases conhecidas. Citação
+  histórica ("o mapa dizia 18 suítes") é ignorada de propósito, com
+  sabotagem nos dois sentidos provando.
+- **Nenhum código morto**: todo símbolo exportado e não importado é
+  costura de injeção de dependência ou superfície de autoteste. O que
+  apareceu foi um conjunto fechado em dois arquivos sem comparação
+  (`CICLOS_VALIDOS` × `DIAS_DO_CICLO`) — divergir daria "não foi
+  possível calcular o acerto" para um plano inteiro, em silêncio.
+
+Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
+assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
+(exigem payload real); o primeiro pagamento real de valor baixo, que é o
+gatilho escrito da exceção de backup (§3). Tudo isso vem depois da troca
+da Asaas para produção, que é do dono e que fecha a 5 sem ressalva. O
+MostrAí retesta o lado dele em paralelo.
+
+Do item 6 sobraram três, e **duas mudaram de natureza em 17/09** depois
+de o dono mandar resolver sem ele:
+
+- **O registro SPF deixou de ser decisão e virou permissão.** O valor
+  está definido e conferido na fonte do Google
+  (`v=spf1 include:_spf.google.com ~all`), a credencial da Cloudflare
+  está no ambiente, e o comando está pronto no `docs/pendencias.md` —
+  mas **o classificador de permissões do harness recusa escrita de
+  DNS**, e não há caminho alternativo (não há MCP da Cloudflare aqui,
+  `wrangler` não está instalado, e rotear a mesma escrita por subagente
+  seria contornar a guarda, não usá-la). Falta liberar a permissão ou
+  colar o registro no painel: um segundo de trabalho.
+- **O teste da pessoa número dois foi rodado por um substituto** — um
+  agente sem contexto, lendo só o RUNBOOK (§10 dele tem o resultado).
+  Ele achou oito furos, quatro com consequência real. O que **não** dá
+  para substituir é a metade com credencial: publicar de verdade e
+  entrar no `/admin`. Isso só fecha com pessoa.
+- **Os campos `⬜`** do inventário de contas e dos contatos encolheram:
+  o que API responde eu preenchi (conta e 2FA da Cloudflare, planos,
+  regiões, ids, vencimento do domínio, quatro projetos de Pages). O que
+  sobra é o que **nenhuma API responde** — onde a senha mora, qual
+  cartão paga, e o contato direto do dono.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
@@ -286,15 +646,54 @@ dele em paralelo.
 - Integração Asaas: `src/config/asaas.js` (único que sabe URL e ambiente) e `src/services/asaasService.js`
 - Endereço que vem de fora: `src/utils/alvoDeRede.js` (alvo de saída, anti-SSRF) e `src/utils/retornoSeguro.js` (o `returnUrl`, anti open redirect) — os dois decidem no servidor, nunca no front
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
-- Testes: `tests/` — `npm test` roda as 18 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes
+- O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
+- Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
+- Testes: `tests/` — `npm test` roda as 35 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
+
+## Mesclar é decisão tomada
+**O dono autorizou, em 18/09/2026, mesclar na `main` sem pedir, sempre
+que estiver pronto** — e mesclar aqui é publicar, porque a `main` vai
+para produção sozinha. A porta continua sendo o **CI verde**
+(`RUNBOOK` §3), não uma pessoa. O que ele dispensou foi a pergunta
+"posso mesclar?"; a lista curta da skill `leis` (caminho de dinheiro,
+segredo, migration destrutiva, contrato que outro projeto consome)
+continua exigindo autorização para CONSTRUIR.
 
 ## Conformidade
 Violação segue o ciclo da skill `leis`. Não existe estado final fora de
 conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 
 ## Pendências que bloqueiam a esteira
-- **Estação 6 · não iniciada, esperando autorização.** Ela é da sessão por inteiro (decisão do dono, 13/09): teste de ponta a ponta com todos os meios de pagamento no sandbox, ciclo de segurança sobre o Northflank, e os sete itens de prontidão operacional de `leis/references/prontidao-operacional.md` — cada um com evidência medida, não "configurei". Depois dela, troca das variáveis para produção e segunda rodada sem os testes de pagamento (`CONSTRAINTS.md` §3).
-- **Antes de abrir a 6**, a lei pede três condições conferidas (`leis/references/varredura-final.md`): commit servido igual ao da branch principal, migrations aplicadas em produção, nada relevante só no disco.
+
+> Esta seção dizia **"Estação 6 · não iniciada, esperando autorização"** e
+> **"antes de abrir a 6"** até 17/09/2026 — três dias depois de a estação
+> ter sido aberta e quase toda executada, com o estado verdadeiro escrito
+> logo acima, no "Estado na esteira". Duas partes do mesmo arquivo se
+> contradizendo é a falha que este documento existe para não ter: quem
+> lesse só esta seção planejaria de novo um trabalho já feito.
+
+**O que falta para fechar a Estação 6** — nada disso é código nosso:
+
+- **A troca da Asaas para produção** (as três variáveis no Northflank e o
+  webhook de produção em `/api/webhooks/asaas`, plural). É do dono, e ele
+  a fez depender de o MostrAí bater o mesmo ponto de equilíbrio deste
+  lado. Fecha junto a ressalva da Estação 5 (`CONSTRAINTS.md` §3).
+- **O ciclo de assinatura pago em produção**, que só existe depois da
+  troca — e com ele a marcação dos eventos `SUBSCRIPTION_*`, que exige
+  payload real para ser decidida (`CONSTRAINTS.md` §2.2).
+- **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
+  da exceção de backup (`CONSTRAINTS.md` §3).
+- **Do item 6 ("outra pessoa consegue operar"):** o **registro SPF** na
+  zona — valor já definido e comando pronto, barrado pelo classificador
+  de permissões do ambiente, então é liberar a permissão ou colar no
+  painel; os campos `⬜` que nenhuma API responde (onde a senha mora,
+  qual cartão paga, contato direto); e a **pessoa número dois**, cuja
+  metade com credencial — publicar de verdade e entrar no `/admin` —
+  nenhum agente substitui. O resto do teste já rodou (`RUNBOOK` §10).
+
+Tudo o mais de prontidão está fechado ou virou decisão registrada — a
+lista completa, com o que era e o que passou a ser, está em
+`docs/pendencias.md`.
 
 As demais, que não bloqueiam, estão em `docs/pendencias.md`.

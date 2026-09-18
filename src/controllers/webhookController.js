@@ -67,7 +67,7 @@ import {
   registrarCicloAssinatura,
   atualizarSituacaoSubconta
 } from '../services/cobrancaService.js';
-import { upsertAssinatura, atualizarStatusAssinatura } from '../services/assinaturaService.js';
+import { upsertAssinatura, atualizarStatusAssinatura, buscarAssinaturaPorId } from '../services/assinaturaService.js';
 import { cancelarAssinatura as cancelarAssinaturaNaAsaas } from '../services/asaasService.js';
 import {
   registrarEventoWebhook,
@@ -75,6 +75,7 @@ import {
   redigirPayload,
   extrairReferencia
 } from '../services/auditoriaWebhookService.js';
+import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from '../services/pedidoService.js';
 import { compararSeguro } from '../utils/validadores.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
 
@@ -104,6 +105,7 @@ const dependenciasPadrao = {
   atualizarSituacaoSubconta,
   upsertAssinatura,
   atualizarStatusAssinatura,
+  buscarAssinaturaPorId,
   cancelarAssinaturaNaAsaas,
   /* SEM `await`, pelo MESMO motivo que a auditoria em
      `criarReceptorWebhook` não é aguardada — e aqui o risco é maior, não
@@ -225,9 +227,12 @@ const EVENTOS_PAYMENT_TRATADOS = [
  */
 const VERSAO_WEBHOOK = 1;
 
-/** Os dois jeitos de assinar. Ambos falam o vocabulário de assinatura
- *  no webhook do contratante, não o de pedido avulso. */
-const METODOS_DE_ASSINATURA = ['assinatura', 'assinatura_pix'];
+/* `METODOS_DE_ASSINATURA` (os dois jeitos de assinar — ambos falam o
+   vocabulário de assinatura no webhook do contratante, não o de pedido
+   avulso) era declarado aqui e virou import de `pedidoService.js` em
+   17/09/2026: a conciliação e a troca de plano precisam da MESMA lista,
+   e três cópias dessincronizam no dia em que um terceiro método de
+   assinatura nascer. */
 
 /**
  * O roteamento por vocabulário de evento, sem Express em volta. É aqui
@@ -578,6 +583,22 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
 
   await deps.atualizarStatusCobranca(chargeId, novoStatus);
 
+  /* O ACERTO DE UMA TROCA DE PLANO não tem evento próprio no contrato, e
+     não pode cair no ramo de pedido avulso lá embaixo.
+
+     Ele é uma cobrança avulsa de verdade (cartão salvo, `POST
+     /v3/payments`), então a Asaas manda `PAYMENT_CONFIRMED` — e um dia
+     pode mandar `PAYMENT_REFUNDED` — para ele. Sem esta guarda, o ramo
+     final montaria `montarPayloadConfirmacaoPedido` com `pedidoId:
+     null` e anunciaria ao contratante a confirmação de um pedido que
+     nunca existiu; o checklist do `API.md` §11 manda creditar em cima
+     disso. Quem anuncia a troca é a própria rota `/trocar-plano`, na
+     hora, com `evento: 'plano_trocado'` (§4.3.4).
+
+     O status CONTINUA sendo gravado acima, de propósito: é assim que um
+     estorno do acerto aparece no painel. O que não sai é a notificação. */
+  if (cobranca.metodo_pagamento === METODO_ACERTO_TROCA) return;
+
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     /* Aqui o trabalho ACABOU, e notificar seria um erro caro.
 
@@ -747,11 +768,20 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     return null;
   }
 
+  /* O PLANO vem da assinatura, não da cobrança-modelo, e a diferença
+     só aparece depois de uma troca de plano (`/trocar-plano`, 17/09):
+     a cobrança anterior guarda o plano que ERA, e copiá-la faria o
+     ciclo novo nascer com o plano velho — e, como cada ciclo copia do
+     anterior, o contratante seria avisado do plano errado a cada
+     cobrança, para sempre. O molde continua valendo para o resto
+     (contratante, documento, telefone, endereço), que não muda. */
+  const assinatura = await deps.buscarAssinaturaPorId(subscriptionId);
+
   const resultado = await deps.registrarCicloAssinatura({
     chargeId: payment.id,
     asaasSubscriptionId: subscriptionId,
     contratanteId: modelo.contratante_id,
-    planoId: modelo.plano_id,
+    planoId: assinatura?.plano_id ?? modelo.plano_id,
     documento: modelo.documento,
     email: modelo.email,
     telefone: modelo.telefone,
@@ -763,7 +793,8 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     cidade: modelo.cidade,
     uf: modelo.uf,
     cidadeIbge: modelo.cidade_ibge,
-    ciclo: modelo.ciclo,
+    /* Mesmo motivo do plano: a troca reescreve o ciclo da assinatura. */
+    ciclo: assinatura?.ciclo ?? modelo.ciclo,
     valorCheio: payment.value ?? modelo.valor_cheio,
     valorComDesconto: payment.value ?? modelo.valor_com_desconto,
     valorCobrado: payment.value ?? modelo.valor_cobrado
@@ -930,6 +961,44 @@ export async function notificarAssinaturaCancelada(contratante, { planoId, docum
     planoId,
     documento,
     evento: 'cancelada'
+  }, contratante.api_key);
+}
+
+/**
+ * `POST /trocar-plano` (trocaPlanoController.js) — o assinante passou do
+ * plano A para o plano B, com o vínculo mantido.
+ *
+ * Mesmo canal e mesmo vocabulário dos outros avisos de assinatura
+ * (`API.md` §4.3.4). Duas diferenças que o payload precisa carregar, e
+ * que nenhum outro evento tem:
+ *
+ *  - **`planoAnterior`.** O payload de assinatura identifica por
+ *    `planoId` + `documento`, e o `planoId` acabou de mudar: sem o
+ *    anterior, o contratante não acha o próprio registro para atualizar.
+ *  - **`valor`, `ciclo` e `acertoCobrado`.** É ele que tem de explicar a
+ *    cobrança ao assinante (RN-35: avisar o pagador é obrigação do
+ *    contratante, por e-mail e por aviso no site dele). Sem os números,
+ *    o aviso dele seria "seu plano mudou" sem dizer para quanto.
+ *
+ * Fire-and-forget como os outros: a resposta síncrona da rota já
+ * confirmou a quem chamou.
+ */
+export async function notificarPlanoTrocado(
+  contratante,
+  { planoId, planoAnterior, documento, valor, ciclo, acertoCobrado },
+  deps = dependenciasPadrao
+) {
+  if (!contratante?.webhook_url) return;
+  return deps.notificar(contratante.webhook_url, {
+    versao: VERSAO_WEBHOOK,
+    tipo: 'assinatura',
+    planoId,
+    planoAnterior,
+    documento,
+    evento: 'plano_trocado',
+    valor,
+    ciclo,
+    acertoCobrado
   }, contratante.api_key);
 }
 
@@ -1241,6 +1310,51 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   );
   assert.equal(deps.chamou('notificar').length, 0, 'entrega perdedora da corrida não pode notificar de novo o mesmo ciclo');
   assert.equal(chamadasBuscarCobranca, 1, 'com o guarda, nem chega a buscar a cobrança de novo');
+
+  /* CICLO NOVO DEPOIS DE UMA TROCA DE PLANO — o plano sai da
+     ASSINATURA, não da cobrança-modelo.
+
+     Achado no ciclo 3 da revisão da troca de plano (17/09/2026), e é o
+     furo mais duradouro que ela tinha: a cobrança anterior guarda o
+     plano que ERA. Copiá-la faz o ciclo seguinte nascer com o plano
+     velho — e como cada ciclo copia do anterior, o contratante receberia
+     `cobranca_confirmada` com o planoId errado a CADA cobrança, para
+     sempre, creditando o plano que o assinante deixou de ter. */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorSubscriptionId: { ...modeloAssinatura, plano_id: 'plano_velho', ciclo: 'MONTHLY' },
+    buscarAssinaturaPorId: { id: 'sub_1', plano_id: 'plano_novo', ciclo: 'QUARTERLY' },
+    registrarCicloAssinatura: () => ({ duplicado: false })
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_pos_troca', subscription: 'sub_1', value: 160 } },
+    deps
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].planoId, 'plano_novo',
+    'o ciclo depois da troca tem que nascer com o plano NOVO — o molde guarda o antigo'
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].ciclo, 'QUARTERLY',
+    'e com o ciclo novo, pelo mesmo motivo'
+  );
+
+  /* Controle positivo: sem troca (ou sem linha de assinatura), o molde
+     continua mandando — senão a correção viraria "ignora o molde". */
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorSubscriptionId: { ...modeloAssinatura, plano_id: 'plano_unico', ciclo: 'MONTHLY' },
+    buscarAssinaturaPorId: null,
+    registrarCicloAssinatura: () => ({ duplicado: false })
+  });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sem_assinatura', subscription: 'sub_1', value: 50 } },
+    deps
+  );
+  assert.equal(
+    deps.chamou('registrarCicloAssinatura')[0].args[0].planoId, 'plano_unico',
+    'sem linha de assinatura, o molde continua sendo a fonte'
+  );
 
   // Ciclo novo sem molde local: ignora, não adivinha o contratante.
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });

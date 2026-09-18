@@ -135,7 +135,21 @@ export function verificarToken(token, hashDaSenha) {
    AUTOTESTE — `node src/utils/sessaoAdmin.js`
    ==================================================================== */
 if (process.argv[1]?.endsWith('sessaoAdmin.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
   const HASH = 'scrypt$131072$8$1$c2FsdA==$aGFzaA==';
 
   const t = emitirToken('operador', HASH);
@@ -182,5 +196,5 @@ if (process.argv[1]?.endsWith('sessaoAdmin.js')) {
   const msPorVerificacao = Number(process.hrtime.bigint() - inicio) / 1e6 / 1000;
   assert.ok(msPorVerificacao < 1, `verificar precisa custar menos de 1ms (custou ${msPorVerificacao.toFixed(3)}ms)`);
 
-  console.log(`sessaoAdmin: 22 checagens OK — ${(msPorVerificacao * 1000).toFixed(0)}µs por verificação, contra ~830ms do scrypt`);
+  console.log(`sessaoAdmin: ${checagens} checagens OK — ${(msPorVerificacao * 1000).toFixed(0)}µs por verificação, contra ~830ms do scrypt`);
 }

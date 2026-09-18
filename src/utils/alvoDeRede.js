@@ -88,7 +88,21 @@ export function alvoDeRedeSeguro(valor) {
    Roda junto com os outros em `npm test` (tests/executar.js).
    ==================================================================== */
 if (process.argv[1]?.endsWith('alvoDeRede.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   // --- público https passa ---
   assert.ok(alvoDeRedeSeguro('https://contratante-teste.brunosanches-bhs.workers.dev'), 'worker público passa');
@@ -122,5 +136,5 @@ if (process.argv[1]?.endsWith('alvoDeRede.js')) {
   assert.ok(!alvoDeRedeSeguro(null), 'nulo recusa');
   assert.ok(!alvoDeRedeSeguro('não é url'), 'texto solto recusa');
 
-  console.log('alvoDeRede: 22 checagens OK');
+  console.log(`alvoDeRede: ${checagens} checagens OK`);
 }

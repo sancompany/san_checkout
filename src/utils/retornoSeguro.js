@@ -170,7 +170,21 @@ export function retornoSeguro(valor, contratante, { pedidoId } = {}) {
    um é um bypass real, que funciona contra uma comparação textual.
    ==================================================================== */
 if (process.argv[1]?.endsWith('retornoSeguro.js')) {
-  const assert = (await import('node:assert/strict')).default;
+  const assertReal = (await import('node:assert/strict')).default;
+  // Contador de verdade, não chumbado — ver a nota em
+  // `utils/validadores.js`. Oito autotestes daqui tinham o número
+  // escrito à mão, e três deles estavam errados.
+  //
+  // Envolve o `assert` num proxy para contar sem reescrever as chamadas.
+  let checagens = 0;
+  const assert = new Proxy(assertReal, {
+    get(alvo, nome) {
+      const valor = alvo[nome];
+      if (typeof valor !== 'function') return valor;
+      return (...argumentos) => { checagens += 1; return valor.apply(alvo, argumentos); };
+    }
+  });
+
 
   const LOJA = {
     api_base_url: 'https://api.loja.com.br',
@@ -289,5 +303,5 @@ if (process.argv[1]?.endsWith('retornoSeguro.js')) {
     'caminho da api_base_url some, sobra a origem'
   );
 
-  console.log('retornoSeguro: 46 checagens OK');
+  console.log(`retornoSeguro: ${checagens} checagens OK`);
 }
