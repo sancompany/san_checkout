@@ -656,11 +656,12 @@ essas coisas, o que tá esperando?"):
   `docs/erros/2026-09-18-o-duble-omitia-a-chave-e-a-forma-real-era-null.md`.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
-assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
-(exigem payload real); o primeiro pagamento real de valor baixo, que é o
-gatilho escrito da exceção de backup (§3). Tudo isso vem depois da troca
-da Asaas para produção, que é do dono e que fecha a 5 sem ressalva. O
-MostrAí retesta o lado dele em paralelo.
+assinatura pago em produção (exige payload real — e agora existe onde
+ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
+primeiro pagamento real de valor baixo, que é o gatilho escrito da
+exceção de backup (§3). Tudo isso vem depois da troca da Asaas para
+produção, que é do dono e que fecha a 5 sem ressalva. O MostrAí retesta
+o lado dele em paralelo.
 
 Do item 6 sobraram três, e **duas mudaram de natureza em 17/09** depois
 de o dono mandar resolver sem ele:
@@ -726,8 +727,10 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   a fez depender de o MostrAí bater o mesmo ponto de equilíbrio deste
   lado. Fecha junto a ressalva da Estação 5 (`CONSTRAINTS.md` §3).
 - **O ciclo de assinatura pago em produção**, que só existe depois da
-  troca — e com ele a marcação dos eventos `SUBSCRIPTION_*`, que exige
-  payload real para ser decidida (`CONSTRAINTS.md` §2.2).
+  troca — e com ele o **tratamento em código** dos eventos
+  `SUBSCRIPTION_*`, que exige payload real para ser escrito
+  (`CONSTRAINTS.md` §2.2). A **marcação** deles já não bloqueia mais:
+  o dono marcou o grupo inteiro em 18/09/2026 — ver abaixo.
 - **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
   da exceção de backup (`CONSTRAINTS.md` §3).
 - **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` que
@@ -743,6 +746,13 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   (`docs/proximas-versoes.md`). O resto do teste do `RUNBOOK` §10 já
   rodou com um agente sem contexto; o que falta é a metade com
   credencial, que nenhum agente substitui.
+  ✅ **A marcação de `SUBSCRIPTION_*` saiu daqui em 18/09**: o dono
+  marcou o grupo inteiro no painel (as 7 famílias, `CONSTRAINTS.md`
+  §2.2), junto com `INTERNAL_TRANSFER_CREDIT`/`_DEBIT` (achado
+  faltando) e desmarcou `PAYMENT_CHECKOUT_VIEWED` (achado sobrando) —
+  as duas divergências que uma conferência contra o painel real achou
+  no mesmo dia. O que falta é só o **tratamento em código**, que segue
+  no item acima porque exige o primeiro payload real.
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

@@ -689,10 +689,15 @@ alterar `value` e `cycle` de uma assinatura ativa — medido no sandbox em
 17/09/2026, em cartão e em boleto. Para o caso legítimo existe a troca de
 plano (RN-35). Esta regra é sobre o caso que **não passa por nós**:
 alteração feita pelo painel da Asaas ou por API direta. O checkout **não
-recebe aviso na hora** — nenhum evento chegou ao receptor em toda a
-bateria, porque `SUBSCRIPTION_*` não está entre os 53 eventos
-configurados e `PAYMENT_UPDATED` está desmarcado de propósito
-(`CONSTRAINTS.md` §2.2).
+age na hora** — medido em 17/09/2026, nenhum evento chegou ao receptor
+em toda a bateria, porque `SUBSCRIPTION_*` não estava entre os eventos
+configurados naquele dia. ⚠️ Isso mudou em 18/09/2026: o dono marcou o
+grupo (`CONSTRAINTS.md` §2.2), então o evento **passa a chegar** —
+`PAYMENT_UPDATED` continua desmarcado de propósito. O que não muda é o
+efeito: o código ainda não trata `SUBSCRIPTION_*` (cai como não
+mapeado, só vira log), então nem o nosso registro é corrigido nem o
+contratante é avisado por esse caminho — a correção segue vindo pela
+conciliação (pull), até alguém tratar o evento em código.
 
 O que a conciliação (`API.md` §5.3) faz desde **18/09/2026**, por decisão
 do dono: reconfere `valor` junto de `status`, `ciclo` e

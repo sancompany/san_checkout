@@ -533,7 +533,7 @@ não sai do contêiner") valia igual para esta, e eu não a apliquei ao
 comando de inventário.
 
 
-### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09, marcar liberado 18/09
+### 🟡 Assinatura encerrada pela Asaas só chega por conciliação — MARCADO 18/09, tratar em código ainda aberto
 Achado em 15/09/2026, auditando o caminho da assinatura. O
 `CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos
 marcados no painel da Asaas — e **não menciona o grupo de assinaturas em
@@ -562,10 +562,11 @@ que foi escrever contra payload imaginado que causou os dois bugs de
 a segurar: a razão para segurar era uma regra errada no `CONSTRAINTS.md`
 §2.2 (dizia que o payload ia cru pro log, com dado pessoal — falso,
 corrigido em 18/09; a auditoria redige por lista branca desde 11/09,
-tratado ou não). Sem esse custo, a recomendação passou a ser marcar o
-grupo inteiro — a ação em si é do dono, no painel da Asaas —, porque é
-o único jeito de um dia existir um payload real para ler: sem marcar,
-"medir antes de codificar" nunca teria nada para medir.
+tratado ou não). Sem esse custo, **o dono marcou o grupo inteiro em
+18/09/2026** — é o único jeito de um dia existir um payload real para
+ler. O evento agora chega ao receptor; até alguém tratá-lo em código,
+cai como `nao_mapeado` e o efeito prático não muda: continua sendo a
+conciliação (pull) que corrige o registro.
 
 ### 🟢 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação — CORRIGIDO 16/09
 **Corrigido no mesmo dia em que foi declarado.** A razão de ter ficado

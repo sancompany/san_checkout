@@ -297,17 +297,17 @@ Caem no ramo de evento não mapeado, respondem 200 e viram linha na aba
 Webhook do painel. O leitor futuro é a Fairy, que é quem vai cuidar de
 aviso financeiro — ver `docs/proximas-versoes.md`.
 
-> ⚠️ **Conferido contra o painel em 18/09/2026 (capturas do dono) e achou
-> duas divergências entre o que este documento afirma e o que estava
-> marcado de verdade** — a mesma classe de falha que a declaração de
-> "referência única" existe para impedir. Achado, ainda não fechado —
-> a correção é clicar no painel da Asaas, que é do dono:
+> ✅ **Conferido contra o painel em 18/09/2026 (capturas do dono), achou
+> duas divergências e as duas foram fechadas no mesmo dia** — a mesma
+> classe de falha que a declaração de "referência única" existe para
+> impedir:
 > - **`INTERNAL_TRANSFER_CREDIT` e `INTERNAL_TRANSFER_DEBIT` estavam
->   desmarcados** — o grupo "Movimentações Internas" ficou de fora
->   quando Transferências e Bloqueios de Saldo foram marcados.
+>   desmarcados** — o grupo "Movimentações Internas" tinha ficado de
+>   fora quando Transferências e Bloqueios de Saldo foram marcados.
+>   Marcados pelo dono.
 > - **`PAYMENT_CHECKOUT_VIEWED` estava marcado**, mas pertence ao "ruído
 >   de cobrança" abaixo — o código não trata, e cada visualização de
->   fatura vira log com payload cru (dado pessoal) à toa.
+>   fatura virava log à toa. Desmarcado pelo dono.
 
 ### Grupo "Situação da conta" — 18 marcados, o grupo inteiro
 
@@ -354,42 +354,45 @@ antes, não presumido.
 - **Pix Automático** — ver §2.4: o grupo está indisponível nesta conta,
   com uma exceção.
 
-### Grupo "Assinaturas" (`SUBSCRIPTION_*`) — desmarcado, e **não** por decisão
+### Grupo "Assinaturas" (`SUBSCRIPTION_*`) — MARCADO em 18/09, tratamento em código ainda aberto
 
-Medido em 16/09/2026: nenhum evento desse grupo está entre os 53
-configurados. Isso nunca foi uma escolha registrada — esta seção
-simplesmente não mencionava o grupo, o que é a falha que a própria
-declaração de "referência única" existe para impedir.
+Medido em 16/09/2026: nenhum evento desse grupo estava entre os 53
+configurados naquele dia. Isso nunca tinha sido uma escolha registrada
+— esta seção simplesmente não mencionava o grupo, o que é a falha que
+a própria declaração de "referência única" existe para impedir.
 
-Consequência: assinatura encerrada fora do nosso fluxo (cancelada direto
-no painel, ou encerrada pela Asaas após falhas de cobrança) **não chega
-por aviso**. Desde 16/09 ela chega por conciliação — `POST
-/consultar-assinatura` reconfere o estado real contra
-`GET /v3/subscriptions/{id}` (RN-26) —, então a divergência deixou de ser
-permanente, mas continua tendo o atraso de quem concilia.
+**Consequência até 18/09:** assinatura encerrada fora do nosso fluxo
+(cancelada direto no painel, ou encerrada pela Asaas após falhas de
+cobrança) não chegava por aviso — só por conciliação (RN-26).
 
-**Tratar** os eventos em código é trabalho aberto, e **exige medir antes
-de codificar**: ler o payload real de um evento antes de escrever
-tratamento. Escrever contra payload imaginado é exatamente o que causou
-os dois bugs de 15/09.
+**Duas coisas diferentes, e só a primeira está feita:**
 
-**Marcar** o grupo no painel, sem tratar ainda, é outra coisa — e é o
-**único jeito de um dia existir um payload real para ler**. ⚠️ Até
-18/09/2026 esta seção recomendava não marcar, citando a regra 3 acima,
-que estava **errada** (payload cru com dado pessoal — corrigido lá:
-todo evento é redigido por lista branca, tratado ou não). Sem esse
-custo, não marcar só adia indefinidamente o dia de medir. **Decisão do
-dono em 18/09: marcar o grupo inteiro** — as 7 famílias
-(`SUBSCRIPTION_CREATED`, `_UPDATED`, `_INACTIVATED`, `_DELETED`,
-`_SPLIT_DISABLED`, `_SPLIT_DIVERGENCE_BLOCK`,
-`_SPLIT_DIVERGENCE_BLOCK_FINISHED`), mesmo critério já usado para
-"Situação da conta" (o grupo inteiro, baixo volume) e para
-Transferências/Movimentações Internas/Bloqueios de Saldo (marcados sem
-tratamento, porque o log agora dá destino visível). `status`, `cycle`,
-`deleted` e `nextDueDate` já estão na lista branca do
-`auditoriaWebhookService.js` — o primeiro evento real vai trazer
-exatamente os campos que o tratamento vai precisar, sem dado pessoal
-junto. `docs/pendencias.md`.
+1. **Marcar** o grupo no painel — **feito em 18/09/2026**, as 7 famílias
+   (`SUBSCRIPTION_CREATED`, `_UPDATED`, `_INACTIVATED`, `_DELETED`,
+   `_SPLIT_DISABLED`, `_SPLIT_DIVERGENCE_BLOCK`,
+   `_SPLIT_DIVERGENCE_BLOCK_FINISHED`), mesmo critério já usado para
+   "Situação da conta" (o grupo inteiro, baixo volume) e para
+   Transferências/Movimentações Internas/Bloqueios de Saldo (marcados
+   sem tratamento, porque o log agora dá destino visível). Até
+   18/09/2026 esta seção recomendava não marcar, citando a regra 3
+   acima, que estava **errada** (payload cru com dado pessoal —
+   corrigido lá: todo evento é redigido por lista branca, tratado ou
+   não). Sem esse custo, não marcar só adiava indefinidamente o dia de
+   medir.
+2. **Tratar** os eventos em código — **ainda aberto**, e **exige medir
+   antes de codificar**: ler o payload real de um evento antes de
+   escrever tratamento. Escrever contra payload imaginado é exatamente
+   o que causou os dois bugs de 15/09. `status`, `cycle`, `deleted` e
+   `nextDueDate` já estão na lista branca do
+   `auditoriaWebhookService.js` — o primeiro evento real vai trazer
+   exatamente os campos que o tratamento vai precisar, sem dado pessoal
+   junto.
+
+**Consequência agora:** o evento **chega** ao receptor, mas cai como
+`nao_mapeado` até o item 2 ser feito — então, na prática, uma assinatura
+ainda só é corrigida por conciliação (pull), com o atraso de quem
+concilia. O que mudou é que agora existe um payload real esperando para
+ser lido. `docs/pendencias.md`.
 
 **Grafia que engana:** `CHECKOUT_CANCELED` tem **um** L e
 `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` tem **dois**. As duas

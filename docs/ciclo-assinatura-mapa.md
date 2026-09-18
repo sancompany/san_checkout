@@ -160,7 +160,7 @@ seguidas de cobrança.
 
 | Erro | Status |
 |---|---|
-| Grupo de eventos `SUBSCRIPTION_*` não é tratado nem marcado no painel — nunca chega por aviso | **[MEDIDO 16/09, ainda aberto]** — `GET /v3/webhooks` de dentro do container: **zero `SUBSCRIPTION_*` entre os 53 eventos configurados**. Não era ambiguidade: a Asaas de fato nunca nos avisa. **Mitigado por T10**: a conciliação detecta e corrige o estado real, então a divergência deixou de ser permanente — mas continua chegando por *pull*, com o atraso de quem concilia |
+| Grupo de eventos `SUBSCRIPTION_*` não é tratado em código — chega, mas não faz nada | **[MEDIDO 16/09, MARCADO 18/09, tratamento ainda aberto]** — `GET /v3/webhooks` de dentro do container media zero `SUBSCRIPTION_*` entre os eventos configurados em 16/09; o dono marcou o grupo inteiro em 18/09 (`CONSTRAINTS.md` §2.2), então o evento **agora chega**, mas cai em `nao_mapeado` — nenhum código o lê ainda. **Mitigado por T10**: a conciliação detecta e corrige o estado real, então a divergência deixou de ser permanente — mas continua chegando por *pull*, com o atraso de quem concilia, até alguém escrever o tratamento sobre o payload real que só agora existe para ler |
 
 ## T12 — Preço ou ciclo alterado direto na Asaas (etapa nova, 17/09)
 
@@ -203,8 +203,8 @@ regra inteira, e cada passo dela existe por um erro possível:
 4. acerto **cobrado no cartão salvo**, e o plano só muda se confirmar;
 5. `PUT` e **releitura** — status HTTP não prova alteração nesta API
    (a armadilha que T12 revelou, agora usada a favor);
-6. o nosso banco escrito na mesma operação (nada vai contar depois:
-   zero eventos `SUBSCRIPTION_*`, T11);
+6. o nosso banco escrito na mesma operação (nada vai corrigir depois:
+   `SUBSCRIPTION_*` chega desde 18/09, mas nenhum código o lê — T11);
 7. `evento: 'plano_trocado'` para o contratante. O assinante é avisado
    **por ele** — RN-35.
 
@@ -242,9 +242,9 @@ não tem o furo de T1).
 
 ## O que ainda está aberto, resumido
 
-1. **[MEDIDO, ainda aberto]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook, e agora isso é fato medido, não suspeita: **zero eventos `SUBSCRIPTION_*` entre os 53 configurados** (`GET /v3/webhooks`, 16/09). **Mitigado em parte**: a conciliação (T10, RN-26) reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
+1. **[MEDIDO 16/09, MARCADO 18/09, tratamento ainda aberto]** T11 — assinatura encerrada fora do nosso fluxo não gera ação nenhuma, ainda: o grupo `SUBSCRIPTION_*` estava zero entre os eventos configurados em 16/09 (`GET /v3/webhooks`), e o dono marcou o grupo inteiro em 18/09 (`CONSTRAINTS.md` §2.2). O evento **passa a chegar** ao receptor, mas nenhum código o lê — cai em `nao_mapeado`, só vira log. **Mitigado em parte**: a conciliação (T10, RN-26) reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de o evento disparar uma correção sozinho.
 2. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
-2b. **[CORRIGIDO 18/09]** T12 — `valor` passou a ser reconciliado contra a Asaas, com denúncia da divergência na mesma resposta (RN-34, decisão do dono). O que **continua aberto** é outra coisa, e menor: não há aviso PROATIVO — quem muda o preço no painel da Asaas não dispara nada, e o contratante só descobre na conciliação seguinte. Fechar isso dependeria de marcar `SUBSCRIPTION_*`/`PAYMENT_UPDATED` (§2.2), que é decisão de configuração do dono.
+2b. **[CORRIGIDO 18/09]** T12 — `valor` passou a ser reconciliado contra a Asaas, com denúncia da divergência na mesma resposta (RN-34, decisão do dono). O que **continua aberto** é outra coisa, e menor: não há aviso PROATIVO — mesmo com `SUBSCRIPTION_*` marcado desde 18/09, ninguém trata o evento em código ainda, então quem muda o preço no painel da Asaas não dispara correção nenhuma, e o contratante só descobre na conciliação seguinte. Fechar isso é tratar o evento em código, medindo o payload real primeiro — `PAYMENT_UPDATED` continua desmarcado de propósito.
 2c. **[DECLARADO 17/09]** T13 — acerto estornado depois da troca não reverte o plano. Nenhum dano ativo (a troca já aconteceu e o assinante está usando o plano novo); é decisão de operação.
 3. **Falta confirmar ao vivo** (não muda comportamento): qual dos dois formatos a Asaas usa pra uma assinatura deletada — objeto com `deleted: true` ou `404`. O código trata os dois; medir só permitiria simplificar.
 
