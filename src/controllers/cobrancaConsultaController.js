@@ -43,7 +43,8 @@ import {
 import {
   buscarAssinaturaAtiva,
   atualizarStatusAssinatura,
-  atualizarCicloAssinatura
+  atualizarCicloAssinatura,
+  atualizarValorAssinatura
 } from '../services/assinaturaService.js';
 import {
   recuperarCobrancaPix,
@@ -116,8 +117,46 @@ function comoEstaNoBanco(assinatura) {
   return {
     status: assinatura?.status ?? null,
     ciclo: assinatura?.ciclo ?? null,
+    valor: assinatura?.valor ?? null,
+    // Sem ida à Asaas não há divergência a denunciar: `null` aqui
+    // significa "não comparei", e não "estava igual".
+    divergenciaDeValor: null,
     proximaCobranca: assinatura?.proxima_cobranca ?? null
   };
+}
+
+/** Centavos, que é como a Asaas guarda. Comparar preço em reais com
+ *  ponto flutuante inventa divergência onde não há (e uma divergência
+ *  falsa reescreveria o nosso registro a cada conciliação). */
+const emCentavos = (n) => Math.round(Number(n) * 100);
+
+/**
+ * Número de dinheiro, ou `null` — e o `null` tem de ser `null` mesmo.
+ *
+ * ⚠️ Esta função existe por causa de um furo que a revisão pegou no
+ * mesmo dia em que a reconciliação de `valor` foi escrita:
+ * `Number.isFinite(Number(null))` é **`true`**, porque `Number(null)` é
+ * `0`. E `consultarAssinaturaNaAsaas` devolve `valor: corpo?.value ??
+ * null` — ou seja, `null` explícito quando a Asaas não manda o campo.
+ *
+ * Com o teste `Number.isFinite(Number(...))`, uma assinatura cuja
+ * resposta viesse sem `value` seria lida como **R$ 0,00 na Asaas**,
+ * divergente do nosso registro: gravaria zero no banco e devolveria
+ * `valor: 0` ao contratante — no campo que ele acabou de ganhar
+ * permissão para confiar.
+ *
+ * O autoteste não pegou porque o dublê OMITIA a chave (`undefined`, que
+ * dá `NaN` e é recusado) em vez de mandar `null`, que é a forma real.
+ * É a mesma lição do dublê de pedido com o formato de item errado.
+ */
+function dinheiroOuNulo(valor) {
+  if (typeof valor === 'number') return Number.isFinite(valor) ? valor : null;
+  // String numérica é aceita porque driver de banco pode devolver
+  // `numeric` como texto; string vazia e qualquer outra coisa, não.
+  if (typeof valor === 'string' && valor.trim() !== '' && Number.isFinite(Number(valor))) {
+    return Number(valor);
+  }
+  return null;
 }
 
 /** Injetável só pro autoteste: a reconciliação decide status e ciclo, e
@@ -125,7 +164,8 @@ function comoEstaNoBanco(assinatura) {
 const dependenciasDaConciliacao = {
   consultarAssinaturaNaAsaas,
   atualizarStatusAssinatura,
-  atualizarCicloAssinatura
+  atualizarCicloAssinatura,
+  atualizarValorAssinatura
 };
 
 export async function assinaturaAtualizada(assinatura, deps = dependenciasDaConciliacao) {
@@ -165,6 +205,32 @@ export async function assinaturaAtualizada(assinatura, deps = dependenciasDaConc
       await deps.atualizarCicloAssinatura(assinatura.id, viva.ciclo);
     }
 
+    /* VALOR — decisão do dono em 18/09/2026: reconciliar (RN-34).
+       O porquê inteiro está em `assinaturaService.atualizarValorAssinatura`;
+       em uma linha: quem debita o cartão é a Asaas, então o nosso número
+       divergente não é uma opinião, é informação falsa.
+
+       Reconciliar E DENUNCIAR: o valor corrigido volta em `valor`, e a
+       divergência volta em `divergenciaDeValor` — o contratante precisa
+       saber que o preço do assinante dele mudou fora do nosso fluxo,
+       porque é ele que fala com o assinante (RN-35). Corrigir calado
+       trocaria um número errado por uma mudança invisível.
+
+       Comparação em CENTAVOS: em reais, `30` e `30.000000000000004`
+       seriam divergência, e a "correção" reescreveria a linha a cada
+       conciliação. */
+    const valorLocal = dinheiroOuNulo(assinatura.valor);
+    const valorNaAsaas = dinheiroOuNulo(viva.valor);
+    const temValorDaAsaas = valorNaAsaas !== null;
+    const valorDivergiu = temValorDaAsaas
+      && valorLocal !== null
+      && emCentavos(valorNaAsaas) !== emCentavos(valorLocal);
+
+    if (valorDivergiu) {
+      console.error(`[consulta] valor corrigido: assinatura ${assinatura.id} estava ${valorLocal} aqui e ${valorNaAsaas} na Asaas — quem cobra é ela.`);
+      await deps.atualizarValorAssinatura(assinatura.id, valorNaAsaas);
+    }
+
     /* `proximaCobranca` sai do `null` eterno: `nextDueDate` existe nesta
        resposta (o que nenhum payload de webhook trazia, que é por que o
        campo nasceu nulo — ver docs/pendencias.md).
@@ -178,6 +244,8 @@ export async function assinaturaAtualizada(assinatura, deps = dependenciasDaConc
     return {
       status: statusReal,
       ciclo: cicloReal,
+      valor: temValorDaAsaas ? valorNaAsaas : valorLocal,
+      divergenciaDeValor: valorDivergiu ? { nosso: valorLocal, asaas: valorNaAsaas } : null,
       proximaCobranca: statusReal === 'cancelada'
         ? null
         : (viva.proximaCobranca ?? assinatura.proxima_cobranca ?? null)
@@ -376,7 +444,12 @@ export async function consultarAssinatura(requisicao, resposta) {
       documento,
       assinaturaId: assinatura?.id ?? null,
       status: assinaturaViva.status,
-      valor: assinatura?.valor ?? null,
+      /* Reconciliado contra a Asaas desde 18/09/2026 (RN-34). Este
+         campo era o único que saía do nosso banco sem reconferência, e
+         o `API.md` §5.3 avisava o integrador para não confiar nele —
+         o aviso saiu junto com a causa. */
+      valor: assinaturaViva.valor,
+      divergenciaDeValor: assinaturaViva.divergenciaDeValor,
       ciclo: assinaturaViva.ciclo,
       proximaCobranca: assinaturaViva.proximaCobranca,
       ultimaCobranca: ultima
@@ -423,19 +496,20 @@ if (process.argv[1]?.endsWith('cobrancaConsultaController.js')) {
 
   /** Falseia a Asaas e anota tudo que a reconciliação tentou gravar. */
   function costura(respostaDaAsaas) {
-    const gravado = { status: [], ciclo: [] };
+    const gravado = { status: [], ciclo: [], valor: [] };
     return {
       gravado,
       deps: {
         consultarAssinaturaNaAsaas: async () => respostaDaAsaas,
         atualizarStatusAssinatura: async (id, status) => { gravado.status.push([id, status]); },
-        atualizarCicloAssinatura: async (id, ciclo) => { gravado.ciclo.push([id, ciclo]); }
+        atualizarCicloAssinatura: async (id, ciclo) => { gravado.ciclo.push([id, ciclo]); },
+        atualizarValorAssinatura: async (id, valor) => { gravado.valor.push([id, valor]); }
       }
     };
   }
 
   const noBanco = {
-    id: 'sub_qut6521d50496vkn', status: 'ativa', ciclo: 'MONTHLY', proxima_cobranca: null
+    id: 'sub_qut6521d50496vkn', status: 'ativa', ciclo: 'MONTHLY', valor: 30, proxima_cobranca: null
   };
 
   /* --- 1. cancelada: `deleted` manda, apesar do INACTIVE --- */
@@ -510,6 +584,92 @@ if (process.argv[1]?.endsWith('cobrancaConsultaController.js')) {
   /* --- 7. sem assinatura local não explode --- */
   r = await assinaturaAtualizada(null, costura(null).deps);
   conferir(r.status === null && r.ciclo === null, 'sem linha local devolve nulos, não estoura');
+
+  /* --- 7b. VALOR: reconcilia E denuncia (RN-34, decisão de 18/09) ---
+     Era o único campo que a conciliação devolvia sem reconferir, e o
+     `API.md` §5.3 chegava a avisar o integrador para não confiar nele.
+     Decisão do dono: reconciliar. Quem debita o cartão é a Asaas — o
+     nosso número divergente não é opinião, é informação falsa. */
+  c = costura({
+    status: 'ACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: 45
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(r.valor === 45, `o valor devolvido é o da Asaas, veio ${r.valor}`);
+  conferir(
+    c.gravado.valor.some(([, v]) => v === 45),
+    'e a divergência é GRAVADA — senão a correção vale só para esta resposta e volta na próxima'
+  );
+  conferir(
+    r.divergenciaDeValor?.nosso === 30 && r.divergenciaDeValor?.asaas === 45,
+    `a divergência é DENUNCIADA na resposta, veio ${JSON.stringify(r.divergenciaDeValor)}`
+  );
+
+  /* Controle positivo: valor igual não escreve nem denuncia. Sem este
+     par, um "reconcilia sempre" reescreveria a linha a cada conciliação
+     e inventaria divergência em toda chamada. */
+  c = costura({
+    status: 'ACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: 30
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(c.gravado.valor.length === 0, 'valor igual não vira escrita');
+  conferir(r.divergenciaDeValor === null, 'nem denúncia');
+  conferir(r.valor === 30, 'e o valor devolvido continua sendo o certo');
+
+  /* Ponto flutuante não pode inventar divergência: em reais,
+     `30.000000000000004 !== 30`. A comparação é em centavos. */
+  c = costura({
+    status: 'ACTIVE', deleted: false, encerrada: false,
+    proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: 30.000000000000004
+  });
+  r = await assinaturaAtualizada(noBanco, c.deps);
+  conferir(c.gravado.valor.length === 0, 'diferença de ponto flutuante não é divergência');
+  conferir(r.divergenciaDeValor === null, 'e não é denunciada');
+
+  /* Asaas sem `value` na resposta: mantém o nosso, não anula. Anular
+     seria a mesma classe do "ausência virou zero" que este projeto já
+     pagou duas vezes na tela.
+
+     ⚠️ Os DOIS casos abaixo, e a diferença entre eles é o furo que a
+     revisão pegou: `consultarAssinaturaNaAsaas` devolve `valor: null`
+     EXPLÍCITO quando a Asaas não manda `value`, e `Number(null)` é `0`.
+     A primeira versão deste teste só omitia a chave (`undefined`, que dá
+     `NaN`) e por isso passava sobre um código que, com `null`, gravaria
+     **zero** no banco e devolveria R$ 0,00 ao contratante. Dublê que não
+     tem a forma real não prova nada. */
+  for (const [rotulo, respostaDaAsaas] of [
+    ['chave omitida', { status: 'ACTIVE', deleted: false, encerrada: false, proximaCobranca: '2026-10-18', ciclo: 'MONTHLY' }],
+    ['valor null explícito (a forma REAL)', { status: 'ACTIVE', deleted: false, encerrada: false, proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: null }]
+  ]) {
+    c = costura(respostaDaAsaas);
+    r = await assinaturaAtualizada(noBanco, c.deps);
+    conferir(r.valor === 30, `${rotulo}: mantém o nosso valor — veio ${r.valor}`);
+    conferir(r.valor !== 0, `${rotulo}: e NUNCA vira zero`);
+    conferir(c.gravado.valor.length === 0, `${rotulo}: e não grava nada`);
+    conferir(r.divergenciaDeValor === null, `${rotulo}: e não denuncia divergência`);
+  }
+
+  /* `numeric` do banco pode chegar como STRING dependendo do driver.
+     String numérica é dinheiro; string vazia não é. */
+  c = costura({ status: 'ACTIVE', deleted: false, encerrada: false, proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: 45 });
+  r = await assinaturaAtualizada({ ...noBanco, valor: '30.00' }, c.deps);
+  conferir(r.valor === 45 && r.divergenciaDeValor?.nosso === 30, `valor local em string é comparado como número, veio ${JSON.stringify(r.divergenciaDeValor)}`);
+
+  c = costura({ status: 'ACTIVE', deleted: false, encerrada: false, proximaCobranca: '2026-10-18', ciclo: 'MONTHLY', valor: 45 });
+  r = await assinaturaAtualizada({ ...noBanco, valor: '' }, c.deps);
+  conferir(c.gravado.valor.length === 0, 'valor local vazio não é comparado — sem base, não há divergência a afirmar');
+
+  /* Asaas fora do ar e 404: o valor vem do banco, sem denúncia. */
+  r = await assinaturaAtualizada(noBanco, costura(null).deps);
+  conferir(r.valor === 30 && r.divergenciaDeValor === null, '404 devolve o valor do banco, sem denunciar divergência');
+  r = await assinaturaAtualizada(noBanco, {
+    consultarAssinaturaNaAsaas: async () => { throw new Error('asaas fora do ar'); },
+    atualizarStatusAssinatura: async () => {},
+    atualizarCicloAssinatura: async () => {},
+    atualizarValorAssinatura: async () => {}
+  });
+  conferir(r.valor === 30 && r.divergenciaDeValor === null, 'Asaas fora do ar idem');
 
   /* --- 8. a última cobrança segue a ASSINATURA, não o plano ------
      Achado no ciclo 4 da revisão da troca de plano: as cobranças ficam

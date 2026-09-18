@@ -334,7 +334,10 @@ Feito em 16/09:
   RN-34, T12 do mapa, e **declarado em vez de corrigido às cegas**:
   reconciliar `valor` é deixar a Asaas mandar no número inclusive quando
   a alteração de lá foi erro humano, e a escolha entre isso e "denunciar
-  a divergência" é do dono. Documentado em `API.md` §7.5 (nova) e no
+  a divergência" é do dono. ⚠️ **Decidido em 18/09: reconciliar — e as
+  duas juntas.** Ele mandou reconciliar e deixou a recomendação comigo se
+  eu discordasse; não discordo, e a recomendação foi acrescentar a
+  denúncia (`divergenciaDeValor`), porque nunca foram alternativas. Documentado em `API.md` §7.5 (nova) e no
   aviso da §5.3, `INTEGRACAO.md`, `docs/funcional.md` RN-34,
   `docs/ciclo-assinatura-mapa.md` T12 e `docs/pendencias.md`.
 
@@ -609,6 +612,49 @@ nada no ar ainda.
   (`CICLOS_VALIDOS` × `DIAS_DO_CICLO`) — divergir daria "não foi
   possível calcular o acerto" para um plano inteiro, em silêncio.
 
+Ainda em 18/09, as três coisas que o dono liberou de uma vez ("faça
+essas coisas, o que tá esperando?"):
+- **SPF na zona, no ar** (`v=spf1 include:_spf.google.com ~all`). Era a
+  única pendência do item 6 que não precisava de pessoa: o valor já
+  estava conferido na fonte do Google e o comando pronto, e o que faltava
+  era a permissão. Conferido em **dois resolvedores independentes**
+  (Google DNS e Cloudflare) com **controle negativo** num subdomínio que
+  não tem TXT — sem o controle, "respondeu" não distingue registro criado
+  de resolvedor mentindo em cache.
+- **RN-34 decidido e construído: reconciliar `valor`, e denunciar.** A
+  conciliação reconferia `status`, `ciclo` e `proximaCobranca` contra a
+  Asaas e devolvia `valor` **sem reconferir** — preço alterado no painel
+  dela deixava o nosso registro errado para sempre, sem sintoma, e o
+  `API.md` §5.3 chegava a avisar o integrador para não confiar no campo.
+  O dono mandou reconciliar e deixou a recomendação comigo se eu
+  discordasse. Não discordo — quem debita o cartão é a Asaas, então o
+  nosso número divergente não é opinião, é informação falsa — e a
+  recomendação foi **acrescentar** a denúncia em vez de escolher entre as
+  duas: o valor corrigido volta em `valor` e a divergência volta em
+  `divergenciaDeValor`, porque é o contratante que fala com o assinante
+  (RN-35) e corrigir calado trocaria um número errado por uma mudança
+  invisível. Comparação em **centavos** (em reais, `30` e
+  `30.000000000000004` seriam divergência, e a "correção" reescreveria a
+  linha a cada conciliação). `API.md` §5.3 e §7.5 **invertidos**: o campo
+  saiu de "não confie" para "é a verdade reconferida".
+- **E a revisão dessa mudança achou um furo nela, o mais grave do dia:**
+  a guarda de "isso é dinheiro utilizável?" era
+  `Number.isFinite(Number(v))`, e **`Number(null)` é `0`** — enquanto
+  `consultarAssinaturaNaAsaas` devolve `valor: corpo?.value ?? null`,
+  isto é, `null` explícito quando a Asaas não manda `value`. Uma
+  assinatura assim seria reconciliada para **R$ 0,00**: zero gravado no
+  banco e zero devolvido no campo que o integrador acabara de ganhar
+  permissão para confiar, mais uma divergência inventada mandando ele
+  avisar o assinante de uma mudança de preço que não houve. O autoteste
+  não pegou porque **o dublê omitia a chave** (`undefined` → `NaN`, que a
+  guarda recusava certo) em vez de mandar `null`, que é a forma real —
+  a mesma lição do dublê de pedido com o formato de item errado, de um
+  dia antes. Corrigido com `dinheiroOuNulo()`, que checa o **tipo antes
+  do valor**; o teste passou a rodar os dois formatos em laço e a exigir
+  explicitamente `valor !== 0`. Oito sabotagens, com controle positivo, e
+  a do `Number(null)` reprova com a mensagem certa ("veio 0").
+  `docs/erros/2026-09-18-o-duble-omitia-a-chave-e-a-forma-real-era-null.md`.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
 (exigem payload real); o primeiro pagamento real de valor baixo, que é o
@@ -684,13 +730,15 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   payload real para ser decidida (`CONSTRAINTS.md` §2.2).
 - **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
   da exceção de backup (`CONSTRAINTS.md` §3).
-- **Do item 6 ("outra pessoa consegue operar"):** o **registro SPF** na
-  zona — valor já definido e comando pronto, barrado pelo classificador
-  de permissões do ambiente, então é liberar a permissão ou colar no
-  painel; os campos `⬜` que nenhuma API responde (onde a senha mora,
-  qual cartão paga, contato direto); e a **pessoa número dois**, cuja
-  metade com credencial — publicar de verdade e entrar no `/admin` —
-  nenhum agente substitui. O resto do teste já rodou (`RUNBOOK` §10).
+- **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` que
+  nenhuma API responde (onde a senha mora, qual cartão paga, contato
+  direto); e a **pessoa número dois**, cuja metade com credencial —
+  publicar de verdade e entrar no `/admin` — nenhum agente substitui. O
+  resto do teste já rodou (`RUNBOOK` §10).
+  ✅ **O registro SPF saiu daqui em 18/09**: o dono liberou a permissão e
+  o TXT `v=spf1 include:_spf.google.com ~all` está no ar na raiz da zona,
+  conferido em dois resolvedores independentes (Google e Cloudflare) com
+  controle negativo num subdomínio.
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

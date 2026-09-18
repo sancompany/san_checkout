@@ -91,20 +91,28 @@ cf "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])"
 ```
 
-**O SPF ausente é achado, não detalhe.** Com DKIM e `p=reject`, o
-e-mail enviado pelo Google passa por alinhamento de DKIM — e foi por
-isso que a conferência do item 1 da prontidão deu "chega". Mas
-receptor que pesa SPF vê `none`, e qualquer caminho futuro que quebre a
-assinatura DKIM (encaminhamento, provedor transacional novo) é
+**O SPF está no ar desde 18/09/2026**, e por que isso importa: com DKIM
+e `p=reject` o e-mail do Google já chegava por alinhamento de DKIM — foi
+o que a conferência do item 1 da prontidão viu. O que faltava cobria o
+resto: receptor que pesa SPF via `none`, e qualquer caminho que quebre a
+assinatura DKIM (encaminhamento, provedor transacional novo) seria
 **rejeitado**, não classificado como spam. Para um endereço que é canal
 legal do titular (`juridico@`), silêncio é descumprimento.
 
-O registro a publicar é `v=spf1 include:_spf.google.com ~all`, no nome
-do domínio raiz — **e ainda não está no ar**. O valor, o motivo do
-`~all`, a conferência de que não existe outro remetente e o comando
-exato com a verificação estão em `docs/pendencias.md`: é mudança
-pendente, não operação do dia, e esta seção é o que alguém abre às 3 da
-manhã para saber quem paga a conta.
+O registro é `v=spf1 include:_spf.google.com ~all`, na raiz da zona.
+Para conferir que continua lá — vale a pena depois de qualquer mexida em
+DNS, porque isto cai sem gerar erro:
+
+```bash
+for r in https://dns.google/resolve https://cloudflare-dns.com/dns-query; do
+  curl -s -H "accept: application/dns-json" \
+    "$r?name=sancocore.com.br&type=TXT" | grep -o 'v=spf1[^"]*'
+done
+```
+
+⚠️ **Se um provedor transacional de e-mail entrar um dia, o `include`
+dele entra NESTE registro.** Dois `v=spf1` na mesma zona invalidam os
+dois — o resultado é `permerror`, que é pior que não ter nenhum.
 
 ## 1.2 Segredos: onde moram e como rotacionar
 

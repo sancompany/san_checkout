@@ -46,9 +46,14 @@ antes de prometer benefício a assinante).
 
 Acrescentado em 17/09/2026: **mudar o preço de quem já assinou**
 (7.5) — a Asaas permite aumentar, diminuir e trocar o ciclo de uma
-assinatura ativa, medido no sandbox; e o `valor` da conciliação (5.3)
-sai do nosso registro, não da Asaas. Se você mudar preço direto no
-painel da Asaas, o número que nós devolvemos fica errado em silêncio.
+assinatura ativa, medido no sandbox.
+
+Corrigido em 18/09/2026: esta linha dizia que o `valor` da conciliação
+(5.3) sai do nosso registro e fica errado em silêncio se o preço mudar
+no painel da Asaas. **Deixou de ser verdade**: a conciliação reconfere
+`valor`, corrige o nosso registro e devolve `divergenciaDeValor` na
+mesma resposta (5.3, RN-34). O que continua valendo é que o aviso não é
+proativo — você descobre quando roda a conciliação.
 
 Acrescentado ainda em 17/09/2026: **trocar de plano** (5.6, rota nova
 `POST /trocar-plano`) — upgrade e downgrade mantendo o vínculo, com o
