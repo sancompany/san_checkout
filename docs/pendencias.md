@@ -327,7 +327,7 @@ conciliação); **Asaas sem `value` mantém o nosso** (anular seria a classe
 banco **sem** denunciar divergência — `null` ali significa "não
 comparei", não "estava igual".
 
-**No ar em `3ec6454`** (PR #20), e a conferência depois da mescla foi
+**No ar em `3ec6454`** (PR #20 — é o commit de código; o `deployedSHA` seguiu para `9278241`, que só traz documento), e a conferência depois da mescla foi
 esta: o `deployedSHA` do Northflank é o commit da `main`; o arquivo
 servido tem `dinheiroOuNulo` e `divergenciaDeValor` (com controle
 negativo de que um padrão inexistente conta zero); o autoteste do
