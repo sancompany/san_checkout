@@ -289,6 +289,18 @@ Caem no ramo de evento não mapeado, respondem 200 e viram linha na aba
 Webhook do painel. O leitor futuro é a Fairy, que é quem vai cuidar de
 aviso financeiro — ver `docs/proximas-versoes.md`.
 
+> ⚠️ **Conferido contra o painel em 18/09/2026 (capturas do dono) e achou
+> duas divergências entre o que este documento afirma e o que estava
+> marcado de verdade** — a mesma classe de falha que a declaração de
+> "referência única" existe para impedir. Achado, ainda não fechado —
+> a correção é clicar no painel da Asaas, que é do dono:
+> - **`INTERNAL_TRANSFER_CREDIT` e `INTERNAL_TRANSFER_DEBIT` estavam
+>   desmarcados** — o grupo "Movimentações Internas" ficou de fora
+>   quando Transferências e Bloqueios de Saldo foram marcados.
+> - **`PAYMENT_CHECKOUT_VIEWED` estava marcado**, mas pertence ao "ruído
+>   de cobrança" abaixo — o código não trata, e cada visualização de
+>   fatura vira log com payload cru (dado pessoal) à toa.
+
 ### Grupo "Situação da conta" — 18 marcados, o grupo inteiro
 
 São 18 eventos em quatro famílias (`GENERAL_APPROVAL`, `COMMERCIAL_INFO`,
