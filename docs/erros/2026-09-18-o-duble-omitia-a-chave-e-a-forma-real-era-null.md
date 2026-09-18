@@ -93,3 +93,23 @@ plausível.
 **Ecossistema:** sim. Vale para todo projeto que leia número vindo de
 terceiro ou de banco — e a regra do dublê vale para qualquer teste com
 dependência injetada.
+
+---
+
+## Apêndice do mesmo dia: o sha que envelhece porque o documento é publicado
+
+Ainda em 18/09, ao registrar o estado no ar, escrevi no `CLAUDE.md`
+"main = `3ec6454` e **é** o `deployedSHA`". Mesclei o PR seguinte — só
+documento — e a frase ficou falsa em três minutos, porque o commit que
+atualiza a linha muda o número que a linha afirma. Corrigi nomeando os
+dois shas, e **a correção teve o mesmo defeito**: o PR que a levou ao ar
+mudou o servido de novo.
+
+A regra, na terceira tentativa: **documento publicado não afirma o sha
+que está publicado.** A linha nomeia o último commit de **código** (que
+só muda quando código muda) e manda no comando que responde o resto
+(`RUNBOOK` §3). É a mesma família do "N suítes" escrito em prosa: número
+que envelhece sozinho não mora em texto — mora em quem sabe medi-lo.
+
+**Ecossistema:** sim, para todo repositório cujo próprio conteúdo é
+implantado.
