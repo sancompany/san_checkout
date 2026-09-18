@@ -143,5 +143,5 @@ assert.ok(
 
 console.log(
   `nenhuma-chamada-de-saida-sem-teto: ${chamadas} chamadas de saída, todas com teto — ` +
-  `3 tetos conferidos, ${recebemDeFora} com guarda de execução`
+  `${tetos.length} tetos conferidos, ${recebemDeFora} com guarda de execução`
 );

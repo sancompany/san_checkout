@@ -1122,3 +1122,39 @@ O que ficou: exceção aceita em `CONSTRAINTS.md` §3 (com a consequência
 escrita), entrada em `docs/proximas-versoes.md`, e a medição que provou a
 causa em `CONSTRAINTS.md` §2.5.3 +
 `docs/erros/2026-09-17-diagnostico-de-subconta-lia-o-endpoint-errado.md`.
+
+### 🟡 `public/js/` · quatro padrões de UI nasceram em mais de um lugar — DECLARADO 18/09
+Achado no ciclo de revisão do projeto inteiro em 18/09/2026 (agente
+dedicado a `public/`). Os quatro são simplicidade pura — nenhum achado de
+correção ou segurança neles — mas são a mesma classe de dívida que a Lei
+5 e o `CLAUDE.md` deste projeto tratam como séria (token/componente
+repetido diverge cedo ou tarde, calado). Não corrigidos nesta rodada
+porque a extração toca o código de pop-up/polling de pagamento em cinco
+arquivos ao mesmo tempo, com pequenas diferenças de comportamento entre
+cada cópia (intervalo, seletor, texto) que precisam ser preservadas uma
+a uma — risco maior do que o resto desta varredura, e melhor como fatia
+própria (skill `construir`) do que misturado num ciclo de revisão:
+
+1. **Polling + pop-up de pagamento**: `public/js/modules/cartaoHandler.js`
+   e `assinaturaCheckoutHandler.js` duplicam quase 100 linhas
+   (`pararPolling`, `observarFechamentoPopup`, `iniciarPollingPopup`, as
+   três constantes de intervalo) — só id do botão, endpoint e texto de
+   sucesso/falha mudam.
+2. **Polling de cobrança (Pix/Boleto)**: `pixHandler.js` e
+   `boletoHandler.js` repetem os mesmos arrays `STATUS_CONFIRMADOS`/
+   `STATUS_FALHOS` e a mesma lógica de `iniciarPolling`/`pararPolling`.
+3. **"Copiar com fallback"** implementado 5 vezes com 3 estratégias
+   diferentes: `campo.select()` (`app.js`, `status.js`),
+   `document.execCommand('copy')` — API depreciada — (`pixHandler.js`,
+   `boletoHandler.js`), e **sem fallback nenhum** (`admin.js`, onde o
+   valor é um `<span>` mascarado, não um input, então `.select()` nem
+   funcionaria ali).
+4. **`mostrarToast`** existe em três arquivos (`app.js`, `status.js`,
+   `admin.js`) com comportamento já divergente: id de container, tipo
+   padrão, duração (4500ms vs 4000ms) e mecanismo de estilo (inline vs
+   classe CSS) diferentes entre eles.
+
+Nenhum dos quatro tem dano ativo hoje — são cópias que ainda concordam
+no comportamento visível, ou (no caso do toast) divergem de um jeito que
+não quebra nada, só deixa de ser um componente só. Extrair quando a
+próxima mudança tocar qualquer um destes fluxos.

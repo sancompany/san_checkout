@@ -736,7 +736,11 @@ export async function listarAuditoriaWebhook(requisicao, resposta) {
 }
 
 export async function obterResumoWebhook(requisicao, resposta) {
-  const dias = Math.min(Number(requisicao.query.dias) || 7, 90);
+  // Faltava o piso — achado no ciclo de revisão do projeto inteiro em
+  // 18/09/2026: `dias=-100` calculava uma data no FUTURO em
+  // `contarEventosNaoTratados`, e "0 eventos não tratados" saía sem
+  // sintoma, mesmo havendo. Mesmo padrão do `obterMetricas` acima.
+  const dias = Math.min(Math.max(Number(requisicao.query.dias) || 7, 1), 90);
   try {
     const [naoTratados, ultimo, rejeicoes] = await Promise.all([
       contarEventosNaoTratados(dias),

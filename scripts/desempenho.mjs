@@ -56,10 +56,10 @@
  *       npm run desempenho -- --tela assinatura --rodadas 3
  */
 
-import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PEDIDO_DUBLE, PLANO_DUBLE, servir } from './ajudantesNavegador.mjs';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLICO = join(RAIZ, 'public');
@@ -92,36 +92,13 @@ const ORCAMENTO = { lcp: 2500, inp: 200, cls: 0.1 };
  *  especificação. Interação mais rápida que isso não gera entrada. */
 const PISO_DO_OBSERVADOR_MS = 16;
 
-/* O mesmo dublê de pedido da auditoria de acessibilidade, no formato
-   real de `pedidoController` (`API.md` §4.1). Sem ele a tela vira
-   "Acesso não autorizado" e mediríamos a página errada. */
-const PEDIDO_DUBLE = {
-  contratanteNome: 'Loja de Teste',
-  metodosHabilitados: ['pix', 'boleto', 'cartao', 'assinatura'],
-  pedido: {
-    tipo: 'produto',
-    descricao: 'Camiseta preta — tamanho M',
-    itens: [
-      { nome: 'Camiseta preta M', quantidade: 1, valorUnitario: 79.9 },
-      { nome: 'Meia par avulso', quantidade: 2, valorUnitario: 5 }
-    ],
-    valorCheio: 89.9, desconto: 0, valorComDesconto: 89.9, frete: 0
-  },
-  taxa: { taxaAsaas: 1.99, taxaPropria: 2.7, taxasTotais: 4.69, valorCobrado: 94.59 },
-  maxParcelas: 12,
-  retornoUrl: null
-};
+/* `PEDIDO_DUBLE` e `PLANO_DUBLE` vêm de `ajudantesNavegador.mjs`,
+   compartilhado com `acessibilidade.mjs` — os dois nasceram com cópia
+   própria e divergiram na formatação, então foram unificados em
+   18/09/2026 (ciclo de revisão do projeto inteiro). Sem eles a tela vira
+   "Acesso não autorizado" e mediríamos a página errada.
 
-const PLANO_DUBLE = {
-  id: 'plano_auditoria',
-  nome: 'Plano Mensal de Teste',
-  descricao: 'Acesso completo, renovação automática',
-  valor: 49.9,
-  ciclo: 'MONTHLY',
-  _checkout: { metodosHabilitados: ['assinatura'], contratanteNome: 'Loja de Teste', retornoUrl: null }
-};
-
-/* `interagir` é o que produz INP. `exigeVisiveis` é o controle positivo
+   `interagir` é o que produz INP. `exigeVisiveis` é o controle positivo
    de "a tela apareceu" — herdado da auditoria de acessibilidade, que já
    aprovou uma tela que não era a tela. */
 /* `clicarEm` é uma LISTA de seletores tentados em ordem, e não um
@@ -173,31 +150,6 @@ const TELAS = [
     clicarEm: ['h1']
   }
 ];
-
-const TIPOS = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.webmanifest': 'application/manifest+json'
-};
-
-function servir() {
-  const servidor = createServer(async (req, res) => {
-    const caminho = normalize(join(PUBLICO, decodeURIComponent(req.url.split('?')[0])));
-    if (!caminho.startsWith(PUBLICO)) { res.writeHead(403).end(); return; }
-    try {
-      const corpo = await readFile(caminho);
-      res.writeHead(200, { 'Content-Type': TIPOS[extname(caminho)] ?? 'application/octet-stream' });
-      res.end(corpo);
-    } catch {
-      res.writeHead(404, { 'Content-Type': 'text/plain' }).end('nao encontrado');
-    }
-  });
-  return new Promise((ok) => servidor.listen(0, '127.0.0.1', () => ok(servidor)));
-}
 
 /* O coletor roda ANTES de qualquer script da página, senão perde as
    entradas que acontecem no começo — que são justamente as que
@@ -306,7 +258,7 @@ if (pesadas.length) {
 console.log('');
 
 const { chromium } = await import('playwright');
-const servidor = await servir();
+const servidor = await servir(PUBLICO);
 const base = `http://127.0.0.1:${servidor.address().port}`;
 const executavel = process.env.CHROMIUM_EXECUTAVEL ?? '/opt/pw-browsers/chromium';
 const navegador = await chromium.launch({ executablePath: executavel });
