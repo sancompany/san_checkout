@@ -2,5 +2,16 @@
   "extraKnownMarketplaces": {
     "san-co": { "source": { "source": "github", "repo": "sancompany/Plugin_san-co" } }
   },
-  "enabledPlugins": { "san-co@san-co": true }
+  "enabledPlugins": { "san-co@san-co": true },
+  "permissions": {
+    "allow": [
+      "Bash(npm run check *)",
+      "Bash(git fetch *)",
+      "Bash(northflank get *)",
+      "Bash(/tmp/gitleaks detect *)",
+      "mcp__github__pull_request_read",
+      "mcp__github__actions_list",
+      "mcp__Supabase__list_projects"
+    ]
+  }
 }
