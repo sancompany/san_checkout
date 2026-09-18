@@ -327,6 +327,24 @@ conciliação); **Asaas sem `value` mantém o nosso** (anular seria a classe
 banco **sem** denunciar divergência — `null` ali significa "não
 comparei", não "estava igual".
 
+**No ar em `3ec6454`** (PR #20), e a conferência depois da mescla foi
+esta: o `deployedSHA` do Northflank é o commit da `main`; o arquivo
+servido tem `dinheiroOuNulo` e `divergenciaDeValor` (com controle
+negativo de que um padrão inexistente conta zero); o autoteste do
+controlador roda **dentro do contêiner de produção** e dá 37 checagens
+OK; e, de fora, `/api/saude` responde 200, `consultar-assinatura` sem
+chave dá 401, com chave falsa dá 401 `Chave inválida.` (não 500) e um
+caminho inventado dá 404.
+
+**O que faltou conferir, e é permissão, não acesso:** a chamada real
+contra uma assinatura de verdade — como foi feito em 16/09 para `status`
+e `ciclo` — porque o classificador de permissões do harness recusa
+leitura de dado de produção (`[Production Reads]`) neste ambiente. O
+caminho é liberar a permissão; o comando roda **dentro do contêiner**
+(nenhum dado pessoal desce para disco) e imprime só `status`, `ciclo`,
+`valor` e `divergenciaDeValor`, nunca o documento. Rotear a mesma
+leitura por subagente seria contornar a guarda em vez de usá-la.
+
 **O que continua aberto, e é menor:** não há aviso **proativo**. Quem
 muda o preço no painel da Asaas não dispara nada, e o contratante
 descobre na conciliação seguinte. Fechar isso dependeria de marcar o
