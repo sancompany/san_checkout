@@ -84,7 +84,7 @@ com esforço alto, e é da sessão por inteiro.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 18/09: main = `b57df2b` (PR #17 mesclado) e **é o commit ativo no Northflank**, `/api/saude` 200, árvore limpa. **O banco está UMA migration à frente do código no ar:** a 0010 (troca de plano) está aplicada em produção e o código que a usa está na branch `claude/nifty-meitner-4ffp9s`, não na main — é a ordem que a lei manda (a coluna nova existe ANTES do código que a lê), e as três colunas são aditivas, então nada no ar as toca |
+| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 18/09: main = `5910150` (PR #18 mesclado) e **é o commit ativo no Northflank**, migrations 0001-0010 aplicadas, árvore limpa. Conferido no ar depois da mescla, com controle negativo: `/api/saude` 200 com Supabase respondendo; `POST /api/checkout/trocar-plano` sem chave devolve **401** (a rota existe e a guarda funciona) enquanto um caminho inventado devolve 404; e o teto de id novo recusa um `pedidoId` de 200 caracteres com **400**, enquanto um id normal passa por ele |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -518,7 +518,7 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   uma checagem geral: todo campo que o agregador lê de uma linha tem de
   estar no `select` da rota
   (`docs/erros/2026-09-17-o-filtro-dependia-de-coluna-que-a-consulta-nao-trazia.md`).
-- **Troca de plano, construída NESTA versão por ordem do dono** — ⚠️ **na branch `claude/nifty-meitner-4ffp9s`, ainda NÃO na main nem no ar** (o que está no ar é `b57df2b`); só a migration 0010 já está aplicada no banco, de propósito
+- **Troca de plano, construída NESTA versão por ordem do dono** — **no ar desde 18/09** (PR #18, commit `5910150`), com a rota conferida em produção
   (`POST /api/checkout/trocar-plano`, `API.md` §5.6, RN-35 e RN-36,
   migration 0010). Ela nasceu de uma pergunta dele — "no Asaas não é
   possível fazer uma alteração de preço nos planos já contratados?" —
