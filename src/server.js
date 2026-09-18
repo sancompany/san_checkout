@@ -432,6 +432,20 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     .then((relatorios) => {
       const mexidas = relatorios.reduce((soma, r) => soma + r.anonimizadas, 0);
       if (mexidas > 0) console.log(`[expurgo] ${mexidas} linha(s) anonimizada(s) por prazo de retenção.`);
+
+      /* Erro por LINHA (ex.: UPDATE recusado por uma constraint) não
+         lança — fica só em `relatorio.erros`, pra uma linha ruim não
+         travar as outras. Sem isto aqui, ficava só ali: achado no ciclo
+         de revisão de 18/09/2026
+         (docs/erros/2026-09-18-a-migration-que-acrescentou-coluna-not-null-nao-atualizou-a-lista-branca-do-expurgo.md) —
+         uma coluna nova sem decisão na lista branca faria TODA
+         anonimização de `cobrancas` falhar, calada, pra sempre. */
+      for (const relatorio of relatorios) {
+        for (const mensagem of relatorio.erros) {
+          console.error(`[expurgo] ${mensagem}`);
+          void registrarErro(new Error(mensagem), { contexto: 'expurgo.prazo', status: 500 });
+        }
+      }
     })
     .catch((erro) => console.error('[expurgo]', erro.message));
 

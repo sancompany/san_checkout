@@ -654,6 +654,49 @@ essas coisas, o que tá esperando?"):
   explicitamente `valor !== 0`. Oito sabotagens, com controle positivo, e
   a do `Number(null)` reprova com a mensagem certa ("veio 0").
   `docs/erros/2026-09-18-o-duble-omitia-a-chave-e-a-forma-real-era-null.md`.
+- **Segundo ciclo de `revisar` sobre o projeto inteiro, a pedido do
+  dono, mesclado e no ar** (PR #29, `486b472`). Cinco agentes em
+  paralelo, cada achado relido por mim antes de contar; `services/`,
+  `utils/`, `config/` e a checagem de afirmações sobre estado externo
+  fecharam limpos. Corrigido: `telefone` sem validação em três rotas
+  (`gerarPix`/`gerarBoleto`/`criarAssinaturaPixAutomatico`) e campos de
+  endereço sem teto de tamanho — mesma classe do furo de `nome` de
+  11/09; `obterResumoWebhook` sem piso em `dias` (data no futuro,
+  "0 eventos" sem sintoma); **um bug real no admin**: editar um
+  contratante com `metodos_habilitados` nulo ("sem restrição", inclusive
+  `assinatura_pix`) estreitava silenciosamente pros 4 métodos padrão em
+  qualquer salvamento, mesmo sem mexer nisso; `celulaTaxa` era a única
+  interpolação em `innerHTML` do `admin.js` sem `escapar()`;
+  `termos.html`/`privacidade.html` pulavam o `<h2>` (WCAG 1.3.1); mais
+  dois de simplicidade (contador chumbado, dublês duplicados entre
+  `acessibilidade.mjs`/`desempenho.mjs`, extraídos para
+  `scripts/ajudantesNavegador.mjs`). Declarado, não corrigido por risco/
+  escopo: quatro padrões de UI repetidos em `public/js/` (polling+pop-up
+  de pagamento, polling de cobrança, copiar-com-fallback, toast) —
+  `docs/pendencias.md`. Reverificado com `npm run acessibilidade` (0
+  violações) e `npm run desempenho` depois das correções, e conferido no
+  ar (`deployedSHA` = `486b472`).
+- **Terceira varredura, com lente diferente: contrato ENTRE arquivos**
+  (o dono pediu "furos de lógica entre os arquivos"). Dois agentes em
+  paralelo — banco↔código e assinatura de função↔chamador; API↔front-end
+  e webhook Asaas↔código — vieram limpos, exceto **um achado real e
+  grave**: a migration 0009 (`ambiente`/`e_teste`, `not null`) e a 0010
+  (`plano_anterior_id`/`trocado_em`/`trocando_em`) nunca entraram na
+  lista branca do `expurgoService.js` (Lei 10), porque o retrato do
+  autoteste (`COLUNAS_REAIS`) foi tirado no mesmo dia das migrations mas
+  **antes** delas — a checagem que devia travar isso comparava a lista
+  branca contra si mesma por um caminho indireto. Efeito: toda tentativa
+  de anonimizar uma linha de `cobrancas` falharia na constraint `not
+  null`, calada, porque `server.js` só somava `anonimizadas` e nunca
+  olhava `relatorio.erros`. Sem dano ainda — nenhuma linha tem mais de
+  cinco anos —, mas o próximo pedido de titular sobre dado velho já
+  bateria nisto. Corrigido: as cinco colunas decididas (as cinco ficam —
+  nenhuma identifica pessoa), `COLUNAS_REAIS` atualizado, duas
+  asserções novas por coluna (o patch não toca nela, o valor sobrevive),
+  sabotagem verificada; e `server.js` passou a logar e registrar (Lei 8)
+  todo erro de `relatorio.erros`, fechando o mesmo buraco de visibilidade
+  para qualquer coluna futura.
+  `docs/erros/2026-09-18-a-migration-que-acrescentou-coluna-not-null-nao-atualizou-a-lista-branca-do-expurgo.md`.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde

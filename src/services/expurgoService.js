@@ -70,7 +70,18 @@ const FICAM_EM_COBRANCAS = new Set([
   'metodo_pagamento', 'parcelas',
   'nota_fiscal_id', 'nota_fiscal_drive_file_id', 'nota_fiscal_status',
   'status', 'criado_em', 'atualizado_em', 'confirmado_em',
-  'asaas_subscription_id', 'substitui_assinatura_id', 'ciclo', 'proxima_cobranca'
+  'asaas_subscription_id', 'substitui_assinatura_id', 'ciclo', 'proxima_cobranca',
+  /* `ambiente` e `e_teste` (migration 0009) — mecânico e decisão
+     operacional sobre a cobrança, não atributo de quem comprou; mesma
+     razão de `metodo_pagamento`/`status` já ficarem. Achado no ciclo de
+     revisão de 18/09/2026: as duas são `not null`, e ficaram de fora
+     desta lista quando a migration entrou — toda anonimização de
+     `cobrancas` tentaria gravar `null` nelas e o `UPDATE` inteiro da
+     linha falharia na constraint, sem nada avisar (o erro cai em
+     `relatorio.erros`, que `server.js` nunca lê). Sem dano ainda
+     porque não existe cobrança com mais de 5 anos, mas o próximo pedido
+     de titular sobre dado velho já bateria nisto. */
+  'ambiente', 'e_teste'
 ]);
 
 /**
@@ -81,7 +92,18 @@ const FICAM_EM_COBRANCAS = new Set([
  */
 const FICAM_EM_ASSINATURAS = new Set([
   'id', 'contratante_id', 'plano_id',
-  'valor', 'ciclo', 'status', 'proxima_cobranca', 'criado_em'
+  'valor', 'ciclo', 'status', 'proxima_cobranca', 'criado_em',
+  /* `plano_anterior_id`/`trocado_em` (migration 0010) — o rastro de
+     troca de plano é registro técnico/financeiro, mesma razão de
+     `plano_id`/`ciclo` já ficarem: sem eles, uma assinatura cancelada e
+     anonimizada perderia "de onde ela veio", e é essa pergunta que o
+     contratante faz. `trocando_em` é lock operacional (a guarda contra
+     cobrar o acerto duas vezes), nunca dado de pessoa — nulo é o estado
+     normal, então nem chegaria a virar patch na prática, mas entra na
+     lista pelo mesmo motivo dos outros dois: decisão explícita, não
+     esquecimento. Achado no ciclo de revisão de 18/09/2026 — as três
+     colunas nasceram depois desta lista e nunca foram decididas. */
+  'plano_anterior_id', 'trocado_em', 'trocando_em'
 ]);
 
 /**
@@ -417,7 +439,16 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
   const ok = (condicao, mensagem) => { assert.ok(condicao, mensagem); checagens += 1; };
   const igual = (a, b, mensagem) => { assert.deepEqual(a, b, mensagem); checagens += 1; };
 
-  /* Retrato do `information_schema` de produção em 17/09/2026. */
+  /* Retrato das migrations aplicadas (0001-0010) — atualizado em
+     18/09/2026 (ciclo de revisão do projeto inteiro): a versão anterior
+     era de 17/09/2026 e não incluía `ambiente`/`e_teste` (migration
+     0009) nem `plano_anterior_id`/`trocado_em`/`trocando_em` (migration
+     0010) — as duas migrations entraram no mesmo dia em que este retrato
+     foi tirado, mas depois dele. Com o retrato desatualizado, a checagem
+     "AS DUAS LISTAS COBREM O BANCO REAL" comparava a lista branca contra
+     si mesma por um caminho indireto (as duas ficaram cegas para a
+     mesma coluna nova), em vez de travar a suíte até alguém decidir de
+     que lado a coluna fica — que é o motivo desta lista existir. */
   const COLUNAS_REAIS = {
     cobrancas: [
       'id', 'charge_id', 'asaas_checkout_id', 'contratante_id', 'pedido_id', 'plano_id',
@@ -427,11 +458,13 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
       'nota_fiscal_drive_file_id', 'nota_fiscal_status', 'status', 'criado_em',
       'atualizado_em', 'telefone', 'endereco', 'endereco_numero', 'endereco_complemento',
       'bairro', 'cep', 'cidade', 'uf', 'cidade_ibge', 'email', 'asaas_subscription_id',
-      'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em'
+      'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em',
+      'ambiente', 'e_teste'
     ],
     assinaturas: [
       'id', 'contratante_id', 'documento', 'valor', 'ciclo', 'status',
-      'proxima_cobranca', 'criado_em', 'plano_id'
+      'proxima_cobranca', 'criado_em', 'plano_id',
+      'plano_anterior_id', 'trocado_em', 'trocando_em'
     ]
   };
 
@@ -493,7 +526,12 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
     nota_fiscal_id: null, nota_fiscal_drive_file_id: null, nota_fiscal_status: 'pendente',
     status: 'confirmado', criado_em: '2021-01-01T00:00:00Z',
     atualizado_em: '2021-01-02T00:00:00Z', confirmado_em: '2021-01-01T10:00:00Z',
-    asaas_subscription_id: null, substitui_assinatura_id: null, ciclo: null, proxima_cobranca: null
+    asaas_subscription_id: null, substitui_assinatura_id: null, ciclo: null, proxima_cobranca: null,
+    // `not null` desde a migration 0009 — toda linha real tem valor aqui,
+    // nunca `null`. Formato real, não o formato anterior à 0009 que este
+    // dublê tinha até 18/09/2026 (a mesma lição do dublê de pedido e do
+    // `Number(null)`, ver docs/erros/).
+    ambiente: 'sandbox', e_teste: false
   };
 
   const patch = anonimizarLinha('cobrancas', cobrancaReal);
@@ -518,6 +556,19 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
   igual(depois.confirmado_em, '2021-01-01T10:00:00Z', 'e a data da transação');
   igual(depois.cupom, 'PRIMEIRA10', 'o cupom fica: é fato comercial, não atributo de pessoa');
 
+  /* `ambiente`/`e_teste` (migration 0009) são `not null` — achado no
+     ciclo de revisão de 18/09/2026: fora da lista branca, o patch
+     tentaria `null` nas duas e o UPDATE inteiro da linha quebraria na
+     constraint, sem nada avisar (o erro cai em `relatorio.erros`, que
+     `server.js` nunca lê). As duas asserções abaixo travam a causa
+     direta (o patch nem tenta mexer nelas) e o efeito (o valor
+     sobrevive) — sabotar removendo as colunas de `FICAM_EM_COBRANCAS`
+     reprova as duas. */
+  ok(!Object.hasOwn(patch, 'ambiente'), 'ambiente não entra no patch — nunca vira null');
+  ok(!Object.hasOwn(patch, 'e_teste'), 'e_teste idem');
+  igual(depois.ambiente, 'sandbox', 'ambiente sobrevive ao expurgo — metadado operacional, não dado de pessoa');
+  igual(depois.e_teste, false, 'e_teste sobrevive ao expurgo, pelo mesmo motivo');
+
   /* --- 4. IDEMPOTENTE ---
      Rodar de novo numa linha já anonimizada não pode gerar escrita —
      senão toda rodada de 24 h reescreve a tabela inteira e move
@@ -528,11 +579,18 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
   const assinatura = {
     id: 'sub_x', contratante_id: 'testemaster', plano_id: 'plano_anual',
     documento: '552.085.198-01', valor: 267.3, ciclo: 'YEARLY',
-    status: 'cancelada', proxima_cobranca: null, criado_em: '2020-01-01T00:00:00Z'
+    status: 'cancelada', proxima_cobranca: null, criado_em: '2020-01-01T00:00:00Z',
+    // Migration 0010 — nulas no estado normal, mas uma assinatura que já
+    // trocou de plano (o caso real que a coluna existe para cobrir) tem
+    // valor aqui, e é esse formato que o teste precisa exercitar.
+    plano_anterior_id: 'plano_mensal', trocado_em: '2020-06-01T00:00:00Z', trocando_em: null
   };
   const patchAss = anonimizarLinha('assinaturas', assinatura);
   igual(patchAss, { documento: 'expurgado' }, 'o documento da assinatura vira texto fixo, não null (a coluna é not null)');
   ok(patchAss.documento !== null, 'e não é null, senão o update quebraria');
+  ok(!Object.hasOwn(patchAss, 'plano_anterior_id'), 'de onde a assinatura veio não é tocado — é rastro técnico, não dado de pessoa');
+  ok(!Object.hasOwn(patchAss, 'trocado_em'), 'nem quando trocou');
+  ok(!Object.hasOwn(patchAss, 'trocando_em'), 'nem o lock de troca em andamento');
   igual(anonimizarLinha('assinaturas', { ...assinatura, ...patchAss }), {}, 'e também é idempotente');
 
   /* --- 6. O PISO DURO DO PRAZO ---
