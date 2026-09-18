@@ -985,11 +985,12 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > chamada nossa de cancelar/pausar/retomar foi processada pela Asaas mas
 > a confirmação se perdeu no caminho, é esta rota que percebe e corrige
 > o registro — antes, a divergência ficava invisível para sempre. O mesmo
-> vale para uma assinatura cancelada direto no painel da Asaas: como a
-> Asaas não nos manda nenhum evento de assinatura (medido em 16/09:
-> zero `SUBSCRIPTION_*` entre os 53 eventos configurados), **esta rota é
-> o único caminho** pelo qual isso chega até você. É o argumento mais
-> forte para o "rode uma vez por dia" da 5.3.
+> vale para uma assinatura cancelada direto no painel da Asaas: o grupo
+> `SUBSCRIPTION_*` estava zero entre os eventos configurados (medido em
+> 16/09), e desde 18/09 está marcado — mas o código ainda não trata o
+> evento (cai como não mapeado, sem ação), então na prática **esta rota
+> continua sendo o único caminho** pelo qual a mudança chega até você.
+> É o argumento mais forte para o "rode uma vez por dia" da 5.3.
 >
 > **`ciclo` passou a ser reconferido junto, desde 16/09/2026.** Ele
 > continua congelado **pelo nosso fluxo** (a Asaas aceitaria alterá-lo —
@@ -1674,12 +1675,15 @@ com a Asaas:
   assinante" — para isso, o caminho continua sendo o pedido avulso.
 - **Ela não mexe em assinatura sem cartão salvo** (Pix Automático) quando
   há acerto a cobrar: responde `409`.
-- **Nada nos avisa se o valor mudar na Asaas.** Medido: nenhum evento
-  chegou ao nosso receptor em toda a bateria acima — criar, aumentar,
-  diminuir, trocar ciclo, pausar e apagar a assinatura. Isso é
-  **configuração**, não incapacidade: o grupo `SUBSCRIPTION_*` não está
-  entre os 53 eventos marcados nesta conta, e `PAYMENT_UPDATED` está
-  desmarcado de propósito (`CONSTRAINTS.md` §2.2).
+- **Nada nos avisa se o valor mudar na Asaas — e isso continua valendo
+  mesmo depois de 18/09.** Medido em 17/09: nenhum evento chegou ao
+  nosso receptor em toda a bateria acima — criar, aumentar, diminuir,
+  trocar ciclo, pausar e apagar a assinatura, porque o grupo
+  `SUBSCRIPTION_*` não estava marcado naquele dia. Desde 18/09 o dono
+  marcou o grupo (`CONSTRAINTS.md` §2.2), então o evento **passa a
+  chegar ao checkout** — mas nenhum código o lê ainda, e é por isso que
+  a consequência abaixo continua igual. `PAYMENT_UPDATED` segue
+  desmarcado de propósito.
 - **Consequência direta, e ela mudou em 18/09/2026:** na seção 5.3, os
   campos `status`, `ciclo`, `proximaCobranca` **e agora `valor`** são
   reconferidos contra a Asaas a cada chamada. Até 17/09 o `valor` era a

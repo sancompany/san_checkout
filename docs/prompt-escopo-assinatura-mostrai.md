@@ -108,15 +108,19 @@ seu código precisa tratar os seis**:
 A chave para localizar de quem é o evento é `planoId` + `documento` — o
 payload de assinatura **não traz `chargeId`**.
 
-**O que NUNCA chega:**
+**O que NUNCA chega até VOCÊ** (o checkout não repassa, mesmo que o
+evento chegue até nós):
 
-- **nada de assinatura encerrada fora do nosso fluxo.** Medido em
-  16/09/2026: **zero eventos `SUBSCRIPTION_*` entre os 53 configurados**
-  na conta Asaas. Assinatura cancelada direto no painel da Asaas, ou
-  encerrada por ela após falhas seguidas, **só chega até você se você
-  chamar a conciliação**.
-- **nada quando o preço muda.** Medido em 17/09/2026: nenhuma alteração
-  de valor, de ciclo, de pausa ou de exclusão gerou evento.
+- **nada de assinatura encerrada fora do nosso fluxo, nem de preço
+  mudado no painel da Asaas.** ⚠️ Atualizado em 18/09/2026: até então o
+  grupo `SUBSCRIPTION_*` estava zero entre os eventos configurados na
+  conta (medido em 16/09), então nem o checkout recebia o evento. Desde
+  18/09 o dono marcou o grupo inteiro — o evento **passa a chegar ao
+  checkout**, mas o código ainda não o lê nem o repassa; cai como "não
+  mapeado" e vira só uma linha de log interna. **Pra você, na prática,
+  nada muda ainda**: assinatura cancelada direto no painel da Asaas, ou
+  preço/ciclo alterado por lá, **só chega até você se você chamar a
+  conciliação** — o mesmo vale para pausa e exclusão.
 - **renovação abandonada não avisa nada** (desde 15/09/2026). Fechar o
   pop-up de troca de cartão sem pagar deixa a assinatura antiga
   intocada e ativa; antes disso o checkout mandava `cancelada` nesse
