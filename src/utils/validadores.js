@@ -32,6 +32,18 @@ const TETOS = {
   documento: 32,
   telefone: 32,
   cep: 16,
+  /* ENDEREÇO — mesma razão do `nome`: texto livre que a Asaas aceita e
+     grava sem teto próprio, e que antes só era checado por presença
+     (achado no ciclo de revisão do projeto inteiro em 18/09/2026, junto
+     do `telefone` sem validação em três rotas — ver abaixo). Números
+     folgados para o dado real: rua e complemento não passam de umas
+     dezenas de caracteres; `uf` é sempre 2 letras. */
+  endereco: 200,
+  enderecoNumero: 20,
+  complemento: 100,
+  bairro: 100,
+  cidade: 100,
+  uf: 2,
   /* IDENTIFICADOR DE PEDIDO E DE PLANO — 128.
      Eles não vinham com teto nenhum, e é o caso da lição nº 24 (teto
      mora no validador, não em cada controlador): entram por parâmetro
@@ -328,6 +340,20 @@ export function cepValido(valor) {
 }
 
 /**
+ * Teto de tamanho para os campos de endereço — sem formato, porque a
+ * Asaas trata rua/bairro/cidade como texto livre e quem valida o
+ * conteúdo é o antifraude dela. Recebe um objeto { campo: valor } e
+ * confere cada um contra o teto do MESMO nome em `TETOS`; campo ausente
+ * (`undefined`, ex. `complemento` opcional) passa — quem exige presença
+ * é o controlador, não este validador.
+ */
+export function camposDeEnderecoDentroDoTeto(campos) {
+  return Object.entries(campos).every(
+    ([campo, valor]) => valor === undefined || passaNoTeto(valor, TETOS[campo])
+  );
+}
+
+/**
  * `nome` nunca teve validador — só era checado por ser verdadeiro, o
  * que aceitava tanto "a" quanto 100 KB de texto. É o campo que vai
  * para a Asaas como nome do cliente e volta impresso no boleto.
@@ -460,6 +486,27 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   // --- CEP ---
   assert.ok(cepValido('01310-100'), 'CEP pontuado passa');
   assert.ok(!cepValido('0131010'), 'CEP de 7 dígitos recusa');
+
+  /* --- ENDEREÇO ---
+     Achado no ciclo de revisão do projeto inteiro em 18/09/2026: até
+     aqui só `cep` tinha teto — `endereco`, `bairro`, `cidade` etc.
+     eram checados só por presença, e um deles de 100 KB atravessava. */
+  assert.ok(
+    camposDeEnderecoDentroDoTeto({ endereco: 'Rua Tal', enderecoNumero: '123', bairro: 'Centro', cidade: 'SP', uf: 'SP' }),
+    'endereço realista passa'
+  );
+  assert.ok(
+    !camposDeEnderecoDentroDoTeto({ endereco: 'A'.repeat(300) }),
+    'endereço acima do teto recusa'
+  );
+  assert.ok(
+    !camposDeEnderecoDentroDoTeto({ bairro: 'A'.repeat(300) }),
+    'bairro acima do teto recusa — o teto é POR CAMPO, não só do endereco'
+  );
+  assert.ok(
+    camposDeEnderecoDentroDoTeto({ endereco: 'Rua Tal', complemento: undefined }),
+    'campo ausente (ex.: complemento opcional) passa — quem exige presença é o controlador'
+  );
 
   // --- valor ---
   assert.ok(valorValido(0.01), 'centavo passa');

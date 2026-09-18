@@ -44,7 +44,7 @@ import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import {
   documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido,
-  normalizarDocumento,
+  normalizarDocumento, camposDeEnderecoDentroDoTeto,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS,
   parcelasValidas, MAXIMO_DE_PARCELAS_DO_CHECKOUT
 } from '../utils/validadores.js';
@@ -89,6 +89,12 @@ export async function criarCheckoutCartao(requisicao, resposta) {
     return resposta.status(400).json({ erro: 'Endereço completo (rua, número, bairro e CEP) é obrigatório.' });
   }
   if (!cepValido(cep)) return resposta.status(400).json({ erro: 'CEP inválido.' });
+  // Presença não é tamanho — achado no ciclo de revisão do projeto
+  // inteiro em 18/09/2026: até aqui só `cep` tinha teto, e um `endereco`
+  // de 100 KB atravessava e ia direto pra Asaas e pra `cobrancas`.
+  if (!camposDeEnderecoDentroDoTeto({ endereco, enderecoNumero, complemento, bairro, cidade, uf })) {
+    return resposta.status(400).json({ erro: 'Endereço muito longo.' });
+  }
 
   const numeroParcelas = Number(parcelas);
 
@@ -254,6 +260,10 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     return resposta.status(400).json({ erro: 'Endereço completo (rua, número, bairro e CEP) é obrigatório.' });
   }
   if (!cepValido(cep)) return resposta.status(400).json({ erro: 'CEP inválido.' });
+  // Mesma checagem do cartão avulso acima — ver a nota lá.
+  if (!camposDeEnderecoDentroDoTeto({ endereco, enderecoNumero, complemento, bairro, cidade, uf })) {
+    return resposta.status(400).json({ erro: 'Endereço muito longo.' });
+  }
 
   try {
     const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura' });
@@ -433,6 +443,12 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
+  // Telefone é opcional aqui (o Pix Automático não exige, diferente da
+  // pop-up de cartão/assinatura), mas quando vem passa pela MESMA
+  // checagem — achado no ciclo de revisão do projeto inteiro em
+  // 18/09/2026: sem isto, um telefone de 100 KB atravessava e ia gravado
+  // cru em `cobrancas`.
+  if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
   try {
     const { plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });

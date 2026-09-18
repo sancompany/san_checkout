@@ -528,6 +528,14 @@ function abrirModalContratante(id = null) {
     : 'A api_key é gerada automaticamente no cadastro.';
   $('btn-salvar-contratante').textContent = alvo ? 'Salvar alterações' : 'Cadastrar';
   $('btn-salvar-contratante').dataset.editando = alvo ? alvo.id : '';
+  // `metodos_habilitados` nulo é "sem restrição" (ver pedidoService.js) —
+  // acompanhado aqui pra `salvarContratante` saber que, se os checkboxes
+  // saírem intocados do valor padrão que ELE MESMO pré-marcou (abaixo),
+  // não é escolha do operador, é só o padrão de exibição. Achado no
+  // ciclo de revisão do projeto inteiro em 18/09/2026: sem isto, editar
+  // um campo qualquer (ex.: só o nome) de um contratante "sem restrição"
+  // o estreitava pra sempre aos 4 métodos padrão, calado.
+  $('btn-salvar-contratante').dataset.metodosOriginalNulo = alvo && alvo.metodos_habilitados == null ? '1' : '';
   $('campo-contratante-id').hidden = Boolean(alvo);
 
   $('f-id').value = alvo?.id ?? '';
@@ -559,12 +567,23 @@ async function salvarContratante() {
     return mostrarErro('msg-contratante', 'Marque pelo menos um tipo de cobrança.');
   }
 
+  // "Sem restrição" (metodos_habilitados nulo) intocado: os checkboxes
+  // ainda estão exatamente no padrão que a ABERTURA do modal pré-marcou
+  // (ver abrirModalContratante), não numa escolha do operador — omitir
+  // do corpo faz o PATCH preservar o null (a rota já suporta omitir,
+  // ver `metodosHabilitadosValidos` em adminController.js). Tocar em
+  // qualquer checkbox sai desse caso e passa a mandar a lista explícita.
+  const eraSemRestricaoEContinuaNoPadrao =
+    botao.dataset.metodosOriginalNulo === '1' &&
+    metodosHabilitados.length === METODOS_PADRAO.length &&
+    METODOS_PADRAO.every((m) => metodosHabilitados.includes(m));
+
   const corpo = {
     nome: $('f-nome').value.trim(),
     apiBaseUrl: $('f-api-base-url').value.trim(),
     webhookUrl: $('f-webhook-url').value.trim(),
     walletId: $('f-wallet-id').value.trim(),
-    metodosHabilitados,
+    ...(eraSemRestricaoEContinuaNoPadrao ? {} : { metodosHabilitados }),
     retornoDominios: $('f-retorno-dominios').value
       .split('\n')
       .map((linha) => linha.trim())
@@ -830,11 +849,21 @@ function formatarReais(valor) {
 /** Taxa nula = nada se resolveu ainda no período; mostrar "0%" seria
  *  mentira, então mostra travessão. */
 function celulaTaxa(taxa) {
-  if (taxa === null || taxa === undefined) return '<span class="celula-fraca">—</span>';
+  const numero = Number(taxa);
+  if (taxa === null || taxa === undefined || !Number.isFinite(numero)) {
+    return '<span class="celula-fraca">—</span>';
+  }
+  // Mesma disciplina do resto do arquivo: nada vai pro innerHTML sem
+  // passar por `escapar()` — achado no ciclo de revisão do projeto
+  // inteiro em 18/09/2026, a única exceção à regra. `taxa` é sempre um
+  // número calculado pelo servidor hoje, mas nada no tipo garante isso
+  // para sempre; a largura da barra também é limitada a [0,100], que é a
+  // faixa que faz sentido visualmente.
+  const largura = Math.max(0, Math.min(100, numero));
   return `
     <span class="barra-taxa">
-      <span class="barra-taxa-trilho"><span class="barra-taxa-preenchida" style="width:${taxa}%"></span></span>
-      <span class="barra-taxa-numero">${taxa}%</span>
+      <span class="barra-taxa-trilho"><span class="barra-taxa-preenchida" style="width:${largura}%"></span></span>
+      <span class="barra-taxa-numero">${escapar(String(numero))}%</span>
     </span>
   `;
 }

@@ -28,9 +28,8 @@
  * Uso:  npm run acessibilidade
  */
 
-import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
@@ -41,48 +40,25 @@ import { dirname } from 'node:path';
    o dublê acompanhar sozinho. */
 import { MENSAGEM_PISO_ASAAS } from '../src/utils/validadores.js';
 import { taxaComParcelasQueCabem } from '../src/services/taxaService.js';
+import { PEDIDO_DUBLE, PLANO_DUBLE, servir } from './ajudantesNavegador.mjs';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLICO = join(RAIZ, 'public');
 
 /** As telas do COMPRADOR primeiro — é quem não escolheu estar aqui e
  *  não tem alternativa se a tela não funcionar. O painel é do operador,
- *  e entra depois porque a obrigação vale para ele também (Lei 5). */
-/* `PEDIDO_DUBLE` é a resposta de `GET /api/checkout/pedido/:c/:id`, com
-   o formato real de `pedidoController` (contratanteNome,
-   metodosHabilitados, pedido, taxa, retornoUrl).
-
-   Precisa existir porque SEM ELE não há o que auditar: medido em
-   17/09, o checkout sem parâmetros troca a página inteira por "Acesso
-   não autorizado", e com parâmetros mas sem API deixa os 36 elementos
-   no DOM com `offsetParent` nulo — todos invisíveis. Auditar aquilo
-   devolve "zero violações" sobre uma tela que ninguém vê. */
-const PEDIDO_DUBLE = {
-  contratanteNome: 'Loja de Teste',
-  metodosHabilitados: ['pix', 'boleto', 'cartao', 'assinatura'],
-  pedido: {
-    tipo: 'produto',
-    descricao: 'Camiseta preta — tamanho M',
-    /* `nome` e `valorUnitario`, como o contrato manda (`API.md` §4.1).
-       Este dublê dizia `{ descricao, valor }`, que NÃO é o contrato — e
-       o front lê `item.nome`/`item.valorUnitario`. Resultado: a linha de
-       item era auditada em branco, e a auditoria nunca exercitou o que
-       o comprador vê de verdade. Dublê que não bate com o contrato
-       audita a tela errada, que é o mesmo erro do "0 violações" sobre a
-       tela de acesso não autorizado, num campo só. */
-    itens: [
-      { nome: 'Camiseta preta M', quantidade: 1, valorUnitario: 79.9 },
-      { nome: 'Meia par avulso', quantidade: 2, valorUnitario: 5 }
-    ],
-    valorCheio: 89.9,
-    desconto: 0,
-    valorComDesconto: 89.9,
-    frete: 0
-  },
-  taxa: { taxaAsaas: 1.99, taxaPropria: 2.7, taxasTotais: 4.69, valorCobrado: 94.59 },
-  maxParcelas: 12,
-  retornoUrl: null
-};
+ *  e entra depois porque a obrigação vale para ele também (Lei 5).
+ *
+ *  `PEDIDO_DUBLE` (e `PLANO_DUBLE`, mais abaixo) vêm de
+ *  `ajudantesNavegador.mjs`, compartilhado com `desempenho.mjs` — os
+ *  dois nasceram com cópia própria e divergiram na formatação, então
+ *  foram unificados em 18/09/2026 (ciclo de revisão do projeto inteiro).
+ *
+ *  Precisa existir porque SEM ELE não há o que auditar: medido em
+ *  17/09, o checkout sem parâmetros troca a página inteira por "Acesso
+ *  não autorizado", e com parâmetros mas sem API deixa os 36 elementos
+ *  no DOM com `offsetParent` nulo — todos invisíveis. Auditar aquilo
+ *  devolve "zero violações" sobre uma tela que ninguém vê. */
 
 /* ESTADOS NOVOS DE 17/09/2026, e a razão de estarem aqui: os dois
    nasceram nesta data e nenhum navegador os tinha visto. Auditar só o
@@ -142,20 +118,9 @@ if (CABEM.parcelas >= 12) {
 /* A tela de ASSINATURA é outra tela, e carrega por outro endpoint
    (`/api/checkout/plano/:c/:id`, parâmetro `?assinatura=`). Sem ela a
    auditoria deixaria de fora justamente o fluxo de recorrência — o que
-   o MostrAí usa. Formato real de `planoController`: o plano no topo e um
-   `_checkout` com os dados do contratante. */
-const PLANO_DUBLE = {
-  id: 'plano_auditoria',
-  nome: 'Plano Mensal de Teste',
-  descricao: 'Acesso completo, renovação automática',
-  valor: 49.9,
-  ciclo: 'MONTHLY',
-  _checkout: {
-    metodosHabilitados: ['assinatura'],
-    contratanteNome: 'Loja de Teste',
-    retornoUrl: null
-  }
-};
+   o MostrAí usa. `PLANO_DUBLE` (formato real de `planoController`, o
+   plano no topo e um `_checkout` com os dados do contratante) vem de
+   `ajudantesNavegador.mjs`, importado no topo do arquivo. */
 
 const TELAS = [
   { arquivo: 'index.html', nome: 'Checkout', publico: 'comprador',
@@ -172,38 +137,10 @@ const TELAS = [
   { arquivo: 'admin.html', nome: 'Painel administrativo', publico: 'operador' }
 ];
 
-const TIPOS = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.webmanifest': 'application/manifest+json'
-};
-
-function servir() {
-  const servidor = createServer(async (req, res) => {
-    // `normalize` + prefixo conferido: sem isso um `..%2f` no caminho lê
-    // arquivo fora de `public/`. Servidor de teste também é servidor.
-    const caminho = normalize(join(PUBLICO, decodeURIComponent(req.url.split('?')[0])));
-    if (!caminho.startsWith(PUBLICO)) { res.writeHead(403).end(); return; }
-
-    try {
-      const corpo = await readFile(caminho);
-      res.writeHead(200, { 'Content-Type': TIPOS[extname(caminho)] ?? 'application/octet-stream' });
-      res.end(corpo);
-    } catch {
-      res.writeHead(404, { 'Content-Type': 'text/plain' }).end('nao encontrado');
-    }
-  });
-  return new Promise((ok) => servidor.listen(0, '127.0.0.1', () => ok(servidor)));
-}
-
 const { chromium } = await import('playwright');
 const axeFonte = await readFile(join(RAIZ, 'node_modules/axe-core/axe.min.js'), 'utf8');
 
-const servidor = await servir();
+const servidor = await servir(PUBLICO);
 const base = `http://127.0.0.1:${servidor.address().port}`;
 
 // Largura de celular: é como a maioria paga, e é onde alvo pequeno e

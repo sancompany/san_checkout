@@ -103,7 +103,7 @@ export async function cancelarAssinatura(requisicao, resposta) {
  * status na Asaas, o status local e quais status locais são aceitos na
  * busca.
  */
-function criarHandlerDeStatus({ statusAsaas, statusLocal, statusAceitos, jaEstaAssim }) {
+function criarHandlerDeStatus({ statusAsaas, statusLocal, statusAceitos, nomeDoHandler }) {
   return async function handler(requisicao, resposta) {
     const chave = requisicao.get('X-Checkout-Key');
     let { planoId, documento } = requisicao.body ?? {};
@@ -136,7 +136,7 @@ function criarHandlerDeStatus({ statusAsaas, statusLocal, statusAceitos, jaEstaA
 
       resposta.json({ assinaturaId: assinatura.id, status: statusLocal });
     } catch (erro) {
-      responderErro(resposta, erro, `assinaturaController.${jaEstaAssim}`);
+      responderErro(resposta, erro, `assinaturaController.${nomeDoHandler}`);
     }
   };
 }
@@ -145,12 +145,12 @@ export const pausarAssinatura = criarHandlerDeStatus({
   statusAsaas: 'INACTIVE',
   statusLocal: 'pausada',
   statusAceitos: ['ativa', 'pausada'],
-  jaEstaAssim: 'pausarAssinatura'
+  nomeDoHandler: 'pausarAssinatura'
 });
 
 export const retomarAssinatura = criarHandlerDeStatus({
   statusAsaas: 'ACTIVE',
   statusLocal: 'ativa',
   statusAceitos: ['pausada', 'ativa'],
-  jaEstaAssim: 'retomarAssinatura'
+  nomeDoHandler: 'retomarAssinatura'
 });

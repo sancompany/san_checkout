@@ -24,7 +24,7 @@ import {
 } from '../services/asaasService.js';
 import { registrarCobranca, buscarCobrancaPendenteDoPedido } from '../services/cobrancaService.js';
 import {
-  documentoValido, emailValido, valorValido, nomeValido,
+  documentoValido, emailValido, valorValido, nomeValido, telefoneValido,
   normalizarDocumento,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
 } from '../utils/validadores.js';
@@ -79,6 +79,11 @@ export async function gerarPix(requisicao, resposta) {
      outra. Ver `normalizarDocumento` em `utils/validadores.js`. */
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
+  // Telefone é opcional aqui (Pix/Boleto não exigem, diferente da pop-up
+  // de cartão), mas quando vem, passa pela MESMA checagem — achado no
+  // ciclo de revisão do projeto inteiro em 18/09/2026: sem isto, um
+  // telefone de 100 KB atravessava e ia gravado cru em `cobrancas`.
+  if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
   try {
     // Nunca confia no valor mandado pelo front — resolve o pedido de
@@ -196,6 +201,8 @@ export async function gerarBoleto(requisicao, resposta) {
   // inteira está em `normalizarDocumento`, em `utils/validadores.js`.
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
+  // Mesma checagem do Pix acima, e o mesmo motivo — ver a nota lá.
+  if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
   try {
     // Mesmo motivo do Pix: o contratante vem do `resolverPedido`.
