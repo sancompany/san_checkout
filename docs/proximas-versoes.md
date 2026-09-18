@@ -608,3 +608,29 @@ falso — ver a entrada própria neste arquivo.
 - **Quando vale a pena** — no primeiro dinheiro real, ou no segundo
   contratante — o que vier primeiro. A partir daí, recadastrar à mão
   deixa de ser uma tarde de trabalho.
+
+## Pessoa número dois — operar sem o dono
+
+- **O quê** — uma segunda pessoa, com credencial de verdade, capaz de
+  publicar uma mudança e entrar no `/admin` sem falar com quem
+  construiu. É a metade do item 6 da prontidão que nenhum agente
+  substitui: um agente sem contexto já rodou o teste do `RUNBOOK.md`
+  §10 em 17/09/2026, achou oito furos reais no documento (corrigidos),
+  mas não tem — e não deveria ter — credencial de produção.
+- **Por que foi adiado** — decisão do dono em 18/09/2026: não existe
+  pessoa número dois hoje, e treinar/autorizar uma vai levar um tempo.
+  Não é uma pendência técnica; é uma decisão sobre quem, e quando.
+- **O que fica em aberto enquanto isso** — se o dono ficar indisponível
+  (doença, viagem sem sinal, emergência), ninguém mais consegue
+  reverter um deploy ruim, restaurar o banco ou operar o `/admin`. O
+  `RUNBOOK.md` está pronto para ensinar quem chegar — é o que o teste
+  de 17/09 mediu —, mas ensinar exige alguém para ensinar.
+- **O que NÃO precisa esperar** — os campos `⬜` do `RUNBOOK.md` §1.1 e
+  §10 (e-mail de login, onde a senha e o 2FA moram, qual cartão paga o
+  quê, contato direto) são do dono sozinho e não dependem de haver uma
+  segunda pessoa; ele decidiu como vai guardá-los depois de fechar o
+  MostrAí e o checkout.
+- **Quando vale a pena** — quando existir alguém de confiança para essa
+  função. Nesse dia, o teste é reaplicar o roteiro do `RUNBOOK.md` §10
+  com essa pessoa de verdade (não mais um agente) e fechar a metade que
+  falta: publicar de verdade e entrar no `/admin`.

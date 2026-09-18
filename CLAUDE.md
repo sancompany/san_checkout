@@ -732,13 +732,17 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
   da exceção de backup (`CONSTRAINTS.md` §3).
 - **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` que
   nenhuma API responde (onde a senha mora, qual cartão paga, contato
-  direto); e a **pessoa número dois**, cuja metade com credencial —
-  publicar de verdade e entrar no `/admin` — nenhum agente substitui. O
-  resto do teste já rodou (`RUNBOOK` §10).
+  direto) — o dono vai resolver por conta própria depois de fechar o
+  MostrAí e o checkout.
   ✅ **O registro SPF saiu daqui em 18/09**: o dono liberou a permissão e
   o TXT `v=spf1 include:_spf.google.com ~all` está no ar na raiz da zona,
   conferido em dois resolvedores independentes (Google e Cloudflare) com
   controle negativo num subdomínio.
+  🔁 **A pessoa número dois virou atualização futura em 18/09**, por
+  decisão do dono — não existe hoje e vai levar um tempo
+  (`docs/proximas-versoes.md`). O resto do teste do `RUNBOOK` §10 já
+  rodou com um agente sem contexto; o que falta é a metade com
+  credencial, que nenhum agente substitui.
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

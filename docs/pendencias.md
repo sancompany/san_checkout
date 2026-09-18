@@ -141,7 +141,7 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09
+### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09, metade virou atualização futura em 18/09
 As sete seções que a prontidão operacional exige e que **não existiam**
 foram escritas em 17/09: inventário de contas (§1.1), segredos e como
 rotacionar cada um (§1.2), alerta → significado → primeira ação (§6.3),
@@ -181,12 +181,21 @@ O que **só o dono preenche**, e está marcado `⬜` no próprio arquivo:
 e-mail de login de cada conta, onde a senha e o segundo fator moram,
 qual cartão paga o quê, e o contato direto dele. Sem isso as seções
 descrevem a forma e não servem na hora — que é o oposto do objetivo.
+**Decisão do dono em 18/09:** ele preenche isso sozinho, depois de
+fechar o MostrAí e o checkout, guardando as credenciais num lugar seguro
+próprio (site ou anotação já existente) — não depende de mim nem de
+pessoa número dois.
 
-**O item só fecha com a pessoa número dois**, e o teste é o da própria
-prontidão: ela, com o runbook e sem falar com quem construiu, faz um
-deploy trivial, reverte, e acha a data de vencimento do domínio. Onde
-travar, o arquivo está incompleto. **Não existe pessoa número dois
-hoje.**
+**O item só fecha de verdade com a pessoa número dois**, e o teste é o
+da própria prontidão: ela, com o runbook e sem falar com quem construiu,
+faz um deploy trivial, reverte, e acha a data de vencimento do domínio.
+**Não existe pessoa número dois hoje, e o dono decidiu em 18/09/2026
+adiar isso — vira atualização futura**
+(`docs/proximas-versoes.md`, "Pessoa número dois — operar sem o dono"),
+não pendência bloqueante: não é falta técnica, é decisão de quem e
+quando. O teste com o agente sem contexto (acima) já mediu a metade que
+dá para medir sem credencial; a que falta só fecha com uma pessoa de
+verdade.
 
 Medido no dia, e escrito no arquivo: domínio `sancocore.com.br` vence
 **31/08/2027** (RDAP do registro.br); projeto Supabase
