@@ -217,6 +217,19 @@ npm run check           # análise de sintaxe de todo JS + as suítes
 #    https://github.com/sancompany/san_checkout/pulls
 ```
 
+> **Decisão do dono, 18/09/2026: mesclar assim que estiver pronto, sem
+> pedir.** "Mescla na main SEMPRE que tiver pronto já mescle." Ou seja: a
+> sessão não espera autorização caso a caso para mesclar — a porta
+> continua sendo o **CI verde**, não uma pessoa, e é ela que decide.
+>
+> Duas coisas que essa decisão NÃO muda, e é importante que não mudem:
+> **mesclar é publicar** (a main vai para produção sozinha), então o que
+> não estiver pronto não vira commit na branch; e a lista curta da skill
+> `leis` continua valendo — caminho de dinheiro, segredo, migration
+> destrutiva e contrato que outro projeto consome seguem exigindo
+> autorização para serem CONSTRUÍDOS. O que o dono dispensou é o pedido
+> de "posso mesclar?", não o de "posso fazer?".
+
 `npm run check` **é seguro rodar local**: o runner injeta valores falsos
 só para os módulos carregarem, e nenhuma suíte toca banco, rede ou
 relógio. Não precisa de `.env`.

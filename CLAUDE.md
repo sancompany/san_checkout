@@ -651,6 +651,15 @@ de o dono mandar resolver sem ele:
 - Testes: `tests/` — `npm test` roda as 35 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
+## Mesclar é decisão tomada
+**O dono autorizou, em 18/09/2026, mesclar na `main` sem pedir, sempre
+que estiver pronto** — e mesclar aqui é publicar, porque a `main` vai
+para produção sozinha. A porta continua sendo o **CI verde**
+(`RUNBOOK` §3), não uma pessoa. O que ele dispensou foi a pergunta
+"posso mesclar?"; a lista curta da skill `leis` (caminho de dinheiro,
+segredo, migration destrutiva, contrato que outro projeto consome)
+continua exigindo autorização para CONSTRUIR.
+
 ## Conformidade
 Violação segue o ciclo da skill `leis`. Não existe estado final fora de
 conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
