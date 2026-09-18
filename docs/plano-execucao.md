@@ -1,5 +1,14 @@
 # San Checkout — Plano de execução: todos os problemas e soluções
 
+> ⚠️ **REGISTRO FECHADO de 10/09/2026, não plano em vigor.** Marcado
+> assim em 18/09/2026, no ciclo de revisão do projeto inteiro: o
+> documento descrevia o que fazer, sem dizer que já foi feito — e as
+> citações dele apontam para o mundo daquele dia (`supabase/schema.sql`,
+> que deixou de existir quando as migrations numeradas entraram, e a
+> raiz `D:\san-checkout-v2`). O trabalho que FALTA está em
+> `docs/pendencias.md` e no `CLAUDE.md`; este arquivo serve para
+> entender de onde as decisões vieram.
+>
 > 10/09/2026. Lista completa e ordenada do que sai desta auditoria.
 > Cada item traz: o problema, a evidência, a solução, e os arquivos
 > tocados (caminho completo a partir da raiz `D:\san-checkout-v2\`).

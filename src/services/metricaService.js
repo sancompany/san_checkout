@@ -39,6 +39,9 @@ const CONFIRMADOS = ['confirmado'];
 
 /** Cobrança que ainda pode virar pagamento não conta como perdida —
  *  senão a taxa de hoje sempre pareceria péssima. */
+/* ⚠️ A MESMA lista existe em `controllers/cobrancaConsultaController.js`,
+   com o nome `STATUS_AINDA_PAGAVEL` — ver a nota lá: separadas de
+   propósito, ligadas por este ponteiro. */
 const EM_ABERTO = ['pendente', 'em_analise'];
 
 const vazio = () => ({ geradas: 0, pagas: 0, emAberto: 0, perdidas: 0, valorPago: 0 });

@@ -411,7 +411,9 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   lista com o número que o servidor manda.
 - **`seguranca-san` junto**, e ela fechou a lição nº 23: a lista de
   rotas limitadas passou a ser conferida por teste contra a lista de
-  rotas montadas (33 rotas, 17 prefixos), em vez de a olho.
+  rotas montadas, em vez de a olho — a contagem de rotas e prefixos sai
+  do próprio teste quando ele roda, e por isso não está escrita aqui
+  (ela já estava velha em 18/09: dizia 33 e 17 quando eram 34 e 18).
 - **Oito autotestes tinham contador de checagens chumbado**, três deles
   mentindo — `validadores` dizia 40 e tinha 91, e `senhaAdmin` dizia 22
   e tinha 20, superestimando. Todos passaram a contar.

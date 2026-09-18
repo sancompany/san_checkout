@@ -211,7 +211,7 @@ git add -A && git commit -m "<o quê>"
 git push -u origin <sua-branch>
 
 # 2. antes de pedir merge, rodar a mesma porta que o CI roda
-npm run check           # análise de sintaxe + as 32 suítes
+npm run check           # análise de sintaxe de todo JS + as suítes
 
 # 3. abrir o PR e mesclar (a porta é o CI verde — ver abaixo)
 #    https://github.com/sancompany/san_checkout/pulls

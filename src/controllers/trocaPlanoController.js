@@ -80,7 +80,7 @@ import {
   alterarPlanoAssinatura,
   STATUS_ACERTO_PAGO
 } from '../services/asaasService.js';
-import { calcularAcertoDeTroca } from '../services/proporcionalService.js';
+import { calcularAcertoDeTroca, DIAS_DO_CICLO } from '../services/proporcionalService.js';
 import { notificarPlanoTrocado } from './webhookController.js';
 /* Os sete ciclos moram lá porque é lá que a assinatura NASCE, e o front
    espelha a mesma lista apontando para aquele arquivo. Importar em vez
@@ -860,6 +860,28 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
         `${funcao} tem de filtrar por METODOS_DE_ASSINATURA — senão o acerto de troca vira "a cobrança da assinatura"`
       );
     }
+  }
+
+  /* --- 14. os sete ciclos existem em DOIS lugares, e ninguém comparava
+     `CICLOS_VALIDOS` (asaasCheckoutController) é o conjunto que a Asaas
+     aceita e que a criação da assinatura valida; `DIAS_DO_CICLO`
+     (proporcionalService) é quantos dias cada um tem. São dois arquivos
+     com o MESMO conjunto fechado e nenhuma comparação entre eles até
+     18/09/2026 — achado no ciclo de revisão do projeto inteiro.
+
+     O que aconteceria na divergência não é erro visível: um ciclo novo
+     aceito na criação e ausente na tabela de dias faz a troca de plano
+     responder "não foi possível calcular o acerto" para aquele plano,
+     para sempre, sem nada apontar a causa. É a lição nº 19 (conjunto
+     fechado enumerado pela metade) aplicada a duas metades nossas. */
+  {
+    const dosDias = Object.keys(DIAS_DO_CICLO).sort();
+    const aceitos = [...CICLOS_VALIDOS].sort();
+    conferir(
+      dosDias.length === aceitos.length && dosDias.every((c, i) => c === aceitos[i]),
+      `os ciclos aceitos e os ciclos com dias têm de ser o MESMO conjunto — aceitos: ${aceitos.join(',')} / com dias: ${dosDias.join(',')}`
+    );
+    conferir(aceitos.length === 7, `e são sete (veio ${aceitos.length})`);
   }
 
   console.log(`trocaPlanoController: ${checagens} checagens OK`);

@@ -173,7 +173,12 @@ enquanto o prazo fiscal correr.
 
 A skill `legal` trata isto como decisão de arquitetura, não de texto: se
 o modelo não permitir apagar sem quebrar histórico ou guarda fiscal, o
-problema é de modelagem. Conferido contra o `supabase/schema.sql`:
+problema é de modelagem. Conferido contra o schema — que hoje são as
+**migrations numeradas** em `supabase/migrations/` (a `0001_baseline.sql`
+tem os `create table`), e não mais um arquivo de schema único — ele
+deixou de existir quando a regra de migrations imutáveis entrou
+(`CONSTRAINTS.md` §2.1). Este parágrafo apontava para o arquivo antigo
+até 18/09/2026:
 
 - Em `cobrancas`, o dado pessoal (`documento`, `email`, `telefone`, os
   oito campos de endereço, `itens`) está em colunas **separadas** do

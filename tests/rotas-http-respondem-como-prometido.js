@@ -208,6 +208,44 @@ try {
     foraDaApi.cabecalhos.get('cache-control') !== 'no-store',
     `controle positivo: fora de /api o no-store não é aplicado (veio "${foraDaApi.cabecalhos.get('cache-control')}")`
   );
+  /* ---- TODA ROTA DO ADMIN ATRÁS DA GUARDA, E NÃO SÓ UMA -----------
+     Até 18/09/2026 esta suíte provava a guarda em `/contratantes` e
+     confiava na ORDEM do `adminRoutes.js` para o resto: o
+     `router.use(verificarAdminKey)` protege o que vem depois dele, e
+     uma rota nova escrita ACIMA da linha nasceria pública sem nada
+     acusar. É a lição nº 23 por outra porta — lá era a lista de rotas
+     limitadas conferida a olho, aqui é a lista de rotas protegidas.
+
+     A varredura lê as rotas declaradas no arquivo e chama TODAS sem
+     token. `/sessao` fica de fora por desenho: é a rota que troca senha
+     por token, e por isso é a única que não pode exigir um. */
+  {
+    const { readFileSync: lerArquivo } = await import('node:fs');
+    const fonteAdmin = lerArquivo(new URL('../src/routes/adminRoutes.js', import.meta.url), 'utf8');
+
+    const declaradas = [...fonteAdmin.matchAll(/router\.(get|post|patch|put|delete)\('([^']+)'/g)]
+      .map(([, metodo, caminho]) => ({ metodo: metodo.toUpperCase(), caminho }));
+
+    ok(declaradas.length >= 10, `controle positivo: a varredura achou as rotas do admin (achou ${declaradas.length})`);
+
+    const semSessao = declaradas.filter((r) => r.caminho !== '/sessao');
+    ok(semSessao.length >= 9, 'e sobram as que DEVEM exigir token');
+
+    for (const { metodo, caminho } of semSessao) {
+      // `:id` vira um valor qualquer: a guarda roda antes de o handler
+      // olhar o parâmetro, então o valor não importa.
+      const alvo = `/api/admin${caminho.replace(/:[^/]+/g, 'x')}`;
+      const semToken = await chamar(alvo, { metodo, corpo: metodo === 'GET' ? undefined : {} });
+      igual(semToken.http, 401, `${metodo} ${alvo} sem token tem que ser 401`);
+    }
+
+    /* CONTROLE POSITIVO: com token válido, a mesma rota deixa de ser
+       401. Sem este par, uma guarda que recusasse até quem tem token
+       passaria por todo o laço acima. */
+    const comTokenDeNovo = await chamar('/api/admin/contratantes', { cabecalhos: { 'X-Admin-Token': token } });
+    ok(comTokenDeNovo.http !== 401, `com token, a rota do admin não é 401 (veio ${comTokenDeNovo.http})`);
+  }
+
   /* ---- ID GIGANTE É RECUSADO NA FRONTEIRA, COM 400 ------------------
      `pedidoId` e `planoId` não tinham teto de tamanho até 18/09/2026 —
      achado no ciclo de revisão do projeto inteiro. Eles entram por

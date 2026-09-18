@@ -55,6 +55,13 @@ import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
 
 /** Status locais em que ainda faz sentido mostrar como pagar. */
+/* ⚠️ A MESMA lista existe em `services/metricaService.js`, com o nome
+   `EM_ABERTO`. As duas ficam separadas de propósito: aqui a pergunta é
+   "vale reconsultar a Asaas?", lá é "conta como aberta na métrica?" —
+   são decisões que podem divergir (um status novo pode contar como
+   aberto sem valer uma ida à Asaas). O ponteiro existe para quem mexer
+   numa OLHAR a outra, que é o que faltava: valores iguais sem nada
+   ligando os dois lugares dessincronizam calados. */
 const STATUS_AINDA_PAGAVEL = ['pendente', 'em_analise'];
 
 /**
