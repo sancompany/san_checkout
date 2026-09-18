@@ -27,6 +27,14 @@ jobs:
 
       - run: npm ci
 
+      # `check`, e não `test`: o `check` roda a análise de sintaxe de TODO
+      # JS — incluindo `public/js/`, que suíte nenhuma alcança — e só
+      # depois as suítes. Até 18/09/2026 este passo era `npm test`, então
+      # um erro de sintaxe no código do comprador passava pelo portão que
+      # autoriza o deploy. O `RUNBOOK` §3 já mandava rodar `npm run check`
+      # "a mesma porta que o CI roda": o documento estava certo e o CI é
+      # que não era.
+      #
       # Sem segredo nenhum: os autotestes são puros e o runner injeta
       # valores falsos só para os módulos carregarem (ver tests/executar.js).
-      - run: npm test
+      - run: npm run check
