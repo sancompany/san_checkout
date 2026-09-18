@@ -1135,7 +1135,7 @@ cada cópia (intervalo, seletor, texto) que precisam ser preservadas uma
 a uma — risco maior do que o resto desta varredura, e melhor como fatia
 própria (skill `construir`) do que misturado num ciclo de revisão:
 
-1. **Polling + pop-up de pagamento**: `public/js/handlers/cartaoHandler.js`
+1. **Polling + pop-up de pagamento**: `public/js/modules/cartaoHandler.js`
    e `assinaturaCheckoutHandler.js` duplicam quase 100 linhas
    (`pararPolling`, `observarFechamentoPopup`, `iniciarPollingPopup`, as
    três constantes de intervalo) — só id do botão, endpoint e texto de
