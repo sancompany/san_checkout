@@ -218,9 +218,17 @@ Três fatos mandam nela:
 2. **Evento faltando falha em silêncio** — sem erro, sem log, sem 4xx. O
    pagamento acontece na Asaas e o pedido fica pendente para sempre do
    lado do contratante. É o modo de falha mais caro deste projeto.
-3. **Marcar evento que o código ignora não é grátis:** ele chega, é
-   logado inteiro (payload cru, com dado pessoal — pendência aberta no
-   `CLAUDE.md`) e é descartado. Marcar o que tem uso, não tudo.
+3. **Marcar evento que o código ignora não é de graça, mas o custo não é
+   o que esta regra dizia até 18/09/2026.** Ela afirmava que o payload
+   ia cru para o log, com dado pessoal — **falso**, e contradizia o
+   §2.5 escrito no mesmo documento: desde a migration `0002` (11/09), a
+   auditoria redige **todo** evento por lista branca
+   (`redigirPayload`), tratado ou não — `id`, `customer`, `subscription`
+   e qualquer identificador de pessoa nunca são gravados, só o
+   **caminho** da chave, sem valor. O custo real de marcar um evento
+   ignorado é menor: uma linha a mais na aba Webhook, sem paridade nova
+   de dado pessoal. Marcar o que tem uso — e, quando o uso é só
+   observar o formato real antes de codificar, marcar também serve.
 
 Webhook existente **pode ser editado** para acrescentar eventos — não é
 preciso criar outro. O limite é de 10 webhooks por conta, cada um com seu
@@ -360,10 +368,28 @@ por aviso**. Desde 16/09 ela chega por conciliação — `POST
 `GET /v3/subscriptions/{id}` (RN-26) —, então a divergência deixou de ser
 permanente, mas continua tendo o atraso de quem concilia.
 
-Marcar o grupo e tratar os eventos é trabalho aberto, e **exige medir
-antes de codificar**: ler o payload real de um evento antes de escrever
+**Tratar** os eventos em código é trabalho aberto, e **exige medir antes
+de codificar**: ler o payload real de um evento antes de escrever
 tratamento. Escrever contra payload imaginado é exatamente o que causou
-os dois bugs de 15/09. `docs/pendencias.md`.
+os dois bugs de 15/09.
+
+**Marcar** o grupo no painel, sem tratar ainda, é outra coisa — e é o
+**único jeito de um dia existir um payload real para ler**. ⚠️ Até
+18/09/2026 esta seção recomendava não marcar, citando a regra 3 acima,
+que estava **errada** (payload cru com dado pessoal — corrigido lá:
+todo evento é redigido por lista branca, tratado ou não). Sem esse
+custo, não marcar só adia indefinidamente o dia de medir. **Decisão do
+dono em 18/09: marcar o grupo inteiro** — as 7 famílias
+(`SUBSCRIPTION_CREATED`, `_UPDATED`, `_INACTIVATED`, `_DELETED`,
+`_SPLIT_DISABLED`, `_SPLIT_DIVERGENCE_BLOCK`,
+`_SPLIT_DIVERGENCE_BLOCK_FINISHED`), mesmo critério já usado para
+"Situação da conta" (o grupo inteiro, baixo volume) e para
+Transferências/Movimentações Internas/Bloqueios de Saldo (marcados sem
+tratamento, porque o log agora dá destino visível). `status`, `cycle`,
+`deleted` e `nextDueDate` já estão na lista branca do
+`auditoriaWebhookService.js` — o primeiro evento real vai trazer
+exatamente os campos que o tratamento vai precisar, sem dado pessoal
+junto. `docs/pendencias.md`.
 
 **Grafia que engana:** `CHECKOUT_CANCELED` tem **um** L e
 `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` tem **dois**. As duas

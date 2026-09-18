@@ -533,7 +533,7 @@ não sai do contêiner") valia igual para esta, e eu não a apliquei ao
 comando de inventário.
 
 
-### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09
+### 🟠 Assinatura encerrada pela Asaas só chega por conciliação, nunca por aviso — MEDIDO 16/09, marcar liberado 18/09
 Achado em 15/09/2026, auditando o caminho da assinatura. O
 `CONSTRAINTS.md` §2.2 se declara "referência única" dos eventos
 marcados no painel da Asaas — e **não menciona o grupo de assinaturas em
@@ -553,10 +553,19 @@ detectada e corrigida no nosso banco — só que por **pull**, quando o
 contratante concilia, e não por aviso na hora. O buraco encolheu de
 "nunca chega" para "chega com o atraso da conciliação dele".
 
-**Fechar** é marcar o grupo de assinaturas no painel e tratar os eventos
-— e continua exigindo medir primeiro: ler o payload real de um antes de
-escrever tratamento, que foi escrever contra payload imaginado que
-causou os dois bugs de 15/09.
+**Fechar de verdade** (tratar os eventos em código) continua exigindo
+medir primeiro: ler o payload real de um antes de escrever tratamento,
+que foi escrever contra payload imaginado que causou os dois bugs de
+15/09.
+
+**Marcar** o grupo no painel — sem tratar ainda — deixou de ser um passo
+a segurar: a razão para segurar era uma regra errada no `CONSTRAINTS.md`
+§2.2 (dizia que o payload ia cru pro log, com dado pessoal — falso,
+corrigido em 18/09; a auditoria redige por lista branca desde 11/09,
+tratado ou não). Sem esse custo, a recomendação passou a ser marcar o
+grupo inteiro — a ação em si é do dono, no painel da Asaas —, porque é
+o único jeito de um dia existir um payload real para ler: sem marcar,
+"medir antes de codificar" nunca teria nada para medir.
 
 ### 🟢 Sem reconciliação quando cancelar/pausar/retomar perde a confirmação — CORRIGIDO 16/09
 **Corrigido no mesmo dia em que foi declarado.** A razão de ter ficado
