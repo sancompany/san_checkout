@@ -683,33 +683,49 @@ mais excluído é igual ao lido do banco, conferido por autoteste e
 medido contra o banco de produção em 17/09/2026 (10 linhas lidas, 10
 excluídas, 0 de negócio).
 
-**RN-34 · O valor de uma assinatura pode mudar na Asaas, e hoje nada
-nos conta.** A Asaas **aceita** alterar `value` e `cycle` de uma
-assinatura ativa — aumentar, diminuir e trocar o ciclo —, medido no
-sandbox em 17/09/2026 em assinatura de cartão e de boleto. O checkout
-passou a expor **troca de PLANO** no mesmo dia (RN-35), o que cobre o
-caso legítimo — o assinante vai do plano A para o plano B, e o preço sai
-do plano B. O que esta regra descreve continua valendo para o caso que
-não passa por nós: alteração feita **pelo painel da Asaas** ou por API
-direta. O checkout **não recebe aviso quando isso acontece**: nenhum evento chegou
-ao receptor em toda a bateria de alterações, porque `SUBSCRIPTION_*`
-não está entre os 53 eventos configurados e `PAYMENT_UPDATED` está
-desmarcado de propósito (`CONSTRAINTS.md` §2.2). *Violada:* mudado o
-preço no painel da Asaas, ela passa a cobrar o valor novo e
-`assinaturas.valor` aqui continua o antigo — a conciliação
-(`API.md` §5.3) reconfere `status`, `ciclo` e `proximaCobranca` contra a
-Asaas, **e não reconfere `valor`**. O contratante que confia nesse campo
-mostra ao assinante um preço que não é o cobrado, para sempre e sem
-sintoma. É a MESMA família do bug do `ciclo` de 15/09 (dado local que
-divergiu da fonte e ninguém reparava) por outra porta: a correção de
-16/09 fechou `ciclo` e deixou `valor` aberto. *Quem vê:* ninguém, até
-alguém comparar a fatura com a tela. Por isso o `API.md` §5.3 passou a
-dizer, na cara do integrador, que `valor` não é preço vigente — o que é
-verdade é `ultimaCobranca.valorCobrado`, que é histórico de cobrança
-real. **Declarado, não corrigido às cegas:** reconciliar `valor` é
-mudança no caminho do dinheiro e depende de decisão do dono (é a Asaas
-que passa a mandar no número, inclusive quando a alteração de lá foi um
-erro humano) — `docs/pendencias.md`.
+**RN-34 · O valor de uma assinatura pode mudar na Asaas, e a conciliação
+corrige o nosso registro e DENUNCIA a diferença.** A Asaas **aceita**
+alterar `value` e `cycle` de uma assinatura ativa — medido no sandbox em
+17/09/2026, em cartão e em boleto. Para o caso legítimo existe a troca de
+plano (RN-35). Esta regra é sobre o caso que **não passa por nós**:
+alteração feita pelo painel da Asaas ou por API direta. O checkout **não
+recebe aviso na hora** — nenhum evento chegou ao receptor em toda a
+bateria, porque `SUBSCRIPTION_*` não está entre os 53 eventos
+configurados e `PAYMENT_UPDATED` está desmarcado de propósito
+(`CONSTRAINTS.md` §2.2).
+
+O que a conciliação (`API.md` §5.3) faz desde **18/09/2026**, por decisão
+do dono: reconfere `valor` junto de `status`, `ciclo` e
+`proximaCobranca`; achando diferença, **devolve o valor da Asaas**,
+**grava a correção** e **devolve `divergenciaDeValor: { nosso, asaas }`**
+na mesma resposta. Comparação em **centavos**, senão ponto flutuante
+inventa divergência e a "correção" reescreve a linha a cada conciliação.
+
+*Violada de um jeito:* sem reconciliar, `assinaturas.valor` fica o antigo
+para sempre e o contratante mostra ao assinante um preço que não é o
+cobrado — é a MESMA família do bug do `ciclo` de 15/09, e a correção de
+16/09 fechou `ciclo` e deixou `valor` aberto até aqui. *Violada do
+outro:* corrigir **calado** trocaria um número errado por uma mudança
+invisível — o contratante é quem fala com o assinante (RN-35), e ele
+precisa saber que o preço mudou fora do fluxo. *Violada de um terceiro:*
+anular o nosso valor quando a Asaas não devolve `value` seria a classe
+"ausência virou zero", que este projeto já pagou duas vezes na tela;
+sem valor da Asaas, o nosso é mantido.
+
+*Quem vê:* o contratante, em `valor` (corrigido) e em
+`divergenciaDeValor` (o evento). **Não há aviso proativo:** ele descobre
+**quando roda a conciliação**, e é por isso que o "rode uma vez por dia"
+do `API.md` §5.3 ganhou mais um motivo.
+
+> **A decisão foi do dono, em 18/09/2026**, sobre uma declaração que eu
+> havia deixado aberta em 17/09 ("reconciliar é deixar a Asaas mandar no
+> número, inclusive quando a alteração de lá foi erro humano"). Ele
+> mandou reconciliar e me deu a recomendação de fechar se eu achasse
+> errado. Não acho: quem debita o cartão é a Asaas, então o nosso número
+> divergente não é uma opinião — é informação falsa, e guardá-la para
+> "não endossar o erro" só troca um erro de preço por um erro de
+> registro. O cuidado que ele queria cabe inteiro na denúncia, e é por
+> isso que as duas coisas entraram juntas.
 
 **RN-35 · Trocar de plano cobra a diferença antes de trocar, e avisar o
 assinante é obrigação do contratante.** Autorizada pelo dono em

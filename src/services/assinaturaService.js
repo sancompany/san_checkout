@@ -166,6 +166,36 @@ export async function buscarAssinaturaPorId(id) {
   return data;
 }
 
+/**
+ * Corrige o `valor` do nosso registro pelo que a Asaas cobra.
+ *
+ * ── A decisão, e ela é do dono (18/09/2026) ─────────────────────────
+ * Até aqui a conciliação reconferia `status`, `ciclo` e
+ * `proximaCobranca` e **não** reconferia `valor` — RN-34, declarado em
+ * 17/09 em vez de corrigido às cegas, porque reconciliar é deixar a
+ * Asaas mandar no número inclusive quando a alteração de lá foi erro
+ * humano de quem mexeu no painel. O dono decidiu: **reconciliar**.
+ *
+ * E a decisão é a certa, pelo motivo que fecha o argumento contrário:
+ * quem debita o cartão é a Asaas. Se o painel dela diz R$ 45 e o nosso
+ * banco diz R$ 30, o assinante **está pagando R$ 45** — o nosso número
+ * não é uma opinião divergente, é uma informação falsa. Guardar o valor
+ * antigo para "não endossar o erro" só troca um erro de preço por um
+ * erro de registro, e deixa o campo que o integrador lê mentindo.
+ *
+ * O cuidado que ele queria não se perde: a divergência é **denunciada**
+ * na mesma resposta (`divergenciaDeValor`, `API.md` §5.3) e registrada
+ * no log. Corrigir e contar não são alternativas — é o par.
+ */
+export async function atualizarValorAssinatura(id, valor) {
+  const { error } = await supabase
+    .from('assinaturas')
+    .update({ valor })
+    .eq('id', id);
+
+  if (error) console.error('[assinaturaService.atualizarValorAssinatura]', error.message);
+}
+
 export async function atualizarStatusAssinatura(id, status) {
   const { error } = await supabase
     .from('assinaturas')

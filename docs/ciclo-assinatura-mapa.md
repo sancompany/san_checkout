@@ -176,7 +176,7 @@ R$ 5,00 (`400 invalid_value`, com mensagem por meio de pagamento).
 
 | Erro | Status |
 |---|---|
-| Alteração de `value` na Asaas não chega por evento nenhum, e a conciliação (T10) **não reconfere `valor`** — só `status`, `ciclo` e `proximaCobranca`. O registro local fica errado para sempre | **[DECLARADO 17/09]** — RN-34. É a mesma família do bug de T5 (`ciclo` divergindo sem reparo), e a correção de 16/09 fechou `ciclo` e deixou `valor` aberto. Não corrigido às cegas: é caminho de dinheiro e a decisão de deixar a Asaas mandar no número é do dono |
+| Alteração de `value` na Asaas não chega por evento nenhum, e a conciliação (T10) não reconferia `valor` — só `status`, `ciclo` e `proximaCobranca`. O registro local ficava errado para sempre | **[CORRIGIDO 18/09]** — RN-34, por decisão do dono. A conciliação reconfere `valor`, grava a correção e devolve `divergenciaDeValor: { nosso, asaas }` na mesma resposta: corrigir calado trocaria um número errado por uma mudança invisível. Comparação em centavos, senão ponto flutuante inventa divergência. Continua **sem aviso proativo** — o contratante descobre quando roda a conciliação |
 | `cycle` novo **não move** `nextDueDate` — o ciclo novo conta a partir da data já marcada | **[MEDIDO 17/09]**, sem dano: é o comportamento do provedor, e está escrito no `API.md` §7.5 para o integrador não errar por onze meses |
 | A cobrança pendente já gerada só muda com `updatePendingPayments: true` | **[MEDIDO 17/09]** nas duas formas: sem a bandeira fica no valor antigo, com ela muda mantendo id e vencimento |
 | `value` **não está no schema documentado** do `PUT`, e funciona | **[DECLARADO 17/09]** — comportamento não documentado pode mudar sem aviso; quem construir precisa de teste que fique vermelho nesse dia |
@@ -244,7 +244,7 @@ não tem o furo de T1).
 
 1. **[MEDIDO, ainda aberto]** T11 — assinatura encerrada fora do nosso fluxo nunca chega até nós por webhook, e agora isso é fato medido, não suspeita: **zero eventos `SUBSCRIPTION_*` entre os 53 configurados** (`GET /v3/webhooks`, 16/09). **Mitigado em parte**: a conciliação (T10, RN-26) reconfere o estado real na Asaas, então a divergência deixa de ser permanente — mas continua dependendo de alguém chamar a rota, em vez de chegar sozinha por evento.
 2. **[DECLARADO]** T-PixAuto — vínculo de `charge_id` e split, adiados até a liberação do Pix Automático na conta.
-2b. **[DECLARADO 17/09]** T12 — `valor` não é reconciliado contra a Asaas, que **aceita** alterá-lo (medido). Preço mudado no painel da Asaas deixa o nosso registro errado para sempre, e nada avisa. RN-34, `docs/pendencias.md`.
+2b. **[CORRIGIDO 18/09]** T12 — `valor` passou a ser reconciliado contra a Asaas, com denúncia da divergência na mesma resposta (RN-34, decisão do dono). O que **continua aberto** é outra coisa, e menor: não há aviso PROATIVO — quem muda o preço no painel da Asaas não dispara nada, e o contratante só descobre na conciliação seguinte. Fechar isso dependeria de marcar `SUBSCRIPTION_*`/`PAYMENT_UPDATED` (§2.2), que é decisão de configuração do dono.
 2c. **[DECLARADO 17/09]** T13 — acerto estornado depois da troca não reverte o plano. Nenhum dano ativo (a troca já aconteceu e o assinante está usando o plano novo); é decisão de operação.
 3. **Falta confirmar ao vivo** (não muda comportamento): qual dos dois formatos a Asaas usa pra uma assinatura deletada — objeto com `deleted: true` ou `404`. O código trata os dois; medir só permitiria simplificar.
 

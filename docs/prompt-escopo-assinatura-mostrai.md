@@ -127,21 +127,40 @@ payload de assinatura **não traz `chargeId`**.
 não pode depender só de webhook. Rodar a conciliação **uma vez por dia**
 por assinante ativo é o que fecha o buraco.
 
-## 4. A conciliação, e o campo em que você não pode confiar
+## 4. A conciliação, e o campo que passou a ser confiável
 
 `POST /consultar-assinatura` devolve `status`, `valor`, `ciclo`,
-`proximaCobranca` e `ultimaCobranca`.
+`proximaCobranca`, `divergenciaDeValor` e `ultimaCobranca`.
 
-**Três desses quatro primeiros são reconferidos contra a Asaas a cada
-chamada: `status`, `ciclo` e `proximaCobranca`.**
+**Os quatro primeiros são reconferidos contra a Asaas a cada chamada.**
 
-⚠️ **`valor` NÃO é.** Ele sai do banco do checkout. E como a Asaas
-aceita alterar o valor de uma assinatura ativa (seção 5), um preço
-mudado lá deixa esse campo errado **para sempre e sem sintoma**.
+⚠️ **Isto mudou em 18/09/2026, e esta seção dizia o contrário:** até
+então `valor` era a exceção — saía do banco do checkout, e o escopo
+avisava para não confiar nele. Agora a conciliação, achando diferença:
 
-- **Não use `valor` como "o preço que está sendo cobrado".**
-- Use **`ultimaCobranca.valorCobrado`** — esse é histórico de cobrança
-  real, e por isso é verdade.
+1. devolve em `valor` **o que a Asaas cobra**;
+2. corrige o registro do checkout;
+3. e te conta em **`divergenciaDeValor`**:
+
+```json
+"divergenciaDeValor": { "nosso": 30.00, "asaas": 45.00 }
+```
+
+Ele vem `null` em quase toda chamada — só aparece na conciliação que
+achou e corrigiu a diferença. **Trate como evento, não como estado:** é
+o aviso de que o preço daquele assinante mudou **fora do fluxo do
+checkout** (alguém no painel da Asaas, ou chamada direta de API). E
+**quem avisa o assinante é você** — o checkout não fala com o pagador.
+
+Duas coisas que continuam valendo:
+
+- **não há aviso proativo.** Você descobre **quando roda a
+  conciliação** — nada chega por webhook, porque o grupo
+  `SUBSCRIPTION_*` não está marcado nesta conta. É mais um motivo para
+  o "uma vez por dia";
+- `ultimaCobranca.valorCobrado` continua sendo o histórico do que foi
+  **de fato cobrado**, e continua útil para conferência — só deixou de
+  ser a única coisa confiável aqui.
 
 Outras coisas medidas sobre a conciliação:
 

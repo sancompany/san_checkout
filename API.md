@@ -959,6 +959,7 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
   "assinaturaId": "sub_000123456789",
   "status": "ativa",
   "valor": 349.90,
+  "divergenciaDeValor": null,
   "ciclo": "MONTHLY",
   "proximaCobranca": null,
   "ultimaCobranca": {
@@ -1001,25 +1002,44 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 > novas — **para as antigas, é esta rota que repara**. Se você guardou o
 > `ciclo` do seu lado antes desta data, vale reconciliar.
 >
-> ⚠️ **`valor` é o único campo desta resposta que NÃO é reconferido.**
-> Ele sai do nosso banco, e não da Asaas. Isso tem consequência prática
-> desde 17/09/2026, quando foi medido que **a Asaas aceita alterar o
-> valor de uma assinatura ativa** (seção 7.5): mudado o preço lá — pelo
-> painel ou por API —, a Asaas passa a cobrar o novo e **nós continuamos
-> devolvendo o antigo aqui, para sempre**, porque nada nos avisa
-> (`SUBSCRIPTION_*` não está entre os eventos configurados e
-> `PAYMENT_UPDATED` está desmarcado de propósito).
+> **`valor` passou a ser reconferido também, em 18/09/2026 — e agora
+> vem com denúncia.** ⚠️ Este parágrafo dizia o contrário até aquele dia:
+> que `valor` era o único campo da resposta que NÃO era reconferido, e
+> que você não devia usá-lo como preço vigente. **Mudou**, por decisão do
+> dono do checkout, e o motivo é simples: quem debita o cartão é a Asaas,
+> então um número nosso diferente do dela não é uma opinião divergente —
+> é informação falsa.
 >
-> Então: **não use `valor` como "o preço que está sendo cobrado"**. Para
-> isso existe `ultimaCobranca.valorCobrado`, que é histórico de cobrança
-> real e por isso é verdade. O `valor` diz o que foi combinado na
-> criação, do nosso lado.
+> O que a rota faz agora, quando acha diferença:
+>
+> 1. devolve em `valor` **o que a Asaas cobra**, não o nosso registro;
+> 2. **corrige o nosso banco** na mesma chamada (senão a divergência
+>    volta na conciliação seguinte);
+> 3. e **conta para você** em `divergenciaDeValor`:
+>
+> ```json
+> "divergenciaDeValor": { "nosso": 30.00, "asaas": 45.00 }
+> ```
+>
+> Ele vem `null` na esmagadora maioria das chamadas — só aparece na
+> conciliação em que a diferença foi encontrada e corrigida. **Trate-o
+> como evento, não como estado:** é o seu aviso de que o preço daquele
+> assinante mudou **fora do fluxo do checkout** (alguém no painel da
+> Asaas, ou uma chamada direta de API). Você é quem fala com o
+> assinante — quem precisa avisá-lo é você (RN-35).
+>
+> Corrigir e contar não são alternativas: sem a correção, o campo
+> continuaria mentindo; sem a denúncia, o preço de alguém mudaria em
+> silêncio. `ultimaCobranca.valorCobrado` continua sendo o histórico do
+> que foi de fato cobrado, e continua útil — só deixou de ser a única
+> coisa confiável aqui.
 
 | Campo | Descrição |
 |---|---|
 | `assinaturaId` | Id na Asaas. `null` se a primeira cobrança ainda não confirmou |
 | `status` | `ativa`, `pausada` ou `cancelada`. `null` enquanto não existe assinatura |
 | `valor` | Congelado na criação (seção 4.2) |
+| `divergenciaDeValor` | `{ nosso, asaas }` **só** na conciliação em que uma diferença de preço foi achada e corrigida; `null` em todas as outras. É evento, não estado — o seu aviso de que o preço daquele assinante mudou fora do checkout |
 | `ciclo` | Congelado na criação (seção 4.2), mas **reconferido contra a Asaas** a cada consulta — ver a nota acima |
 | `proximaCobranca` | Quando a Asaas vai cobrar de novo. `null` se não houver |
 | `ultimaCobranca` | O ciclo mais recente, com o `status` do vocabulário da seção 4.3.3. `null` se nada foi cobrado |
@@ -1660,15 +1680,17 @@ com a Asaas:
   **configuração**, não incapacidade: o grupo `SUBSCRIPTION_*` não está
   entre os 53 eventos marcados nesta conta, e `PAYMENT_UPDATED` está
   desmarcado de propósito (`CONSTRAINTS.md` §2.2).
-- **Consequência direta, e é a parte que te afeta:** na seção 5.3, os
-  campos `status`, `ciclo` e `proximaCobranca` são reconferidos contra a
-  Asaas a cada chamada — **`valor` não é**. Ele sai do nosso banco. Se
-  alguém alterar o preço pelo painel da Asaas, ou por API, **o `valor`
-  que você lê de nós fica errado, e fica errado para sempre.**
+- **Consequência direta, e ela mudou em 18/09/2026:** na seção 5.3, os
+  campos `status`, `ciclo`, `proximaCobranca` **e agora `valor`** são
+  reconferidos contra a Asaas a cada chamada. Até 17/09 o `valor` era a
+  exceção, saía do nosso banco, e este documento te avisava para não
+  confiar nele — hoje a conciliação **corrige o nosso registro** e
+  **denuncia a diferença** em `divergenciaDeValor`.
 
-  Não trate `valor` da seção 5.3 como preço vigente na operadora. O
-  número que o seu sistema deve considerar cobrado é o
-  `ultimaCobranca.valorCobrado` — esse é histórico, e é verdade.
+  O que isso significa para você, na prática: preço mudado no painel da
+  Asaas **não fica invisível**, mas você só o descobre **quando roda a
+  conciliação** — nada nos avisa na hora (é o item acima). Continua
+  valendo o "rode uma vez por dia" da 5.3, e agora com um motivo a mais.
 
 #### Então como se muda o preço de um assinante hoje
 

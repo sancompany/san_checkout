@@ -291,43 +291,48 @@ entrada nenhuma. As páginas legais foram reprovadas por serem rápidas.
 Agora um contador de cliques separa "não interagiu" de "interagiu abaixo
 do piso".
 
-### 🟠 A conciliação não reconfere o `valor` da assinatura — DECLARADO 17/09
-Achado respondendo uma pergunta do dono ("não é possível alterar preço
-de plano já contratado?"). A resposta medida é **sim** — e ela abriu um
-furo que já existia sem ninguém ver.
+### 🟢 A conciliação reconfere o `valor` da assinatura — DECIDIDO E CORRIGIDO 18/09
+**O que ERA:** a conciliação (`API.md` §5.3) reconferia `status`, `ciclo`
+e `proximaCobranca` contra a Asaas e **não** reconferia `valor` — ele
+saía do nosso banco. Como a Asaas aceita alterar `value` de uma
+assinatura ativa (medido em 17/09) e **nada nos avisa**
+(`SUBSCRIPTION_*` fora dos 53 eventos, `PAYMENT_UPDATED` desmarcado de
+propósito, §2.2), um preço mudado no painel dela deixava o nosso
+registro errado **para sempre e sem sintoma**. Mesma família do bug do
+`ciclo` de 15/09: a correção de 16/09 fechou `ciclo` e deixou `valor`.
 
-A conciliação (`API.md` §5.3) reconfere contra a Asaas o `status`, o
-`ciclo` e a `proximaCobranca`. **O `valor` sai do nosso banco**
-(`cobrancaConsultaController.js`: `valor: assinatura?.valor ?? null`).
-Como a Asaas aceita alterar `value` de uma assinatura ativa (medido no
-sandbox, cartão e boleto, aumentando e diminuindo) e **nada nos avisa**
-— `SUBSCRIPTION_*` fora dos 53 eventos, `PAYMENT_UPDATED` desmarcado de
-propósito (§2.2) —, um preço mudado no painel da Asaas deixa o nosso
-registro errado **para sempre e sem sintoma**.
+Ficou **declarado em vez de corrigido às cegas** porque a escolha era do
+dono, entre duas coisas defensáveis: reconciliar (a Asaas passa a mandar
+no número, inclusive quando a alteração de lá foi erro humano) ou manter
+o nosso e denunciar a divergência.
 
-É a **mesma família** do bug do `ciclo` de 15/09: dado local que
-divergiu da fonte e ninguém reparava. A correção de 16/09 (RN-26.1)
-fechou `ciclo` e **deixou `valor` aberto** — porque naquele dia eu
-acreditava que `valor` não podia mudar.
+**O que passou a ser:** o dono decidiu **reconciliar**, em 18/09/2026, e
+mandou eu fechar com a minha recomendação se discordasse. Não discordo —
+e a recomendação acrescentou a segunda metade: **reconciliar E
+denunciar**, porque as duas nunca foram alternativas.
 
-**Não corrigido às cegas, e o motivo é decisão, não preguiça:**
-reconciliar `valor` significa deixar a Asaas mandar no número, inclusive
-quando a alteração de lá foi erro humano de quem mexeu no painel. É
-caminho de dinheiro (lista curta da skill `leis`) e é escolha do dono
-entre duas coisas defensáveis:
+- quem debita o cartão é a Asaas, então um número nosso diferente do
+  dela não é opinião divergente: é **informação falsa**. Guardar o valor
+  antigo para "não endossar o erro" troca um erro de preço por um erro
+  de registro, e deixa mentindo justamente o campo que o integrador lê;
+- e corrigir **calado** trocaria o número errado por uma **mudança
+  invisível** — o contratante é quem fala com o assinante (RN-35), então
+  ele recebe `divergenciaDeValor: { nosso, asaas }` na mesma resposta.
 
-1. **Reconciliar** — o que a Asaas cobra é a verdade, e o nosso registro
-   segue. Consistente, e aceita que um erro no painel vire preço oficial.
-2. **Não reconciliar, e denunciar** — manter o nosso valor e devolver um
-   sinal de divergência (`valorDivergente: true`, por exemplo) quando os
-   dois não baterem. Mais informação para o contratante, mais código, e
-   exige decidir o que o painel mostra.
+Detalhes que a implementação teve de acertar, cada um com sabotagem
+provando: comparação em **centavos** (em reais, `30.000000000000004`
+seria divergência e a "correção" reescreveria a linha a cada
+conciliação); **Asaas sem `value` mantém o nosso** (anular seria a classe
+"ausência virou zero"); e 404 ou Asaas fora do ar devolvem o valor do
+banco **sem** denunciar divergência — `null` ali significa "não
+comparei", não "estava igual".
 
-**Mitigação que já está no ar, sem código:** o `API.md` §5.3 e §7.5
-passaram a dizer ao integrador, com destaque, que `valor` não é preço
-vigente — o que é verdade é `ultimaCobranca.valorCobrado`, histórico de
-cobrança real. RN-34 em `docs/funcional.md`, etapa T12 em
-`docs/ciclo-assinatura-mapa.md`.
+**O que continua aberto, e é menor:** não há aviso **proativo**. Quem
+muda o preço no painel da Asaas não dispara nada, e o contratante
+descobre na conciliação seguinte. Fechar isso dependeria de marcar o
+grupo `SUBSCRIPTION_*` (ou `PAYMENT_UPDATED`), que é decisão de
+configuração do dono e está registrada em `CONSTRAINTS.md` §2.2 —
+depende de payload real para ser decidida.
 
 ### 🟢 Trocar de plano numa assinatura já ativa — CONSTRUÍDO 17/09
 **O que ERA:** entrada em `docs/proximas-versoes.md`, com o motivo
@@ -417,61 +422,46 @@ parecer.
 De brinde, é a resposta para o p75 de **campo** do item 4: ele vai
 aparecer nesse mesmo painel quando houver visitante real.
 
-### 🟠 A zona `sancocore.com.br` não tem registro SPF, e o DMARC é `p=reject` — MEDIDO 17/09
-Conferido em dois resolvedores independentes (Cloudflare e Google): a
-zona tem DKIM (seletor `google`) e `_dmarc` com `v=DMARC1; p=reject`, e
-**nenhum registro `v=spf1`**.
-
-Por que passou pela conferência do item 1 da prontidão: com DKIM
-válido, o DMARC passa por alinhamento de DKIM, então o e-mail enviado
-pelo Workspace chega — e chegou. O que o SPF ausente custa é o resto:
-receptor que pesa SPF vê `none`, e **qualquer caminho que quebre a
-assinatura DKIM** (encaminhamento, provedor transacional novo amanhã)
+### 🟢 A zona `sancocore.com.br` tem SPF — APLICADO 18/09
+**O que ERA:** a zona tinha DKIM (seletor `google`) e `_dmarc` com
+`v=DMARC1; p=reject`, e **nenhum registro `v=spf1`** — conferido em dois
+resolvedores independentes em 17/09. Passou pela conferência do item 1 da
+prontidão porque, com DKIM válido, o DMARC passa por alinhamento de DKIM
+e o e-mail do Workspace chega (e chegou). O que o SPF ausente custava era
+o resto: receptor que pesa SPF vê `none`, e **qualquer caminho que quebre
+a assinatura DKIM** (encaminhamento, provedor transacional novo amanhã)
 cai em `p=reject` — rejeição, não caixa de spam. Para um endereço que é
 **canal legal do titular** (`juridico@`), silêncio é descumprimento.
 
-**O registro está definido, e não saiu de cabeça:** lido na
-documentação oficial do Google em 17/09/2026 —
-`v=spf1 include:_spf.google.com ~all`, no nome do domínio raiz, com
-`~all` (softfail) que é o qualificador que o próprio Google recomenda.
-Antes de fixar o valor eu confirmei que **não existe outro remetente
-para incluir**: não há biblioteca de envio de e-mail no `src/`, e as
-notificações da Asaas ao comprador nascem desligadas
-(`asaasService.buscarOuCriarCliente` manda `notificationDisabled`).
+Ficou parada não por falta de decisão — o valor estava definido e lido na
+documentação oficial do Google (`v=spf1 include:_spf.google.com ~all`,
+com o `~all` que eles recomendam) —, mas porque **o classificador de
+permissões do harness recusava escrita de DNS**, e rotear a mesma escrita
+por subagente seria contornar a guarda em vez de usá-la.
 
-**Por que não está no ar, e isto mudou de dono para ambiente.** O dono
-autorizou explicitamente a sessão a aplicar, e a credencial da
-Cloudflare está no ambiente — mas o **classificador de permissões do
-harness recusa escrita de DNS** (categoria "DNS / Domain / Cert
-Changes"), e recusa antes de a chamada sair. Não existe caminho
-alternativo: não há MCP da Cloudflare nesta sessão, `wrangler` não está
-instalado, e rotear a mesma escrita por um subagente seria contornar a
-guarda em vez de usá-la — o que eu não faço.
+**O que passou a ser:** o dono liberou a permissão em 18/09/2026 e o
+registro foi criado pela API da Cloudflare, na raiz da zona, `ttl: 1`
+(automático).
 
-Então a pendência deixou de ser "decidir o valor" e passou a ser
-**uma permissão**: liberar a escrita de DNS para a sessão (regra de
-permissão no `settings`), ou colar o registro no painel.
+Conferido, e não suposto:
 
-```bash
-# a função `cf` que lê os cabeçalhos do ambiente está no RUNBOOK §1.1
+- os cinco TXT que já existiam foram **lidos antes** da escrita, e o
+  método foi `POST` (cria) e não `PUT` (substitui) — o TXT de
+  verificação do Google que já morava na raiz continua lá, porque vários
+  TXT convivem no mesmo nome;
+- a resposta da API devolveu `success: true` com o conteúdo exato;
+- **dois resolvedores independentes** (`dns.google` e
+  `cloudflare-dns.com`) devolvem `v=spf1 include:_spf.google.com ~all`;
+- **controle negativo:** `api.sancocore.com.br` não devolve SPF nenhum —
+  o registro está na raiz, que é onde o remetente está, e não espalhado
+  por subdomínio.
 
-# o id da zona sai na hora — não fica escrito em documento
-ZONA=$(cf "https://api.cloudflare.com/client/v4/zones?name=sancocore.com.br" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][0]['id'])")
-
-# CRIA um TXT novo (POST) — não toca nos 12 registros que já existem
-cf -X POST -H "Content-Type: application/json" \
-  "https://api.cloudflare.com/client/v4/zones/$ZONA/dns_records" \
-  --data '{"type":"TXT","name":"sancocore.com.br","content":"v=spf1 include:_spf.google.com ~all","ttl":1}'
-
-# conferência, em dois resolvedores independentes
-for r in https://dns.google/resolve https://cloudflare-dns.com/dns-query; do
-  curl -s -H "accept: application/dns-json" "$r?name=sancocore.com.br&type=TXT" | grep -o 'v=spf1[^"]*'
-done
-```
-
-Pelo painel, o equivalente é: DNS → Records → Add record → TXT → Name
-`@` → Content `v=spf1 include:_spf.google.com ~all` → Save.
+Antes de fixar o valor eu havia confirmado que **não existe outro
+remetente para incluir**: não há biblioteca de envio de e-mail no `src/`,
+e as notificações da Asaas ao comprador nascem desligadas
+(`asaasService.buscarOuCriarCliente` manda `notificationDisabled`). Se um
+provedor transacional entrar um dia, o `include` dele entra no MESMO
+registro — dois `v=spf1` na mesma zona invalidam os dois.
 
 ### 🟡 Rotação do token de webhook não tem janela sem risco — DECLARADO 17/09
 O receptor aceita **um** `ASAAS_WEBHOOK_TOKEN` por vez. Trocando
