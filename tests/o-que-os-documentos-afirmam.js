@@ -111,7 +111,7 @@ for (const rel of arquivosMarkdown(RAIZ)) {
        suítes"), porque o registro do erro é o que impede o próximo. O
        que se cobra é o número no presente. */
     const antes = texto.slice(Math.max(0, achado.index - 60), achado.index);
-    if (/diz(ia|iam)|afirmava|estava errado|era\s*$/.test(antes)) continue;
+    if (/diz(ia|iam|endo)|afirma(va|ndo)|estava errado|era\s*$/.test(antes)) continue;
     afirmacoesDeContagem.push({ rel, numero: Number(achado[1]) });
   }
 }

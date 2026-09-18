@@ -550,6 +550,65 @@ tudo que era meu, e estas eram as pendências que restavam do meu lado:
   por isso que a resposta e o evento `plano_trocado` levam crédito,
   débito e dias restantes em vez de só o valor.
 
+Feito em 18/09 — **ciclo de `revisar` sobre o projeto INTEIRO**, a
+pedido do dono (43 arquivos de `src/`, o front, as suítes, os 11 scripts
+e os 54 documentos). Três ciclos: o primeiro achou em todas as quatro
+varreduras, o segundo achou um, o terceiro fechou limpo. Tudo na branch,
+nada no ar ainda.
+
+- **O processo morria calado** (Lei 8, o pedaço que faltava). A captura
+  de exceção pega o que passa por rota; ficava de fora o que MATA o
+  processo — promessa rejeitada sem `catch` e exceção fora de
+  requisição —, e este projeto tem fire-and-forget deliberado no caminho
+  do dinheiro. Sem tratador, o Node encerra e não sobra linha nenhuma em
+  `erros`: um serviço reiniciando sem motivo conhecido, com o log só no
+  painel do Northflank. Agora grava, loga e continua morrendo com código
+  1, de propósito — seguir de pé depois de uma rejeição não observada é
+  seguir num estado que ninguém sabe qual é. Suíte nova em processo
+  FILHO (não dá para provar de dentro), e **a primeira versão dela
+  passou sabotada**; e o comentário que eu havia escrito sobre a
+  iteração anterior estava errado, corrigido contra medição: o que se
+  perdia era o código de saída (saía **0**, que o orquestrador lê como
+  desligamento limpo), não a gravação.
+- **`pedidoId` e `planoId` não tinham teto de tamanho** — lição nº 24, e
+  a guarda foi para as três funções compartilhadas por onde todo id
+  passa, não para cada controlador. `express.json()` passou a declarar o
+  limite em vez de herdar o default da biblioteca.
+- **A guarda do `/api/admin` era provada em UMA rota das treze** — a
+  ordem do `router.use` era a garantia do resto, e rota nova escrita
+  acima dela nasceria pública em silêncio. É a lição nº 23 por outra
+  porta; agora a suíte chama todas sem token.
+- **O portão do CI não era o que os documentos prometiam**: `ci.yml`
+  rodava `npm test`, e o `RUNBOOK` dizia `npm run check` — a diferença é
+  a análise de sintaxe de `public/js/`, que **suíte nenhuma alcança**.
+  Erro de sintaxe na tela de pagamento passava pelo portão que autoriza
+  o deploy. Aqui o documento estava certo e o CI é que não era, que é a
+  direção rara.
+- **Documentos que mentiam**, e o pior deles não era de código:
+  `docs/TESTES.md` mandava configurar `SMTP_*`/`GOOGLE_*` e prometia
+  e-mail ao comprador e nota fiscal — variáveis que não existem e
+  recursos **removidos do escopo em 08/09** (§1.9); o arquivo de schema
+  único, que deixou de existir quando as migrations numeradas entraram,
+  ainda citado por caminho em três documentos — um deles o inventário de
+  dados, que é documento legal;
+  `docs/plano-execucao.md` descrevendo o que fazer sem dizer que já foi
+  feito; e o `RUNBOOK` dizendo 32 suítes quando eram 35. **E ao corrigir
+  o `TESTES.md` eu escrevi dois nomes que não existem** (`npm run
+  hash-admin`, `CHECKOUT_ADMIN_HASH`) — conferidos contra o
+  `package.json` e o `.env.example` e corrigidos antes de ficar.
+- **As duas checagens que teriam pego isso sozinhas, generalizadas**:
+  ponteiro quebrado passou a valer para TODO documento vivo (registro de
+  erro e arquivo arquivado ficam de fora, porque descrevem o mundo de
+  quando foram escritos), e "N suítes" passou a ser conferido em
+  qualquer documento vivo, não em duas frases conhecidas. Citação
+  histórica ("o mapa dizia 18 suítes") é ignorada de propósito, com
+  sabotagem nos dois sentidos provando.
+- **Nenhum código morto**: todo símbolo exportado e não importado é
+  costura de injeção de dependência ou superfície de autoteste. O que
+  apareceu foi um conjunto fechado em dois arquivos sem comparação
+  (`CICLOS_VALIDOS` × `DIAS_DO_CICLO`) — divergir daria "não foi
+  possível calcular o acerto" para um plano inteiro, em silêncio.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção e a marcação dos eventos `SUBSCRIPTION_*`
 (exigem payload real); o primeiro pagamento real de valor baixo, que é o
