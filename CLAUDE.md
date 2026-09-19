@@ -733,6 +733,22 @@ Feito em 19/09:
   HTML público pode citar o CNPJ antigo, e as duas telas batem com o
   CPF que `termos.html` afirma como fonte (lido dele, não chumbado no
   teste). Sabotagem verificada manualmente.
+- **A pop-up da Asaas nunca fechava sozinha, e atrapalhava o próprio
+  `returnUrl`.** Relatado pelo dono: depois do pagamento, a pop-up
+  ficava aberta e em foco, cobrindo a janela principal — exatamente
+  onde `ativarRetorno()` mostra "Pagamento Aprovado"/"Assinatura Ativa"
+  e a contagem de 10s até o `returnUrl`. Já existia um `callback`
+  (successUrl/cancelUrl/expiredUrl) redirecionando a pop-up pra uma
+  página que se fecha sozinha, mas o próprio comentário da função já
+  avisava que a Asaas "pode (ou não) redirecionar" — quem manda de
+  verdade é o webhook + polling no NOSSO backend. Corrigido nos dois
+  fluxos de pop-up (`cartaoHandler.js`, `assinaturaCheckoutHandler.js`):
+  o `aoConfirmar` — que só dispara quando o polling confirma
+  `CHECKOUT_PAID` — agora fecha a pop-up, com a mesma guarda de
+  `observarFechamentoPopup` (`popup && !popup.closed`, pro caso do
+  pagador já ter fechado sozinho). Travado por
+  `tests/popup-fecha-ao-confirmar.js`, sabotagem verificada
+  manualmente. `docs/erros/2026-09-19-a-popup-da-asaas-nunca-fechava-sozinha.md`.
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
@@ -774,7 +790,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 37 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 38 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada

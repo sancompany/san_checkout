@@ -95,6 +95,14 @@ export async function continuarComCartao({ contratanteId, pedidoId, parcelas, da
 
     iniciarPollingPopup(asaasCheckoutId, {
       aoConfirmar: () => {
+        // A pop-up é da Asaas, não nossa — fechar ela é o que dá pro
+        // comprador VER o "Pagamento Aprovado" e a contagem de volta
+        // pra loja (`ativarRetorno`, na janela principal) em vez de
+        // ficarem escondidos atrás de uma janela que não faz mais
+        // nada. Mesma checagem de `observarFechamentoPopup`: a pop-up
+        // pode já estar fechada (o pagador fechou sozinho) quando o
+        // polling confirma.
+        if (popup && !popup.closed) popup.close();
         botao.textContent = 'Pagamento Aprovado ✓';
         botao.classList.add('btn-success');
         mostrarToast('Pagamento aprovado!', 'sucesso');
