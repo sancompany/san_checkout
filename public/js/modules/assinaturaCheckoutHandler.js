@@ -96,6 +96,12 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
 
     iniciarPollingPopup(asaasCheckoutId, {
       aoConfirmar: () => {
+        // Mesmo motivo do cartaoHandler.js: a pop-up é da Asaas, e
+        // deixá-la aberta esconde o "Assinatura Ativa" e a contagem de
+        // volta pra loja (`ativarRetorno`, na janela principal) atrás
+        // de uma janela que não faz mais nada. A pop-up pode já estar
+        // fechada (o pagador fechou sozinho) quando o polling confirma.
+        if (popup && !popup.closed) popup.close();
         botao.textContent = 'Assinatura Ativa ✓';
         botao.classList.add('btn-success');
         mostrarToast('Assinatura criada com sucesso!', 'sucesso');
