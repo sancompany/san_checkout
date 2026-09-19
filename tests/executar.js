@@ -52,7 +52,8 @@ const SUITES = [
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
   'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
-  'tests/nome-do-item-nao-passa-do-teto-da-asaas.js' // items[].name > 30 caracteres quebrava Cartão/Assinatura por inteiro
+  'tests/nome-do-item-nao-passa-do-teto-da-asaas.js', // items[].name > 30 caracteres quebrava Cartão/Assinatura por inteiro
+  'tests/rodape-nao-cita-identidade-antiga.js' // reidentificação pra CPF (17/09) não tocou o rodapé das telas
 ];
 
 /**

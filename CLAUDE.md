@@ -721,6 +721,19 @@ essas coisas, o que tá esperando?"):
   (`CONSTRAINTS.md` §2.4).
   `docs/erros/2026-09-18-descricao-do-contratante-sem-teto-quebrava-cartao-por-inteiro.md`.
 
+Feito em 19/09:
+- **Rodapé do checkout e da tela de status citavam a identidade
+  ANTIGA do operador.** `index.html` e `status.html` ainda afirmavam
+  "SAN & CO. — CNPJ 68.949.029/0001-58" — a reidentificação pra pessoa
+  física (CPF 552.085.198-01, `termos.html`/`privacidade.html`) tinha
+  acontecido em 17/09 e tocou só os dois documentos legais, não as
+  telas. Achado pelo dono: cobrança sai no CPF, então uma tela dizendo
+  CNPJ é documento incorreto no ar. Corrigido nos dois arquivos, e
+  travado por `tests/rodape-nao-cita-identidade-antiga.js` — nenhum
+  HTML público pode citar o CNPJ antigo, e as duas telas batem com o
+  CPF que `termos.html` afirma como fonte (lido dele, não chumbado no
+  teste). Sabotagem verificada manualmente.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
@@ -761,7 +774,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 36 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 37 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada
