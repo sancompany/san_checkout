@@ -51,7 +51,18 @@ resumo aqui.
   de pagamento, polling de cobrança, copiar-com-fallback, toast) —
   declarado por risco/escopo no ciclo de revisão de 18/09, não
   simplificado ainda. Arquivos: `public/js/modules/*Handler.js`.
-- [ ] Itens de `docs/proximas-versoes.md` não puxados para cá
+- [ ] **Trocar de plano com redirecionamento ao Checkout** — hoje a troca
+  (`POST /api/checkout/trocar-plano`) é servidor-a-servidor e silenciosa
+  ao pagador (decisão deliberada de 17/09/2026, `docs/pendencias.md`); o
+  dono quer revisar isso para redirecionar o pagador a uma tela
+  hospedada no Checkout, com os detalhes do acerto mostrados ali antes
+  de confirmar. Pedido explícito em 20/09/2026: **só guardar o caminho,
+  não construir agora**. Detalhe completo em
+  `docs/proximas-versoes.md`, "Trocar de plano com redirecionamento ao
+  Checkout, em vez de rota silenciosa". Redesenho de fluxo + reabre
+  contrato que o MostrAí já consome — exige autorização explícita antes
+  de começar.
+- [ ] Demais itens de `docs/proximas-versoes.md` não puxados para cá
   individualmente — cobrem principalmente eventos de webhook adicionais
   (funil de checkout, aprovação por antifraude, split) e canal de alerta
   via "Fairy" (produto externo, fora do escopo deste repositório).
