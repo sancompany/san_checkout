@@ -141,6 +141,33 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟡 Trocar de plano precisa redirecionar o pagador ao Checkout — achado 20/09, pendência para amanhã
+Hoje `POST /api/checkout/trocar-plano` (`API.md` §5.6) é servidor-a-
+servidor: o contratante chama, recebe o resultado em JSON e mostra na
+própria tela dele — o pagador nunca vê uma tela do Checkout. Isso é
+comportamento deliberado, registrado nesta mesma pendência desde
+17/09/2026: "Não existe tela. A troca é rota servidor-a-servidor, como
+cancelar/pausar/retomar: quem aciona é o contratante. Ninguém pediu
+tela, e o pagador não decide o próprio plano pelo checkout."
+
+O dono testou o MostrAí em 20/09/2026
+(`mostrai.sancocore.com.br/anunciante/confirmar-plano.html`, captura de
+tela: "Troca feita. Cobramos R$ 405,00 de acerto no cartão salvo.") e
+quer reverter essa decisão: o pagador deve ser redirecionado a uma
+página hospedada no Checkout, com os detalhes do acerto (crédito,
+débito, valor a cobrar) mostrados ali antes de confirmar — no mesmo
+espírito do link/pop-up que já existe para pedido e assinatura nova.
+
+**Não construído ainda** — pedido dele em 20/09/2026 foi só registrar
+o caminho para amanhã. Fechar isto exige: reabrir a decisão "Não
+existe tela" acima; desenhar o mecanismo de link/id opaco para essa
+intenção de troca (quem cria, como o pagador chega lá, o que a tela
+mostra antes de cobrar); revisar `API.md` §5.6 (contrato que o MostrAí
+já integrou) e `docs/funcional.md` (RN-35/36). Caminho de dinheiro
+(cobra o acerto) e contrato de estrutura (muda o que o contratante já
+consome): os dois na lista curta que exige autorização explícita antes
+de começar a construir (skill `leis`).
+
 ### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09, metade virou atualização futura em 18/09
 As sete seções que a prontidão operacional exige e que **não existiam**
 foram escritas em 17/09: inventário de contas (§1.1), segredos e como

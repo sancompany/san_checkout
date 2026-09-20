@@ -481,44 +481,6 @@ para um problema que talvez nem exista mais.
   mão. Antes disso, o pedido avulso que o MostrAí escolheu é mais
   simples e não constrói cálculo proporcional para dois casos por mês.
 
-## Trocar de plano com redirecionamento ao Checkout, em vez de rota silenciosa
-
-- **O quê** — ao pedir a troca de plano, redirecionar o pagador para
-  uma página hospedada no Checkout (no mesmo espírito do link/pop-up
-  que já existe para pedido e assinatura nova) mostrando os detalhes
-  do acerto proporcional — crédito, débito, valor a cobrar — e pedindo
-  confirmação ali, em vez de o contratante chamar
-  `POST /api/checkout/trocar-plano` servidor-a-servidor e mostrar o
-  resultado só na própria tela dele, sem o pagador nunca ver o Checkout.
-- **Por que** — o dono esperava esse redirecionamento e descobriu, ao
-  testar o MostrAí (`mostrai.sancocore.com.br/anunciante/confirmar-plano.html`,
-  20/09/2026), que a troca acontece de forma automática e silenciosa:
-  o MostrAí chama a rota, recebe o resultado, e mostra "Troca feita.
-  Cobramos R$ 405,00 de acerto no cartão salvo." na própria tela dele —
-  o pagador nunca sai do domínio do MostrAí nem vê nada do Checkout.
-  Isso é exatamente o comportamento hoje **documentado e deliberado**:
-  `docs/pendencias.md` registra, desde 17/09/2026, "Não existe tela. A
-  troca é rota servidor-a-servidor, como cancelar/pausar/retomar: quem
-  aciona é o contratante. Ninguém pediu tela, e o pagador não decide o
-  próprio plano pelo checkout." O dono está revisando essa premissa —
-  ele quer a tela agora.
-- **De onde veio** — relatado pelo dono em 20/09/2026, com captura de
-  tela da confirmação de troca no MostrAí como evidência do
-  comportamento atual.
-- **O que toca** — um redesenho do fluxo, não um ajuste pequeno: hoje
-  `trocaPlanoController.js` devolve JSON direto pro contratante
-  (`API.md` §5.6); para existir tela, precisaria de um mecanismo de
-  link/id opaco parecido com o checkout de pedido/plano (quem cria a
-  "intenção de troca", como o pagador chega lá, o que a tela mostra
-  antes de cobrar), e reabrir a decisão "Não existe tela" registrada em
-  `docs/pendencias.md` — a exigiria também revisar `API.md` §5.6 (o
-  contrato que o MostrAí já integrou) e `docs/funcional.md` (RN-35/36).
-  Caminho de dinheiro (cobra o acerto) e contrato de estrutura (mudaria
-  o que o contratante já consome): os dois na lista curta que exige
-  autorização explícita antes de construir (skill `leis`).
-- **Quando vale a pena** — quando o dono voltar a isto. Pedido dele em
-  20/09/2026: só guardar o caminho, não construir agora.
-
 ## Converter o registro da conta Asaas para CNPJ, e ligar o split
 
 - **O quê** — pedir ao suporte da Asaas a conversão do **registro** da
