@@ -3,6 +3,17 @@
 Estrutura da San & Co. Motor de pagamento whitelabel, modelo pull, Asaas
 por baixo. Segue as leis do plugin `san-co`.
 
+> **Este arquivo é a memória do processo `san-co` no Claude Code — não
+> é a única memória do repositório.** Desde 20/09/2026 existe também
+> `.ia/`, a camada de memória agnóstica de agente e de metodologia:
+> qualquer agente (Claude Code, Codex, Jules), com ou sem o plugin
+> carregado, precisa conseguir entender e operar este projeto lendo
+> `.ia/README.md`. Este `CLAUDE.md` continua sendo a fonte para "que
+> skill rodar" e para o histórico dia a dia — leia os dois, comece por
+> `AGENTS.md` (raiz) se você não é uma sessão Claude Code com o plugin
+> já carregado. `.ia/CONTROL_PLANE.md` explica a relação entre os dois
+> em detalhe.
+
 > **O plugin é fonte, e a citação dele neste repositório não é.**
 > `.claude/settings.json` declara o marketplace, mas plugin só carrega na
 > abertura da sessão: `ListPlugins` vazio significa trabalhar de segunda
