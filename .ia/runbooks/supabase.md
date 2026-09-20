@@ -12,8 +12,8 @@ Projeto confirmado (20/09/2026, via `mcp__Supabase__list_projects`):
 
 Existe um segundo projeto na mesma organização Supabase, `MostrAi`
 (`ref: wnbztsprmzarexnncchg`) — **não é deste repositório**, pertence a
-outro projeto do ecossistema San & Co. (política de banco isolado por
-projeto, `.ia/DECISIONS.md`). Não leia nem escreva nele a partir daqui.
+outro projeto (banco dedicado a San Checkout, nunca compartilhado, ver
+`.ia/DECISIONS.md` ADR-001). Não leia nem escreva nele a partir daqui.
 
 ## Mecanismos de acesso confirmados
 

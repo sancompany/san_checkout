@@ -6,26 +6,30 @@ com data, medição e o texto exato da exceção, está em `CONSTRAINTS.md`
 (raiz) e em `CLAUDE.md` (raiz). Onde os dois divergirem, eles são a
 fonte — corrija esta vista.
 
-## ADR-001 — Banco de dados isolado por projeto
+## ADR-001 — Banco de dados dedicado, nunca compartilhado com outro produto
 
 **Status:** adopted
 
-**Context:** Múltiplos projetos do ecossistema San & Co. (San Checkout,
-MostrAí, outros) poderiam compartilhar um único banco Supabase para
-reduzir custo de administração.
+**Context:** San Checkout processa dado de terceiro (contratantes e
+seus pagadores) e dinheiro. Compartilhar o banco com outro produto
+reduziria custo de administração, mas aumentaria o raio de dano de
+qualquer incidente.
 
-**Decision:** Cada projeto e cada peça de estrutura tem seu próprio
-banco/projeto Supabase. Sem exceção.
+**Decision:** San Checkout tem seu próprio projeto Supabase
+(`San_Checkout`, `zacuaroarelaqnzjjlcz`), nunca compartilhado com
+projetos-contratantes nem com qualquer outro serviço. Confirmado: é o
+único projeto Supabase que este repositório referencia em código ou
+configuração.
 
-**Reason:** Entrega/venda (projeto não pode ser entregue a um cliente
-sem desmontar um banco compartilhado), raio de dano (migration errada
-ou credencial vazada atinge todos de uma vez), mistura de
-responsabilidade (dado de cliente de terceiro no mesmo banco de dado
-pessoal).
+**Reason:** Raio de dano (migration errada ou credencial vazada fica
+contida a este serviço); mistura de responsabilidade (dado de cliente
+de terceiro nunca convive com dado de outro produto no mesmo banco);
+isolamento de contrato (contratantes acessam o Checkout só pela
+`API.md`, nunca por acesso direto ao banco).
 
-**Consequences:** Mais instâncias para administrar; mitigado por
-instância paga só quando o projeto entra em produção. Dado cruzado
-entre projetos resolve-se por API autenticada, nunca acesso direto.
+**Consequences:** Toda integração entre San Checkout e um contratante
+passa por API autenticada — nunca por acesso a banco. Ver
+`ARCHITECTURE.md`.
 
 ---
 
@@ -138,11 +142,11 @@ credencial; o ideal de segurança é um token escopado por operação.
 projeto.
 
 **Reason:** Registrado em `CONSTRAINTS.md` §3 — praticidade operacional
-sobre uma conta pequena, de um único operador, sem múltiplos projetos
-com fronteiras de confiança diferentes ainda exigindo isolamento
-rígido de credencial (mas note: a mesma zona já hospeda registros de
-outros projetos do ecossistema — MostrAí, San Humano — então essa
-credencial JÁ alcança mais do que este repositório).
+sobre uma conta pequena, de um único operador. Nota de risco: a mesma
+zona Cloudflare (`sancocore.com.br`) hospeda registros DNS de outros
+projetos além deste repositório (confirmado via `list dns_records` —
+ver `runbooks/cloudflare.md`), então essa credencial JÁ alcança mais do
+que só San Checkout, mesmo sem cruzar organização.
 
 **Consequences:** Qualquer chamada usando essa credencial precisa ser
 tratada como potencialmente afetando toda a conta Cloudflare, não só

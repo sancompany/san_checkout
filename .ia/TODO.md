@@ -54,8 +54,7 @@ resumo aqui.
 - [ ] Itens de `docs/proximas-versoes.md` não puxados para cá
   individualmente — cobrem principalmente eventos de webhook adicionais
   (funil de checkout, aprovação por antifraude, split) e canal de alerta
-  via "Fairy" (produto externo ao ecossistema, fora do escopo deste
-  repositório).
+  via "Fairy" (produto externo, fora do escopo deste repositório).
 
 ## PLUGIN / CONTROL PLANE
 

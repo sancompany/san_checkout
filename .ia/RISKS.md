@@ -23,8 +23,9 @@ alarme.
 ## Segurança
 
 - **MEDIUM — Credencial Cloudflare no ambiente é a Global API Key**, com
-  acesso à conta inteira (múltiplos projetos do ecossistema, não só
-  este). Risco aceito conscientemente (`CONSTRAINTS.md` §3, ADR-007) —
+  acesso à conta inteira (outras zonas/projetos além deste repositório,
+  não só `sancocore.com.br`). Risco aceito conscientemente
+  (`CONSTRAINTS.md` §3, ADR-007) —
   mitigação: nunca logar/persistir o valor, preferir token escopado
   quando uma tarefa já tocar essa configuração, nunca trocar por conta
   própria fora de escopo.
