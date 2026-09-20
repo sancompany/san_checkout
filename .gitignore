@@ -3,6 +3,10 @@
 node_modules/
 npm-debug.log*
 
+# Estado local do Supabase CLI (cache de versão) — criado sozinho a cada
+# comando `supabase`, nunca tem dado de projeto, nunca deve ser versionado.
+supabase/.temp/
+
 # Capturas de tela de sessão — contêm dado pessoal legível.
 # Ver docs/inventario-de-dados.md seção 6.1.
 Claude outputs/
