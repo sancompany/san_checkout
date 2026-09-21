@@ -30,7 +30,7 @@ import {
   liberarTroca,
   aplicarTrocaDePlano
 } from './assinaturaService.js';
-import { buscarContratante } from './pedidoService.js';
+import { buscarContratante, resolverPlano } from './pedidoService.js';
 import {
   dadosDeCobrancaDaAssinatura,
   cobrarNoCartaoSalvo,
@@ -66,6 +66,7 @@ const dependenciasPadrao = {
   liberarTroca,
   aplicarTrocaDePlano,
   buscarContratante,
+  resolverPlano,
   dadosDeCobrancaDaAssinatura,
   cobrarNoCartaoSalvo,
   alterarPlanoAssinatura,
@@ -213,6 +214,43 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
   }
 
   /**
+   * Revalida, na hora da aprovação, o que pode ter mudado durante a
+   * janela de até 15 minutos e que `mutation_version` NÃO cobre: o preço
+   * do plano de destino (repuxado da API do CONTRATANTE — a mesma fonte
+   * que `trocaPlanoController.criarIntencao` usa) e o estado da
+   * assinatura NA ASAAS. `mutation_version` só muda quando ALGO grava na
+   * NOSSA linha de `assinaturas`; o contratante mudando o preço do plano
+   * do lado dele não toca essa coluna — achado no review do PR #36 pelo
+   * Codex: sem isto, uma troca aprovada minutos depois de o contratante
+   * reprecificar o plano de destino cobraria e aplicaria o valor
+   * CONGELADO por cima de um plano que já não custa mais isso.
+   *
+   * Qualquer divergência (preço, ciclo, assinatura encerrada na Asaas) OU
+   * falha em verificar (rede caiu falando com o contratante ou com a
+   * Asaas) é tratada do mesmo jeito: não bate. Nunca recálculo
+   * silencioso — a mesma regra do `mutation_version` acima, e a mesma
+   * postura de "recusar cedo o que ficaria ambíguo depois" do resto
+   * deste projeto.
+   */
+  async function planoEAssinaturaAindaBatem(intencao, contratante) {
+    try {
+      const { plano: planoNovo } = await deps.resolverPlano(contratante.id, intencao.plano_novo_id, {
+        metodoRequerido: 'assinatura',
+        contratante
+      });
+      const precoBate = Number.isFinite(Number(planoNovo?.valor))
+        && emCentavos(planoNovo.valor) === emCentavos(intencao.valor_novo)
+        && planoNovo?.ciclo === intencao.ciclo_novo;
+      if (!precoBate) return false;
+
+      const viva = await deps.consultarAssinaturaNaAsaas(intencao.assinatura_id);
+      return Boolean(viva) && !viva.encerrada;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * PENDING_APPROVAL → (cobrar) → PROCESSING_PAYMENT → veredito.
    * A ÚNICA função que dispara uma cobrança nova — tudo o mais neste
    * arquivo só reage a uma cobrança que já existe.
@@ -255,6 +293,19 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
       return { tipo: 'stale' };
     }
 
+    /* Segunda metade da revalidação: o plano de destino (repuxado da API
+       do CONTRATANTE) e o estado da assinatura NA ASAAS — nenhum dos
+       dois muda `mutation_version` (essa coluna só reage a escrita NA
+       NOSSA linha), então a checagem acima sozinha deixava passar um
+       contratante reprecificando o plano de destino no meio da janela de
+       15 minutos. Busca o contratante aqui e reaproveita abaixo (split). */
+    const contratante = await deps.buscarContratante(intencao.contratante_id);
+    const aindaBate = contratante && await planoEAssinaturaAindaBatem(intencao, contratante);
+    if (!aindaBate) {
+      await deps.marcarStale(intencao.id);
+      return { tipo: 'stale' };
+    }
+
     const arrendamentoDaAssinatura = await deps.reivindicarTroca(assinatura.id);
     if (!arrendamentoDaAssinatura) {
       // Outra mutação da MESMA assinatura está em andamento agora —
@@ -274,7 +325,6 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
       return { tipo: 'stale' };
     }
 
-    const contratante = await deps.buscarContratante(intencao.contratante_id);
     /* Assinatura não leva taxa nossa, e o acerto segue a mesma regra da
        versão síncrona: o valor todo é do contratante quando há carteira. */
     const split = contratante?.wallet_id
@@ -295,7 +345,16 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
        órfã para sempre, e o pagador veria "processando" indefinidamente.
        Sem certeza de que nada foi cobrado, o lado seguro é sempre
        `RECONCILIATION_REQUIRED` — nunca fingir que ficou tudo igual a
-       antes. */
+       antes.
+
+       O `try` cobre `registrarChargeId` também, não só `cobrarNoCartaoSalvo`
+       — achado no review do PR #36 pelo Codex: se a cobrança tiver
+       sucesso mas a GRAVAÇÃO do `chargeId` falhar (Supabase fora do ar
+       bem naquele instante), a versão anterior deixava a exceção escapar
+       SEM liberar o arrendamento nem marcar reconciliação — a mesma
+       órfã de antes, só que agora com o cartão comprovadamente cobrado.
+       Por isso o erro registrado sempre leva o `chargeId` que a Asaas
+       devolveu, mesmo quando não foi possível persisti-lo na linha. */
     let cobranca;
     try {
       cobranca = await deps.cobrarNoCartaoSalvo({
@@ -306,13 +365,20 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
         referenciaExterna: `troca:${intencao.id}`,
         split
       });
+      /* O charge_id é gravado ANTES de classificar — é o que permite o
+         webhook achar esta intenção mesmo enquanto o veredito ainda é
+         UNKNOWN (ver `webhookController.js`, "acerto de troca"). */
+      if (cobranca.chargeId) await deps.registrarChargeId(intencao.id, cobranca.chargeId);
     } catch (erroDeRede) {
       await deps.liberarTroca(assinatura.id);
       await deps.registrarErro(
         new Error(
-          `cobrarNoCartaoSalvo falhou para a intenção ${intencao.id} (assinatura ${assinatura.id}, ` +
-          `valor ${intencao.valor_acerto}) — NÃO SE SABE se o cartão foi cobrado: ${erroDeRede.message}. ` +
-          `Confira na Asaas por externalReference "troca:${intencao.id}" antes de qualquer nova tentativa.`
+          `cobrarNoCartaoSalvo/registrarChargeId falhou para a intenção ${intencao.id} (assinatura ${assinatura.id}, ` +
+          `valor ${intencao.valor_acerto}) — chargeId conhecido: ${cobranca?.chargeId ?? 'nenhum'}. ` +
+          `NÃO SE SABE se o cartão foi cobrado quando não há chargeId: ${erroDeRede.message}. ` +
+          `Confira na Asaas por externalReference "troca:${intencao.id}"` +
+          (cobranca?.chargeId ? ` ou pelo id ${cobranca.chargeId}` : '') +
+          ' antes de qualquer nova tentativa.'
         ),
         { contexto: 'trocaExecucaoService.cobrancaComFalhaDeRede', rota: '/troca/aprovar', metodo: 'POST' }
       );
@@ -320,10 +386,6 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
       return { tipo: 'reconciliacao_necessaria', intencao };
     }
 
-    /* O charge_id é gravado ANTES de classificar — é o que permite o
-       webhook achar esta intenção mesmo enquanto o veredito ainda é
-       UNKNOWN (ver `webhookController.js`, "acerto de troca"). */
-    if (cobranca.chargeId) await deps.registrarChargeId(intencao.id, cobranca.chargeId);
     intencao = { ...intencao, charge_id: cobranca.chargeId ?? null };
 
     const veredito = classificarPagamentoDoAcerto({ status: cobranca.status });
@@ -422,6 +484,7 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
       marcarStale: async (id) => { anotar('marcarStale', [id]); intencoes.get(id).status = 'STALE'; },
       registrarChargeId: async (id, chargeId) => {
         anotar('registrarChargeId', [id, chargeId]);
+        if (ajustes.registrarChargeIdFalha) throw new Error('Supabase indisponível');
         intencoes.get(id).charge_id = chargeId;
       },
       marcarConfirmada: async (id) => {
@@ -475,6 +538,17 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
       liberarTroca: async (id) => { anotar('liberarTroca', [id]); },
       aplicarTrocaDePlano: async (id, dados) => { anotar('aplicarTrocaDePlano', [id, dados]); return !ajustes.perdeuCasNaAplicacao; },
       buscarContratante: async (id) => { anotar('buscarContratante', [id]); return { id, webhook_url: 'https://x.test', api_key: 'k' }; },
+      resolverPlano: async (contratanteId, planoNovoId) => {
+        anotar('resolverPlano', [contratanteId, planoNovoId]);
+        if (ajustes.resolverPlanoFalha) throw new Error('fetch failed');
+        return {
+          plano: {
+            nome: 'Plano Novo',
+            valor: ajustes.precoDoPlanoMudou ? 999 : INTENCAO_BASE.valor_novo,
+            ciclo: ajustes.cicloDoPlanoMudou ? 'YEARLY' : INTENCAO_BASE.ciclo_novo
+          }
+        };
+      },
       dadosDeCobrancaDaAssinatura: async (id) => {
         anotar('dadosDeCobrancaDaAssinatura', [id]);
         return ajustes.semCartao ? { clienteId: null, cartaoToken: null } : { clienteId: 'cus_1', cartaoToken: 'tok_1' };
@@ -485,7 +559,10 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
         return { chargeId: 'pay_1', status: ajustes.statusDaCobranca ?? 'CONFIRMED', valor: dados.valor };
       },
       alterarPlanoAssinatura: async (id, dados) => { anotar('alterarPlanoAssinatura', [id, dados]); if (!ajustes.putNaoPega) Object.assign(asaas, dados); },
-      consultarAssinaturaNaAsaas: async (id) => { anotar('consultarAssinaturaNaAsaas', [id]); return { ...asaas }; },
+      consultarAssinaturaNaAsaas: async (id) => {
+        anotar('consultarAssinaturaNaAsaas', [id]);
+        return { ...asaas, encerrada: Boolean(ajustes.assinaturaEncerradaNaAsaas) };
+      },
       consultarStatus: async (chargeId) => { anotar('consultarStatus', [chargeId]); return { status: ajustes.statusNaReclassificacao ?? 'CONFIRMED' }; },
       registrarAcertoDeTroca: async (dados) => { anotar('registrarAcertoDeTroca', [dados]); return { registrado: !ajustes.registroFalha }; },
       notificarPlanoTrocado: (contratante, dados) => { anotar('notificarPlanoTrocado', [contratante, dados]); },
@@ -573,6 +650,39 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
   conferir(!t.chamou('cobrarNoCartaoSalvo'), 'STALE NUNCA COBRA — a revalidação vem antes da cobrança');
   conferir(!t.chamou('reivindicarTroca'), 'nem chega a arrendar a assinatura');
 
+  /* --- 5b. revalidação: o contratante reprecificou o plano de destino
+     durante a janela de aprovação — achado no review do PR #36 pelo
+     Codex. `mutation_version` (teste 5) não pega isto: essa coluna só
+     muda quando ALGO grava na NOSSA assinatura, e reprecificar um plano
+     não toca nela. */
+  t = costura({ precoDoPlanoMudou: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `preço do plano mudou no contratante vira "stale", veio ${r.tipo}`);
+  conferir(t.chamou('resolverPlano'), 'a revalidação repuxa o plano da API do contratante');
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'e NUNCA cobra o valor congelado por cima de um plano que já mudou de preço');
+  conferir(!t.chamou('reivindicarTroca'), 'nem chega a arrendar a assinatura — mesmo padrão da revalidação de mutation_version');
+
+  /* --- 5c. o ciclo do plano mudou (mesmo preço, ciclo diferente) ---- */
+  t = costura({ cicloDoPlanoMudou: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `ciclo do plano mudou também vira "stale", veio ${r.tipo}`);
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'e não cobra');
+
+  /* --- 5d. a assinatura foi encerrada NA ASAAS entre a criação e a
+     aprovação — mutation_version local pode nem ter mudado se o
+     encerramento veio de fora do nosso fluxo. */
+  t = costura({ assinaturaEncerradaNaAsaas: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `assinatura encerrada na Asaas vira "stale", veio ${r.tipo}`);
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'e não cobra sobre uma assinatura que a Asaas já encerrou');
+
+  /* --- 5e. não deu para revalidar (rede caiu falando com o contratante)
+     — o lado seguro é recusar, nunca presumir que continua igual. ---- */
+  t = costura({ resolverPlanoFalha: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `falha ao revalidar o plano também vira "stale" (fail-closed), veio ${r.tipo}`);
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'NÃO COBRA quando não deu para confirmar que o plano continua o mesmo');
+
   /* --- 6. assinatura cancelada entre a criação e a aprovação -------- */
   t = costura({ statusAssinatura: 'cancelada' });
   r = await t.iniciarCobranca('int_1');
@@ -616,6 +726,23 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
   conferir(t.chamou('liberarTroca'), 'e o arrendamento da assinatura é devolvido — nada mais vai tentar cobrar por este caminho');
   conferir(t.chamou('registrarErro'), 'o estado ambíguo é registrado, com o que dá para achar a cobrança na Asaas se ela tiver acontecido');
   conferir(!t.chamou('registrarChargeId'), 'sem chargeId nenhum — a chamada nunca chegou a devolver um');
+
+  /* --- 10c. a cobrança teve SUCESSO, mas GRAVAR o chargeId falhou —
+     achado no review do PR #36 pelo Codex: a versão anterior só tinha
+     `try/catch` em volta de `cobrarNoCartaoSalvo`, não de
+     `registrarChargeId`. Sem cobrir os dois, esta exceção escapava sem
+     liberar o arrendamento nem marcar reconciliação — a MESMA órfã do
+     teste 10b, só que agora com o cartão comprovadamente cobrado (o
+     `chargeId` existe, só não foi possível persisti-lo). --------------- */
+  t = costura({ registrarChargeIdFalha: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'reconciliacao_necessaria', `falha ao gravar o chargeId também vira "reconciliacao_necessaria", veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'RECONCILIATION_REQUIRED', 'a intenção nunca fica presa em PROCESSING_PAYMENT');
+  conferir(t.chamou('liberarTroca'), 'e o arrendamento é devolvido mesmo com o cartão já cobrado');
+  conferir(
+    t.chamadas.find((c) => c.nome === 'registrarErro').args[0].message.includes('pay_1'),
+    'o erro registrado leva o chargeId REAL da Asaas (pay_1), mesmo sem ter conseguido gravá-lo na linha — é o único jeito de achar a cobrança depois'
+  );
 
   /* --- 11. PUT que a Asaas ignora em silêncio (mesmo furo da versão
      síncrona, agora do lado da aplicação) ----------------------------- */

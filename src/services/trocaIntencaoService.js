@@ -294,16 +294,28 @@ export async function expirarTodasVencidas() {
 
 /**
  * As intenções que o sweeper reconsulta uma a uma: qualquer estado não
- * terminal que já disparou (ou pode ter disparado) uma cobrança.
+ * terminal que já disparou (ou pode ter disparado) uma cobrança E que o
+ * sweeper de fato FAZ algo com (`trocaSweeperService.js`).
  * `PENDING_APPROVAL` fica de fora — não é reconsulta por linha que a
  * resolve, é `expirarTodasVencidas` (acima), chamada uma vez por
  * passada, não uma vez por linha.
+ *
+ * `RECONCILIATION_REQUIRED` também fica de fora — achado no review do
+ * PR #36 pelo Codex: o sweeper não toca essa linha (é dali que o
+ * painel/Lei 8 puxa para reparo manual), mas a query tinha `.limit(100)`
+ * ordenado por `criada_em` ascendente INCLUINDO esse status. Depois de
+ * 100 intenções antigas acumuladas em `RECONCILIATION_REQUIRED`, toda
+ * passada devolveria só ESSAS 100 linhas (as mais velhas) e NUNCA
+ * chegaria às intenções novas de verdade (`PAYMENT_UNKNOWN`,
+ * `PAYMENT_CONFIRMED`, `APPLYING_PLAN`) — starvation silenciosa, porque
+ * um estado inerte estava competindo pelo mesmo limite de página que os
+ * estados que precisam de trabalho de verdade.
  */
 export async function listarIntencoesParaVarredura({ limite = 100 } = {}) {
   const { data, error } = await supabase
     .from('intencoes_troca_plano')
     .select('*')
-    .in('status', ['PROCESSING_PAYMENT', 'PAYMENT_UNKNOWN', 'PAYMENT_CONFIRMED', 'APPLYING_PLAN', 'RECONCILIATION_REQUIRED'])
+    .in('status', ['PROCESSING_PAYMENT', 'PAYMENT_UNKNOWN', 'PAYMENT_CONFIRMED', 'APPLYING_PLAN'])
     .order('criada_em', { ascending: true })
     .limit(limite);
 

@@ -166,7 +166,19 @@ async function iniciar() {
     const dados = await post('/api/checkout/troca/contexto', { token });
     if (dados.status === 'PENDING_APPROVAL') mostrarPendente(dados);
     else if (dados.status === 'COMPLETED') mostrarConcluido(dados);
-    else mostrarBloco('bloco-processando'); // 202: já em processamento (aberto de novo enquanto ambíguo)
+    else {
+      /* 202: já em processamento (link reaberto enquanto ambíguo, ou a
+         aba nunca fechou depois de clicar "aprovar"). Achado no review
+         do PR #36 pelo Codex: sem retomar o poll aqui, a tela ficava
+         presa em "Confirmando o pagamento" para sempre — mesmo depois de
+         o backend já ter fechado o veredito (webhook ou sweeper), porque
+         nada nesta aba voltava a perguntar. `aprovar()` é seguro de
+         chamar de novo: `/troca/aprovar` é idempotente para qualquer
+         status que não seja `PENDING_APPROVAL` (só reconsulta, nunca
+         cobra de novo). */
+      mostrarBloco('bloco-processando');
+      aprovar();
+    }
   } catch (erro) {
     mostrarErroPorCodigo(erro);
   }
