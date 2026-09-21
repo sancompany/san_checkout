@@ -141,32 +141,54 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟡 Trocar de plano precisa redirecionar o pagador ao Checkout — achado 20/09, pendência para amanhã
-Hoje `POST /api/checkout/trocar-plano` (`API.md` §5.6) é servidor-a-
-servidor: o contratante chama, recebe o resultado em JSON e mostra na
-própria tela dele — o pagador nunca vê uma tela do Checkout. Isso é
-comportamento deliberado, registrado nesta mesma pendência desde
-17/09/2026: "Não existe tela. A troca é rota servidor-a-servidor, como
-cancelar/pausar/retomar: quem aciona é o contratante. Ninguém pediu
-tela, e o pagador não decide o próprio plano pelo checkout."
+### ✅ Trocar de plano redireciona o pagador ao Checkout — achado 20/09, construído e no ar em 21/09/2026
+Reabria a decisão de 17/09/2026 ("não existe tela, pagador não decide
+plano pelo checkout") depois de o dono testar o MostrAí e ver a
+cobrança acontecer sem o assinante ver nada. Desenho fechado num relay
+de quatro rodadas com um chat externo, cada proposta verificada contra
+o código real antes de aceitar — `docs/specs/2026-09-20-troca-de-plano-
+redireciona-pagador.md`. Autorizado a construir em 21/09/2026.
 
-O dono testou o MostrAí em 20/09/2026
-(`mostrai.sancocore.com.br/anunciante/confirmar-plano.html`, captura de
-tela: "Troca feita. Cobramos R$ 405,00 de acerto no cartão salvo.") e
-quer reverter essa decisão: o pagador deve ser redirecionado a uma
-página hospedada no Checkout, com os detalhes do acerto (crédito,
-débito, valor a cobrar) mostrados ali antes de confirmar — no mesmo
-espírito do link/pop-up que já existe para pedido e assinatura nova.
+**O que mudou:** `POST /trocar-plano` continua respondendo `200`
+imediato quando não há acerto (rebaixamento, absorção); quando há
+acerto (>= R$ 5,00), passa a responder `202` e criar uma **intenção**
+(migration 0011, `intencoes_troca_plano`) com o retrato congelado —
+nada é cobrado nem alterado na hora. O assinante aprova em `/troca#t=…`
+(token no fragmento, nunca query string, em memória, nunca storage).
+Só então o cartão salvo é cobrado, pela mesma coreografia de sempre
+(cobrar → alterar na Asaas → reler → gravar), agora em
+`trocaExecucaoService.js`. Um classificador financeiro canônico
+(`classificacaoFinanceiraService.js`) substitui o binário antigo
+"CONFIRMED/RECEIVED ou recusa na hora" por três veredictos —
+`PAID`/`DECLINED_FINAL`/`UNKNOWN` —, corrigindo um furo pré-existente
+que tratava status ambíguo como recusa definitiva. Um sweeper de 60s
+(`trocaSweeperService.js`) resolve o que ficou ambíguo, e o webhook
+resolve pelo `charge_id` quando a Asaas confirma antes do sweeper.
+`CONSTRAINTS.md` §3 (a exceção de CVV), `API.md` §5.6 e
+`docs/funcional.md` (RN-35, RN-35.2, RN-36) reescritos.
 
-**Não construído ainda** — pedido dele em 20/09/2026 foi só registrar
-o caminho para amanhã. Fechar isto exige: reabrir a decisão "Não
-existe tela" acima; desenhar o mecanismo de link/id opaco para essa
-intenção de troca (quem cria, como o pagador chega lá, o que a tela
-mostra antes de cobrar); revisar `API.md` §5.6 (contrato que o MostrAí
-já integrou) e `docs/funcional.md` (RN-35/36). Caminho de dinheiro
-(cobra o acerto) e contrato de estrutura (muda o que o contratante já
-consome): os dois na lista curta que exige autorização explícita antes
-de começar a construir (skill `leis`).
+**O que ficou aberto, e não bloqueia:**
+- **`nao-conferido`**: o formato exato da resposta síncrona da Asaas
+  para um cartão de teste RECUSADO nunca foi medido ao vivo — a doc
+  pública não lista um status `REFUSED`/`DECLINED`. O classificador foi
+  desenhado do lado conservador (status síncrono sozinho nunca vira
+  `DECLINED_FINAL`), então a medição só relaxaria a regra, não
+  destravaria nada. Medir com cartão de teste de recusa contra o
+  sandbox antes de considerar isso fechado de verdade.
+- **CLS do estado "resumo pendente"** (o mais alto, com o botão
+  Aprovar) não foi medido com `npm run desempenho` — só o caminho
+  sem token (esqueleto→erro) foi, porque medir o outro exigiria um
+  token de teste de verdade contra um backend de verdade. `min-height`
+  em `troca.css` está calibrado por leitura do conteúdo real, não por
+  medição de CLS.
+- **Rollout por contratante**: decidido não construir flag por
+  contratante — o MostrAí é o único integrador ativo hoje, e o `202` é
+  aditivo ao contrato existente. Reabrir se um segundo contratante
+  existir antes do MostrAí migrar.
+- **Retenção de `intencoes_troca_plano`**: a migration 0011 não
+  registrou ainda uma rotina de expurgo própria (a tabela não guarda
+  documento nem IP/UA — não é a mesma classe de risco de
+  `cobrancas`/`assinaturas`, mas as linhas nunca são limpas hoje).
 
 ### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09, metade virou atualização futura em 18/09
 As sete seções que a prontidão operacional exige e que **não existiam**

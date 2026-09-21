@@ -83,7 +83,7 @@ de titular de terceiro é publicado em lugar nenhum.
 
 | Onde | O quê | Observação |
 |---|---|---|
-| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas seis tabelas (as quatro de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil** |
+| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas sete tabelas (as cinco de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil**. `intencoes_troca_plano` (migration 0011, 21/09/2026) é a quinta de negócio — ver nota abaixo |
 | Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador. Provedor brasileiro |
 | Northflank | Logs da aplicação | Ver seção 7. Região `southamerica-east` — **Brasil**, medido pela API do provedor em 17/09/2026. **Esta linha dizia "Render" até 17/09/2026**, e o Render deixou de ser usado em 12/09: inventário que nomeia o fornecedor errado aponta a transferência internacional errada, que é o pior lugar para estar desatualizado |
 | Cloudflare Pages | Nada em repouso — front estático | Não recebe dado pessoal em repouso. Mas trata **dado técnico de conexão em trânsito** (IP, agente do navegador, metadados), porque é ela que entrega a página |
@@ -91,6 +91,33 @@ de titular de terceiro é publicado em lugar nenhum.
 | Cloudflare Access | Identidade do operador no login administrativo | Camada de borda do `/admin`; trata o e-mail do operador para autorizar |
 | Contratante | Payload do webhook e da conciliação | Não inclui endereço; inclui `pedidoId`, valores e, em assinatura, `documento` |
 | Contratante (navegação de volta) | Só o `pedidoId`, na URL de retorno | Desde 15/09/2026. O `returnUrl` leva o comprador de volta à loja depois de pagar e carrega **um** parâmetro, `pedido` — um id que o próprio contratante gerou e já conhece. Nenhum dado pessoal, e nenhum status de pagamento, viaja por aí (`API.md` §3.1). O destino é sempre origem do próprio contratante, conferida no servidor |
+
+### 5.1 `intencoes_troca_plano` — nasceu em 21/09/2026, e o que ela NÃO guarda
+
+Tabela nova (migration 0011, RN-35.2 em `docs/funcional.md`): registra
+uma troca de plano com acerto a pagar, enquanto aguarda (ou já processou)
+a aprovação explícita do assinante em `/troca`. Desenhada, desde a
+primeira versão, para não carregar dado pessoal direto:
+
+- **Sem `documento`** — a linha identifica o assinante por
+  `assinatura_id`, e a tabela `assinaturas` (já inventariada acima) é
+  quem guarda o CPF/CNPJ dele.
+- **Sem IP nem User-Agent** — decisão deliberada no desenho
+  (`docs/specs/2026-09-20-troca-de-plano-redireciona-pagador.md`): o
+  consentimento é evidenciado pelo vínculo com a assinatura (só chega ao
+  link quem o contratante mandou), não por metadado de rede que este
+  projeto não coleta em nenhum outro lugar do caminho de pagamento.
+
+O que a linha guarda é o retrato do acerto (planos, valores, ciclo,
+crédito/débito) e o estado da aprovação — dado financeiro/operacional,
+mesma classe de `cobrancas`/`assinaturas`.
+
+> ⚠️ **PENDÊNCIA ABERTA:** a migration não trouxe rotina de retenção
+> própria. `expurgoService.js` cobre `cobrancas` e `assinaturas`; esta
+> tabela ainda não tem lista branca nem prazo decidido —
+> `docs/pendencias.md`, "Trocar de plano redireciona o pagador ao
+> Checkout". Risco menor que as outras duas (sem dado pessoal direto),
+> mas linhas nunca são limpas hoje.
 
 ## 6. Retenção e exclusão
 

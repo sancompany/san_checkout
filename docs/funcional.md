@@ -117,9 +117,11 @@ Nenhum dos três é botão, e o porquê de cada um está na seção 8.
 4. Recebe o webhook de saída, assinado com a `api_key` dele.
 5. Quando decide devolver, chama `POST /checkout/estornar` com a chave
    dele — a decisão de estornar é do lojista, a execução é nossa.
-6. Quando o assinante muda de plano, chama
-   `POST /checkout/trocar-plano` — e **avisa o assinante por e-mail e no
-   site dele** (RN-35: o checkout não fala com o pagador).
+6. Quando o assinante muda de plano, chama `POST /checkout/trocar-plano`
+   — se houver acerto a cobrar, o Checkout redireciona o assinante para
+   aprovar o valor (RN-35.2); o contratante **também avisa por e-mail e
+   no site dele** (RN-35), porque a tela do Checkout só pede aprovação
+   do valor, não substitui o aviso do contratante sobre a troca em si.
 
 ### 2.8 Principal — o operador cadastra um contratante
 
@@ -173,6 +175,7 @@ onde acontece, com quantas vezes aconteceu).
 |---|---|---|---|---|---|
 | Checkout | `/` (`public/index.html`) | comprador | resumo do pedido ou do plano, e o formulário do pagador | escolher método, preencher dados, aceitar termos, gerar cobrança | página de status; ou pop-up da Asaas, no cartão |
 | Status do pagamento | `/status` (`public/status.html`) | comprador | selo e texto do estado atual, dados do Pix ou boleto, rodapé com canais | copiar código, abrir boleto, achar o canal certo | Termos, Privacidade, e-mail dos canais |
+| Aprovar troca de plano | `/troca#t=…` (`public/troca.html`) | assinante | resumo do acerto (crédito, débito, valor a pagar) — nunca escolha de plano | aprovar a cobrança exata | fecha na própria tela, com o resultado |
 | Fechar pop-up | `/pagamento-popup-fechar.html` | comprador | "pode fechar esta janela" | fechar | volta ao checkout, que atualiza sozinho |
 | Painel administrativo | `/admin` (`public/admin.html`) | operador | seis seções: Contratantes, Subcontas, Métricas, Arquivados, Webhook, Erros | cadastrar, editar, trocar chave, arquivar, criar subconta, ler métrica, log e exceções | permanece no painel |
 | Termos de Uso | `/termos.html` | qualquer um | o contrato de uso da infraestrutura | ler | — |
@@ -282,6 +285,32 @@ vai em todo request (limite declarado em `CONSTRAINTS.md` §2.6).
 Páginas estáticas. **Carregando, vazio, erro, sem permissão e lista
 longa não se aplicam** — não consultam nada e não têm estado. A 404 é
 servida com status HTTP 404, não 200.
+
+### 4.5 Aprovar troca de plano (`/troca#t=…`)
+
+Nasce em RN-35.2 — só existe quando `POST /trocar-plano` responde `202`.
+O token vai no FRAGMENTO da URL, lido uma vez e mantido só em memória
+(nunca em storage do navegador); recarregar a página perde o token por
+desenho.
+
+| estado | o que aparece |
+|---|---|
+| Carregando | esqueleto com a geometria RESERVADA do estado final — nunca revela conteúdo depois de um layout diferente (evita o CLS que a tela de assinatura teve em 17/09/2026) |
+| Sucesso (pronto) | resumo do acerto: crédito do plano atual, o que o plano novo custa nos dias restantes, e o total a pagar — com o botão "Aprovar cobrança de R$ X,XX" |
+| Vazio | **não se aplica** — sempre existe uma intenção por trás do token, ou o estado é erro |
+| **Erro / Indisponível** | token ausente, mal formado, ou intenção inexistente: "Link inválido" |
+| Link expirado | passou dos 15 minutos (ou da virada do dia civil de Brasília): "Link expirado", sem cobrar nada |
+| Link desatualizado (`STALE`) | a assinatura mudou desde que o link nasceu (ex.: outra troca já concluiu): "Link desatualizado", sem cobrar nada — nunca recalcula às cegas |
+| Processando | depois de clicar "Aprovar", enquanto o veredito do cartão ainda não fechou: "Confirmando o pagamento", com poll automático |
+| Pago, com volta | **não se aplica** — não é um `returnUrl` de pedido; a tela mostra "Troca confirmada" e para ali, sem redirecionar a lugar nenhum |
+| Pago, sem volta | **não se aplica**, mesmo motivo |
+| Recusado | o cartão salvo recusou o acerto: "Pagamento não aprovado" — a assinatura continua no plano ANTIGO |
+| Sem permissão | **não se aplica** — a credencial é o token em si, não um login |
+| Lista longa demais | **não se aplica** — a tela mostra só o resumo de UM acerto |
+
+**Nunca deixa escolher plano.** É a restrição central do dono ao pedir
+esta tela (20/09/2026): o assinante aprova o valor que o contratante já
+calculou, nunca decide para qual plano está indo.
 
 ---
 
@@ -732,29 +761,58 @@ do `API.md` §5.3 ganhou mais um motivo.
 > registro. O cuidado que ele queria cabe inteiro na denúncia, e é por
 > isso que as duas coisas entraram juntas.
 
-**RN-35 · Trocar de plano cobra a diferença antes de trocar, e avisar o
-assinante é obrigação do contratante.** Autorizada pelo dono em
-17/09/2026, com as sete regras do acerto decididas por ele.
+**RN-35 · Trocar de plano cobra a diferença, e avisar o assinante que a
+troca ACONTECEU é obrigação do contratante.** Autorizada pelo dono em
+17/09/2026, com as sete regras do acerto decididas por ele; o CAMINHO de
+cobrança foi revisto em 21/09/2026 (RN-35.2, abaixo).
 `POST /api/checkout/trocar-plano` (`API.md` §5.6) leva o assinante do
 plano A para o plano B **mantendo o vínculo**, e a ordem é a regra:
 o plano de destino é **puxado da API do contratante** (valor e ciclo
-nunca vêm do corpo da requisição); o acerto proporcional é **cobrado no
-cartão já salvo**; e **o plano só muda se o acerto for aprovado**. Para
-baixo não cobra e **não devolve** — o preço novo vale no vencimento que
-já estava marcado, que a Asaas não move nem quando o ciclo muda
-(medido). Acerto abaixo do piso de R$ 5,00 é **absorvido**, nunca
-arredondado para cima. *Violada de um jeito:* alterar o plano antes de
-cobrar daria o plano caro de graça a quem tem cartão recusado. *Violada
-do outro:* confiar no `200` do `PUT` gravaria "trocou" no nosso banco
-sobre uma alteração que a Asaas ignorou em silêncio — ela responde `200`
-para campo que não conhece, medido, e por isso a assinatura é **relida**
-depois. *Quem vê:* o contratante, no `evento: 'plano_trocado'` e na
-resposta, que traz crédito, débito e dias restantes. **O assinante não é
-avisado por nós:** o checkout não fala com o pagador (não há biblioteca
-de e-mail no `src/`), e mudar o valor que um cartão salvo vai cobrar
-exige concordância dele (CDC) — então avisar por **e-mail e por aviso no
-site** é obrigação de cada projeto contratante, decisão do dono, escrita
-em `API.md` §5.6 e no checklist da §11.
+nunca vêm do corpo da requisição); quando há acerto, ele é **cobrado no
+cartão já salvo** (depois de aprovado — RN-35.2); e **o plano só muda se
+o acerto for aprovado no cartão**. Para baixo não cobra e **não
+devolve** — o preço novo vale no vencimento que já estava marcado, que a
+Asaas não move nem quando o ciclo muda (medido). Acerto abaixo do piso de
+R$ 5,00 é **absorvido**, nunca arredondado para cima. *Violada de um
+jeito:* alterar o plano antes de cobrar daria o plano caro de graça a
+quem tem cartão recusado. *Violada do outro:* confiar no `200` do `PUT`
+gravaria "trocou" no nosso banco sobre uma alteração que a Asaas ignorou
+em silêncio — ela responde `200` para campo que não conhece, medido, e
+por isso a assinatura é **relida** depois. *Quem vê:* o contratante, no
+`evento: 'plano_trocado'` — que só dispara quando a troca CONCLUI, seja
+na hora (sem acerto) ou depois da aprovação (com acerto) — e traz
+crédito, débito e dias restantes. **Avisar que a troca aconteceu não é
+função do Checkout:** ele não manda e-mail nem WhatsApp com o resumo
+(não há biblioteca de e-mail no `src/`) — isso é obrigação de cada
+projeto contratante, decisão do dono, escrita em `API.md` §5.6 e no
+checklist da §11. O que o Checkout PASSOU a fazer, desde RN-35.2, é
+diferente: pedir o consentimento da COBRANÇA, não avisar do resultado.
+
+**RN-35.2 · Havendo acerto a cobrar, o ASSINANTE aprova o valor antes de
+qualquer cobrança — decisão do dono em 20/09/2026, revertendo a de
+17/09/2026 ("não existe tela").** O dono testou o MostrAí e viu a troca
+acontecer sem o assinante ver nada; achou errado mudar o valor que um
+cartão salvo vai cobrar sem consentimento explícito de quem paga (CDC).
+Desde 21/09/2026: quando `acerto.cobra` é verdadeiro (>= R$ 5,00),
+`POST /trocar-plano` **não cobra mais nada na própria chamada** — cria
+uma intenção com o retrato do acerto CONGELADO (migration 0011,
+`intencoes_troca_plano`) e devolve `202` com um link (`API.md` §5.6). O
+assinante abre `/troca#t=…`, vê o valor exato (nunca escolhe plano — só
+aprova o número) e aprova ou não. Só então o cartão é cobrado.
+*Violada:* voltar ao comportamento antigo reabriria exatamente a queixa
+do dono — cobrança sem consentimento visível de quem paga. *Quem vê:* o
+assinante, na tela; o contratante, no `evento: 'plano_trocado'`, que
+agora pode chegar minutos depois da chamada original, nunca na mesma
+resposta HTTP quando há acerto. **Sem aprovação, nada é cobrado** — o
+link expira sozinho em 15 minutos (ou na virada do dia civil de
+Brasília, o que vier primeiro) sem tocar o cartão. O token vai no
+FRAGMENTO da URL (nunca query string — não viaja em log de acesso nem
+`Referer`), é lido uma vez e fica só em memória no navegador (nunca
+`sessionStorage`/`localStorage` — este domínio carrega o Web Analytics
+da Cloudflare, terceiro não auditado quanto a acesso a storage).
+Desenho completo, com as quatro rodadas de decisão e os contrapontos
+considerados: `docs/specs/2026-09-20-troca-de-plano-redireciona-
+pagador.md`.
 
 **RN-35.1 · Depois da troca, quem manda é a assinatura, não o plano.**
 A troca tira do `plano_id` a estabilidade que todo o resto do sistema
@@ -770,16 +828,23 @@ credita o plano que o assinante deixou de ter, a cada cobrança, sem
 sintoma. *Quem vê:* ninguém, até alguém comparar o acesso com a fatura.
 `docs/erros/2026-09-17-uma-chave-que-era-estavel-deixou-de-ser.md`.
 
-**RN-36 · Duas trocas simultâneas não cobram o acerto duas vezes.** A
-troca reivindica um arrendamento na própria linha da assinatura
-(`assinaturas.trocando_em`, migration 0010) antes de cobrar, com um
-`update` condicional — que é atômico no Postgres. *Violada:* sem ele, as
-duas chamadas leem "não trocou ainda", as duas cobram, e desfazer é
-estorno no cartão de uma pessoa real. *Quem vê:* a segunda chamada, com
-`409` e **nada cobrado**. Medido dentro do contêiner em 17/09/2026: 1ª
-reivindicação ganha, 2ª não ganha, e um arrendamento de dez minutos
-atrás volta a poder — o prazo curto existe para que um processo que morra
-no meio não tranque a assinatura para sempre. O acerto também **não conta
+**RN-36 · Duas cobranças do mesmo acerto não acontecem — nem duas
+chamadas simultâneas, nem duplo clique no mesmo link, nem o webhook e o
+sweeper resolvendo ao mesmo tempo.** Duas camadas, desde 21/09/2026: (1)
+a INTENÇÃO só cobra uma vez — a transição de estado que dispara a
+cobrança é um `UPDATE` condicional (CAS) em `intencoes_troca_plano`, e
+só quem vence a corrida chega a chamar a Asaas; (2) a ASSINATURA continua
+com o arrendamento de sempre (`assinaturas.trocando_em`, migration 0010)
+durante a janela ativa de cobrança, o mesmo mecanismo da troca síncrona
+(sem acerto) de 17/09/2026. *Violada:* sem a primeira camada, um duplo
+clique ou o webhook chegando durante o poll do assinante cobrariam o
+mesmo acerto duas vezes; sem a segunda, duas trocas da MESMA assinatura
+correndo juntas colidiriam. *Quem vê:* a chamada perdedora não cobra
+nada — reconsulta o que a vencedora já fez. Medido dentro do contêiner
+em 17/09/2026 (a versão síncrona do arrendamento, ainda em uso): 1ª
+reivindicação ganha, 2ª não ganha, e um arrendamento de minutos atrás
+volta a poder — o prazo curto existe para que um processo que morra no
+meio não tranque a assinatura para sempre. O acerto também **não conta
 como "última cobrança da assinatura"** na conciliação (`API.md` §5.3):
 ele carrega o mesmo `plano_id` e nasce depois do ciclo, e sem o filtro de
 método o contratante leria o acerto de R$ 30 como se fosse o preço do

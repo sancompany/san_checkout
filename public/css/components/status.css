@@ -23,7 +23,13 @@
 }
 .status-selo--pago { background: rgba(5, 150, 105, 0.10); color: var(--status-success); }
 .status-selo--aguardando { background: rgba(217, 119, 6, 0.12); color: var(--status-warning); }
-.status-selo--encerrado { background: rgba(220, 38, 38, 0.09); color: var(--status-error); }
+/* `#B91C1C`, não `var(--status-error)` (#DC2626): o texto em 11px sobre
+   este fundo claro mede 4,19:1 com o token padrão — abaixo do piso AA
+   de 4,5:1 (achado em 21/09/2026, testando `troca.html`: nenhuma tela
+   anterior chegava a exibir este selo específico no estado auditado, e
+   por isso o furo nunca apareceu em `npm run acessibilidade`). Este
+   vermelho mais escuro mede acima do piso, mantendo o mesmo fundo. */
+.status-selo--encerrado { background: rgba(220, 38, 38, 0.09); color: #B91C1C; }
 .status-selo--neutro { background: var(--bg-input); color: var(--text-secondary); }
 
 .status-titulo {

@@ -37,19 +37,30 @@ resumo aqui.
   nenhuma técnica — decisão de fazer antes ou durante a troca de
   produção. Critério de conclusão: teste de sabotagem trocando um token
   por vez sem gerar rejeição.
-- [ ] **Trocar de plano precisa redirecionar o pagador ao Checkout** —
-  hoje a troca (`POST /api/checkout/trocar-plano`) é servidor-a-servidor
-  e silenciosa ao pagador (decisão deliberada de 17/09/2026); o dono
-  quer reverter isso para redirecionar o pagador a uma tela hospedada
-  no Checkout, com os detalhes do acerto mostrados ali antes de
-  confirmar. Pendência para amanhã (achado 20/09/2026), **ainda não
-  autorizado a construir** — redesenho de fluxo que reabre contrato já
-  consumido pelo MostrAí, está na lista curta que exige autorização
-  explícita antes de começar. Detalhe completo em `docs/pendencias.md`,
-  "Trocar de plano precisa redirecionar o pagador ao Checkout".
+- [x] **Trocar de plano redireciona o pagador ao Checkout** — construído
+  e no ar em 21/09/2026 (autorizado pelo dono no mesmo dia). Detalhe
+  completo em `docs/pendencias.md`, "Trocar de plano redireciona o
+  pagador ao Checkout" (mesma entrada, agora ✅).
 
 ## LATER
 
+- [ ] **Expurgo de `intencoes_troca_plano`** — a migration 0011
+  (21/09/2026) não registrou rotina de retenção própria para a tabela
+  de intenção de troca de plano. Não é a mesma classe de risco de
+  `cobrancas`/`assinaturas` (não guarda documento nem IP/UA), mas as
+  linhas nunca são limpas hoje. `docs/pendencias.md`, "Trocar de plano
+  redireciona o pagador ao Checkout".
+- [ ] **Medir a recusa síncrona de cartão contra o sandbox** — o
+  classificador financeiro (`classificacaoFinanceiraService.js`) nunca
+  deriva `DECLINED_FINAL` de status síncrono sozinho, por não haver
+  medição ao vivo do que a Asaas devolve num cartão de teste recusado
+  (a doc pública não lista um status `REFUSED`). O desenho já é
+  conservador o bastante para não bloquear nisso; medir só relaxaria a
+  regra se confirmado seguro.
+- [ ] **Medir CLS de `/troca` com token real** — `npm run desempenho`
+  só cobre o caminho sem token (esqueleto→erro) da tela de aprovação;
+  o estado "resumo pendente" (o mais alto, com o botão Aprovar)
+  exigiria um token de teste de verdade contra um backend de verdade.
 - [ ] **Contador de rate limit por credencial (`X-Checkout-Key`)**, não só
   por IP — declarado em `CONSTRAINTS.md` §2.7 e `docs/proximas-versoes.md`,
   esperando evidência de tentativa real no log de rejeição antes de

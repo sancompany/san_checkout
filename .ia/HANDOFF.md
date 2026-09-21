@@ -38,7 +38,7 @@ commit que fecham esta tarefa.
 
 - Auditoria do repositório: estrutura, `package.json`, CI
   (`.github/workflows/ci.yml`, `seguranca.yml`), migrations (10
-  arquivos), `docs/`, `scripts/`, `tests/` (38 suítes), `src/` completo.
+  arquivos), `docs/`, `scripts/`, `tests/` (43 suítes), `src/` completo.
 - Auditoria do plugin `san-co` v1.3.0: as 9 `SKILL.md` lidas por
   completo (`novo-projeto`, `classificar`, `leis`, `construir`,
   `depurar`, `revisar`, `checkout`, `seguranca-san`, `legal`) — achado

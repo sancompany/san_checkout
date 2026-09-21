@@ -138,6 +138,20 @@ const TELAS = [
     clicarEm: ['h1', 'body']
   },
   {
+    /* ⚠️ `nao-conferido`: só mede o caminho SEM token (link incompleto
+       → esqueleto→erro). O caminho com token válido (esqueleto→resumo
+       pendente, o mais alto e o que o `min-height` de troca.css existe
+       para proteger) exigiria um token de teste de verdade — a
+       intenção nasce numa migration real (`intencoes_troca_plano`), e
+       este script não sobe backend nenhum. Conferir com um token real
+       contra o sandbox antes de fechar a Estação 6 desta
+       funcionalidade. */
+    nome: 'Troca de plano · sem token (esqueleto→erro)',
+    arquivo: 'troca.html',
+    exigeVisiveis: 1,
+    clicarEm: ['h1', 'body']
+  },
+  {
     nome: 'Termos de Uso',
     arquivo: 'termos.html',
     exigeVisiveis: 1,

@@ -122,9 +122,29 @@ export async function liberarTroca(id) {
  * evento nenhum** de assinatura (`CONSTRAINTS.md` §2.2, medido — zero
  * eventos `SUBSCRIPTION_*` entre os 53 configurados). Quem altera lá
  * escreve aqui na mesma operação, ou o dado nunca chega.
+ *
+ * `mutation_version` sobe SEMPRE, e a escrita é sempre CAS contra o
+ * valor que quem chama tinha em mãos (`mutationVersionEsperada`,
+ * obrigatório) — é a cerca de concorrência otimista (migration 0011)
+ * que a aprovação de troca de plano usa para saber se a assinatura
+ * mudou desde que o retrato foi congelado. A troca síncrona de sempre
+ * (sem concorrência a temer dentro da mesma requisição, já protegida
+ * por `trocando_em`) também passa por aqui com o valor que acabou de
+ * ler — CAS que sempre bate não é CAS a mais, é o mesmo primitivo
+ * usado em todo lugar, sem um segundo caminho "sem cerca" que alguém
+ * possa esquecer de proteger amanhã.
+ *
+ * @returns {Promise<boolean>} `true` quando a escrita aconteceu;
+ *   `false` quando o `mutation_version` já não era o esperado — nesse
+ *   caso NADA foi escrito, e quem chama decide o que fazer (`STALE`,
+ *   nunca sobrescrever às cegas).
  */
-export async function aplicarTrocaDePlano(id, { planoNovoId, planoAnteriorId, valor, ciclo }) {
-  const { error } = await supabase
+export async function aplicarTrocaDePlano(id, { planoNovoId, planoAnteriorId, valor, ciclo, mutationVersionEsperada }) {
+  if (!Number.isInteger(mutationVersionEsperada)) {
+    throw new Error('aplicarTrocaDePlano: mutationVersionEsperada é obrigatório (inteiro) — CAS sem ele não é CAS.');
+  }
+
+  const { data, error } = await supabase
     .from('assinaturas')
     .update({
       plano_id: planoNovoId,
@@ -132,11 +152,15 @@ export async function aplicarTrocaDePlano(id, { planoNovoId, planoAnteriorId, va
       valor,
       ciclo,
       trocado_em: new Date().toISOString(),
-      trocando_em: null
+      trocando_em: null,
+      mutation_version: mutationVersionEsperada + 1
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('mutation_version', mutationVersionEsperada)
+    .select('id');
 
   if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
 }
 
 /**

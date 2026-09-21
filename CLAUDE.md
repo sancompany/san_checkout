@@ -761,6 +761,71 @@ Feito em 19/09:
   `tests/popup-fecha-ao-confirmar.js`, sabotagem verificada
   manualmente. `docs/erros/2026-09-19-a-popup-da-asaas-nunca-fechava-sozinha.md`.
 
+Feito em 21/09/2026:
+- **Troca de plano redireciona o pagador ao Checkout — reabre e
+  reverte a decisão de 17/09/2026.** O dono testou o MostrAí em 20/09 e
+  viu a cobrança do acerto acontecer sem o assinante ver nada; achou
+  errado. Desenho fechado num relay de quatro rodadas com um chat
+  externo, cada proposta verificada contra o código real antes de
+  aceitar (`docs/specs/2026-09-20-troca-de-plano-redireciona-
+  pagador.md`), autorizado a construir em 21/09/2026.
+  `POST /trocar-plano` continua `200` imediato sem acerto a cobrar
+  (rebaixamento, absorção); havendo acerto (>= R$ 5,00), passa a
+  responder `202` e criar uma **intenção** (migration 0011,
+  `intencoes_troca_plano`) com o retrato CONGELADO — nada é cobrado nem
+  alterado na hora. O assinante aprova em `/troca#t=…` (token no
+  FRAGMENTO, nunca query string; lido uma vez, mantido só em memória,
+  nunca em `sessionStorage`/`localStorage` — este domínio carrega o Web
+  Analytics da Cloudflare, terceiro não auditado quanto a storage). A
+  cobrança de verdade só acontece depois de aprovada, pela mesma
+  coreografia de sempre (cobrar → alterar na Asaas → reler → gravar),
+  agora em `trocaExecucaoService.js` — com um classificador financeiro
+  canônico novo (`classificacaoFinanceiraService.js`, `PAID`/
+  `DECLINED_FINAL`/`UNKNOWN`) que corrige um furo pré-existente: a rota
+  síncrona antiga tratava qualquer status que não fosse
+  `CONFIRMED`/`RECEIVED` como recusa definitiva na hora, e não há
+  confirmação medida de que a Asaas devolve algo distinguível disso
+  quando o cartão é recusado de verdade — o classificador nunca deriva
+  `DECLINED_FINAL` de status síncrono sozinho, só de evento de webhook
+  (`PAYMENT_CREDIT_CARD_CAPTURE_REFUSED`/`PAYMENT_REPROVED_BY_RISK_
+  ANALYSIS`). Um sweeper de 60s (`trocaSweeperService.js`, o intervalo
+  mais curto do projeto — justificado por `PAYMENT_AUTHORIZED` não ter
+  garantia de chegar por webhook) resolve o que ficou ambíguo; o
+  webhook resolve pelo `charge_id` quando a Asaas confirma antes do
+  sweeper. Concorrência protegida em duas camadas: CAS por transição de
+  estado na intenção (`trocaIntencaoService.js`) e o arrendamento de
+  sempre na assinatura (`trocando_em`); `mutation_version`
+  (`assinaturas`, novo) detecta se algo mudou entre a criação da
+  intenção e a aprovação — divergência vira `STALE`, nunca recálculo
+  silencioso. `CONSTRAINTS.md` §3 (a exceção de CVV, cuja justificativa
+  invertia de sentido — "pagador fora do circuito" virou "é a nossa
+  tela que substitui a reconfirmação"), `API.md` §5.6 e
+  `docs/funcional.md` (RN-35, RN-35.2 nova, RN-36) reescritos.
+  Achado nesta própria revisão, antes de subir: as duas rotas novas do
+  pagador não tinham `try/catch` (uma exceção viraria promessa rejeitada
+  sem dono dentro de um handler assíncrono do Express — nenhuma outra
+  rota deste projeto comete isso), e a retomada de um crash pelo sweeper
+  não levava o documento do assinante para a cobrança nem para o aviso
+  ao contratante (corrigido buscando a assinatura dentro da própria
+  função de aplicação, em vez de exigir que cada chamador se lembrasse
+  de anexar o campo). A auditoria de acessibilidade, rodada sobre a tela
+  nova, achou de quebra um contraste insuficiente em `.status-selo--
+  encerrado` que já existia em `status.html` — nenhuma tela anterior
+  chegava a exibir esse selo específico no estado auditado, por isso o
+  furo nunca tinha aparecido. 163 checagens novas nos módulos do
+  caminho do dinheiro (classificador, intenção, execução, sweeper,
+  controlador de troca reescrito, controlador de aprovação, mais a
+  cobertura no `webhookController.js`), todas de sabotagem verificada.
+  **Declarado, não fechado:** a recusa síncrona de cartão nunca foi
+  medida ao vivo contra o sandbox (o desenho já é conservador o
+  bastante para não bloquear nisso); o CLS do estado "resumo pendente"
+  da tela `/troca` não foi medido com `npm run desempenho` (só o
+  caminho sem token foi — medir o outro exige um token de teste de
+  verdade); e `intencoes_troca_plano` ainda não tem rotina de expurgo
+  própria (sem dado pessoal direto, risco menor que `cobrancas`/
+  `assinaturas`, mas linhas nunca são limpas hoje). `docs/pendencias.md`,
+  "Trocar de plano redireciona o pagador ao Checkout".
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
@@ -801,7 +866,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 38 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 43 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada

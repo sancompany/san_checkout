@@ -1002,13 +1002,12 @@ virar mentira:
 Exceção aceita entra aqui com a lei, o motivo e a data — exceção
 esquecida não é conformidade.
 
-### Lei 4 · o acerto da troca de plano é cobrado no cartão salvo SEM reconfirmação de CVV — 17/09/2026
+### Lei 4 · o acerto da troca de plano é cobrado no cartão salvo SEM reconfirmação de CVV — 17/09/2026, revista em 21/09/2026
 
 A skill `seguranca-san` diz, sem ressalva: **"cartão salvo pede
-reconfirmação de CVV antes de pagar"**. A rota `POST /trocar-plano`
-(`API.md` §5.6) cobra o acerto proporcional no cartão tokenizado da
-assinatura **sem CVV e sem nenhuma interação do assinante**. É desvio da
-regra, e fica registrado aqui em vez de virar silêncio.
+reconfirmação de CVV antes de pagar"**. A cobrança do acerto proporcional
+(`trocaExecucaoService.js`) usa o cartão tokenizado da assinatura sem
+CVV. É desvio da regra, e fica registrado aqui em vez de virar silêncio.
 
 **Por que não dá para cumprir como escrito.** Reconfirmar CVV exige
 receber CVV, e receber CVV é exatamente o que a arquitetura deste
@@ -1020,29 +1019,52 @@ substitui os dados do cartão pelo token — não há campo de CVV a
 preencher. Cumprir a letra da regra significaria construir um formulário
 de cartão nosso, que é uma piora de segurança, não uma melhora.
 
-**A compensação, e é ela que torna o desvio aceitável:**
+**⚠️ A justificativa mudou em 21/09/2026, e é a mudança que a versão
+anterior desta exceção já previa** ("revisar no dia em que o acerto
+passar a ser disparado por uma tela do assinante"). Até 18/09/2026,
+`POST /trocar-plano` cobrava o acerto na hora, servidor-a-servidor, e a
+compensação principal era **"o pagador não está no circuito"** — o
+contratante disparava com a própria chave, e o assinante nunca via nada
+antes da cobrança acontecer. O dono reverteu essa decisão em 20/09/2026
+(`docs/pendencias.md`, `docs/specs/2026-09-20-troca-de-plano-
+redireciona-pagador.md`): agora, sempre que há acerto a pagar (>=
+R$ 5,00), `POST /trocar-plano` só cria uma **intenção** (`202`, migration
+0011) — nada é cobrado ainda — e o PAGADOR precisa aprovar
+explicitamente o valor exato na tela `/troca` antes de a cobrança
+acontecer (`trocaAprovacaoController.js`). O desvio da letra da regra
+continua (não existe reconfirmação de CVV), mas o motivo de ser
+aceitável não é mais "o pagador está fora do circuito" — é o oposto:
+**é a nossa tela, não um campo de CVV, que substitui a reconfirmação.**
 
-1. **O pagador não dispara isto.** A rota exige a `X-Checkout-Key` do
-   contratante — a mesma credencial de cancelar, pausar e estornar. Não
-   há caminho público, nem tela, nem link.
-2. **Quem dispara não escolhe o valor.** O acerto é calculado pelo
-   servidor a partir do plano de destino **puxado da API do
-   contratante** e do valor efetivamente pago no ciclo (RN-35). O corpo
-   da requisição não carrega valor nenhum; mandar um é ignorado, e há
-   teste que reprova se isso mudar.
+**A compensação, revista:**
+
+1. **O pagador CONSENTE explicitamente**, na tela `/troca`, vendo o
+   valor exato antes de aprovar — a tela nunca deixa escolher plano, só
+   aprovar o acerto que o contratante já calculou. É o oposto do "não
+   está no circuito" de antes: agora ele é quem aciona.
+2. **Quem aprova não escolhe o valor.** O retrato da intenção é
+   CONGELADO no momento da criação (`intencoes_troca_plano`,
+   `valor_acerto` etc.) — a aprovação nunca recalcula, só confere que a
+   assinatura não mudou de baixo (`mutation_version`) e cobra
+   exatamente o que foi mostrado.
 3. **É o MESMO cartão que a assinatura já cobra sem CVV todo ciclo.**
    A recorrência inteira funciona assim, por desenho do provedor: o
    acerto não abre uma porta nova, usa a que o assinante autorizou ao
    assinar.
-4. **Não cobra duas vezes:** arrendamento por linha de assinatura
-   (RN-36), medido.
-5. **Teto de rota** de criação (10/min por IP), como as outras rotas que
-   cobram.
+4. **Não cobra duas vezes:** o token da intenção é de uso único por
+   transição de estado (CAS, `trocaIntencaoService.js`) — um duplo
+   clique no mesmo link, o webhook e o sweeper concorrendo não disparam
+   uma segunda cobrança.
+5. **Sem aprovação, nada é cobrado**: a intenção expira sozinha em 15
+   minutos (ou na virada do dia civil, o que vier primeiro) sem nunca
+   tocar o cartão.
+6. **Teto de rota** de criação (10/min por IP) em `/troca/aprovar`, como
+   as outras rotas que cobram; `/troca/contexto` tem teto de consulta
+   (60/min).
 
-**Revisar no dia em que** o acerto passar a ser disparado por uma tela do
-assinante (aí o consentimento dele volta a ser o assunto, e o caminho é
-a pop-up, não um campo de CVV nosso), ou em que a Asaas passar a aceitar
-CVV junto do token sem que os dados do cartão toquem o nosso servidor.
+**Revisar de novo no dia em que** a Asaas passar a aceitar CVV junto do
+token sem que os dados do cartão toquem o nosso servidor — aí a letra da
+regra volta a ser cumprível de verdade, não só compensada.
 
 ### Lei 3 · a credencial do Cloudflare no ambiente é a conta inteira — 14/09/2026
 

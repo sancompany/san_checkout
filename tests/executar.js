@@ -34,6 +34,11 @@ const SUITES = [
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
   'src/services/proporcionalService.js', // o acerto da troca de plano: as sete regras do dono, em aritmética
+  'src/services/classificacaoFinanceiraService.js', // veredito único PAID/DECLINED_FINAL/UNKNOWN — status ambíguo nunca é recusa por suposição
+  'src/services/trocaIntencaoService.js', // TTL da aprovação: 15 min ou a virada do dia civil, o que vier primeiro
+  'src/services/trocaExecucaoService.js', // a coreografia da aprovação: cobra→classifica→aplica, nunca cobra duas vezes
+  'src/services/trocaSweeperService.js', // a rede de segurança: reclassifica, retoma, escalona depois de N tentativas
+  'src/controllers/trocaAprovacaoController.js', // /troca/contexto e /troca/aprovar: mapeamento estado→HTTP, nunca vaza cartão/documento
   'src/services/expurgoService.js',  // expurgo de dado pessoal: lista branca do que fica, e o piso do prazo
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas

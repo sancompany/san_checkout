@@ -62,3 +62,16 @@
 
 /status/
   X-Robots-Tag: noindex, nofollow, noarchive
+
+# Mesmo motivo de /status acima: o token de aprovação (fragmento da
+# URL) é quem abre a página — não é conteúdo indexável, e um
+# `robots.txt` listando o caminho publicaria exatamente o que se quer
+# não anunciar (o header, não o `robots.txt`, é quem resolve isso).
+/troca.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/troca
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/troca/
+  X-Robots-Tag: noindex, nofollow, noarchive
