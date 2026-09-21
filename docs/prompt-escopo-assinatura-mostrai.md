@@ -23,6 +23,18 @@ troca, o `planoId` do assinante é o NOVO.** Cancelar, pausar, retomar,
 conciliar e gerar link de renovação passam a usar o plano novo; mandar o
 antigo responde `404`.
 
+⚠️ **Redesenho em 21/09/2026 — reverte o que a seção 5 descrevia até
+então.** `POST /trocar-plano` **deixou de cobrar o acerto na mesma
+chamada.** Havendo acerto a pagar (>= R$ 5,00), a rota agora responde
+`202` com um link (`approvalUrl`): é o **ASSINANTE**, não o MostrAí,
+quem aprova o valor exato numa tela do próprio Checkout
+(`/troca#t=<token>`) — e só depois disso o cartão salvo é cobrado.
+Sem acerto (rebaixamento, ou acerto abaixo do piso de R$ 5,00), a rota
+continua `200` imediato, exatamente como sempre foi — nada muda nesse
+caso. A confirmação da troca com acerto chega pelo webhook
+(`evento: 'plano_trocado'`), nunca pela resposta HTTP original. Seção 5
+reescrita inteira contra isto.
+
 **Como usar:** copie tudo abaixo da linha e cole na sessão do MostrAí.
 
 ---
@@ -78,7 +90,7 @@ trate como desconhecido.
 | pausar | `POST /pausar-assinatura` | para de cobrar, vínculo vivo |
 | retomar | `POST /retomar-assinatura` | volta a cobrar |
 | conciliar | `POST /consultar-assinatura` | reconfere o estado real na Asaas |
-| **trocar de plano** | `POST /trocar-plano` | **nova em 17/09/2026** — cobra o acerto no cartão salvo e só então troca |
+| **trocar de plano** | `POST /trocar-plano` | **nova em 17/09/2026, redesenhada em 21/09/2026** — sem acerto, troca na hora (`200`); havendo acerto, responde `202` e o ASSINANTE aprova a cobrança numa tela do Checkout antes de qualquer coisa acontecer |
 
 Todas com `X-Checkout-Key` do contratante, e corpo
 `{ planoId, documento }` — a troca de plano leva um campo a mais,
@@ -195,22 +207,28 @@ meio que o checkout usa) e de boleto, com fixtures descartáveis:
 
 **O que isso significa para o MostrAí:**
 
-1. **Sim, dá para aumentar e diminuir** — e **o checkout passou a expor
-   isso** no fim de 17/09/2026, como troca de PLANO:
-   `POST /api/checkout/trocar-plano` (`API.md` §5.6). ⚠️ Esta seção
-   dizia "não existe rota nossa" até aquele dia; a rota foi autorizada e
-   construída depois de o dono do checkout decidir as sete regras do
-   acerto. **Leia a §5.6 do `API.md`, não esta lista, como contrato.**
+1. **Sim, dá para aumentar e diminuir** — e **o checkout expõe isso**
+   como troca de PLANO: `POST /api/checkout/trocar-plano` (`API.md`
+   §5.6). ⚠️ A rota nasceu em 17/09/2026 cobrando na mesma chamada, e
+   foi **redesenhada em 21/09/2026**: o dono testou o MostrAí e viu a
+   cobrança do acerto acontecer sem o assinante ver nada — achou errado.
+   Hoje, havendo acerto, a rota nunca cobra sozinha: ela responde `202`
+   com um link, e é o assinante quem aprova o valor exato numa tela do
+   Checkout antes de qualquer débito. **Leia a §5.6 do `API.md`, não
+   esta lista, como contrato.**
 2. **O piso de R$ 5,00 vale na alteração também**, com mensagem por meio
-   de pagamento. A rota valida antes de chamar a Asaas e devolve `400`.
+   de pagamento. A rota valida antes de criar qualquer intenção e
+   devolve `400`.
 3. **Ciclo novo não move a data já marcada.** Trocar mensal por anual
    mantém a próxima data; o ciclo novo conta dali. Quem assumir "virou
    anual, próxima em um ano" erra por onze meses. A troca de plano vive
    disso: o acerto cobre os dias que faltam, e o plano novo inteiro entra
    na data que o assinante já tinha.
-4. **`200` não prova alteração nessa API** — a Asaas ignora em silêncio
-   campo que não conhece. A rota **relê** a assinatura depois de alterar,
-   e responde `502` sem mexer no registro se a alteração não pegou.
+4. **`200` (sem acerto) não prova alteração nessa API** — a Asaas ignora
+   em silêncio campo que não conhece. A rota **relê** a assinatura
+   depois de alterar, e responde `502` sem mexer no registro se a
+   alteração não pegou. Com acerto, quem confirma é o webhook, não a
+   resposta HTTP (item 0 abaixo).
 5. **`value` não está no schema documentado** do `PUT` da Asaas.
    Funciona, é comportamento não documentado, e pode mudar sem aviso —
    o dia em que mudar, o `502` acima é o que aparece.
@@ -218,14 +236,48 @@ meio que o checkout usa) e de boleto, com fixtures descartáveis:
    nos avisa, e o `valor` do checkout fica errado para sempre (seção 4).
    Se for para mudar preço, mude pela rota.
 
+#### O fluxo com acerto — o que o MostrAí precisa fazer, desde 21/09/2026
+
+`POST /trocar-plano` respondendo `202` significa **nada foi cobrado nem
+alterado ainda**:
+
+```json
+{
+  "code": "PLAN_CHANGE_APPROVAL_REQUIRED",
+  "status": "approval_required",
+  "approvalUrl": "https://checkout.sancocore.com.br/troca#t=3f7a...",
+  "expiresAt": "2026-09-25T15:15:00.000Z",
+  "amount": 30.00
+}
+```
+
+1. **O MostrAí leva o assinante até `approvalUrl`** (redirecionar, abrir
+   em nova aba, mandar por e-mail — a escolha é sua). Essa URL é do
+   **Checkout**, não do MostrAí; o assinante vê lá o valor exato do
+   acerto e aprova (ou não) no cartão que já está salvo — ele **não
+   escolhe plano, não digita cartão**, só confirma o valor.
+2. **O link expira em 15 minutos.** Se o assinante não abrir a tempo, ou
+   abrir e não aprovar, nada acontece: o plano continua o antigo, nada
+   foi cobrado. Uma nova chamada a `POST /trocar-plano` gera um link
+   novo.
+3. **Quem confirma que a troca aconteceu é o webhook**
+   (`evento: 'plano_trocado'`, seção 3), nunca a resposta HTTP original
+   — ela só disse "existe um acerto pendente de aprovação", não "a troca
+   aconteceu". Pode levar de segundos a nunca.
+4. **Recusa não muda nada.** Se o assinante aprovar mas o cartão salvo
+   recusar a cobrança, o plano permanece o antigo — não há estado
+   intermediário para você tratar.
+
 **Como se muda preço hoje — três caminhos:**
 
-0. **`POST /trocar-plano`** (o novo): o assinante vai do plano A para o
-   plano B, o acerto proporcional é cobrado **no cartão já salvo** (ele
-   não digita nada), e o plano só muda se o acerto for aprovado. Para
-   baixo não cobra e não devolve — o preço novo vale no vencimento.
-   **O valor e o ciclo saem do SEU `GET /plano/{planoNovoId}`**, nunca
-   do corpo da requisição.
+0. **`POST /trocar-plano`** (o novo): sem acerto, troca na hora (`200`).
+   Havendo acerto, nasce um link de aprovação (`202`, acima) — o acerto
+   só é cobrado, no cartão já salvo, depois que o **assinante** aprova
+   na tela do Checkout. Para baixo não cobra e não devolve — o preço
+   novo vale no vencimento. **O valor e o ciclo saem do SEU
+   `GET /plano/{planoNovoId}`**, nunca do corpo da requisição, e são
+   revalidados de novo na hora da aprovação (contra o que pode ter
+   mudado na sua API entre a chamada e o assinante aprovar).
 1. **Cancelar e assinar de novo** (o assinante digita o cartão outra vez).
 2. **Cobrar a diferença como pedido avulso** mantendo a assinatura — era
    a decisão do dono em 16/09/2026, tomada quando a rota não existia.
@@ -278,9 +330,17 @@ E as decisões do dono do checkout que você vai sentir na prática (são
   naquele momento, a partir do valor **pago** do período;
 - **cobrança do período pendente recusa a troca** (`409`): não existe
   crédito de período que não foi pago;
-- **duas trocas simultâneas**: a segunda recebe `409` e **nada é
-  cobrado** — a guarda existe para ninguém pagar o mesmo acerto duas
-  vezes;
+- ⚠️ **duas chamadas de `POST /trocar-plano` com acerto a cobrar NÃO dão
+  mais `409` uma na outra** — isto mudou em 21/09/2026. Antes, a trava
+  era pega na própria chamada (nada esperava aprovação); agora, como
+  nada é cobrado na criação da intenção, uma segunda chamada só
+  recalcula e cria **outra** intenção/link, sem bloquear a primeira. A
+  guarda contra pagar o mesmo acerto duas vezes existe do mesmo jeito,
+  só que mudou de lugar: ela trava no **assinante aprovando**, não no
+  MostrAí chamando a rota — só uma aprovação por assinatura consegue
+  cobrar por vez, e um link vencido (15 min) simplesmente para de
+  funcionar. Se o seu código depende do `409` aqui para saber "já existe
+  uma troca pendente", ele vai parar de ver esse sinal;
 - ⚠️ **depois da troca, o `planoId` do assinante é o NOVO**: cancelar,
   pausar, retomar, conciliar e gerar link de renovação passam a usar
   `planoNovoId`; mandar o antigo responde `404`. É por isso que o evento
