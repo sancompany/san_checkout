@@ -243,30 +243,61 @@ export async function marcarReconciliacaoNecessaria(id, deStatus) {
   return transicionar(id, deStatus, 'RECONCILIATION_REQUIRED');
 }
 
-/** Incrementa `tentativas_sweeper` — não é uma transição de estado,
- *  só o contador que decide quando escalonar. */
-export async function incrementarTentativaSweeper(id) {
-  const { data, error } = await supabase
+/**
+ * Incrementa `tentativas_sweeper` — não é uma transição de estado, só o
+ * contador que decide quando escalonar. CAS contra o valor que quem
+ * chama já tinha em mãos (`valorEsperado`, da mesma leitura que trouxe a
+ * linha para o sweeper), e não ler-somar-escrever: duas passadas do
+ * sweeper se sobrepondo (uma demorou mais que os 60s do intervalo) leriam
+ * o mesmo valor e as duas escreveriam `+1`, perdendo um incremento — o
+ * mesmo risco de contagem em rajada que `erroService.registrarErro` já
+ * resolve no banco, por outro caminho (achado no ciclo de revisão do
+ * PR #36). Perder um incremento aqui não perde dinheiro — só atrasa a
+ * escalada para `RECONCILIATION_REQUIRED` em um ciclo — mas o resto deste
+ * arquivo é CAS em toda escrita, e esta era a única exceção.
+ */
+export async function incrementarTentativaSweeper(id, valorEsperado) {
+  const { error } = await supabase
     .from('intencoes_troca_plano')
-    .select('tentativas_sweeper')
+    .update({ tentativas_sweeper: valorEsperado + 1 })
     .eq('id', id)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return;
+    .eq('tentativas_sweeper', valorEsperado);
 
-  const { error: erroUpdate } = await supabase
-    .from('intencoes_troca_plano')
-    .update({ tentativas_sweeper: data.tentativas_sweeper + 1 })
-    .eq('id', id);
-  if (erroUpdate) throw erroUpdate;
+  if (error) throw error;
 }
 
 /**
- * As intenções que o sweeper precisa olhar: qualquer estado não
+ * Expira em LOTE toda `PENDING_APPROVAL` vencida — o link que o
+ * assinante nunca abriu de novo (ou abriu e nunca aprovou). Sem isto,
+ * achado no ciclo de revisão do PR #36: "expira sozinha" descrevia o
+ * COMPORTAMENTO (o CAS de `reivindicarProcessamento` já recusa cobrar
+ * um token vencido), não o REGISTRO — o `status` da linha só muda de
+ * `PENDING_APPROVAL` para `EXPIRED` quando *algo* chama
+ * `expirarSePassouDoPrazo` sobre aquele id específico
+ * (`/troca/contexto` ou `/troca/aprovar`), e um link nunca reaberto
+ * não chama nada. A linha ficava `PENDING_APPROVAL` no banco para
+ * sempre, mentindo que ainda está dentro da janela de 15 minutos.
+ * `UPDATE` em lote, sem `SELECT` antes — não precisa da linha, só do
+ * efeito.
+ */
+export async function expirarTodasVencidas() {
+  const { data, error } = await supabase
+    .from('intencoes_troca_plano')
+    .update({ status: 'EXPIRED' })
+    .eq('status', 'PENDING_APPROVAL')
+    .lt('expira_em', new Date().toISOString())
+    .select('id');
+
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
+/**
+ * As intenções que o sweeper reconsulta uma a uma: qualquer estado não
  * terminal que já disparou (ou pode ter disparado) uma cobrança.
- * `PENDING_APPROVAL` fica de fora de propósito — o sweeper nunca cria
- * cobrança nova, e uma intenção pendente sem aprovação não tem nada
- * para reconciliar (só expira sozinha).
+ * `PENDING_APPROVAL` fica de fora — não é reconsulta por linha que a
+ * resolve, é `expirarTodasVencidas` (acima), chamada uma vez por
+ * passada, não uma vez por linha.
  */
 export async function listarIntencoesParaVarredura({ limite = 100 } = {}) {
   const { data, error } = await supabase

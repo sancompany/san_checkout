@@ -24,7 +24,8 @@
 import {
   listarIntencoesParaVarredura,
   incrementarTentativaSweeper,
-  marcarReconciliacaoNecessaria
+  marcarReconciliacaoNecessaria,
+  expirarTodasVencidas
 } from './trocaIntencaoService.js';
 import { criarExecutorDeTroca } from './trocaExecucaoService.js';
 import { registrarErro } from './erroService.js';
@@ -43,6 +44,7 @@ const dependenciasPadrao = {
   listarIntencoesParaVarredura,
   incrementarTentativaSweeper,
   marcarReconciliacaoNecessaria,
+  expirarTodasVencidas,
   executor: criarExecutorDeTroca(),
   registrarErro
 };
@@ -51,8 +53,28 @@ export function criarSweeper(deps = dependenciasPadrao) {
   /** Uma passada — chamada pelo `setInterval` em `server.js`, e
    *  diretamente pelo autoteste (sem esperar 60s de verdade). */
   async function varrerUmaVez() {
+    const relatorio = { examinadas: 0, avancadas: 0, escaladas: 0, erros: 0, expiradas: 0 };
+
+    /* Fora do laço por linha, de propósito: `PENDING_APPROVAL` nem
+       entra em `listarIntencoesParaVarredura` (achado no ciclo de
+       revisão do PR #36 — um link nunca reaberto ficava PENDING_
+       APPROVAL no banco para sempre, mesmo depois de vencido). Um
+       `UPDATE` em lote por passada, não um por linha. Erro aqui não
+       impede o resto da varredura — vira erro registrado como qualquer
+       outro, e a próxima passada tenta de novo. */
+    try {
+      relatorio.expiradas = await deps.expirarTodasVencidas();
+    } catch (erro) {
+      relatorio.erros += 1;
+      await deps.registrarErro(erro, {
+        contexto: 'trocaSweeperService.expiracaoEmLote',
+        rota: 'sweeper-troca-de-plano',
+        metodo: 'INTERNO'
+      });
+    }
+
     const pendentes = await deps.listarIntencoesParaVarredura();
-    const relatorio = { examinadas: pendentes.length, avancadas: 0, escaladas: 0, erros: 0 };
+    relatorio.examinadas = pendentes.length;
 
     for (const intencao of pendentes) {
       try {
@@ -67,7 +89,7 @@ export function criarSweeper(deps = dependenciasPadrao) {
           relatorio.avancadas += 1;
 
           if (eraAmbigua && resultado.tipo === 'ambigua') {
-            await deps.incrementarTentativaSweeper(intencao.id);
+            await deps.incrementarTentativaSweeper(intencao.id, intencao.tentativas_sweeper);
             if (intencao.tentativas_sweeper + 1 >= MAX_TENTATIVAS_AMBIGUAS) {
               await deps.marcarReconciliacaoNecessaria(intencao.id, 'PAYMENT_UNKNOWN');
               relatorio.escaladas += 1;
@@ -119,7 +141,11 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
 
     const deps = {
       listarIntencoesParaVarredura: async () => { anotar('listarIntencoesParaVarredura', []); return intencoesIniciais; },
-      incrementarTentativaSweeper: async (id) => { anotar('incrementarTentativaSweeper', [id]); tentativas.set(id, (tentativas.get(id) ?? 0) + 1); },
+      expirarTodasVencidas: async () => { anotar('expirarTodasVencidas', []); return 0; },
+      incrementarTentativaSweeper: async (id, valorEsperado) => {
+        anotar('incrementarTentativaSweeper', [id, valorEsperado]);
+        tentativas.set(id, valorEsperado + 1);
+      },
       marcarReconciliacaoNecessaria: async (id, de) => { anotar('marcarReconciliacaoNecessaria', [id, de]); },
       executor: {
         reclassificarPendente: async (intencao) => {
@@ -139,6 +165,10 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
   let s = costura([]);
   let r = await s.varrerUmaVez();
   conferir(r.examinadas === 0 && r.avancadas === 0, 'lista vazia não faz nada');
+  conferir(
+    s.chamou('expirarTodasVencidas'),
+    'TODA passada expira PENDING_APPROVAL vencida em lote — mesmo sem nada para reconsultar por linha, senão um link nunca reaberto fica PENDING_APPROVAL no banco para sempre'
+  );
 
   /* --- 2. PAYMENT_UNKNOWN que se resolve na hora -------------------- */
   s = costura([{ id: 'int_1', status: 'PAYMENT_UNKNOWN', charge_id: 'pay_1', tentativas_sweeper: 0, __resultadoForçado: { tipo: 'confirmada' } }]);
@@ -148,10 +178,14 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
   conferir(!s.chamou('marcarReconciliacaoNecessaria'), 'e não escalona nada');
 
   /* --- 3. continua ambígua: conta tentativa, ainda sem escalonar ---- */
-  s = costura([{ id: 'int_1', status: 'PAYMENT_UNKNOWN', charge_id: 'pay_1', tentativas_sweeper: 0 }]);
+  s = costura([{ id: 'int_1', status: 'PAYMENT_UNKNOWN', charge_id: 'pay_1', tentativas_sweeper: 1 }]);
   r = await s.varrerUmaVez();
   conferir(s.chamou('incrementarTentativaSweeper'), 'continuar ambígua conta como tentativa');
   conferir(!s.chamou('marcarReconciliacaoNecessaria'), 'primeira tentativa frustrada ainda não escalona');
+  conferir(
+    s.chamadas.find((c) => c.nome === 'incrementarTentativaSweeper').args[1] === 1,
+    'o incremento é CAS contra o valor que a MESMA passada leu — não lê de novo antes de escrever (duas passadas sobrepostas não perderiam incremento)'
+  );
 
   /* --- 4. terceira tentativa frustrada escalona --------------------- */
   s = costura([{ id: 'int_1', status: 'PAYMENT_UNKNOWN', charge_id: 'pay_1', tentativas_sweeper: 2 }]); // já tentou 2×
@@ -196,6 +230,24 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
   conferir(r.erros === 1, 'a linha que quebrou conta como erro');
   conferir(s.chamou('registrarErro'), 'e é registrada (Lei 8)');
   conferir(r.avancadas === 1, 'mas a OUTRA linha continua sendo processada na mesma passada');
+
+  /* --- 10. o número de expiradas em lote chega ao relatório, e uma
+     falha na expiração em lote também não derruba o resto -------------- */
+  s = costura([]);
+  r = await s.varrerUmaVez();
+  conferir(typeof r.expiradas === 'number', 'o relatório sempre traz quantas foram expiradas em lote');
+
+  const semExpiracaoFuncionando = criarSweeper({
+    listarIntencoesParaVarredura: async () => [{ id: 'int_boa', status: 'PAYMENT_CONFIRMED', charge_id: 'pay_y' }],
+    expirarTodasVencidas: async () => { throw new Error('banco fora do ar'); },
+    incrementarTentativaSweeper: async () => {},
+    marcarReconciliacaoNecessaria: async () => {},
+    executor: { reclassificarPendente: async () => ({ tipo: 'ambigua' }), retomarAplicacao: async () => {} },
+    registrarErro: async () => {}
+  });
+  r = await semExpiracaoFuncionando.varrerUmaVez();
+  conferir(r.erros === 1, 'a expiração em lote falhando conta como erro');
+  conferir(r.avancadas === 1, 'mas a varredura por linha continua rodando mesmo assim');
 
   console.log(`trocaSweeperService: ${checagens} checagens OK`);
 }

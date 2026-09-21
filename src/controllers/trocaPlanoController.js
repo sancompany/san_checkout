@@ -151,6 +151,15 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
       return resposta.status(400).json({ erro: 'planoNovoId é o mesmo plano da assinatura — não há troca a fazer.' });
     }
 
+    /* Fora do `try`: o `catch` precisa saber se ESTA chamada é dona do
+       arrendamento, para devolvê-lo numa falha de rede a meio do
+       caminho (a Asaas cai entre `reivindicarTroca` e a releitura). Sem
+       isto, achado no ciclo de revisão do PR #36: uma assinatura ficava
+       travada até o arrendamento de 5 minutos vencer sozinho — nada se
+       perde (este caminho não cobra nada), mas é a mesma regressão que
+       a versão síncrona original já evitava. */
+    let assinaturaIdArrendada = null;
+
     try {
       const contratante = await deps.buscarContratantePorChave(chave);
       if (!contratante) return resposta.status(401).json({ erro: 'Chave inválida.' });
@@ -300,6 +309,7 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
       if (!arrendamentoMeu) {
         return resposta.status(409).json({ erro: 'Já existe uma troca de plano em andamento para esta assinatura.' });
       }
+      assinaturaIdArrendada = assinatura.id;
 
       await deps.alterarPlanoAssinatura(assinatura.id, { valor: valorNovo, ciclo: cicloNovo });
 
@@ -378,6 +388,10 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         }
       });
     } catch (erro) {
+      /* Este caminho (sem acerto) nunca cobra nada — então, ao contrário
+         da aprovação assíncrona, não há ambiguidade de dinheiro a
+         proteger aqui: devolver o arrendamento é sempre seguro. */
+      if (assinaturaIdArrendada) await deps.liberarTroca(assinaturaIdArrendada);
       responderErro(resposta, erro, 'trocaPlano.trocarPlano');
     }
   };
@@ -451,6 +465,7 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
       },
       alterarPlanoAssinatura: async (id, { valor, ciclo }) => {
         anotar('alterarPlanoAssinatura', [id, { valor, ciclo }]);
+        if (ajustes.putFalhaDeRede) throw new Error('fetch failed');
         if (!ajustes.putNaoPega) { asaas.valor = valor; asaas.ciclo = ciclo; }
       },
       criarIntencao: async (dados) => {
@@ -592,6 +607,18 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
   t = await rodar({ plano: { nome: 'Barato', valor: 60, ciclo: 'MONTHLY' }, casPerdido: true });
   conferir(t.r.codigo === 502, `CAS perdido é 502, veio ${t.r.codigo}`);
   conferir(t.chamou('registrarErro'), 'e fica registrado');
+
+  /* --- 7b. a Asaas cai DEPOIS de reivindicar o arrendamento — achado no
+     ciclo de revisão do PR #36: a versão antiga desta rota devolvia o
+     arrendamento no `catch` quando nada tinha sido cobrado
+     (`if (arrendamentoMeu && !chargeIdDoAcerto)`); a reescrita tinha
+     perdido essa proteção, e a assinatura ficava travada até o
+     arrendamento de 5 minutos vencer sozinho. Este caminho nunca cobra
+     nada, então devolver sempre é seguro. ------------------------------ */
+  t = await rodar({ plano: { nome: 'Barato', valor: 60, ciclo: 'MONTHLY' }, putFalhaDeRede: true });
+  conferir(t.r.codigo >= 500, `exceção de rede no PUT responde erro, veio ${t.r.codigo}`);
+  conferir(t.chamou('reivindicarTroca'), 'o arrendamento foi reivindicado antes de quebrar');
+  conferir(t.chamou('liberarTroca'), 'MAS É DEVOLVIDO NO CATCH — nada foi cobrado, nada impede a próxima tentativa');
 
   /* --- 8. a segunda troca DENTRO do mesmo período, pelo id da
      assinatura — mesma regra de sempre -------------------------------- */

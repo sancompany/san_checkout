@@ -281,14 +281,44 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
       ? [{ walletId: contratante.wallet_id, fixedValue: Number(intencao.valor_acerto) }]
       : undefined;
 
-    const cobranca = await deps.cobrarNoCartaoSalvo({
-      clienteId: cobravel.clienteId,
-      cartaoToken: cobravel.cartaoToken,
-      valor: Number(intencao.valor_acerto),
-      descricao: `Acerto proporcional da troca de plano (${intencao.dias_restantes} dia(s) restante(s))`,
-      referenciaExterna: `troca:${intencao.id}`,
-      split
-    });
+    /* A partir daqui existe risco de AMBIGUIDADE: se `cobrarNoCartaoSalvo`
+       lançar (timeout, 5xx da Asaas), não dá para saber se o cartão foi
+       cobrado ou não — a resposta se perdeu, não a certeza de que nada
+       aconteceu. Achado no ciclo de revisão do PR #36: a versão síncrona
+       antiga (`trocaPlanoController.js`, até esta reescrita) tinha um
+       `catch` dedicado a isso — `if (arrendamentoMeu && !chargeIdDoAcerto)
+       liberarTroca(...)` — e esta função não tinha NENHUM. Sem ele, uma
+       falha de rede aqui deixava a intenção presa em `PROCESSING_PAYMENT`
+       **sem `charge_id`** — e o sweeper pula exatamente essa combinação
+       (`trocaSweeperService.js`: `if (!intencao.charge_id) continue;`),
+       porque sem `charge_id` não há o que reconsultar. A intenção ficaria
+       órfã para sempre, e o pagador veria "processando" indefinidamente.
+       Sem certeza de que nada foi cobrado, o lado seguro é sempre
+       `RECONCILIATION_REQUIRED` — nunca fingir que ficou tudo igual a
+       antes. */
+    let cobranca;
+    try {
+      cobranca = await deps.cobrarNoCartaoSalvo({
+        clienteId: cobravel.clienteId,
+        cartaoToken: cobravel.cartaoToken,
+        valor: Number(intencao.valor_acerto),
+        descricao: `Acerto proporcional da troca de plano (${intencao.dias_restantes} dia(s) restante(s))`,
+        referenciaExterna: `troca:${intencao.id}`,
+        split
+      });
+    } catch (erroDeRede) {
+      await deps.liberarTroca(assinatura.id);
+      await deps.registrarErro(
+        new Error(
+          `cobrarNoCartaoSalvo falhou para a intenção ${intencao.id} (assinatura ${assinatura.id}, ` +
+          `valor ${intencao.valor_acerto}) — NÃO SE SABE se o cartão foi cobrado: ${erroDeRede.message}. ` +
+          `Confira na Asaas por externalReference "troca:${intencao.id}" antes de qualquer nova tentativa.`
+        ),
+        { contexto: 'trocaExecucaoService.cobrancaComFalhaDeRede', rota: '/troca/aprovar', metodo: 'POST' }
+      );
+      await deps.marcarReconciliacaoNecessaria(intencao.id, 'PROCESSING_PAYMENT');
+      return { tipo: 'reconciliacao_necessaria', intencao };
+    }
 
     /* O charge_id é gravado ANTES de classificar — é o que permite o
        webhook achar esta intenção mesmo enquanto o veredito ainda é
@@ -451,6 +481,7 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
       },
       cobrarNoCartaoSalvo: async (dados) => {
         anotar('cobrarNoCartaoSalvo', [dados]);
+        if (ajustes.cobrancaFalhaDeRede) throw new Error('fetch failed');
         return { chargeId: 'pay_1', status: ajustes.statusDaCobranca ?? 'CONFIRMED', valor: dados.valor };
       },
       alterarPlanoAssinatura: async (id, dados) => { anotar('alterarPlanoAssinatura', [id, dados]); if (!ajustes.putNaoPega) Object.assign(asaas, dados); },
@@ -571,6 +602,20 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
   r = await t.iniciarCobranca('int_1');
   conferir(r.tipo === 'stale', 'sem cartão salvo, a aprovação recusa em vez de inventar caminho de cobrança');
   conferir(t.chamou('liberarTroca'), 'e devolve o arrendamento que tinha acabado de reivindicar');
+
+  /* --- 10b. a Asaas cai NO MEIO da chamada que cobra — achado no ciclo
+     de revisão do PR #36: sem tratamento, a intenção ficava presa em
+     PROCESSING_PAYMENT SEM charge_id, e o sweeper pula exatamente essa
+     combinação (não tem o que reconsultar) — órfã para sempre. Não dá
+     para saber se o cartão foi cobrado, então o único destino seguro é
+     RECONCILIATION_REQUIRED, nunca fingir que nada aconteceu. -------- */
+  t = costura({ cobrancaFalhaDeRede: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'reconciliacao_necessaria', `falha de rede na cobrança vira "reconciliacao_necessaria", veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'RECONCILIATION_REQUIRED', 'a intenção NUNCA fica presa em PROCESSING_PAYMENT sem chargeId');
+  conferir(t.chamou('liberarTroca'), 'e o arrendamento da assinatura é devolvido — nada mais vai tentar cobrar por este caminho');
+  conferir(t.chamou('registrarErro'), 'o estado ambíguo é registrado, com o que dá para achar a cobrança na Asaas se ela tiver acontecido');
+  conferir(!t.chamou('registrarChargeId'), 'sem chargeId nenhum — a chamada nunca chegou a devolver um');
 
   /* --- 11. PUT que a Asaas ignora em silêncio (mesmo furo da versão
      síncrona, agora do lado da aplicação) ----------------------------- */
