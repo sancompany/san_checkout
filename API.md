@@ -1174,6 +1174,16 @@ Leva um assinante do plano A para o plano B **mantendo o vínculo**: sem
 cancelar, sem ele digitar cartão de novo, e sem janela em que ele fica
 sem assinatura.
 
+> ⚠️ **Mudança de contrato em 21/09/2026.** Até 18/09/2026 esta rota
+> cobrava o acerto proporcional na hora, sem o assinante ver nada. O
+> dono reverteu essa decisão: agora, sempre que há acerto a pagar (>=
+> R$ 5,00), o assinante precisa **aprovar o valor numa tela do
+> Checkout** antes de qualquer cobrança acontecer. As respostas `200`
+> imediatas (rebaixamento, acerto absorvido) continuam exatamente como
+> eram — o que muda é só o caso em que há dinheiro a cobrar.
+> Desenho completo: `docs/specs/2026-09-20-troca-de-plano-redireciona-
+> pagador.md`.
+
 ```http
 POST {BASE}/api/checkout/trocar-plano
 X-Checkout-Key: {sua chave}
@@ -1191,60 +1201,81 @@ dois do **seu** `GET /plano/{planoNovoId}` (seção 4.2), como faz na
 criação da assinatura. É a mesma regra do valor de um pedido: quem paga
 não escolhe quanto paga.
 
-**Resposta 200 — troca para um plano mais caro:**
+#### As TRÊS respostas possíveis
+
+**1. `200` — sem nada a cobrar (rebaixamento, ou acerto abaixo de
+R$ 5,00).** A troca acontece na hora, como sempre foi:
 
 ```json
 {
   "assinaturaId": "sub_000123456789",
-  "planoId": "plano-vitrina-pro-3a81",
-  "planoAnterior": "plano-vitrina-9f2c",
-  "valor": 160.00,
+  "planoId": "plano-vitrina-basico-7c1d",
+  "planoAnterior": "plano-vitrina-pro-3a81",
+  "valor": 60.00,
   "ciclo": "MONTHLY",
   "proximaCobranca": "2026-10-10",
-  "acerto": {
-    "cobrado": true,
-    "valor": 30.00,
-    "chargeId": "pay_000987654321",
-    "credito": 50.00,
-    "debito": 80.00,
-    "diasRestantes": 15,
-    "motivo": "cobra o acerto"
-  }
+  "acerto": { "cobrado": false, "valor": 0, "credito": 50.00, "debito": 12.00, "diasRestantes": 15, "motivo": "..." }
 }
 ```
+
+**2. `202` — existe acerto a cobrar (>= R$ 5,00). NADA foi cobrado nem
+alterado ainda.** Redirecione o assinante para `approvalUrl`:
+
+```json
+{
+  "code": "PLAN_CHANGE_APPROVAL_REQUIRED",
+  "status": "approval_required",
+  "approvalUrl": "https://checkout.sancocore.com.br/troca#t=3f7a...",
+  "expiresAt": "2026-09-25T15:15:00.000Z",
+  "amount": 30.00
+}
+```
+
+A cobrança de verdade só acontece **depois** que o assinante aprova nessa
+tela — pode levar de segundos a nunca (ele pode simplesmente não
+aprovar; o link expira sozinho em 15 minutos). Seu sistema **não
+recebe uma resposta síncrona da cobrança** neste caso: quem avisa que a
+troca aconteceu é o webhook, no passo 5 abaixo.
+
+**3. Erro** — ver a tabela de códigos, mais abaixo.
 
 #### O que acontece, na ordem
 
 1. **O acerto proporcional é calculado** (a conta está na seção 7.5).
-2. **Se houver acerto, ele é cobrado AGORA, no cartão que já está
-   salvo** — o assinante não digita nada.
-3. **O plano só muda se o acerto for aprovado.** Cartão recusado
-   responde `402` e **nada** é alterado.
-4. A assinatura passa a valer `valor` e `ciclo` do plano novo, e a
-   **data de vencimento não se move**: o plano novo inteiro entra na data
-   que o assinante já tinha.
-5. Você recebe `evento: "plano_trocado"` no webhook (seção 4.3.4).
+2. **Sem acerto a cobrar**: a troca acontece na hora (resposta `200`,
+   acima).
+   **Com acerto a cobrar**: nasce uma intenção com o retrato congelado
+   do acerto, e você recebe `202` com o link de aprovação.
+3. **O assinante aprova (ou não) na tela do Checkout.** Ele vê o valor
+   exato, mas **não escolhe plano nenhum** — só aprova o que você já
+   calculou.
+4. **Se ele aprovar, o cartão salvo é cobrado** — sem ele digitar nada,
+   é o mesmo cartão da recorrência. **O plano só muda se o acerto for
+   aprovado no cartão.** Recusa não muda nada.
+5. Quando a troca conclui (imediata, ou depois da aprovação), você
+   recebe `evento: "plano_trocado"` no webhook (seção 4.3.4) — **é este
+   evento, não a resposta HTTP original, que confirma a troca no caso
+   assíncrono.**
 
 #### Os campos de `acerto`, e por que eles vão abertos
 
 | campo | o que é |
 |---|---|
-| `cobrado` | `true` se uma cobrança foi feita agora |
+| `cobrado` | `true` se uma cobrança foi feita |
 | `valor` | quanto foi cobrado (`0` quando não houve) |
-| `chargeId` | id da cobrança do acerto na Asaas, ou `null` |
 | `credito` | a parte **não usada** do que ele já pagou |
 | `debito` | o que o plano novo custaria nos dias que faltam |
 | `diasRestantes` | dias até o vencimento que já estava marcado |
-| `motivo` | por que cobrou, ou por que não cobrou |
+| `motivo` | por que cobrou, ou por que não cobrou (só na resposta `200` imediata) |
 
-Eles vão abertos porque **explicar a cobrança ao assinante é
-responsabilidade sua** — por e-mail e por aviso no seu site (decisão do
-dono em 17/09/2026; `docs/funcional.md` RN-35). O checkout não fala com
-o pagador: ele não manda e-mail, não manda WhatsApp, não mostra tela.
-Sem `credito`, `debito` e `diasRestantes`, o seu aviso seria "cobramos
-R$ 30" sem dizer de onde saiu o número.
+Eles vão abertos porque **explicar a cobrança ao assinante continua
+sendo responsabilidade sua** — por e-mail e por aviso no seu site
+(decisão do dono em 17/09/2026; `docs/funcional.md` RN-35). O checkout
+mostra ao pagador **só o valor a aprovar**, na tela `/troca` — ele não
+manda e-mail, não manda WhatsApp com o resumo, e não substitui o aviso
+que você já manda.
 
-#### Quando NÃO há cobrança, e a troca acontece do mesmo jeito
+#### Quando NÃO há cobrança, e a troca acontece do mesmo jeito (resposta `200`)
 
 - **Plano mais barato** (downgrade): não cobra e **não devolve nada**. O
   preço novo passa a valer no vencimento que já existia. `acerto.cobrado`
@@ -1261,42 +1292,46 @@ R$ 30" sem dizer de onde saiu o número.
 
 | Código | Significa |
 |---|---|
-| `200` | Trocado. Leia `acerto.cobrado` para saber se houve cobrança |
+| `200` | Trocado na hora. `acerto.cobrado` é sempre `false` aqui — se houvesse cobrança, a resposta seria `202` |
+| `202` | Existe acerto a cobrar. Nada foi feito ainda — redirecione para `approvalUrl` |
 | `400` | Campos ausentes, CPF/CNPJ inválido, `planoNovoId` igual ao `planoId`, ou o plano novo com valor abaixo de R$ 5,00 / ciclo fora dos sete (seção 7.1) |
 | `401` | Chave ausente ou inválida |
-| `402` | **O acerto não foi aprovado no cartão salvo. O plano NÃO foi alterado** |
 | `404` | Nenhuma assinatura `ativa` ou `pausada` nesse plano/documento, ou o plano novo não existe na sua API |
 | `409` | Ver a tabela abaixo |
-| `502` | A alteração não foi confirmada pela Asaas. **O plano NÃO foi alterado** — se `acerto.chargeId` vier preenchido, o acerto FOI cobrado e precisa de tratamento manual |
+| `502` | A troca **imediata** (resposta `200`, sem acerto) não foi confirmada pela Asaas. O plano NÃO foi alterado |
 
 Os `409` são as recusas deliberadas, e cada uma tem motivo:
 
 | Situação | Por que recusa |
 |---|---|
 | **A cobrança do período em curso não está confirmada** | Não existe crédito de um período que não foi pago. Resolva o pagamento antes |
-| **Já existe uma troca em andamento** | Duas chamadas simultâneas cobrariam o acerto duas vezes. A segunda é recusada sem cobrar nada |
-| **A assinatura não tem cartão salvo** | É o caso do Pix Automático: sem cartão não há como cobrar o acerto sem interação do assinante |
+| **A assinatura não tem cartão salvo** | É o caso do Pix Automático: sem cartão não há como cobrar o acerto sem interação do assinante — recusado ANTES de criar a intenção |
 | **A assinatura está encerrada na Asaas** | Não há plano a trocar. O caminho é assinar de novo |
 | **Não foi possível calcular o acerto** | Vem com `motivo`. Significa dado incoerente (ciclo desconhecido, vencimento mais longe que o ciclo inteiro) — e aqui o checkout **recusa em vez de dar a troca de graça** |
 
-> **Só o seu projeto aciona**, como em cancelar/pausar/retomar. O
-> assinante não troca de plano sozinho pelo checkout: quem decide (e
-> quem cobra o consentimento dele) é você. Isso importa: mudar o valor
-> que um cartão salvo vai cobrar **exige concordância do assinante**
-> (CDC). Um upgrade que ele pediu é uma coisa; um aumento que ele não
-> pediu é outra, e a segunda não se resolve com API.
+> **Só o seu projeto aciona `POST /trocar-plano`**, como em cancelar/
+> pausar/retomar — o assinante não escolhe o PRÓPRIO PLANO pelo
+> checkout, quem decide isso é você. O que mudou em 21/09/2026 é só o
+> **consentimento da cobrança**: mudar o valor que um cartão salvo vai
+> cobrar **exige concordância do assinante** (CDC), e agora é ele quem
+> aprova, na nossa tela, antes de qualquer débito.
 
-> ⚠️ **Depois da troca, o `planoId` do assinante é o NOVO.** Cancelar,
-> pausar, retomar, conciliar (seção 5.5 e 5.3) e gerar link de renovação
-> (seção 7.3) passam a usar `planoNovoId`. Continuar mandando o antigo
-> responde `404` — a assinatura não está mais lá. É por isso que o evento
-> `plano_trocado` carrega `planoAnterior`: é com ele que você acha o seu
-> próprio registro para atualizar.
+> ⚠️ **Depois da troca CONCLUÍDA, o `planoId` do assinante é o NOVO.**
+> Cancelar, pausar, retomar, conciliar (seção 5.5 e 5.3) e gerar link de
+> renovação (seção 7.3) passam a usar `planoNovoId` **só depois que o
+> evento `plano_trocado` chegar** — numa resposta `202` ainda pendente
+> de aprovação, o `planoId` antigo continua valendo para tudo. Continuar
+> mandando o antigo depois de concluído responde `404`. É por isso que o
+> evento `plano_trocado` carrega `planoAnterior`: é com ele que você
+> acha o seu próprio registro para atualizar.
 
 > **Uma troca por vez, e o crédito não acumula.** Cada troca recalcula
 > sobre os dias que restam naquele momento, a partir do valor **pago**
 > do período — o crédito da troca anterior não sobrevive (decisão do
-> dono; a aritmética está na seção 7.5).
+> dono; a aritmética está na seção 7.5). Enquanto uma intenção estiver
+> pendente de aprovação, uma segunda chamada a `POST /trocar-plano`
+> recalcula e cria outra — não há bloqueio de "já existe uma pendente",
+> porque nada foi cobrado ainda pela primeira.
 
 ---
 
@@ -2157,6 +2192,9 @@ diretamente:
 `POST /api/checkout/cartao/…` · `POST /api/checkout/assinatura/…` ·
 `POST /api/checkout/assinatura-pix/…` ·
 `GET /api/checkout/asaas-checkout/status/…` ·
+`POST /api/checkout/troca/contexto` e `POST /api/checkout/troca/aprovar`
+(usadas pela tela `/troca#t=…` — seção 5.6 — nunca pelo seu projeto:
+autenticação é o token de aprovação, não `X-Checkout-Key`) ·
 `POST /api/webhooks/asaas` (recebe a Asaas) · `/api/admin/*` (painel).
 
 **Glossário:**

@@ -1,0 +1,79 @@
+/**
+ * public/css/components/troca.css
+ * Tela de aprovação de troca de plano (public/troca.html) —
+ * `docs/specs/2026-09-20-troca-de-plano-redireciona-pagador.md`.
+ *
+ * `min-height` no corpo é DELIBERADO, não estético: é o que reserva a
+ * geometria do primeiro paint, para o esqueleto e o conteúdo final
+ * ocuparem o MESMO espaço — a mesma lição da tela de assinatura, cujo
+ * CLS medido caiu de 0,409 para 0,033 quando o conteúdo parou de ser
+ * revelado depois de um `await` (17/09/2026). Aqui o esqueleto está no
+ * HTML desde o primeiro byte, não é inserido por JS.
+ */
+
+.troca-page { padding: 32px 28px 28px; }
+
+.troca-header { display: flex; justify-content: center; margin-bottom: 24px; }
+.troca-header .brand-logo { height: 26px; width: auto; }
+
+/* Reserva a altura do corpo — cobre o caso mais comum e mais alto
+   (aprovação pendente: título + resumo + botão). Estados terminais
+   (recusado, expirado) são mais curtos; o card encolhe SEM empurrar
+   nada por cima, então não é o mesmo tipo de CLS que este arquivo
+   existe para evitar — mas ainda não foi medido com `npm run
+   desempenho` (`limite:` ajustar o número aqui contra a medição real
+   antes de fechar a Estação 6 desta funcionalidade). */
+.troca-body { min-height: 420px; }
+
+.troca-skeleton { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+
+.troca-skeleton-line {
+  height: 14px; border-radius: 6px; background: var(--bg-input);
+  position: relative; overflow: hidden; width: 100%;
+}
+.troca-skeleton-line + .troca-skeleton-line { margin-top: 10px; }
+.troca-skeleton-line--titulo { height: 22px; width: 65%; margin-bottom: 18px; }
+.troca-skeleton-line--curta { width: 45%; }
+
+.troca-skeleton-line::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: troca-shimmer 1.4s infinite;
+}
+@media (prefers-reduced-motion: reduce) { .troca-skeleton-line::after { animation: none; } }
+@keyframes troca-shimmer { 100% { transform: translateX(100%); } }
+
+.troca-skeleton-card {
+  width: 100%; height: 130px; margin-top: 20px;
+  border-radius: calc(var(--radius-card) - 8px);
+  background: var(--bg-summary); border: 1px solid var(--border-color);
+}
+.troca-skeleton-botao {
+  width: 100%; height: 48px; margin-top: 24px;
+  border-radius: var(--radius-btn); background: var(--bg-input);
+}
+
+.troca-resumo {
+  margin: 20px 0 0; padding: 18px 20px; text-align: left;
+  background: var(--bg-summary); border: 1px solid var(--border-color);
+  border-radius: calc(var(--radius-card) - 8px);
+}
+.troca-resumo-titulo {
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 10px;
+}
+.troca-resumo-linha { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; font-size: 0.875rem; }
+.troca-resumo-linha dt { color: var(--text-secondary); margin: 0; }
+.troca-resumo-linha dd { margin: 0; font-weight: 600; color: var(--text-main); text-align: right; }
+.troca-resumo-linha--total {
+  border-top: 1px solid var(--border-color); margin-top: 8px; padding-top: 12px; font-size: 1rem;
+}
+.troca-resumo-linha--total dd { font-weight: 800; }
+
+.troca-aviso { font-size: 0.8125rem; color: var(--text-muted); margin-top: 16px; line-height: 1.5; text-align: center; }
+
+.troca-botao { width: 100%; margin-top: 20px; }
+
+@media (max-width: 480px) {
+  .troca-page { padding: 24px 18px; }
+}

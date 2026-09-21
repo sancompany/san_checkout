@@ -78,6 +78,9 @@ import {
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from '../services/pedidoService.js';
 import { compararSeguro } from '../utils/validadores.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
+import { buscarIntencaoPorChargeId, marcarConfirmada as marcarIntencaoConfirmada } from '../services/trocaIntencaoService.js';
+import { resolverAposClassificacao, retomarAplicacao } from '../services/trocaExecucaoService.js';
+import { classificarPagamentoDoAcerto } from '../services/classificacaoFinanceiraService.js';
 
 /**
  * Tudo que este módulo toca fora de si mesmo, reunido num objeto só.
@@ -131,7 +134,40 @@ const dependenciasPadrao = {
   // autoteste não conseguiria afirmar que a linha é gravada — e uma
   // auditoria que ninguém testa é a que descobre estar quebrada no dia
   // em que era a única fonte de informação.
-  registrarAuditoria: (dados) => registrarEventoWebhook(dados)
+  registrarAuditoria: (dados) => registrarEventoWebhook(dados),
+  /**
+   * O acerto de uma troca de plano ainda sem `cobrancas` — resolve pela
+   * intenção (`intencoes_troca_plano.charge_id`), não pelo `payment.id`
+   * direto, porque a linha em `cobrancas` só nasce quando o veredito
+   * fecha `PAID`. Devolve `true` quando encontrou (e o chamador para
+   * por aqui); `false` quando o `chargeId` não é de troca nenhuma (e o
+   * chamador segue para o ramo de ciclo de assinatura).
+   *
+   * A transição de estado (CAS, escrita rápida) é AGUARDADA; a
+   * APLICAÇÃO do plano na Asaas (`PUT`+`GET`, pode levar segundos) é
+   * fire-and-forget — pelo MESMO motivo de `notificar` acima: a Asaas
+   * conta resposta lenta como falha e pausa a fila da conta inteira
+   * depois de 15 seguidas (§2.3). O sweeper é a rede de segurança se
+   * este processo morrer no meio.
+   */
+  avancarIntencaoDeTrocaPorChargeId: async (chargeId, evento) => {
+    const intencao = await buscarIntencaoPorChargeId(chargeId);
+    if (!intencao) return false;
+
+    const veredito = classificarPagamentoDoAcerto({ evento });
+    if (veredito === 'PAID') {
+      const confirmada = await marcarIntencaoConfirmada(intencao.id);
+      if (confirmada) {
+        retomarAplicacao(confirmada)
+          .catch((erro) => console.error('[webhook/asaas] aplicar troca de plano falhou fora do fluxo:', erro.message));
+      }
+    } else {
+      // DECLINED_FINAL e UNKNOWN não chamam a Asaas nenhuma — CAS puro,
+      // seguro para aguardar.
+      await resolverAposClassificacao(intencao, veredito);
+    }
+    return true;
+  }
 };
 
 /**
@@ -566,6 +602,18 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao) {
   }
 
   if (!cobranca) {
+    /* O ACERTO DE UMA TROCA DE PLANO ainda sem `cobrancas` registrada —
+       o caminho normal enquanto o veredito local ainda é UNKNOWN (a
+       linha em `cobrancas` só nasce quando `PAID` fecha, em
+       `trocaExecucaoService.js`). Sem isto, este evento cairia direto
+       no ramo de baixo (sem `payment.subscription`, porque o acerto não
+       é ciclo de assinatura nenhum) e seria descartado calado — e é
+       exatamente o caso em que o WEBHOOK é quem resolve a ambiguidade,
+       porque chegou antes do sweeper (`docs/specs/2026-09-20-troca-de-
+       plano-redireciona-pagador.md`, "O webhook"). */
+    const avancou = await deps.avancarIntencaoDeTrocaPorChargeId(chargeId, evento);
+    if (avancou) return;
+
     // Charge_id desconhecido: só vale a pena investigar se for um
     // ciclo novo de assinatura (a Asaas manda o id da assinatura de
     // origem no campo `subscription`) — qualquer outra cobrança
@@ -1363,6 +1411,33 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     deps
   );
   assert.equal(deps.chamou('registrarCicloAssinatura').length, 0, 'sem cobrança-modelo: não registra ciclo às cegas');
+
+  /* O ACERTO DE UMA TROCA DE PLANO ainda sem `cobrancas`: o webhook
+     resolve pela INTENÇÃO (`avancarIntencaoDeTrocaPorChargeId`), não
+     cai no ramo de ciclo de assinatura — mesmo sem `payment.subscription`
+     nenhum, que é a forma real (o acerto não é ciclo de assinatura). */
+  deps = depsFalsas({ buscarCobranca: null, avancarIntencaoDeTrocaPorChargeId: true });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_acerto_1' } }, // sem `subscription` — é isso que provaria o bug se caísse no ramo errado
+    deps
+  );
+  assert.deepEqual(
+    deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args, ['pay_acerto_1', 'PAYMENT_CONFIRMED'],
+    'o chargeId e o evento (não o status já traduzido) vão para a resolução da intenção'
+  );
+  assert.equal(deps.chamou('registrarNovoCicloAssinatura').length, 0, 'achou a intenção: NUNCA cai no ramo de ciclo de assinatura');
+  assert.equal(deps.chamou('atualizarStatusCobranca').length, 0, 'e não tenta atualizar uma cobrança que não existe');
+
+  // chargeId que NÃO é de troca nenhuma: a função devolve falso (o
+  // padrão de `depsFalsas`, que devolve `null` — falsy) e o fluxo
+  // continua para o ramo de sempre.
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });
+  await processarWebhook(
+    { event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_qualquer', subscription: 'sub_nunca_vista' } },
+    deps
+  );
+  assert.ok(deps.chamou('avancarIntencaoDeTrocaPorChargeId').length > 0, 'sempre tenta primeiro, mesmo quando não é troca');
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 0, 'e cai no caminho normal (sem molde, ignora) quando não achou intenção');
 
   // CHECKOUT_PAID: liga o charge que só agora existe, confirma, notifica.
   deps = depsFalsas({

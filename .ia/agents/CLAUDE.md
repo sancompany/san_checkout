@@ -5,10 +5,11 @@ Base: `AGENT_PROTOCOL.md`. Este arquivo só cobre o que é diferente para você.
 ## O que você tem que os outros não têm
 
 - **O plugin `san-co`**, carregado via marketplace (`.claude/settings.json`).
-  Ele empacota a metodologia deste ecossistema (esteira de sete estações,
-  onze leis, skills de revisão e segurança) como `Skill`s que entram no seu
-  contexto sob demanda. `CONTROL_PLANE.md` documenta a fundo o que ele é e
-  onde ele falha. **`ListPlugins` vazio no início da sessão significa que
+  Ele empacota a metodologia de processo usada para desenvolver este
+  repositório (esteira de sete estações, onze leis, skills de revisão e
+  segurança) como `Skill`s que entram no seu contexto sob demanda.
+  `CONTROL_PLANE.md` documenta a fundo o que ele é e onde ele falha.
+  **`ListPlugins` vazio no início da sessão significa que
   o plugin não carregou** — já custou uma estação fechada errado
   (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`).
   Sem ele carregado, ou clone `sancompany/Plugin_san-co` e leia de lá, ou

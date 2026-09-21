@@ -7,7 +7,7 @@ e preview) — usar quando disponível; os comandos abaixo são os
 confirmados por execução direta nesta auditoria e funcionam sem ele.
 
 Projetos confirmados na conta (20/09/2026): `san-checkout` (este
-repositório) e `mostrai` (outro projeto do ecossistema — não mexer a
+repositório) e `mostrai` (outro projeto, não relacionado — não mexer a
 partir daqui).
 
 ## Projeto e serviço

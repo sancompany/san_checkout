@@ -94,7 +94,7 @@ mcp__Supabase__list_tables(project_id="zacuaroarelaqnzjjlcz", schemas=["public"]
 
 ## Testes
 
-38 suítes (`tests/executar.js`), todas passando na última execução
+43 suítes (`tests/executar.js`), todas passando na última execução
 desta auditoria (`npm run check`). O número exato é conferido por
 `tests/o-que-os-documentos-afirmam.js` — não copie um número fixo para
 outro documento sem rodar o teste, ele já pegou divergência três vezes

@@ -62,8 +62,8 @@ Registros confirmados relevantes a este repositório (20/09/2026):
 
 Outros registros na mesma zona (`humano.sancocore.com.br`,
 `mostrai.sancocore.com.br`, `www.sancocore.com.br`, raiz) pertencem a
-**outros projetos** do ecossistema San & Co., não a este repositório —
-não alterar a partir daqui.
+**outros projetos**, não a este repositório — não verificados por esta
+auditoria e não alterar a partir daqui.
 
 ## Cloudflare Pages
 

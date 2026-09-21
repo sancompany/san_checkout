@@ -20,7 +20,7 @@ arquivos.
 
 ```bash
 npm run check     # scripts/checar.mjs (sintaxe de TODO JS, inclusive public/js/) + npm test
-npm test           # só as suítes (tests/executar.js) — 38 suítes em 20/09/2026
+npm test           # só as suítes (tests/executar.js) — 43 suítes em 21/09/2026
 ```
 
 **Sempre rodar `npm run check`, não só `npm test`**, antes de propor uma

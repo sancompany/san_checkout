@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Aprovar troca de plano — SAN &amp; CO.</title>
+  <!-- Sem canônica e sem `og:`: a página é `noindex` (o token no
+       fragmento é quem abre) e um link de cobrança não deve ganhar
+       pré-visualização em rede social. -->
+  <meta name="description" content="Aprove o valor da troca de plano antes de qualquer cobrança." />
+  <meta name="theme-color" content="#B8912A" />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/theme-engine.css" />
+  <link rel="stylesheet" href="css/components/card.css" />
+  <link rel="stylesheet" href="css/components/forms.css" />
+  <link rel="stylesheet" href="css/components/status.css" />
+  <link rel="stylesheet" href="css/components/troca.css" />
+</head>
+<body>
+
+  <main class="checkout-container">
+    <div class="checkout-card">
+      <div class="troca-page" id="troca-root">
+
+        <header class="troca-header">
+          <img class="brand-logo brand-logo--operator" src="assets/logo-sanco-192.png" width="192" height="192" alt="SAN &amp; CO." />
+        </header>
+
+        <div class="troca-body">
+
+          <!-- Esqueleto — no HTML desde o primeiro byte, não inserido
+               por JS. É ele que reserva a geometria: o conteúdo real
+               ocupa o MESMO espaço quando substitui isto. -->
+          <section id="bloco-esqueleto">
+            <div class="troca-skeleton">
+              <div class="troca-skeleton-line troca-skeleton-line--titulo"></div>
+              <div class="troca-skeleton-line troca-skeleton-line--curta"></div>
+              <div class="troca-skeleton-card"></div>
+              <div class="troca-skeleton-botao"></div>
+            </div>
+          </section>
+
+          <!-- Erro / link inválido / vencido / recusado / stale — o
+               mesmo vocabulário visual de status.html. -->
+          <section class="status-bloco hidden" id="bloco-erro">
+            <div class="status-selo status-selo--encerrado" id="erro-selo">Não encontrado</div>
+            <h1 class="status-titulo" id="erro-titulo">Link inválido</h1>
+            <p class="status-texto" id="erro-texto">
+              Confira se o link está completo. Se ele veio de um e-mail ou
+              mensagem, peça um novo à loja.
+            </p>
+          </section>
+
+          <!-- A troca já concluiu — mostrado quando o pagador reabre o
+               mesmo link depois de aprovar. -->
+          <section class="status-bloco hidden" id="bloco-concluido">
+            <div class="status-selo status-selo--pago">Aprovado</div>
+            <h1 class="status-titulo">Troca confirmada</h1>
+            <p class="status-texto" id="texto-concluido"></p>
+          </section>
+
+          <!-- Aguardando aprovação — o único estado com o botão. -->
+          <section class="troca-conteudo hidden" id="bloco-pendente">
+            <div class="status-selo status-selo--neutro">Aprovação necessária</div>
+            <h1 class="status-titulo">Confirme a troca de plano</h1>
+            <p class="status-texto" id="texto-pendente"></p>
+
+            <dl class="troca-resumo">
+              <p class="troca-resumo-titulo">Resumo do acerto</p>
+              <div class="troca-resumo-linha">
+                <dt>Crédito do plano atual</dt>
+                <dd id="resumo-credito">—</dd>
+              </div>
+              <div class="troca-resumo-linha">
+                <dt>Novo plano (dias restantes)</dt>
+                <dd id="resumo-debito">—</dd>
+              </div>
+              <div class="troca-resumo-linha troca-resumo-linha--total">
+                <dt>Você paga agora</dt>
+                <dd id="resumo-total">—</dd>
+              </div>
+            </dl>
+
+            <button type="button" class="btn-primary troca-botao" id="btn-aprovar">
+              Aprovar cobrança
+            </button>
+            <p class="troca-aviso" id="aviso-expira"></p>
+          </section>
+
+          <!-- Cobrança em processamento — depois de clicar "Aprovar",
+               enquanto o veredito ainda não fechou (poll). -->
+          <section class="status-bloco hidden" id="bloco-processando">
+            <div class="status-selo status-selo--aguardando">Processando</div>
+            <h1 class="status-titulo">Confirmando o pagamento</h1>
+            <p class="status-texto">Isso costuma levar poucos segundos. Não feche esta página.</p>
+          </section>
+
+        </div>
+
+        <footer class="checkout-footer">
+          <p class="legal-footer">
+            Esta cobrança é feita pela loja onde você assina, processada
+            pelo Checkout dela. Dúvidas sobre a troca em si: fale com a
+            loja.
+          </p>
+          <p class="legal-footer">
+            Seus dados pessoais (acesso, correção, exclusão):
+            <a href="mailto:juridico@sancocore.com.br">juridico@sancocore.com.br</a>
+            · Problema nesta página:
+            <a href="mailto:suporte@sancocore.com.br">suporte@sancocore.com.br</a>
+          </p>
+          <p class="legal-footer">
+            <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a>
+            · <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>
+            · SAN &amp; CO. — CPF 552.085.198-01
+          </p>
+        </footer>
+
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script type="module" src="js/troca.js"></script>
+</body>
+</html>

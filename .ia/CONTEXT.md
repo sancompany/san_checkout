@@ -2,12 +2,13 @@
 
 ## O que é
 
-**San Checkout** é o motor de pagamento whitelabel da San & Co., modelo
-**pull**, com a Asaas (PSP brasileiro) por baixo. Não é um produto vendido
-a clientes finais — é **estrutura compartilhada** do ecossistema San & Co.
-(skill `classificar`, `.ia/CONTROL_PLANE.md`): outros projetos ("contratantes")
-consomem o Checkout para cobrar os próprios clientes, sem construir
-cobrança própria.
+**San Checkout** (também referido como **Checkout Pay** / **SAN & CO. Pay
+Engine**) é o motor de pagamento whitelabel deste repositório, modelo
+**pull**, com a Asaas (PSP brasileiro) por baixo. Não é vendido a
+clientes finais diretamente — o modelo de negócio do próprio produto é
+servir como infraestrutura de cobrança para projetos-clientes
+("contratantes"): eles integram via `API.md` para cobrar os próprios
+clientes, sem construir cobrança própria.
 
 Repositório: `sancompany/san_checkout`. Backend: `src/server.js` +
 `public/` (front do comprador e painel admin). Produção real, sandbox de
@@ -15,12 +16,12 @@ pagamento (Asaas ainda em modo sandbox — ver `PROJECT_STATE.md`).
 
 ## O problema que resolve
 
-Cada novo projeto do ecossistema (loja, SaaS, evento) precisaria construir
-do zero: cobrança avulsa (Pix/boleto/cartão), assinatura recorrente,
-webhook assinado, conciliação, estorno, split de taxa — superfície grande
-de segurança e dinheiro para reconstruir a cada projeto. O Checkout
-resolve isso **uma vez**, e cada projeto novo só integra um contrato de
-API (`API.md`), nunca reimplementa.
+Cada projeto-cliente (loja, SaaS, evento) que precisasse cobrar teria que
+construir do zero: cobrança avulsa (Pix/boleto/cartão), assinatura
+recorrente, webhook assinado, conciliação, estorno, split de taxa —
+superfície grande de segurança e dinheiro para reconstruir a cada
+projeto. O Checkout resolve isso **uma vez**, e cada projeto-cliente novo
+só integra um contrato de API (`API.md`), nunca reimplementa.
 
 ## Modelo: pull, não push
 
@@ -42,8 +43,9 @@ telefone, endereço quando o método exige, valor, status).
 
 ## Quem usa (usuários)
 
-- **Contratantes** — outros projetos San & Co. (ex.: MostrAí) que
-  integram via `API.md` para cobrar os próprios clientes. Cadastrados
+- **Contratantes** — projetos-clientes (ex.: MostrAí, confirmado como
+  contratante real via a tabela `contratantes`) que integram via
+  `API.md` para cobrar os próprios clientes. Cadastrados
   manualmente no banco do Checkout (nunca por endpoint público):
   `contratante_id`, `api_base_url`, `api_key`, `webhook_url`,
   `wallet_id`, métodos habilitados.

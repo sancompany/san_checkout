@@ -130,6 +130,7 @@ const TELAS = [
     query: '?c=testemaster&assinatura=plano_auditoria', dublarPlano: true,
     exigeVisiveis: 8 },
   { arquivo: 'status.html', nome: 'Status do pedido', publico: 'comprador' },
+  { arquivo: 'troca.html', nome: 'Aprovar troca de plano (sem token)', publico: 'comprador' },
   { arquivo: 'termos.html', nome: 'Termos de Uso', publico: 'comprador' },
   { arquivo: 'privacidade.html', nome: 'Política de Privacidade', publico: 'comprador' },
   { arquivo: '404.html', nome: 'Página não encontrada', publico: 'comprador' },

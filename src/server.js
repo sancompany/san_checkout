@@ -34,9 +34,11 @@ import rotasAsaasCheckout from './routes/asaasCheckoutRoutes.js';
 import rotasPlano from './routes/planoRoutes.js';
 import rotasEstorno from './routes/refundRoutes.js';
 import rotasAssinatura from './routes/assinaturaRoutes.js';
+import rotasTrocaAprovacao from './routes/trocaAprovacaoRoutes.js';
 import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
 import { expurgarDadoPessoal } from './services/expurgoService.js';
+import { varrerUmaVez as varrerIntencoesDeTroca } from './services/trocaSweeperService.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -204,6 +206,7 @@ app.use('/api/checkout', rotasAsaasCheckout);
 app.use('/api/checkout', rotasPlano);
 app.use('/api/checkout', rotasEstorno);
 app.use('/api/checkout', rotasAssinatura);
+app.use('/api/checkout', rotasTrocaAprovacao);
 app.use('/api/admin', rotasAdmin);
 app.use('/api/webhooks', rotasWebhook);
 
@@ -451,4 +454,23 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
 
   rodarExpurgo();
   setInterval(rodarExpurgo, UM_DIA_MS).unref();
+
+  /* A rede de segurança da aprovação de troca de plano
+     (`docs/specs/2026-09-20-troca-de-plano-redireciona-pagador.md`).
+     60s, não 24h: é o intervalo mais curto do projeto, porque
+     `PAYMENT_AUTHORIZED` (e qualquer recusa síncrona ambígua) não tem
+     garantia de chegar por webhook — sem um poll frequente, uma
+     intenção em `PAYMENT_UNKNOWN` ficaria presa até alguém olhar.
+     Nunca cria cobrança nova; só reconsulta e avança por CAS. */
+  const UM_MINUTO_MS = 60 * 1000;
+  const rodarVarreduraDeTroca = () => varrerIntencoesDeTroca()
+    .then((relatorio) => {
+      if (relatorio.avancadas > 0 || relatorio.escaladas > 0) {
+        console.log(`[troca-de-plano] varredura: ${relatorio.avancadas} avançada(s), ${relatorio.escaladas} escalonada(s) para reconciliação.`);
+      }
+    })
+    .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message));
+
+  rodarVarreduraDeTroca();
+  setInterval(rodarVarreduraDeTroca, UM_MINUTO_MS).unref();
 });

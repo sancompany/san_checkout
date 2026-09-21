@@ -30,11 +30,11 @@ nome de variável, ID não sensível e mecanismo.
   configurado de propósito ou só inativo, ver `RISKS.md`).
 
 ### Supabase
-- Um projeto por escopo de isolamento de dado (política registrada em
-  `DECISIONS.md`): `San_Checkout` (`zacuaroarelaqnzjjlcz`, `sa-east-1`)
-  é o único que este repositório usa. Existe um segundo projeto na
-  mesma organização (`MostrAi`) — pertence a outro produto, fora de
-  escopo.
+- `San_Checkout` (`zacuaroarelaqnzjjlcz`, `sa-east-1`) é o único projeto
+  Supabase que este repositório usa — banco dedicado, isolado de
+  qualquer outro produto (ver `DECISIONS.md`, ADR-001). Existe um
+  segundo projeto na mesma organização (`MostrAi`) — pertence a outro
+  produto, fora de escopo, não tocar a partir daqui.
 - 7 tabelas em produção, todas com RLS: `contratantes`, `cobrancas`,
   `assinaturas`, `subcontas`, `webhook_eventos`, `webhook_rejeicoes`,
   `erros`. Detalhe de colunas em `ARCHITECTURE.md`/`runbooks/supabase.md`.
@@ -48,14 +48,18 @@ nome de variável, ID não sensível e mecanismo.
   registrada); `checkout.sancocore.com.br` aponta para um projeto
   Cloudflare Pages, proxiado.
 - Outros registros na mesma zona (`www`, raiz, `humano.*`, `mostrai.*`)
-  pertencem a outros projetos do ecossistema — fora de escopo deste
-  repositório, não alterar a partir daqui.
+  pertencem a outros projetos, não a este repositório — não alterar a
+  partir daqui.
 - Cloudflare Access protege `/admin` e `/admin.html` em produção
   (confirmado por documentação do projeto, `CONSTRAINTS.md` §2.6; não
   re-exercitado nesta auditoria via API).
 - SPF/DMARC configurados na zona (confirmado via DNS: SPF via
   `include:_spf.google.com`, DMARC `p=reject`) — relacionado a e-mail do
   domínio, não à aplicação em si.
+- **Web Analytics** ativo no domínio (confirmado: `auto_install`/`enabled`
+  pela API, e o CSP em `public/_headers` libera
+  `static.cloudflareinsights.com`) — injetado pela própria Cloudflare,
+  sem cookie, não aparece como `<script>` no HTML servido.
 
 ### Northflank
 - Um projeto: `san-checkout`, um serviço: `san-checkout` (tipo
@@ -63,11 +67,12 @@ nome de variável, ID não sensível e mecanismo.
   interna 3001.
 - Sem addon de banco (o banco é o Supabase externo).
 - Existe um segundo projeto Northflank na mesma conta (`mostrai`) —
-  outro produto, fora de escopo.
+  outro produto, fora de escopo, não tocar a partir daqui.
 - Existe também um plugin/skill oficial da Northflank
   (`northflank:northflank`) disponível para agentes Claude Code, cobrindo
-  deploy/banco/preview por comando — não audita processo, só executa
-  operação (README do plugin `san-co`, seção "Onde ele fica instalado").
+  deploy/banco/preview por comando — só executa operação, não faz parte
+  da metodologia de processo deste repositório (essa é o `san-co`,
+  documentado em `CONTROL_PLANE.md`).
 
 ### Asaas
 - PSP brasileiro, motor real de cobrança. Hoje em **modo sandbox**
@@ -80,15 +85,6 @@ nome de variável, ID não sensível e mecanismo.
   este é o lado em que o San Checkout É o consumidor da Asaas; o
   contrato que o San Checkout oferece a OUTROS projetos é o mesmo
   `API.md`, do outro lado (San Checkout como provedor).
-
-## Serviços mencionados na documentação do ecossistema, fora de escopo direto deste repositório
-
-- **Google Workspace** (e-mail, Drive) — estrutura compartilhada do
-  ecossistema (skill `classificar`), não integrada por código neste
-  repositório.
-- **Cloudflare Web Analytics** — confirmado ativo no domínio
-  (auto-injetado, sem cookie), não é uma integração de código, é
-  configuração de zona.
 
 ## Não confirmado (marcar, não inventar)
 
