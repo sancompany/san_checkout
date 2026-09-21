@@ -105,8 +105,8 @@ solto** (sem um plano seu por trás). Ver a seção 5.
 
 ## 3. O que o checkout te avisa, e o que ele NÃO avisa
 
-Eventos que chegam no seu `webhook_url`, com `evento` — **são seis, e o
-seu código precisa tratar os seis**:
+Eventos que chegam no seu `webhook_url`, com `evento` — **são sete, e o
+seu código precisa tratar os sete**:
 
 - `criada` — assinatura criada e primeira cobrança paga;
 - `cobranca_confirmada` — um ciclo foi cobrado com sucesso;
@@ -115,7 +115,13 @@ seu código precisa tratar os seis**:
 - `cobranca_estornada` — um ciclo foi estornado;
 - `cobranca_contestada` — chargeback num ciclo. **Suspenda o acesso**;
 - `cancelada` — assinatura encerrada, pelo seu pedido ou por abandono de
-  assinatura nova.
+  assinatura nova;
+- `plano_trocado` — **desde 21/09/2026** (seção 5): confirma que uma
+  troca de plano concluiu, com `planoAnterior`, `valor`, `ciclo` e
+  `acertoCobrado`. ⚠️ **É este evento que avisa a troca com acerto — sem
+  tratá-lo, o seu registro fica preso no plano antigo**, e cancelar,
+  pausar, retomar, conciliar e gerar link de renovação passam a exigir
+  `planoNovoId` (seção 5), não mais o `planoId` que você tinha.
 
 A chave para localizar de quem é o evento é `planoId` + `documento` — o
 payload de assinatura **não traz `chargeId`**.
@@ -256,10 +262,15 @@ alterado ainda**:
    **Checkout**, não do MostrAí; o assinante vê lá o valor exato do
    acerto e aprova (ou não) no cartão que já está salvo — ele **não
    escolhe plano, não digita cartão**, só confirma o valor.
-2. **O link expira em 15 minutos.** Se o assinante não abrir a tempo, ou
-   abrir e não aprovar, nada acontece: o plano continua o antigo, nada
-   foi cobrado. Uma nova chamada a `POST /trocar-plano` gera um link
-   novo.
+2. **O link expira em até 15 minutos — pode ser bem menos perto da
+   meia-noite de Brasília.** O prazo real é o que vier primeiro entre 15
+   minutos e a virada do dia civil de Brasília (métrica de "confirmadas
+   por dia" não pode contar uma aprovação no dia errado): um link criado
+   às 23h58 expira em ~2 minutos, não 15. **`expiresAt`, na resposta
+   `202`, é a fonte de verdade** — use-o para calcular o prazo, nunca
+   "15 minutos" fixo. Se o assinante não abrir a tempo, ou abrir e não
+   aprovar, nada acontece: o plano continua o antigo, nada foi cobrado.
+   Uma nova chamada a `POST /trocar-plano` gera um link novo.
 3. **Quem confirma que a troca aconteceu é o webhook**
    (`evento: 'plano_trocado'`, seção 3), nunca a resposta HTTP original
    — ela só disse "existe um acerto pendente de aprovação", não "a troca
