@@ -2,7 +2,7 @@
 
 ## Updated
 
-2026-09-20 (UTC)
+2026-09-22 (UTC)
 
 ## Agent
 
@@ -10,151 +10,161 @@ Claude Code
 
 ## Branch
 
-`claude/nifty-meitner-4ffp9s` (sincronizada com `origin/main` em `3c53868`
-antes desta tarefa começar — nenhum trabalho de produto pendente antes
-desta tarefa)
+`claude/nifty-meitner-4ffp9s` (reconstruída a partir de `origin/main`
+depois de cada PR mesclada nesta sessão — é assim que este projeto trata
+"branch cuja PR já mesclou": nunca empilha em cima de história já
+mesclada, recomeça de `main`)
 
 ## Current objective
 
-Preparar o repositório para desenvolvimento e operação colaborativa
-entre múltiplos agentes de IA (Claude Code, OpenAI Codex, Google Jules),
-criando a infraestrutura persistente `.ia/` como fonte de verdade
-compartilhada — pedido explícito do dono, não uma tarefa de produto.
+Verificar e corrigir os 22 achados de uma auditoria técnica externa
+(Codex, sem acesso a este repositório — o dono repassou o relatório em
+texto), rodada sobre o código do caminho do dinheiro (checkout,
+estorno, assinatura, migrations). Nenhum achado aceito só pela palavra
+do relatório — cada um lido contra o código real antes de decidir
+corrigir ou declarar.
 
 ## Current state
 
-Toda a estrutura `.ia/` foi criada e escrita nesta sessão, com base em
-auditoria real (não suposição): repositório inteiro, o plugin `san-co`
-(9 skills lidas por completo), e verificação read-only ao vivo de
-GitHub, Supabase, Cloudflare e Northflank. `AGENTS.md` (raiz) foi
-criado; `CLAUDE.md` (raiz) recebeu um cabeçalho apontando para `.ia/`,
-sem alterar o conteúdo substantivo existente.
+**PR #39 mesclada** (`b8111e1`): três corridas reais no caminho do
+dinheiro corrigidas — Pix/Boleto duplicado (AUD-001), estorno duplicado
+(AUD-007), cancelar/pausar/retomar assinatura sem guarda nenhuma
+(AUD-005). A revisão automática do Codex sobre a própria PR achou um
+furo DENTRO da correção do AUD-001 (`criarCobrancaPix` faz duas
+chamadas à Asaas; uma falha limpa na segunda liberava a reserva com o
+pagamento já criado) — corrigido antes de mesclar.
 
-**Ainda não commitado no momento em que este HANDOFF foi escrito pela
-primeira vez** — ver "Next task" para os passos finais de validação e
-commit que fecham esta tarefa.
+**PR #40 aberta** (verificação dos 19 achados restantes): dois
+corrigidos (AUD-017, vocabulário fechado sem `check` no banco —
+migration 0014; SUS-004, migration 0009 ausente do histórico do
+Supabase — replay seguro), quatro já cobertos por trabalho anterior
+(AUD-006/008/009/012), o resto declarado com caminho de fechamento em
+`docs/pendencias.md` (AUD-004 exige checar o painel da Asaas; SUS-002 e
+a ausência de fencing token no arrendamento por tempo são reais mas
+baixa severidade).
 
 ## Work completed
 
-- Auditoria do repositório: estrutura, `package.json`, CI
-  (`.github/workflows/ci.yml`, `seguranca.yml`), migrations (10
-  arquivos), `docs/`, `scripts/`, `tests/` (43 suítes), `src/` completo.
-- Auditoria do plugin `san-co` v1.3.0: as 9 `SKILL.md` lidas por
-  completo (`novo-projeto`, `classificar`, `leis`, `construir`,
-  `depurar`, `revisar`, `checkout`, `seguranca-san`, `legal`) — achado
-  central documentado em `CONTROL_PLANE.md`: é puro texto/instrução,
-  sem estado próprio, Claude-Code-only por construção.
-- Verificação read-only ao vivo (20/09/2026): GitHub (`get_me`, repo
-  confirmado), Supabase (`list_projects`, `list_tables` verbose,
-  `list_migrations` — projeto `zacuaroarelaqnzjjlcz`), Cloudflare
-  (zona `sancocore.com.br`, DNS records via API direta), Northflank
-  (`list projects`, `get service` — serviço `san-checkout`).
-- Achado de risco durante a verificação: divergência de nomenclatura
-  entre `list_migrations` (Supabase) e os arquivos locais — sem dano,
-  documentado em `RISKS.md` e `runbooks/supabase.md`.
-- Criados todos os arquivos de `.ia/` (ver "Files changed").
+- **PR #38** (mesclada antes desta sessão continuar): dois achados
+  confirmados e corrigidos — escrita local engolida depois de cobrança
+  real na Asaas.
+- **PR #39** (mesclada, `b8111e1`): AUD-001 (reserve-then-charge em
+  `gerarPix`/`gerarBoleto`, `checkoutController.js` migrado pro padrão
+  de fábrica com `deps`), AUD-007 (CAS no estorno, migration 0013 —
+  `cobrancas.estornando_em`), AUD-005 (lease comum em cancelar/pausar/
+  retomar, reaproveitando `assinaturas.trocando_em` que antes era
+  exclusivo da troca de plano — `assinaturaController.js` ganhou seu
+  primeiro autoteste). Suíte: 43 → 46.
+- **PR #40** (aberta, aguardando CI): AUD-017 (migration 0014 — `check`
+  em `cobrancas.status`/`metodo_pagamento`/`assinaturas.status`/
+  `ciclo`; a primeira enumeração de `cobrancas.status` estava
+  incompleta, corrigida ANTES de aplicar depois de um `select distinct`
+  contra produção achar `expirado` fora do conjunto lido só do código),
+  SUS-004 (migration 0009 registrada no histórico do Supabase via
+  replay idempotente — as colunas já existiam em produção desde 17/09,
+  só o registro no tracking faltava).
 
 ## Files changed
 
-**Criados:**
-```
-.ia/README.md
-.ia/CONTEXT.md
-.ia/ARCHITECTURE.md
-.ia/PROJECT_STATE.md
-.ia/CONTROL_PLANE.md
-.ia/INTEGRATIONS.md
-.ia/ACCESS.md
-.ia/AUTONOMY.md
-.ia/OPERATIONS.md
-.ia/DECISIONS.md
-.ia/TODO.md
-.ia/RISKS.md
-.ia/HANDOFF.md
-.ia/AGENT_PROTOCOL.md
-.ia/agents/CLAUDE.md
-.ia/agents/CODEX.md
-.ia/agents/JULES.md
-.ia/runbooks/github.md
-.ia/runbooks/supabase.md
-.ia/runbooks/cloudflare.md
-.ia/runbooks/northflank.md
-AGENTS.md (raiz, novo)
-```
+Ver os diffs das PRs #39 e #40 no GitHub — lista completa não repetida
+aqui de propósito (haveria dessincronia garantida). Resumo por área:
 
-**Atualizados:**
-```
-CLAUDE.md (raiz) — só um cabeçalho novo apontando para .ia/, conteúdo
-                    substantivo preservado integralmente
-```
-
-Nenhum arquivo de código (`src/`, `public/`, `tests/`) foi tocado nesta
-tarefa — é puramente documentação/infraestrutura de processo.
+- `src/controllers/checkoutController.js`, `refundController.js`,
+  `assinaturaController.js` — padrão de fábrica com `deps`, guardas de
+  corrida.
+- `src/services/asaasService.js`, `cobrancaService.js`,
+  `assinaturaService.js` — `foiRecusaLimpaDaAsaas` (compartilhada),
+  `reivindicarEstorno`/`liberarEstorno`, doc de `reivindicarTroca`
+  ampliada.
+- `supabase/migrations/0013_lease_de_estorno.sql`,
+  `0014_vocabulario_fechado_no_banco.sql` — novas.
+- `docs/erros/2026-09-22-*.md` — seis arquivos, um por achado fechado.
+- `docs/pendencias.md`, `docs/funcional.md` (RN-37/38),
+  `docs/ciclo-assinatura-mapa.md`, `API.md` §5.4/§5.5 — documentação.
+- `CLAUDE.md` (raiz) — jornal de 22/09.
 
 ## External systems touched
 
-**Nenhuma escrita.** Toda verificação foi read-only: `get_me` (GitHub),
-`list_projects`/`list_tables`/`list_migrations` (Supabase),
-`GET /zones`/`GET /dns_records` (Cloudflare), `list projects`/`get
-service`/`list addons` (Northflank).
+- **Supabase** (`zacuaroarelaqnzjjlcz`): duas migrations aplicadas via
+  MCP (`0013_lease_de_estorno`, `0014_vocabulario_fechado_no_banco`) e
+  um replay idempotente da 0009 pra registrar no histórico. Todas
+  verificadas contra dados reais (`select distinct`/`count(*)` por
+  coluna) ANTES de aplicar — a verificação da 0014 achou um erro na
+  minha própria primeira enumeração antes de ele virar `ALTER TABLE`.
+- **GitHub**: PRs #39 (mesclada) e #40 (aberta), replies a review
+  comments do Codex, threads resolvidas.
 
 ## Deployments
 
-Nenhum — esta tarefa não toca código de produto, não há deploy
-associado.
+PR #39 mesclada → deploy automático em produção (Northflank + Cloudflare
+Pages), CI verde é a porta (`CLAUDE.md`, "Mesclar é decisão tomada").
+PR #40 ainda não mesclada no momento em que este HANDOFF foi escrito.
 
 ## Database changes
 
-Nenhuma.
+- Migration 0013 (`cobrancas.estornando_em`) — no ar via PR #39.
+- Migration 0014 (`check` em quatro colunas) — aplicada diretamente via
+  Supabase MCP, no ar antes mesmo do merge da PR #40 (constraint
+  aditiva, sem risco de reverter comportamento).
+- Migration 0009 — sem mudança de schema, só passou a aparecer no
+  histórico do Supabase (estava aplicada desde 17/09, sem estar
+  registrada lá).
 
 ## What is working
 
-Tudo o que já funcionava antes desta tarefa continua igual — nenhuma
-mudança de comportamento. A adição é puramente informacional.
+Tudo que a suíte cobre (46 suítes, `npm test`/`npm run check` verdes em
+cada commit) e o que foi conferido ao vivo contra produção antes de
+cada `ALTER TABLE` (ver "External systems touched").
 
 ## What is not working
 
-Nada quebrado por esta tarefa. Ver `.ia/RISKS.md` para riscos
-pré-existentes encontrados (nenhum introduzido).
+Nada quebrado por este trabalho — só achados PRÉ-EXISTENTES,
+documentados como corrigidos ou declarados (nunca "quebrado por esta
+tarefa"). Ver `docs/pendencias.md` pelas entradas de 22/09 para o que
+ficou declarado (AUD-004: sendType do webhook da Asaas não verificado;
+SUS-002: corrida em `buscarOuCriarCliente`, baixa severidade; ausência
+de fencing token no arrendamento por tempo).
 
 ## Next task
 
-1. **Rodar `npm run check`** para confirmar que nada foi quebrado
-   (mudança é só documentação, mas validar é parte do protocolo).
-2. **Revisar `.ia/` por completo uma vez** procurando link interno
-   quebrado, nome de arquivo inconsistente, ou secret exposto
-   acidentalmente (nenhum foi escrito de propósito — conferir mesmo
-   assim).
-3. **Commitar e dar push** na branch `claude/nifty-meitner-4ffp9s`,
-   depois abrir PR — esta tarefa é infraestrutura de processo, não
-   caminho de dinheiro, então não está na lista de itens que exigem
-   autorização prévia para construir (`AUTONOMY.md`); mesclar segue a
-   autorização permanente já existente (CI verde).
-4. Depois de mesclada: **a primeira tarefa recomendada para Codex ou
-   Jules** é ler `.ia/README.md` → `AGENTS.md` → este `HANDOFF.md`, e
-   confirmar de forma independente (no próprio ambiente) quais
-   mecanismos de acesso de `ACCESS.md` realmente funcionam por lá —
-   fechando o "não verificado" que fica registrado quando um agente
-   list a de outro ambiente.
+1. **Fechar a PR #40**: aguardar CI verde e mesclar (autorização
+   permanente, `CLAUDE.md` raiz). Responder/resolver qualquer achado
+   novo de revisão automática antes — nenhum ficou pendente até este
+   HANDOFF ser escrito.
+2. **AUD-004** (webhook fora de ordem) precisa de alguém com acesso ao
+   painel da Asaas ou ao container de produção pra conferir o `sendType`
+   configurado (`GET /v3/webhooks`) — só o dono ou um agente com essa
+   credencial fecha isso. Caminho completo em `docs/pendencias.md`.
+3. Depois de #40 mesclada: **`.ia/PROJECT_STATE.md` está desatualizado**
+   (última verificação 20/09) — não bloqueia nada, porque o próprio
+   arquivo é desenhado pra ser reconfirmado por comando, não por
+   confiança no texto, mas vale uma passada quando a próxima tarefa
+   mexer em algo que ele descreve.
 
 ## Known risks
 
-Ver `.ia/RISKS.md` na íntegra. Os dois mais relevantes para quem for
-mexer em infraestrutura a seguir: a Global API Key da Cloudflare no
-ambiente (acesso à conta inteira, não só este projeto) e a ausência de
-staging (todo merge na `main` publica em produção real).
+Ver `.ia/RISKS.md` — inalterado por esta tarefa. Nada novo introduzido;
+achados da auditoria externa que não foram corrigidos viraram entradas
+em `docs/pendencias.md` (a lista de trabalho do projeto), não em
+`RISKS.md` (que é sobre risco de infraestrutura/acesso, escopo
+diferente).
 
 ## Do not undo
 
 - Não reverter a autorização de merge automático com CI verde
-  (`CLAUDE.md` raiz, "Mesclar é decisão tomada") — decisão do dono,
-  anterior a esta tarefa.
-- Não editar o conteúdo do plugin `san-co` em si (fora deste
-  repositório) — governança dele é "só a sessão de manutenção edita",
-  documentado em `CONTROL_PLANE.md`.
-- Não trocar a credencial Cloudflare por um token escopado como efeito
-  colateral de uma tarefa não relacionada — é melhoria registrada
-  (`RISKS.md`, `DECISIONS.md` ADR-007), não uma correção urgente.
+  (`CLAUDE.md` raiz, "Mesclar é decisão tomada").
+- Não editar o conteúdo do plugin `san-co` em si — só a sessão de
+  manutenção do plugin edita skill.
+- Não reabrir PR #38 ou #39 (já mescladas) — trabalho de acompanhamento
+  vira PR nova, nunca commit em cima de história já mesclada (é assim
+  que este HANDOFF trata "branch cujo PR já fechou", ver "Branch"
+  acima).
+- Não silenciar/pular achado de auditoria por parecer pequeno —
+  verificar contra o código real e contra dados de produção antes de
+  decidir "declarar" em vez de "corrigir" (a lição de 22/09: uma
+  enumeração de vocabulário lida só do código estava incompleta, e só
+  um `select distinct` contra produção achou o erro antes de ele virar
+  `ALTER TABLE` em produção).
 
 ## Useful commands
 
@@ -178,22 +188,18 @@ grep -roE '\.ia/[A-Za-z0-9_./-]+\.md' .ia/*.md .ia/agents/*.md .ia/runbooks/*.md
 
 ## Notes for next agent
 
-Esta tarefa foi deliberadamente **só documentação/infraestrutura de
-processo** — nenhuma mudança de comportamento do produto. O valor dela
-só se realiza se `.ia/` for de fato mantido daqui para frente: toda
-tarefa futura relevante deveria terminar atualizando pelo menos este
-`HANDOFF.md`, e `PROJECT_STATE.md`/`TODO.md`/`RISKS.md`/`DECISIONS.md`
-quando aplicável. Um `.ia/` que para de ser atualizado depois de uma
-sessão vira exatamente o problema que ele foi criado para evitar —
-documento desatualizado é pior que ausente, porque gera confiança
-falsa (mesma lição já registrada em `CLAUDE.md` raiz sobre o `CLAUDE.md`
-em si).
+Este HANDOFF ficou parado em 20/09/2026 (a tarefa de criar `.ia/`)
+enquanto três PRs de código passaram por aqui sem atualizá-lo — achado
+por revisão automática do Codex na PR #40, e a lição bate com o aviso
+que a versão anterior deste mesmo arquivo já deixava escrito: "um
+`.ia/` que para de ser atualizado depois de uma sessão vira exatamente
+o problema que ele foi criado para evitar". Regra prática: **toda PR
+que mexe em código ou schema termina atualizando este arquivo**, não só
+tarefas de infraestrutura de processo — é fácil esquecer quando o foco
+está no código, e é exatamente por isso que esquecer aconteceu aqui.
 
-A auditoria do plugin `san-co` (`CONTROL_PLANE.md`) é o achado mais
-importante desta tarefa: ele é fundamentalmente Claude-Code-only, então
-"integrar Codex e Jules à metodologia" não é uma tarefa de configuração
-— é uma tarefa de **desenho** (que informação deve existir como arquivo
-comum vs. como skill exclusiva). Isso não foi decidido nem implementado
-aqui de propósito (era fora do escopo pedido) — está mapeado como
-roadmap em `CONTROL_PLANE.md` e `TODO.md`, seção "PLUGIN / CONTROL
-PLANE", para uma tarefa futura explícita.
+A auditoria do plugin `san-co` (`CONTROL_PLANE.md`, escrita em 20/09)
+continua válida e não foi tocada por este trabalho — ele é
+fundamentalmente Claude-Code-only, e "integrar Codex e Jules à
+metodologia" segue como tarefa de desenho futura, mapeada em
+`CONTROL_PLANE.md` e `TODO.md`.
