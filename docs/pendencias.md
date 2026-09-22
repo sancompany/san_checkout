@@ -1207,3 +1207,116 @@ Nenhum dos quatro tem dano ativo hoje — são cópias que ainda concordam
 no comportamento visível, ou (no caso do toast) divergem de um jeito que
 não quebra nada, só deixa de ser um componente só. Extrair quando a
 próxima mudança tocar qualquer um destes fluxos.
+
+### 🟡 Webhook `payment.*` não tem guarda contra entrega fora de ordem — DECLARADO 22/09
+Achado numa auditoria técnica externa (Codex, sem acesso a este
+repositório), verificado contra a documentação oficial da Asaas antes de
+decidir (`https://docs.asaas.com/docs/tipos-de-envio`), não corrigido às
+cegas.
+
+**O que está medido, na doc da Asaas:** o envio de webhook tem dois
+modos, escolhidos na configuração do próprio webhook —
+`SEQUENTIALLY` (preserva a ordem de ocorrência, um evento só sai depois
+do anterior terminar) e `NON_SEQUENTIALLY` (paralelo, sem garantia de
+ordem, maior vazão). A doc não declara um padrão — é escolha explícita
+na criação/edição do webhook. **Os dois modos** seguem "at least once"
+(reenvio em falha), então idempotência é obrigatória de qualquer jeito
+— isso já está coberto (`cobranca.status === novoStatus` em
+`processarEventoPayment`, mais o `23505` do índice único).
+
+**O que NÃO está medido:** qual `sendType` está configurado no webhook
+deste projeto hoje. Ninguém verificou — o `GET /v3/webhooks` já rodado
+em 16/09/2026 (`docs/ciclo-assinatura-mapa.md`) mediu a lista de
+eventos marcados, não este campo.
+
+**Por que importa:** `processarEventoPayment`
+(`src/controllers/webhookController.js`) só recusa reprocessar o MESMO
+status (`cobranca.status === novoStatus`) — não tem noção nenhuma de
+"este evento é mais antigo que o que já processei". Se o `sendType`
+configurado for `NON_SEQUENTIALLY` (ou se um dia mudar sem ninguém
+perceber), uma entrega atrasada de um evento mais antigo pode
+sobrescrever um status mais novo — por exemplo, uma tentativa de
+reenvio de `PAYMENT_AWAITING_RISK_ANALYSIS` chegando DEPOIS do
+`PAYMENT_CONFIRMED` reverteria `confirmado` para `em_analise`, calado
+(sem erro, sem sintoma imediato — só apareceria numa auditoria ou numa
+reclamação do contratante).
+
+**Declarado, não corrigido às cegas, por duas razões:**
+1. Não dá pra saber HOJE se o problema é real (`sendType` pode já estar
+   `SEQUENTIALLY`, e nesse caso não há nada a corrigir em código — a
+   Asaas garante a ordem sozinha) sem consultar a configuração real do
+   webhook (painel da Asaas, ou `GET /v3/webhooks` de dentro do
+   container — a `ASAAS_API_KEY` nunca sai de lá).
+2. A correção óbvia (recusar sobrescrever com um evento "mais antigo")
+   não é um `if` simples: o vocabulário de status deste projeto **não é
+   linear** — `confirmado → estornado`, `vencido → confirmado` (pago
+   atrasado), `confirmado → chargeback` são todas transições legítimas
+   para FRENTE, e nenhum campo do payload de webhook foi medido para
+   dar um número de ordem confiável (o candidato óbvio seria o
+   `dateCreated`/id do próprio evento, mas isso não foi conferido
+   contra o payload real — mesma classe de erro que já custou duas
+   vezes aqui, `docs/erros/2026-09-15-confiei-que-o-checkout-paid-
+   traria-o-id-do-pagamento.md` e
+   `docs/erros/2026-09-15-ciclo-de-assinatura-nao-vinha-de-webhook-
+   nenhum.md`: escrever contra formato imaginado).
+
+**Fecha assim:**
+1. Conferir `sendType` do webhook configurado (`GET /v3/webhooks`, de
+   dentro do container ou no painel da Asaas).
+2. Se `SEQUENTIALLY`: fecha por medição — Asaas garante a ordem, nada a
+   construir. Só falta registrar a decisão aqui e em `CONSTRAINTS.md`
+   §2.2.
+3. Se `NON_SEQUENTIALLY` (ou não configurado): **primeiro** tentar
+   trocar para `SEQUENTIALLY` no painel — se a vazão desta conta
+   aguentar (poucos webhooks/dia hoje), é a correção inteira, sem
+   tocar código. Só construir uma guarda de ordem em código (com o
+   campo real do payload medido antes de codificar) se o dono decidir
+   que `SEQUENTIALLY` não serve.
+
+### 🟡 `buscarOuCriarCliente` tem uma corrida de busca-então-cria — DECLARADO 22/09
+Achado na mesma auditoria externa (Codex). `asaasService.
+buscarOuCriarCliente` faz `GET /v3/customers?cpfCnpj=X` e, se vier
+vazio, `POST /v3/customers` — sem lock nenhum entre as duas. Duas
+requisições de checkout quase simultâneas para o MESMO comprador
+(duas abas, um clique duplo antes do primeiro cliente existir) podem
+as duas ler "não existe" e as duas criar um cliente na Asaas.
+
+**Diferente do AUD-001/AUD-007/AUD-005: não é dinheiro duplicado.**
+Cada cobrança carrega o `clienteId` explícito da chamada que a criou —
+mesmo com dois `Customer` cadastrados pra mesma pessoa na Asaas, cada
+cobrança individual sai correta, vinculada a UM cliente só. O dano é
+qualidade de dado (dois registros de cliente pra mesma pessoa no
+painel da Asaas), não cobrança repetida.
+
+**Declarado, não corrigido às cegas:** não está medido se a Asaas
+recusa (ou deduplica sozinha) um segundo `POST /v3/customers` com o
+mesmo `cpfCnpj` — se ela já recusa, não há nada a construir aqui. Medir
+isso exige uma chamada real contra o sandbox antes de decidir entre
+"nada a fazer" e "cachear localmente clienteId por documento" (que
+introduziria sua própria necessidade de invalidação — nome/e-mail do
+mesmo documento pode mudar entre pedidos). Baixa prioridade: sem dano
+no caminho do dinheiro.
+
+### ⚪ O arrendamento por tempo (`trocando_em`/`estornando_em`) não é um fencing token de verdade — DECLARADO 22/09
+Achado na mesma auditoria externa (Codex), ao revisar o AUD-005.
+`reivindicarTroca`/`reivindicarEstorno` são um `UPDATE` condicional
+atômico — fecham a corrida de "quem chega primeiro" —, mas não
+impedem um processo que ULTRAPASSOU o prazo do arrendamento (5 min) de
+ainda assim completar a escrita final depois que outro já assumiu.
+Isso é diferente de `aplicarTrocaDePlano`, que TEM um fencing token de
+verdade (`mutation_version`, CAS na escrita) — cancelar/pausar/retomar
+e a troca síncrona sem acerto não têm.
+
+**Por que fica declarado, não construído:** toda chamada à Asaas neste
+projeto tem teto de 20s (`chamarAsaas`) e nenhuma das operações que
+usam este arrendamento tem retry — o tempo entre reivindicar e
+escrever é, no caminho normal, muito menor que os 5 minutos do prazo.
+O cenário que exigiria isso na prática (um processo pausado por mais
+de 5 minutos entre reivindicar e escrever — GC, throttling de CPU,
+container congelado) já é, por si, um evento raro e grave o bastante
+pra aparecer de outras formas primeiro. Construir `mutation_version`
+para mais três operações é barato tecnicamente, mas ainda seria
+proteger contra um cenário nunca medido como real — mesma razão de
+`buscarOuCriarCliente` acima ficar declarado. Vira construção se algum
+dia aparecer evidência de que o prazo de 5 minutos foi estourado na
+prática.
