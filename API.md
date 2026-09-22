@@ -1104,7 +1104,17 @@ intermediário real, não erro.
 | `400` | `pedidoId` ausente |
 | `401` | Chave ausente ou inválida |
 | `404` | Nenhuma cobrança encontrada para esse pedido |
+| `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha) |
 | `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
+
+> **Desde 22/09/2026, só uma cobrança `confirmado` pode ser estornada,
+> e só uma vez.** Antes disso a rota não checava o estado da cobrança
+> nenhum antes de chamar a Asaas — duas chamadas simultâneas para o
+> mesmo pedido podiam as duas tentar estornar (achado de auditoria
+> externa, `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
+> Repetir a chamada depois de um `409` sem que nada tenha mudado do
+> lado da cobrança não adianta — espere o estado dela mudar (ou, numa
+> falha de rede sua, tente de novo depois de alguns segundos).
 
 ---
 
@@ -1165,6 +1175,16 @@ separadamente.
 | `400` | `planoId`/`documento` ausentes ou CPF/CNPJ inválido |
 | `401` | Chave ausente ou inválida |
 | `404` | Nenhuma assinatura nesse estado para esse plano/documento (cancelar já cancelada também cai aqui) |
+| `409` | Já existe outra operação em andamento nesta assinatura — outra chamada de cancelar/pausar/retomar, ou uma troca de plano ainda não concluída |
+
+> **Desde 22/09/2026, as três rotas se excluem mutuamente (e excluem
+> uma troca de plano em andamento) na mesma assinatura.** Antes disso
+> não havia guarda nenhuma contra chamadas concorrentes — duas chamadas
+> simultâneas de `/cancelar-assinatura`, ou um `/pausar-assinatura`
+> cruzando com um `/cancelar-assinatura`, agiam as duas sobre o mesmo
+> estado. Um `409` aqui significa "tente de novo em instantes", nunca
+> "sua operação falhou" —
+> `docs/erros/2026-09-22-cancelar-pausar-retomar-nao-tinham-guarda-de-corrida.md`.
 
 ---
 

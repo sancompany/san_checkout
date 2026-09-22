@@ -850,6 +850,38 @@ ele carrega o mesmo `plano_id` e nasce depois do ciclo, e sem o filtro de
 método o contratante leria o acerto de R$ 30 como se fosse o preço do
 plano — medido com as duas consultas lado a lado.
 
+**RN-37 · Uma cobrança só é estornada uma vez, e só quando está
+`confirmado`.** Desde 22/09/2026 (achado de auditoria externa):
+`POST /checkout/estornar` reivindica a cobrança por um arrendamento
+(`cobrancas.estornando_em`, migration 0013) num `UPDATE` condicional que
+só encontra linha quando `status = 'confirmado'` — mesmo mecanismo do
+RN-36, aplicado ao estorno. Uma falha da Asaas que não prova
+definitivamente que nada foi feito (timeout, 5xx, limite de taxa) nunca
+libera o arrendamento — só recusa limpa (4xx com motivo reconhecido)
+libera, porque só aí é seguro tentar de novo. *Violada:* duas chamadas
+simultâneas (ou um clique duplo) estornariam a mesma cobrança duas
+vezes, ou uma tentativa estornaria uma cobrança que nunca foi paga ou já
+foi estornada. *Quem vê:* o contratante, como `409` na resposta —
+"esta cobrança não pode ser estornada agora".
+`docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`.
+
+**RN-38 · Cancelar, pausar e retomar uma assinatura se excluem
+mutuamente entre si e contra uma troca de plano em andamento.** Desde
+22/09/2026 (mesma auditoria do RN-37): as três reivindicam o MESMO
+arrendamento que a troca de plano já usa (`assinaturas.trocando_em`,
+migration 0010) antes de chamar a Asaas — ele deixou de ser exclusivo
+da troca, virou o mutex de qualquer operação que muda uma assinatura.
+Diferente do RN-37, nenhuma das três cobra dinheiro, então uma falha na
+Asaas **sempre** libera o arrendamento, mesmo ambígua — não há "será
+que já cobrou" a proteger; se a Asaas processou mesmo assim, é a
+conciliação por pull (§5.3) que corrige depois. *Violada:* duas
+chamadas concorrentes (entre si, ou contra uma troca de plano com
+acerto pendente) agiriam sobre um estado que já mudou debaixo delas —
+o caso mais caro sendo cancelar no meio de uma troca com acerto ainda
+não aprovado. *Quem vê:* o contratante, como `409` — "já existe outra
+operação em andamento".
+`docs/erros/2026-09-22-cancelar-pausar-retomar-nao-tinham-guarda-de-corrida.md`.
+
 ---
 
 ## 6. Textos que o sistema diz

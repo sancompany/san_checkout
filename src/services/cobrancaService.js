@@ -18,57 +18,133 @@ import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
 import { exigirIdNoTeto } from '../utils/validadores.js';
 import { registrarErro } from './erroService.js';
 
-export async function registrarCobranca(dados) {
-  const { error } = await supabase.from('cobrancas').insert({
-    ambiente: ambienteAsaas(),
-    charge_id: dados.chargeId,
-    contratante_id: dados.contratanteId,
-    pedido_id: dados.pedidoId,
-    documento: dados.documento,
-    email: dados.email ?? null,
-    telefone: dados.telefone ?? null,
-    endereco: dados.endereco ?? null,
-    endereco_numero: dados.enderecoNumero ?? null,
-    endereco_complemento: dados.complemento ?? null,
-    bairro: dados.bairro ?? null,
-    cep: dados.cep ?? null,
-    cidade: dados.cidade ?? null,
-    uf: dados.uf ?? null,
-    cidade_ibge: dados.cidadeIbge ? Number(dados.cidadeIbge) : null,
-    itens: dados.itens ?? null,
-    valor_cheio: dados.valorCheio,
-    desconto: dados.desconto ?? 0,
-    cupom: dados.cupom ?? null,
-    valor_com_desconto: dados.valorComDesconto,
-    frete: dados.frete ?? 0,
-    taxa_do_projeto: dados.taxaDoProjeto ?? 0,
-    taxa_asaas: dados.taxaAsaas,
-    taxa_propria: dados.taxaPropria,
-    taxa_isenta: dados.taxaIsenta ?? false,
-    valor_cobrado: dados.valorCobrado,
-    metodo_pagamento: dados.metodoPagamento
-  });
+/**
+ * Reserva o direito de criar uma cobrança pra esse pedido+método, ANTES
+ * de chamar a Asaas — fecha a corrida que `idx_cobrancas_pendente_unica`
+ * só fechava do lado de cá.
+ *
+ * Achado numa auditoria externa (Codex, 22/09/2026), confirmado lendo o
+ * código: até então `checkoutController.js` checava "já existe
+ * pendente?", e só DEPOIS de criar a cobrança de verdade na Asaas é que
+ * gravava a linha local. Duas chamadas simultâneas liam as duas "nada
+ * pendente ainda" (nenhuma tinha se registrado) e as DUAS criavam um
+ * Pix/boleto pagável na Asaas — o índice único só impedia a SEGUNDA
+ * LINHA no Postgres, não o segundo objeto financeiro no PSP.
+ *
+ * Reservando a linha primeiro (mesmo padrão que
+ * `registrarCobrancaPendentePopup` já usa pro fluxo de pop-up), a
+ * segunda chamada esbarra no `23505` do próprio índice único e nunca
+ * chega a chamar a Asaas.
+ *
+ * @returns {Promise<{reservada: boolean, id?: string}>}
+ */
+export async function reservarCobranca({ contratanteId, pedidoId, metodoPagamento }) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .insert({
+      ambiente: ambienteAsaas(),
+      contratante_id: contratanteId,
+      pedido_id: pedidoId,
+      metodo_pagamento: metodoPagamento,
+      status: 'pendente'
+    })
+    .select('id')
+    .single();
 
-  /* A cobrança JÁ EXISTE na Asaas quando isto roda — `criarCobrancaPix`/
-     `criarCobrancaBoleto` já devolveram sucesso antes de o chamador
-     chegar aqui. Achado numa auditoria externa (Codex, 22/09/2026):
-     `console.error` sozinho é invisível fora do log do Northflank — sem
-     isto, uma cobrança real e paga ficava sem NENHUMA linha em
-     `cobrancas`, o webhook nunca a encontrava (`buscarCobranca` por
-     `charge_id`) e o suporte não tinha por onde procurar. Registra em
-     Lei 8 (`erros`) com o chargeId real, mesmo sem conseguir persistir
-     a linha — é o único jeito de reparar depois. Nunca lança: o
-     pagador já recebeu um QR/boleto de verdade, negar a resposta a ele
-     seria pior que a falta de registro local. */
+  if (error?.code === '23505') return { reservada: false };
+  if (error) throw error;
+  return { reservada: true, id: data.id };
+}
+
+/** Preenche a reserva com os dados reais — MESMA linha, sem insert novo
+ *  — depois que a Asaas já confirmou a criação da cobrança. */
+export async function completarCobranca(id, dados) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({
+      charge_id: dados.chargeId,
+      documento: dados.documento,
+      email: dados.email ?? null,
+      telefone: dados.telefone ?? null,
+      endereco: dados.endereco ?? null,
+      endereco_numero: dados.enderecoNumero ?? null,
+      endereco_complemento: dados.complemento ?? null,
+      bairro: dados.bairro ?? null,
+      cep: dados.cep ?? null,
+      cidade: dados.cidade ?? null,
+      uf: dados.uf ?? null,
+      cidade_ibge: dados.cidadeIbge ? Number(dados.cidadeIbge) : null,
+      itens: dados.itens ?? null,
+      valor_cheio: dados.valorCheio,
+      desconto: dados.desconto ?? 0,
+      cupom: dados.cupom ?? null,
+      valor_com_desconto: dados.valorComDesconto,
+      frete: dados.frete ?? 0,
+      taxa_do_projeto: dados.taxaDoProjeto ?? 0,
+      taxa_asaas: dados.taxaAsaas,
+      taxa_propria: dados.taxaPropria,
+      taxa_isenta: dados.taxaIsenta ?? false,
+      valor_cobrado: dados.valorCobrado,
+      atualizado_em: new Date().toISOString()
+    })
+    .eq('id', id);
+
+  /* A cobrança JÁ EXISTE na Asaas quando isto roda. Sem registrar em
+     Lei 8, uma cobrança real e paga ficava com uma linha local
+     incompleta (sem chargeId, sem dado do pagador) — o webhook nunca a
+     acharia (`buscarCobranca` busca por `charge_id`), e o suporte não
+     teria por onde procurar. Nunca lança: o pagador já recebeu um
+     QR/boleto de verdade, negar a resposta a ele seria pior.
+
+     `registrarErro` NUNCA é esperada aqui (fire-and-forget) — achado
+     por revisão externa (Codex, PR #39, 22/09/2026): esperar a escrita
+     de diagnóstico atrasaria a resposta pro pagador que já tem QR/
+     boleto em mãos, por um problema que é só nosso (a linha local, não
+     o pagamento). `registrarErro` nunca lança (engole a própria
+     falha), então não sobra promessa rejeitada sem dono — só um
+     `console.error` de reforço, caso a escrita em si falhe antes de a
+     função nem chegar a rodar. */
   if (error) {
-    console.error('[cobrancaService.registrarCobranca]', error.message);
+    console.error('[cobrancaService.completarCobranca]', error.message);
+    void registrarErro(
+      new Error(
+        `completarCobranca falhou para a reserva ${id} — a cobrança JÁ EXISTE na Asaas com chargeId ` +
+        `${dados.chargeId}, a linha local ficou sem os dados do pagador: ${error.message}`
+      ),
+      { contexto: 'cobrancaService.completarCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
+    );
+  }
+}
+
+/**
+ * Libera uma reserva que não virou cobrança de verdade — chamar SÓ
+ * quando a Asaas recusou de forma limpa (4xx com corpo reconhecido,
+ * nunca timeout nem 5xx): nesses dois últimos casos não dá pra saber se
+ * algo foi criado do outro lado, e apagar a reserva abriria caminho pra
+ * uma segunda tentativa criar uma cobrança DE VERDADE duplicada — a
+ * mesma regra que `trocaExecucaoService.iniciarCobranca` já segue pro
+ * acerto de troca de plano.
+ *
+ * Se o PRÓPRIO `delete` falhar, a reserva fica travada pra sempre: o
+ * índice único (`idx_cobrancas_pendente_unica`) nunca mais libera esse
+ * pedido+método pra uma nova tentativa, e como a Asaas recusou de
+ * forma limpa (nada foi criado do lado dela) ninguém teria como saber
+ * disso sem procurar. Achado por revisão externa (Codex, PR #39,
+ * 22/09/2026) — registrado em Lei 8, esperada (não fire-and-forget:
+ * aqui a resposta que vai pro cliente já é um ERRO, não um pagamento
+ * de sucesso — não há resposta boa a atrasar).
+ */
+export async function liberarReservaCobranca(id) {
+  const { error } = await supabase.from('cobrancas').delete().eq('id', id);
+  if (error) {
+    console.error('[cobrancaService.liberarReservaCobranca]', error.message);
     await registrarErro(
       new Error(
-        `registrarCobranca falhou para o pedido ${dados.pedidoId} (contratante ${dados.contratanteId}, ` +
-        `método ${dados.metodoPagamento}) — a cobrança JÁ EXISTE na Asaas com chargeId ${dados.chargeId}, ` +
-        `sem linha local: ${error.message}`
+        `liberarReservaCobranca falhou para a reserva ${id} — a recusa da Asaas era LIMPA (nada foi ` +
+        `criado do lado dela), mas a linha local não foi apagada: ${error.message}. Essa reserva trava ` +
+        `esse pedido+método pra sempre (o índice único nunca libera sozinho) — apagar a linha na mão.`
       ),
-      { contexto: 'cobrancaService.registrarCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
+      { contexto: 'cobrancaService.liberarReservaCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
     );
   }
 }
@@ -127,7 +203,7 @@ export async function registrarCobrancaPendentePopup(dados) {
     status: 'pendente'
   });
 
-  /* Mesmo achado de `registrarCobranca` acima: a sessão de pop-up já
+  /* Mesmo achado de `completarCobranca` acima: a sessão de pop-up já
      existe na Asaas (`asaasCheckoutId` real) quando isto roda. Sem a
      linha local, o webhook `CHECKOUT_PAID` (que busca por
      `asaas_checkout_id`) nunca acha o que atualizar — o pagador paga,
@@ -516,4 +592,58 @@ export async function atualizarStatusCobranca(chargeId, status) {
     .eq('charge_id', chargeId);
 
   if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);
+}
+
+/** Prazo do arrendamento do estorno. Mesmo valor de
+ *  `assinaturaService.reivindicarTroca`, pela mesma razão. */
+const MINUTOS_DE_ARRENDAMENTO_ESTORNO = 5;
+
+/**
+ * Reivindica o direito de estornar uma cobrança — o arrendamento
+ * (migration 0013, coluna `estornando_em`).
+ *
+ * Achado numa auditoria externa (Codex, 22/09/2026), confirmado lendo o
+ * código: `refundController.estornar` ia direto de
+ * `buscarCobrancaPorPedido` pra `estornarCobranca` na Asaas sem checar
+ * `status` nenhum. Duas chamadas simultâneas de `POST /estornar` para o
+ * mesmo pedido leriam as duas a mesma cobrança `confirmado` e as DUAS
+ * chamariam a Asaas — o mesmo dinheiro devolvido duas vezes. E nada
+ * impedia estornar uma cobrança `pendente` (nunca paga), já `estornado`,
+ * ou com `estorno_solicitado` (boleto) em andamento.
+ *
+ * O `update` condicional é atômico no Postgres, e a condição
+ * `status = 'confirmado'` no MESMO update fecha os dois problemas de
+ * uma vez: só reivindica quem encontra a cobrança no único estado que
+ * pode ser estornado. Mesmo padrão de `assinaturaService.reivindicarTroca`.
+ *
+ * @returns {Promise<boolean>} `true` quando esta chamada é a dona do
+ *   estorno; `false` quando outra está em andamento, ou a cobrança não
+ *   está `confirmado`.
+ */
+export async function reivindicarEstorno(chargeId) {
+  const limite = new Date(Date.now() - MINUTOS_DE_ARRENDAMENTO_ESTORNO * 60_000).toISOString();
+
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .update({ estornando_em: new Date().toISOString() })
+    .eq('charge_id', chargeId)
+    .eq('status', 'confirmado')
+    .or(`estornando_em.is.null,estornando_em.lt.${limite}`)
+    .select('id');
+
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
+}
+
+/** Devolve o arrendamento sem estornar nada — usada quando a Asaas
+ *  recusa o estorno de forma limpa (o status continua `confirmado`,
+ *  então uma nova tentativa pode reivindicar de novo). Falha aqui não é
+ *  fatal: o prazo expira sozinho. */
+export async function liberarEstorno(chargeId) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({ estornando_em: null })
+    .eq('charge_id', chargeId);
+
+  if (error) console.error('[cobrancaService.liberarEstorno]', error.message);
 }

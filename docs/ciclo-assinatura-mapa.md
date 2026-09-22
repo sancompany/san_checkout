@@ -131,6 +131,7 @@ link `&renovar=1` pro assinante.
 |---|---|
 | Nenhum bug de busca aqui — sempre aceitaram `ativa`+`pausada` corretamente (o bug de estado estava só em cancelar, T9) | — |
 | Rate limit compartilhado com outras 6 rotas | **[CORRIGIDO]** `73294d2` |
+| Nenhuma guarda de corrida — duas chamadas simultâneas, ou uma cruzando com cancelar ou com uma troca de plano em andamento, agiam todas sobre o mesmo estado | **[CORRIGIDO]** RN-38, 22/09/2026 — reivindicam o arrendamento de `assinaturas.trocando_em` antes de chamar a Asaas |
 
 ## T9 — Cancelar
 
@@ -141,6 +142,7 @@ link `&renovar=1` pro assinante.
 | Buscava só `ativa` — assinatura `pausada` ficava incancelável | **[CORRIGIDO]** RN-19, sessão anterior |
 | Nunca notificava o contratante — só resposta síncrona, quebrando a seta do `API.md` §7.4 | **[CORRIGIDO]** RN-21, hoje |
 | `API.md` prometia `jaEstava` também pro cancelar — não existe, cancelar-de-novo é `404` | **[CORRIGIDO na doc]** §5.5 |
+| Nenhuma guarda de corrida — mesmo achado de T8 | **[CORRIGIDO]** RN-38, 22/09/2026 |
 
 ## T10 — Conciliação (`POST /consultar-assinatura`)
 

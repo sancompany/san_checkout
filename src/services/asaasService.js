@@ -106,6 +106,45 @@ async function chamarAsaas(caminho, opcoes = {}) {
 }
 
 /**
+ * Recusa LIMPA da Asaas — quer dizer "definitivamente não aconteceu",
+ * nunca "não sei se aconteceu".
+ *
+ * `erro.pagamentoJaCriado` vence qualquer status: é a marca que
+ * `criarCobrancaPix` deixa quando o pagamento em si JÁ FOI criado
+ * (primeira chamada) e é uma chamada SEGUINTE, sobre esse mesmo
+ * pagamento, que falhou — nesse caso um 4xx com corpo não prova
+ * "nada foi criado", prova o oposto. Achado por revisão externa
+ * (Codex, PR #39, 22/09/2026): sem esta marca, uma falha limpa na
+ * busca do QR Code liberava a reserva de um Pix que já existia de
+ * verdade na Asaas, e a tentativa seguinte criava um SEGUNDO Pix real —
+ * o mesmo furo do AUD-001 reaberto por outra chamada dentro da mesma
+ * função.
+ *
+ * Daí em diante: 4xx com corpo reconhecido (exceto 429, que é limite de
+ * taxa: a requisição pode não ter chegado a processar, e "muitas
+ * requisições" não é a Asaas dizendo não ao pedido). Timeout (504),
+ * 5xx, erro de rede sem status e 429 são AMBÍGUOS — a chamada pode ter
+ * sido processada do lado de lá mesmo sem a resposta ter voltado —, e
+ * quem usa isto nunca pode tratar ambíguo como "seguro para repetir" ou
+ * "seguro para desfazer o que foi reservado localmente".
+ *
+ * Mesma classificação usada em `checkoutController.cobrarComReserva`
+ * (22/09/2026) e em `trocaExecucaoService.iniciarCobranca` — um erro
+ * dessa gravidade merece uma definição só, não uma por chamador.
+ */
+export function foiRecusaLimpaDaAsaas(erro) {
+  if (erro?.pagamentoJaCriado) return false;
+
+  return Boolean(
+    erro?.corpoAsaas &&
+    typeof erro.status === 'number' &&
+    erro.status >= 400 &&
+    erro.status < 500 &&
+    erro.status !== 429
+  );
+}
+
+/**
  * O tipo de pessoa da conta-mãe, para explicar uma recusa de subconta.
  * Não entra em nenhum caminho de cobrança.
  *
@@ -222,6 +261,14 @@ const STATUS_AINDA_PAGAVEL = ['PENDING', 'AWAITING_RISK_ANALYSIS'];
 
 /**
  * Cria uma cobrança Pix e já busca o QR Code.
+ *
+ * DUAS chamadas à Asaas: a primeira CRIA o pagamento (dinheiro real a
+ * partir daqui); a segunda só busca o QR Code pra mostrar. Achado por
+ * revisão externa (Codex, PR #39, 22/09/2026): se a SEGUNDA falhasse
+ * com um 4xx, `foiRecusaLimpaDaAsaas` a classificava como "nada foi
+ * criado" — mas o pagamento já existia. Por isso o erro daqui carrega
+ * `pagamentoJaCriado`, que `foiRecusaLimpaDaAsaas` sempre respeita
+ * antes de olhar o status.
  * @param {{ clienteId, valor, descricao, referenciaExterna, split? }} dados
  */
 export async function criarCobrancaPix({ clienteId, valor, descricao, referenciaExterna, split }) {
@@ -238,7 +285,17 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
     })
   });
 
-  const qr = await chamarAsaas(`/v3/payments/${cobranca.id}/pixQrCode`, { method: 'GET' });
+  let qr;
+  try {
+    qr = await chamarAsaas(`/v3/payments/${cobranca.id}/pixQrCode`, { method: 'GET' });
+  } catch (erroQr) {
+    const erro = new Error(
+      `Pix ${cobranca.id} foi criado na Asaas, mas a busca do QR Code falhou: ${erroQr.message}`
+    );
+    erro.pagamentoJaCriado = true;
+    erro.chargeId = cobranca.id;
+    throw erro;
+  }
 
   return {
     chargeId: cobranca.id,

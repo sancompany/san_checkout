@@ -81,7 +81,14 @@ const FICAM_EM_COBRANCAS = new Set([
      `relatorio.erros`, que `server.js` nunca lê). Sem dano ainda
      porque não existe cobrança com mais de 5 anos, mas o próximo pedido
      de titular sobre dado velho já bateria nisto. */
-  'ambiente', 'e_teste'
+  'ambiente', 'e_teste',
+  /* `estornando_em` (migration 0013) — lock operacional (a guarda
+     contra estornar a mesma cobrança duas vezes, RN-37), mesma razão de
+     `assinaturas.trocando_em` já ficar. Nulo é o estado normal — decisão
+     explícita, desta vez tomada NA MESMA mudança que criou a coluna,
+     pra não repetir a lição de 18/09/2026 (migration `not null` que
+     nasceu fora desta lista). */
+  'estornando_em'
 ]);
 
 /**
@@ -459,7 +466,7 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
       'atualizado_em', 'telefone', 'endereco', 'endereco_numero', 'endereco_complemento',
       'bairro', 'cep', 'cidade', 'uf', 'cidade_ibge', 'email', 'asaas_subscription_id',
       'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em',
-      'ambiente', 'e_teste'
+      'ambiente', 'e_teste', 'estornando_em'
     ],
     assinaturas: [
       'id', 'contratante_id', 'documento', 'valor', 'ciclo', 'status',
