@@ -94,10 +94,19 @@ export async function completarCobranca(id, dados) {
      incompleta (sem chargeId, sem dado do pagador) — o webhook nunca a
      acharia (`buscarCobranca` busca por `charge_id`), e o suporte não
      teria por onde procurar. Nunca lança: o pagador já recebeu um
-     QR/boleto de verdade, negar a resposta a ele seria pior. */
+     QR/boleto de verdade, negar a resposta a ele seria pior.
+
+     `registrarErro` NUNCA é esperada aqui (fire-and-forget) — achado
+     por revisão externa (Codex, PR #39, 22/09/2026): esperar a escrita
+     de diagnóstico atrasaria a resposta pro pagador que já tem QR/
+     boleto em mãos, por um problema que é só nosso (a linha local, não
+     o pagamento). `registrarErro` nunca lança (engole a própria
+     falha), então não sobra promessa rejeitada sem dono — só um
+     `console.error` de reforço, caso a escrita em si falhe antes de a
+     função nem chegar a rodar. */
   if (error) {
     console.error('[cobrancaService.completarCobranca]', error.message);
-    await registrarErro(
+    void registrarErro(
       new Error(
         `completarCobranca falhou para a reserva ${id} — a cobrança JÁ EXISTE na Asaas com chargeId ` +
         `${dados.chargeId}, a linha local ficou sem os dados do pagador: ${error.message}`
@@ -115,10 +124,29 @@ export async function completarCobranca(id, dados) {
  * uma segunda tentativa criar uma cobrança DE VERDADE duplicada — a
  * mesma regra que `trocaExecucaoService.iniciarCobranca` já segue pro
  * acerto de troca de plano.
+ *
+ * Se o PRÓPRIO `delete` falhar, a reserva fica travada pra sempre: o
+ * índice único (`idx_cobrancas_pendente_unica`) nunca mais libera esse
+ * pedido+método pra uma nova tentativa, e como a Asaas recusou de
+ * forma limpa (nada foi criado do lado dela) ninguém teria como saber
+ * disso sem procurar. Achado por revisão externa (Codex, PR #39,
+ * 22/09/2026) — registrado em Lei 8, esperada (não fire-and-forget:
+ * aqui a resposta que vai pro cliente já é um ERRO, não um pagamento
+ * de sucesso — não há resposta boa a atrasar).
  */
 export async function liberarReservaCobranca(id) {
   const { error } = await supabase.from('cobrancas').delete().eq('id', id);
-  if (error) console.error('[cobrancaService.liberarReservaCobranca]', error.message);
+  if (error) {
+    console.error('[cobrancaService.liberarReservaCobranca]', error.message);
+    await registrarErro(
+      new Error(
+        `liberarReservaCobranca falhou para a reserva ${id} — a recusa da Asaas era LIMPA (nada foi ` +
+        `criado do lado dela), mas a linha local não foi apagada: ${error.message}. Essa reserva trava ` +
+        `esse pedido+método pra sempre (o índice único nunca libera sozinho) — apagar a linha na mão.`
+      ),
+      { contexto: 'cobrancaService.liberarReservaCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
+    );
+  }
 }
 
 /**

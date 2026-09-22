@@ -50,8 +50,18 @@ import {
 import { responderErro } from '../utils/erros.js';
 import { registrarErro } from '../services/erroService.js';
 
-function gerarReferenciaExterna(documento) {
-  return `${documento}-${Date.now()}`;
+/**
+ * Derivada da RESERVA local, não de documento+timestamp — achado por
+ * revisão externa (Codex, PR #39, 22/09/2026): o valor antigo
+ * (`${documento}-${Date.now()}`) não sobrevivia em lugar nenhum além do
+ * corpo da requisição à Asaas, então uma reserva travada por falha
+ * ambígua (ver `cobrarComReserva`) não tinha como ser encontrada lá —
+ * quem fosse reconciliar na mão precisava adivinhar. `reserva.id` já É
+ * persistido (é a própria linha em `cobrancas`), então esta referência
+ * é sempre recuperável a partir dele.
+ */
+function gerarReferenciaExterna(reservaId) {
+  return `reserva-${reservaId}`;
 }
 
 const dependenciasPadrao = {
@@ -111,7 +121,11 @@ async function cobrarComReserva(deps, { contratanteId, pedidoId, metodoPagamento
 
   let cobranca;
   try {
-    cobranca = await cobrar();
+    // `reserva.id` chega até quem monta o pedido pra Asaas — é dele que
+    // `gerarReferenciaExterna` deriva o `externalReference`, pra uma
+    // reserva travada (caso ambíguo, abaixo) ser recuperável na Asaas
+    // pelo próprio id da linha local.
+    cobranca = await cobrar(reserva.id);
   } catch (erroAsaas) {
     if (foiRecusaLimpaDaAsaas(erroAsaas)) {
       await deps.liberarReservaCobranca(reserva.id);
@@ -122,7 +136,7 @@ async function cobrarComReserva(deps, { contratanteId, pedidoId, metodoPagamento
           `(contratante ${contratanteId}, reserva ${reserva.id}) — NÃO SE SABE se a cobrança foi criada: ` +
           `${erroAsaas.message}. A reserva foi mantida de propósito (nunca solta em caso ambíguo, pra não ` +
           `permitir que uma nova tentativa crie uma segunda cobrança de verdade) — confira na Asaas por ` +
-          `externalReference antes de liberar esta reserva na mão.`
+          `externalReference "reserva-${reserva.id}" antes de liberar esta reserva na mão.`
         ),
         { contexto: 'checkoutController.cobrarComReserva', rota: `checkout/${metodoPagamento}`, metodo: 'POST' }
       );
@@ -184,11 +198,11 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
 
       const resultado = await cobrarComReserva(deps, {
         contratanteId, pedidoId, metodoPagamento: 'pix',
-        cobrar: () => deps.criarCobrancaPix({
+        cobrar: (reservaId) => deps.criarCobrancaPix({
           clienteId,
           valor: valorCobrado,
           descricao: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
-          referenciaExterna: gerarReferenciaExterna(documento),
+          referenciaExterna: gerarReferenciaExterna(reservaId),
           split
         })
       });
@@ -309,11 +323,11 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
 
       const resultado = await cobrarComReserva(deps, {
         contratanteId, pedidoId, metodoPagamento: 'boleto',
-        cobrar: () => deps.criarCobrancaBoleto({
+        cobrar: (reservaId) => deps.criarCobrancaBoleto({
           clienteId,
           valor: valorCobrado,
           descricao: pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine',
-          referenciaExterna: gerarReferenciaExterna(documento),
+          referenciaExterna: gerarReferenciaExterna(reservaId),
           split
         })
       });
@@ -555,6 +569,37 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
   t = costura({ erroNaCobranca: erro429 });
   await t.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_7' }, corpoValido), respostaFalsa());
   conferir(!t.chamou('liberarReservaCobranca'), '429 não é recusa limpa — o efeito colateral do lado da Asaas é desconhecido');
+
+  /* --- 8. `pagamentoJaCriado` vence o status — mesmo um 4xx com corpo
+     NUNCA libera quando o pagamento já existe do lado da Asaas. É o
+     cenário exato do achado de revisão (Codex, PR #39, 22/09/2026):
+     `criarCobrancaPix` cria o pagamento numa chamada e busca o QR Code
+     noutra — se a segunda falhar "limpo", o pagamento continua
+     existindo, e soltar a reserva abriria a mesma corrida do AUD-001
+     por outra porta. --------------------------------------------- */
+  const erroQrJaCriado = new Error('Pix pay_ja_criado foi criado na Asaas, mas a busca do QR Code falhou: 404');
+  erroQrJaCriado.status = 404;
+  erroQrJaCriado.corpoAsaas = { errors: [{ description: 'not found' }] };
+  erroQrJaCriado.pagamentoJaCriado = true;
+  t = costura({ erroNaCobranca: erroQrJaCriado });
+  await t.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_8' }, corpoValido), respostaFalsa());
+  conferir(
+    !t.chamou('liberarReservaCobranca'),
+    '`pagamentoJaCriado` NUNCA libera a reserva, mesmo com status 4xx e corpo — o pagamento já existe'
+  );
+  conferir(t.chamou('registrarErro'), 'e vira Lei 8, como qualquer caso ambíguo');
+
+  /* --- 9. `referenciaExterna` vem do id da RESERVA, não de
+     documento+timestamp — é o que torna uma reserva travada (caso 5/6/7
+     acima) localizável na Asaas por quem for reconciliar na mão
+     (achado de revisão externa, mesma rodada). --------------------- */
+  t = costura();
+  await t.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_9' }, corpoValido), respostaFalsa());
+  const chamadaCriarPix = t.chamadas.find((c) => c.nome === 'criarCobrancaPix');
+  conferir(
+    /^reserva-res_\d+$/.test(chamadaCriarPix.args[0].referenciaExterna),
+    `referenciaExterna precisa ser derivada do id da reserva local (formato "reserva-<id>"), veio "${chamadaCriarPix.args[0].referenciaExterna}"`
+  );
 
   console.log(`checkoutController: ${checagens} checagens OK`);
 }
