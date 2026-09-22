@@ -81,6 +81,7 @@ import { assinarPayload } from '../utils/assinaturaWebhook.js';
 import { buscarIntencaoPorChargeId, marcarConfirmada as marcarIntencaoConfirmada } from '../services/trocaIntencaoService.js';
 import { resolverAposClassificacao, retomarAplicacao } from '../services/trocaExecucaoService.js';
 import { classificarPagamentoDoAcerto } from '../services/classificacaoFinanceiraService.js';
+import { registrarErro } from '../services/erroService.js';
 
 /**
  * Tudo que este módulo toca fora de si mesmo, reunido num objeto só.
@@ -110,6 +111,7 @@ const dependenciasPadrao = {
   atualizarStatusAssinatura,
   buscarAssinaturaPorId,
   cancelarAssinaturaNaAsaas,
+  registrarErro,
   /* SEM `await`, pelo MESMO motivo que a auditoria em
      `criarReceptorWebhook` não é aguardada — e aqui o risco é maior, não
      menor: aquilo é uma escrita no nosso banco, isto é uma chamada de
@@ -430,10 +432,21 @@ async function encerrarAssinaturaSubstituida(cobranca, novaAssinaturaId, deps = 
     await deps.atualizarStatusAssinatura(antigaId, 'cancelada');
     console.log(`[assinatura/renovacao] ${antigaId} encerrada; substituída por ${novaAssinaturaId}`);
   } catch (erro) {
-    console.error(
+    const mensagem =
       `[assinatura/renovacao] a nova assinatura ${novaAssinaturaId} foi paga, mas NÃO consegui cancelar a antiga ` +
-      `${antigaId}: ${erro.message}. Cancele na mão no painel da Asaas pra não cobrar duas vezes.`
-    );
+      `${antigaId}: ${erro.message}. Cancele na mão no painel da Asaas pra não cobrar duas vezes.`;
+    console.error(mensagem);
+    /* Achado numa auditoria externa (Codex, 22/09/2026): `console.error`
+       sozinho só existe no log do Northflank — sem registro em Lei 8
+       (`erros`), a única forma de notar as DUAS assinaturas ativas era
+       alguém abrir o painel da Asaas por acaso. Agora fica visível no
+       painel de erros do admin, com os dois ids, até alguém cancelar a
+       antiga na mão. */
+    await deps.registrarErro(new Error(mensagem), {
+      contexto: 'webhookController.encerrarAssinaturaSubstituida',
+      rota: 'webhook/asaas',
+      metodo: 'POST'
+    });
   }
 }
 
@@ -1479,6 +1492,14 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     deps
   );
   assert.equal(deps.chamou('notificar').length, 1, 'falha ao cancelar a antiga não impede de avisar quem pagou');
+  assert.equal(
+    deps.chamou('registrarErro').length, 1,
+    'falha ao cancelar a antiga fica visível em Lei 8 (achado de auditoria, 22/09/2026) — não só no console'
+  );
+  assert.ok(
+    deps.chamou('registrarErro')[0].args[0].message.includes('sub_antiga'),
+    'o erro registrado nomeia a assinatura antiga que ficou sem cancelar'
+  );
 
   /* ================================================================
      A SEQUÊNCIA REAL DA ASAAS — medida em 15/09/2026, sandbox

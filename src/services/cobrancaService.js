@@ -16,6 +16,7 @@ import { supabase } from '../config/supabase.js';
 import { ambienteAsaas } from '../config/asaas.js';
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
 import { exigirIdNoTeto } from '../utils/validadores.js';
+import { registrarErro } from './erroService.js';
 
 export async function registrarCobranca(dados) {
   const { error } = await supabase.from('cobrancas').insert({
@@ -48,7 +49,28 @@ export async function registrarCobranca(dados) {
     metodo_pagamento: dados.metodoPagamento
   });
 
-  if (error) console.error('[cobrancaService.registrarCobranca]', error.message);
+  /* A cobrança JÁ EXISTE na Asaas quando isto roda — `criarCobrancaPix`/
+     `criarCobrancaBoleto` já devolveram sucesso antes de o chamador
+     chegar aqui. Achado numa auditoria externa (Codex, 22/09/2026):
+     `console.error` sozinho é invisível fora do log do Northflank — sem
+     isto, uma cobrança real e paga ficava sem NENHUMA linha em
+     `cobrancas`, o webhook nunca a encontrava (`buscarCobranca` por
+     `charge_id`) e o suporte não tinha por onde procurar. Registra em
+     Lei 8 (`erros`) com o chargeId real, mesmo sem conseguir persistir
+     a linha — é o único jeito de reparar depois. Nunca lança: o
+     pagador já recebeu um QR/boleto de verdade, negar a resposta a ele
+     seria pior que a falta de registro local. */
+  if (error) {
+    console.error('[cobrancaService.registrarCobranca]', error.message);
+    await registrarErro(
+      new Error(
+        `registrarCobranca falhou para o pedido ${dados.pedidoId} (contratante ${dados.contratanteId}, ` +
+        `método ${dados.metodoPagamento}) — a cobrança JÁ EXISTE na Asaas com chargeId ${dados.chargeId}, ` +
+        `sem linha local: ${error.message}`
+      ),
+      { contexto: 'cobrancaService.registrarCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
+    );
+  }
 }
 
 /**
@@ -105,7 +127,22 @@ export async function registrarCobrancaPendentePopup(dados) {
     status: 'pendente'
   });
 
-  if (error) console.error('[cobrancaService.registrarCobrancaPendentePopup]', error.message);
+  /* Mesmo achado de `registrarCobranca` acima: a sessão de pop-up já
+     existe na Asaas (`asaasCheckoutId` real) quando isto roda. Sem a
+     linha local, o webhook `CHECKOUT_PAID` (que busca por
+     `asaas_checkout_id`) nunca acha o que atualizar — o pagador paga,
+     a Asaas confirma, e ninguém do nosso lado sabe. */
+  if (error) {
+    console.error('[cobrancaService.registrarCobrancaPendentePopup]', error.message);
+    await registrarErro(
+      new Error(
+        `registrarCobrancaPendentePopup falhou para o contratante ${dados.contratanteId} ` +
+        `(método ${dados.metodoPagamento}) — a sessão JÁ EXISTE na Asaas com asaasCheckoutId ` +
+        `${dados.asaasCheckoutId}, sem linha local: ${error.message}`
+      ),
+      { contexto: 'cobrancaService.registrarCobrancaPendentePopup', rota: 'checkout/cartao-ou-assinatura', metodo: 'POST' }
+    );
+  }
 }
 
 /**
