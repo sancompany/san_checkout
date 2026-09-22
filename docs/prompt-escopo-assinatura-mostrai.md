@@ -97,6 +97,20 @@ Todas com `X-Checkout-Key` do contratante, e corpo
 `planoNovoId`. `POST` e não `GET` de propósito: documento em caminho de
 URL vaza para log de acesso, histórico e referer.
 
+⚠️ **Desde 22/09/2026, cancelar/pausar/retomar podem responder `409`.**
+Achado numa auditoria externa: as três rotas não tinham guarda nenhuma
+contra duas chamadas ao mesmo tempo na mesma assinatura — nem entre si,
+nem contra uma troca de plano em andamento. Agora elas reivindicam o
+mesmo arrendamento que a troca de plano já usa; a chamada que perde a
+corrida recebe `409` com `{ "erro": "Já existe outra operação em
+andamento para esta assinatura..." }`. **Isto não é erro do seu lado**:
+tente de novo em alguns segundos — o arrendamento expira sozinho em até
+5 minutos mesmo se a outra chamada travar no meio do caminho. Se o seu
+código trata qualquer resposta fora de `200` como falha definitiva
+(igual ao "antes de 21/09" da troca de plano, seção 5 abaixo), um
+`409` aqui vai precisar do mesmo tratamento: reconsultar ou tentar de
+novo, não desistir.
+
 ⚠️ Esta seção dizia **"as quatro rotas"** e **"não existe rota para
 alterar valor, ciclo ou data de um assinante"** até 17/09/2026. A troca
 de plano passou a existir; o que continua não existindo é **mudar a
