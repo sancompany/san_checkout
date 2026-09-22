@@ -850,6 +850,21 @@ ele carrega o mesmo `plano_id` e nasce depois do ciclo, e sem o filtro de
 método o contratante leria o acerto de R$ 30 como se fosse o preço do
 plano — medido com as duas consultas lado a lado.
 
+**RN-37 · Uma cobrança só é estornada uma vez, e só quando está
+`confirmado`.** Desde 22/09/2026 (achado de auditoria externa):
+`POST /checkout/estornar` reivindica a cobrança por um arrendamento
+(`cobrancas.estornando_em`, migration 0013) num `UPDATE` condicional que
+só encontra linha quando `status = 'confirmado'` — mesmo mecanismo do
+RN-36, aplicado ao estorno. Uma falha da Asaas que não prova
+definitivamente que nada foi feito (timeout, 5xx, limite de taxa) nunca
+libera o arrendamento — só recusa limpa (4xx com motivo reconhecido)
+libera, porque só aí é seguro tentar de novo. *Violada:* duas chamadas
+simultâneas (ou um clique duplo) estornariam a mesma cobrança duas
+vezes, ou uma tentativa estornaria uma cobrança que nunca foi paga ou já
+foi estornada. *Quem vê:* o contratante, como `409` na resposta —
+"esta cobrança não pode ser estornada agora".
+`docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`.
+
 ---
 
 ## 6. Textos que o sistema diz

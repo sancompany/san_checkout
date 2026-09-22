@@ -106,6 +106,32 @@ async function chamarAsaas(caminho, opcoes = {}) {
 }
 
 /**
+ * Recusa LIMPA da Asaas — quer dizer "definitivamente não aconteceu",
+ * nunca "não sei se aconteceu".
+ *
+ * 4xx com corpo reconhecido (exceto 429, que é limite de taxa: a
+ * requisição pode não ter chegado a processar, e "muitas requisições"
+ * não é a Asaas dizendo não ao pedido). Timeout (504), 5xx, erro de
+ * rede sem status e 429 são AMBÍGUOS — a chamada pode ter sido
+ * processada do lado de lá mesmo sem a resposta ter voltado —, e quem
+ * usa isto nunca pode tratar ambíguo como "seguro para repetir" ou
+ * "seguro para desfazer o que foi reservado localmente".
+ *
+ * Mesma classificação usada em `checkoutController.cobrarComReserva`
+ * (22/09/2026) e em `trocaExecucaoService.iniciarCobranca` — um erro
+ * dessa gravidade merece uma definição só, não uma por chamador.
+ */
+export function foiRecusaLimpaDaAsaas(erro) {
+  return Boolean(
+    erro?.corpoAsaas &&
+    typeof erro.status === 'number' &&
+    erro.status >= 400 &&
+    erro.status < 500 &&
+    erro.status !== 429
+  );
+}
+
+/**
  * O tipo de pessoa da conta-mãe, para explicar uma recusa de subconta.
  * Não entra em nenhum caminho de cobrança.
  *

@@ -1104,7 +1104,17 @@ intermediário real, não erro.
 | `400` | `pedidoId` ausente |
 | `401` | Chave ausente ou inválida |
 | `404` | Nenhuma cobrança encontrada para esse pedido |
+| `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha) |
 | `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
+
+> **Desde 22/09/2026, só uma cobrança `confirmado` pode ser estornada,
+> e só uma vez.** Antes disso a rota não checava o estado da cobrança
+> nenhum antes de chamar a Asaas — duas chamadas simultâneas para o
+> mesmo pedido podiam as duas tentar estornar (achado de auditoria
+> externa, `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
+> Repetir a chamada depois de um `409` sem que nada tenha mudado do
+> lado da cobrança não adianta — espere o estado dela mudar (ou, numa
+> falha de rede sua, tente de novo depois de alguns segundos).
 
 ---
 

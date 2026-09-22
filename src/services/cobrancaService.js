@@ -565,3 +565,57 @@ export async function atualizarStatusCobranca(chargeId, status) {
 
   if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);
 }
+
+/** Prazo do arrendamento do estorno. Mesmo valor de
+ *  `assinaturaService.reivindicarTroca`, pela mesma razão. */
+const MINUTOS_DE_ARRENDAMENTO_ESTORNO = 5;
+
+/**
+ * Reivindica o direito de estornar uma cobrança — o arrendamento
+ * (migration 0013, coluna `estornando_em`).
+ *
+ * Achado numa auditoria externa (Codex, 22/09/2026), confirmado lendo o
+ * código: `refundController.estornar` ia direto de
+ * `buscarCobrancaPorPedido` pra `estornarCobranca` na Asaas sem checar
+ * `status` nenhum. Duas chamadas simultâneas de `POST /estornar` para o
+ * mesmo pedido leriam as duas a mesma cobrança `confirmado` e as DUAS
+ * chamariam a Asaas — o mesmo dinheiro devolvido duas vezes. E nada
+ * impedia estornar uma cobrança `pendente` (nunca paga), já `estornado`,
+ * ou com `estorno_solicitado` (boleto) em andamento.
+ *
+ * O `update` condicional é atômico no Postgres, e a condição
+ * `status = 'confirmado'` no MESMO update fecha os dois problemas de
+ * uma vez: só reivindica quem encontra a cobrança no único estado que
+ * pode ser estornado. Mesmo padrão de `assinaturaService.reivindicarTroca`.
+ *
+ * @returns {Promise<boolean>} `true` quando esta chamada é a dona do
+ *   estorno; `false` quando outra está em andamento, ou a cobrança não
+ *   está `confirmado`.
+ */
+export async function reivindicarEstorno(chargeId) {
+  const limite = new Date(Date.now() - MINUTOS_DE_ARRENDAMENTO_ESTORNO * 60_000).toISOString();
+
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .update({ estornando_em: new Date().toISOString() })
+    .eq('charge_id', chargeId)
+    .eq('status', 'confirmado')
+    .or(`estornando_em.is.null,estornando_em.lt.${limite}`)
+    .select('id');
+
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
+}
+
+/** Devolve o arrendamento sem estornar nada — usada quando a Asaas
+ *  recusa o estorno de forma limpa (o status continua `confirmado`,
+ *  então uma nova tentativa pode reivindicar de novo). Falha aqui não é
+ *  fatal: o prazo expira sozinho. */
+export async function liberarEstorno(chargeId) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({ estornando_em: null })
+    .eq('charge_id', chargeId);
+
+  if (error) console.error('[cobrancaService.liberarEstorno]', error.message);
+}

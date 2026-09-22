@@ -33,7 +33,8 @@ import {
   criarCobrancaBoleto,
   consultarStatus,
   recuperarCobrancaPix,
-  recuperarCobrancaBoleto
+  recuperarCobrancaBoleto,
+  foiRecusaLimpaDaAsaas
 } from '../services/asaasService.js';
 import {
   reservarCobranca,
@@ -95,23 +96,6 @@ async function reaproveitarCobrancaPendente(deps, { contratanteId, pedidoId, met
     console.error(`[checkout/${metodo}] falha ao checar cobrança pendente do pedido ${pedidoId}:`, erro.message);
     return null;
   }
-}
-
-/**
- * Um erro da Asaas conta como "recusa limpa" — com certeza absoluta de
- * que NADA foi criado do lado dela — só quando veio um corpo de
- * resposta reconhecido num status 4xx que não seja de rate limit. Tudo
- * o mais (timeout, 5xx, 429, erro de rede sem status) é AMBÍGUO: a
- * Asaas pode ter processado e a resposta se perdido no caminho.
- */
-function foiRecusaLimpaDaAsaas(erro) {
-  return Boolean(
-    erro?.corpoAsaas &&
-    typeof erro.status === 'number' &&
-    erro.status >= 400 &&
-    erro.status < 500 &&
-    erro.status !== 429
-  );
 }
 
 /**
