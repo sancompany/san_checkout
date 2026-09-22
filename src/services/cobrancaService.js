@@ -18,59 +18,107 @@ import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
 import { exigirIdNoTeto } from '../utils/validadores.js';
 import { registrarErro } from './erroService.js';
 
-export async function registrarCobranca(dados) {
-  const { error } = await supabase.from('cobrancas').insert({
-    ambiente: ambienteAsaas(),
-    charge_id: dados.chargeId,
-    contratante_id: dados.contratanteId,
-    pedido_id: dados.pedidoId,
-    documento: dados.documento,
-    email: dados.email ?? null,
-    telefone: dados.telefone ?? null,
-    endereco: dados.endereco ?? null,
-    endereco_numero: dados.enderecoNumero ?? null,
-    endereco_complemento: dados.complemento ?? null,
-    bairro: dados.bairro ?? null,
-    cep: dados.cep ?? null,
-    cidade: dados.cidade ?? null,
-    uf: dados.uf ?? null,
-    cidade_ibge: dados.cidadeIbge ? Number(dados.cidadeIbge) : null,
-    itens: dados.itens ?? null,
-    valor_cheio: dados.valorCheio,
-    desconto: dados.desconto ?? 0,
-    cupom: dados.cupom ?? null,
-    valor_com_desconto: dados.valorComDesconto,
-    frete: dados.frete ?? 0,
-    taxa_do_projeto: dados.taxaDoProjeto ?? 0,
-    taxa_asaas: dados.taxaAsaas,
-    taxa_propria: dados.taxaPropria,
-    taxa_isenta: dados.taxaIsenta ?? false,
-    valor_cobrado: dados.valorCobrado,
-    metodo_pagamento: dados.metodoPagamento
-  });
+/**
+ * Reserva o direito de criar uma cobrança pra esse pedido+método, ANTES
+ * de chamar a Asaas — fecha a corrida que `idx_cobrancas_pendente_unica`
+ * só fechava do lado de cá.
+ *
+ * Achado numa auditoria externa (Codex, 22/09/2026), confirmado lendo o
+ * código: até então `checkoutController.js` checava "já existe
+ * pendente?", e só DEPOIS de criar a cobrança de verdade na Asaas é que
+ * gravava a linha local. Duas chamadas simultâneas liam as duas "nada
+ * pendente ainda" (nenhuma tinha se registrado) e as DUAS criavam um
+ * Pix/boleto pagável na Asaas — o índice único só impedia a SEGUNDA
+ * LINHA no Postgres, não o segundo objeto financeiro no PSP.
+ *
+ * Reservando a linha primeiro (mesmo padrão que
+ * `registrarCobrancaPendentePopup` já usa pro fluxo de pop-up), a
+ * segunda chamada esbarra no `23505` do próprio índice único e nunca
+ * chega a chamar a Asaas.
+ *
+ * @returns {Promise<{reservada: boolean, id?: string}>}
+ */
+export async function reservarCobranca({ contratanteId, pedidoId, metodoPagamento }) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .insert({
+      ambiente: ambienteAsaas(),
+      contratante_id: contratanteId,
+      pedido_id: pedidoId,
+      metodo_pagamento: metodoPagamento,
+      status: 'pendente'
+    })
+    .select('id')
+    .single();
 
-  /* A cobrança JÁ EXISTE na Asaas quando isto roda — `criarCobrancaPix`/
-     `criarCobrancaBoleto` já devolveram sucesso antes de o chamador
-     chegar aqui. Achado numa auditoria externa (Codex, 22/09/2026):
-     `console.error` sozinho é invisível fora do log do Northflank — sem
-     isto, uma cobrança real e paga ficava sem NENHUMA linha em
-     `cobrancas`, o webhook nunca a encontrava (`buscarCobranca` por
-     `charge_id`) e o suporte não tinha por onde procurar. Registra em
-     Lei 8 (`erros`) com o chargeId real, mesmo sem conseguir persistir
-     a linha — é o único jeito de reparar depois. Nunca lança: o
-     pagador já recebeu um QR/boleto de verdade, negar a resposta a ele
-     seria pior que a falta de registro local. */
+  if (error?.code === '23505') return { reservada: false };
+  if (error) throw error;
+  return { reservada: true, id: data.id };
+}
+
+/** Preenche a reserva com os dados reais — MESMA linha, sem insert novo
+ *  — depois que a Asaas já confirmou a criação da cobrança. */
+export async function completarCobranca(id, dados) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({
+      charge_id: dados.chargeId,
+      documento: dados.documento,
+      email: dados.email ?? null,
+      telefone: dados.telefone ?? null,
+      endereco: dados.endereco ?? null,
+      endereco_numero: dados.enderecoNumero ?? null,
+      endereco_complemento: dados.complemento ?? null,
+      bairro: dados.bairro ?? null,
+      cep: dados.cep ?? null,
+      cidade: dados.cidade ?? null,
+      uf: dados.uf ?? null,
+      cidade_ibge: dados.cidadeIbge ? Number(dados.cidadeIbge) : null,
+      itens: dados.itens ?? null,
+      valor_cheio: dados.valorCheio,
+      desconto: dados.desconto ?? 0,
+      cupom: dados.cupom ?? null,
+      valor_com_desconto: dados.valorComDesconto,
+      frete: dados.frete ?? 0,
+      taxa_do_projeto: dados.taxaDoProjeto ?? 0,
+      taxa_asaas: dados.taxaAsaas,
+      taxa_propria: dados.taxaPropria,
+      taxa_isenta: dados.taxaIsenta ?? false,
+      valor_cobrado: dados.valorCobrado,
+      atualizado_em: new Date().toISOString()
+    })
+    .eq('id', id);
+
+  /* A cobrança JÁ EXISTE na Asaas quando isto roda. Sem registrar em
+     Lei 8, uma cobrança real e paga ficava com uma linha local
+     incompleta (sem chargeId, sem dado do pagador) — o webhook nunca a
+     acharia (`buscarCobranca` busca por `charge_id`), e o suporte não
+     teria por onde procurar. Nunca lança: o pagador já recebeu um
+     QR/boleto de verdade, negar a resposta a ele seria pior. */
   if (error) {
-    console.error('[cobrancaService.registrarCobranca]', error.message);
+    console.error('[cobrancaService.completarCobranca]', error.message);
     await registrarErro(
       new Error(
-        `registrarCobranca falhou para o pedido ${dados.pedidoId} (contratante ${dados.contratanteId}, ` +
-        `método ${dados.metodoPagamento}) — a cobrança JÁ EXISTE na Asaas com chargeId ${dados.chargeId}, ` +
-        `sem linha local: ${error.message}`
+        `completarCobranca falhou para a reserva ${id} — a cobrança JÁ EXISTE na Asaas com chargeId ` +
+        `${dados.chargeId}, a linha local ficou sem os dados do pagador: ${error.message}`
       ),
-      { contexto: 'cobrancaService.registrarCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
+      { contexto: 'cobrancaService.completarCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
     );
   }
+}
+
+/**
+ * Libera uma reserva que não virou cobrança de verdade — chamar SÓ
+ * quando a Asaas recusou de forma limpa (4xx com corpo reconhecido,
+ * nunca timeout nem 5xx): nesses dois últimos casos não dá pra saber se
+ * algo foi criado do outro lado, e apagar a reserva abriria caminho pra
+ * uma segunda tentativa criar uma cobrança DE VERDADE duplicada — a
+ * mesma regra que `trocaExecucaoService.iniciarCobranca` já segue pro
+ * acerto de troca de plano.
+ */
+export async function liberarReservaCobranca(id) {
+  const { error } = await supabase.from('cobrancas').delete().eq('id', id);
+  if (error) console.error('[cobrancaService.liberarReservaCobranca]', error.message);
 }
 
 /**
@@ -127,7 +175,7 @@ export async function registrarCobrancaPendentePopup(dados) {
     status: 'pendente'
   });
 
-  /* Mesmo achado de `registrarCobranca` acima: a sessão de pop-up já
+  /* Mesmo achado de `completarCobranca` acima: a sessão de pop-up já
      existe na Asaas (`asaasCheckoutId` real) quando isto roda. Sem a
      linha local, o webhook `CHECKOUT_PAID` (que busca por
      `asaas_checkout_id`) nunca acha o que atualizar — o pagador paga,

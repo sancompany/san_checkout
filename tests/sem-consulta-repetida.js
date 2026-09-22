@@ -67,7 +67,7 @@ for (const caminho of CONTROLADORES) {
   const usaSplit = /wallet_id/.test(fonte);
   if (usaSplit) {
     const vindoDoResolvedor = [...fonte.matchAll(
-      /const\s*\{[^}]*\bcontratante\b[^}]*\}\s*=\s*await\s+resolver(?:Pedido|Plano)\s*\(/g
+      /const\s*\{[^}]*\bcontratante\b[^}]*\}\s*=\s*await\s+(?:deps\.)?resolver(?:Pedido|Plano)\s*\(/g
     )];
     assert.ok(
       vindoDoResolvedor.length > 0,
@@ -76,6 +76,11 @@ for (const caminho of CONTROLADORES) {
       'ou o contratante voltou a ser buscado de um jeito que esta checagem não vê.'
     );
     checagens += 1;
+
+    /* `deps.resolverPedido`/`deps.resolverPlano` conta igual —
+       checkoutController.js passou pro padrão de fábrica com deps
+       injetáveis em 22/09/2026 (fechando AUD-001), e o contratante
+       continua vindo do MESMO resolvedor, só que via injeção. */
 
     /* Toda função que MONTA split precisa ter o contratante vindo do
        resolvedor — não basta uma no arquivo inteiro.

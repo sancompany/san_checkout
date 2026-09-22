@@ -43,6 +43,7 @@ const SUITES = [
   'src/controllers/webhookController.js', // caminho crítico do webhook: guarda, mapa de status, soma de taxas
   'src/controllers/cobrancaConsultaController.js', // conciliação: cancelada vem do `deleted`, ciclo vem da Asaas
   'src/controllers/trocaPlanoController.js', // troca de plano: cobra o acerto ANTES de alterar, e relê o que a Asaas fez
+  'src/controllers/checkoutController.js', // Pix/Boleto: reserva ANTES de cobrar — fecha a corrida de cobrança duplicada na Asaas
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro
   'tests/senha-nao-fica-no-navegador.js', // a senha do admin não sobrevive ao login
