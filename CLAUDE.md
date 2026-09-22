@@ -826,6 +826,81 @@ Feito em 21/09/2026:
   `assinaturas`, mas linhas nunca são limpas hoje). `docs/pendencias.md`,
   "Trocar de plano redireciona o pagador ao Checkout".
 
+Feito em 22/09/2026 — auditoria técnica externa (Codex, sem acesso a
+este repositório, relatório repassado pelo dono), 22 achados (AUD-001 a
+AUD-022, SUS-001 a SUS-006). Verificados lendo o código real antes de
+construir, e depois de construir, **a própria revisão automática do
+Codex sobre a PR achou um furo dentro do meu próprio conserto** —
+tratada com o mesmo rigor dos achados originais.
+
+- **AUD-001, AUD-007, AUD-005 — três corridas no caminho da
+  assinatura, corrigidas e no ar** (PR #39, `b8111e1`): Pix/Boleto
+  duplicado (reserva antes de cobrar, mesmo padrão do pop-up), estorno
+  duplicado (arrendamento novo, `cobrancas.estornando_em`, migration
+  0013), e cancelar/pausar/retomar sem guarda nenhuma (reaproveitando o
+  arrendamento que a troca de plano já tinha, `assinaturas.trocando_em`
+  — ele deixou de ser exclusivo da troca). `assinaturaController.js`
+  não tinha NENHUM autoteste até este dia. Detalhe em
+  `docs/erros/2026-09-22-*.md` (três arquivos, um por achado).
+  **A revisão automática do Codex sobre a própria PR achou o furo mais
+  grave do dia**: `criarCobrancaPix` faz DUAS chamadas à Asaas (criar o
+  pagamento, depois buscar o QR Code), e uma falha limpa na SEGUNDA
+  liberava a reserva mesmo com o pagamento já criado — o AUD-001
+  reaberto por dentro da própria correção. Corrigido com uma marca
+  (`pagamentoJaCriado`) que o classificador de recusa limpa/ambígua
+  respeita antes de olhar o status. Mais dois achados menores da mesma
+  revisão (referência de reconciliação não persistida; falha ao
+  liberar reserva ficava muda) — os três resolvidos e as threads
+  fechadas antes de mesclar.
+- **Os 19 achados restantes, verificados um a um** — nenhum aceito só
+  pela palavra do relatório:
+  - **AUD-006 (troca de plano, falha parcial) e AUD-009 (cancelar/
+    pausar/retomar sem reconciliação em falha ambígua): já fechados**
+    por trabalho anterior (`RECONCILIATION_REQUIRED` de 21/09, e a
+    conciliação por pull de 16/09) — conferido lendo o código, não
+    reconstruído.
+  - **AUD-008 (retry de webhook em memória, perde na queda do
+    processo) e AUD-012 (job rodaria em toda instância): já eram
+    decisão registrada**, não achado novo — `INTEGRACAO.md`/`API.md`
+    §4.3.6 já documentam o retry em memória, e `CONSTRAINTS.md` §2 já
+    registra "não há réplica, de propósito".
+  - **AUD-004 (webhook fora de ordem): real, e a doc oficial da Asaas
+    confirma** — `sendType` (`SEQUENTIALLY`/`NON_SEQUENTIALLY`) é
+    escolha explícita na configuração do webhook, sem padrão
+    documentado. **Não dá pra saber daqui qual está configurado neste
+    projeto** — declarado com o caminho de fechamento em
+    `docs/pendencias.md` (conferir o painel; se `SEQUENTIALLY`, fecha
+    sem tocar código).
+  - **SUS-004 (deriva entre `supabase/migrations/` e o histórico do
+    Supabase): real, e FECHADA.** A migration 0009 estava aplicada no
+    banco (as colunas existem, em uso desde 17/09) mas ausente do
+    histórico do Supabase — replay seguro (ela é inteiramente
+    idempotente) resolveu, sem tocar nenhuma linha.
+  - **AUD-017 (vocabulário fechado sem `check` no banco): real, e
+    FECHADA — migration 0014.** `cobrancas.status`/`metodo_pagamento` e
+    `assinaturas.status`/`ciclo` ganharam `check`. **A primeira
+    enumeração de `cobrancas.status` estava incompleta** — lia só
+    `mapearStatusPayment` e perdia dois outros vocabulários no mesmo
+    arquivo (eventos de pop-up, eventos de Pix Automático). Um `select
+    distinct` contra produção ANTES de aplicar achou `expirado` fora do
+    conjunto — se a migration tivesse ido assim, teria falhado na hora
+    ou quebrado a primeira pop-up expirada em produção, calado.
+    `docs/erros/2026-09-22-quatro-colunas-de-vocabulario-fechado-sem-
+    constraint-no-banco.md`.
+  - **SUS-002 (`buscarOuCriarCliente`, corrida busca-então-cria) e a
+    ausência de fencing token verdadeiro no arrendamento por tempo
+    (`trocando_em`/`estornando_em`): declarados, não construídos.** Os
+    dois são reais, mas de baixa severidade — o primeiro é qualidade de
+    dado na Asaas (cliente duplicado), nunca cobrança duplicada; o
+    segundo exige um processo travado por mais de 5 minutos entre
+    reivindicar e escrever, cenário nunca medido como real e bem acima
+    do teto de 20s que toda chamada à Asaas já tem. `docs/pendencias.md`.
+  - Os oito restantes (P2/P3: versão do Node, baseline de migration,
+    limitador do admin, controladores grandes, XSS sem fuzz, redação de
+    log) não abriram achado novo além do que o ciclo de `revisar` de
+    17-18/09 já tinha coberto ou declarado — conferidos contra o estado
+    atual do código, sem reabrir o que já tinha decisão.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
