@@ -472,6 +472,21 @@ CPF certo não é necessário para provar que o restore funciona.
 A lei pede ensaio com menos de trinta dias. **Refazer até 16/10/2026**, e
 depois de qualquer mudança de versão, extensão ou ferramenta.
 
+> ⚠️ **A tabela acima ficou desatualizada em 22/09/2026** — desde 16/09
+> entraram cinco migrations novas (`0010`…`0014`), quatro delas com
+> `constraint` nova (0013 e 0014). Verificado **parcialmente** no mesmo
+> dia em que este aviso foi escrito: as **14** migrations (`0001`…`0014`)
+> aplicam limpo, em ordem, num Postgres 17.11 descartável — zero erro,
+> só os `NOTICE` esperados dos guardas `IF NOT EXISTS`/`IF EXISTS`
+> (schema-only, sem dado, RTO de 1 s). O que **não** foi refeito é a
+> metade que exige credencial de produção (o despejo anonimizado e a
+> comparação de cinco níveis) — a sessão que fez essa verificação não
+> tinha `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` no shell (só acesso via
+> MCP, que nesse momento estava pedindo aprovação que ninguém deu). Os
+> números novos e corretos de colunas/restrições/índices/RLS só saem de
+> `npm run ensaio-restauracao` de verdade — **é esse o próximo a
+> rodar**, com credencial, antes de confiar na tabela acima de novo.
+
 > O RTO de 1 s é **tempo de máquina**. O relógio de um incidente começa
 > antes, em perceber que caiu — e isso depende do alerta externo, que é
 > item aberto (§2 e `docs/pendencias.md`).
