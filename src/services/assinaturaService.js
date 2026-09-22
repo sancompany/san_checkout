@@ -62,27 +62,36 @@ export async function atualizarCicloAssinatura(id, ciclo) {
 const MINUTOS_DE_ARRENDAMENTO = 5;
 
 /**
- * Reivindica a troca de plano de uma assinatura — o arrendamento
- * (migration 0010, coluna `trocando_em`).
+ * Reivindica o direito de MUDAR uma assinatura — o arrendamento
+ * (migration 0010, coluna `trocando_em`). Apesar do nome (nasceu com a
+ * troca de plano, 17/09/2026), é o mutex de QUALQUER operação que
+ * altera o estado da assinatura na Asaas: desde 22/09/2026 também
+ * `cancelarAssinatura`/`pausarAssinatura`/`retomarAssinatura`
+ * (`assinaturaController.js`, AUD-005) reivindicam aqui antes de
+ * chamar a Asaas — sem isso, um cancelamento e uma troca de plano
+ * simultâneos na MESMA assinatura corriam livres um do outro.
  *
  * Por que existe: a troca cobra o acerto ANTES de alterar o plano (uma
  * recusa de cartão não pode deixar o assinante no plano caro de graça).
  * Duas chamadas simultâneas da rota leriam as duas o mesmo estado e
  * cobrariam DUAS vezes o mesmo acerto — dinheiro do assinante, e um
- * estorno para desfazer.
+ * estorno para desfazer. Cancelar/pausar/retomar não cobram nada, mas
+ * têm o mesmo problema de fundo: duas chamadas concorrentes (entre si,
+ * ou contra uma troca em andamento) leem o mesmo estado e agem duas
+ * vezes sobre ele.
  *
  * O `update` condicional é a guarda inteira: no Postgres ele é atômico,
  * então só uma das duas chamadas encontra linha para atualizar. A outra
- * recebe `false` e a rota devolve 409 **sem ter cobrado nada**.
+ * recebe `false` e a rota devolve 409 **sem ter feito nada**.
  *
- * O prazo curto é deliberado: um processo que morra entre a cobrança e
- * a alteração não pode trancar a assinatura para sempre. Passados os
- * minutos, uma nova tentativa reivindica de novo — e nesse caso o
- * acerto anterior já está registrado em `cobrancas`, que é onde se
- * confere o que foi cobrado.
+ * O prazo curto é deliberado: um processo que morra no meio de uma
+ * operação não pode trancar a assinatura para sempre. Passados os
+ * minutos, uma nova tentativa reivindica de novo — e, no caso da troca
+ * com acerto, o que já foi cobrado está registrado em `cobrancas`, que
+ * é onde se confere.
  *
  * @returns {Promise<boolean>} `true` quando esta chamada é a dona da
- *   troca; `false` quando outra está em andamento.
+ *   operação; `false` quando outra está em andamento.
  */
 export async function reivindicarTroca(id) {
   const limite = new Date(Date.now() - MINUTOS_DE_ARRENDAMENTO * 60_000).toISOString();
@@ -98,9 +107,10 @@ export async function reivindicarTroca(id) {
   return Array.isArray(data) && data.length === 1;
 }
 
-/** Devolve o arrendamento sem trocar nada — usada quando a troca é
- *  abandonada depois de reivindicada (cartão recusado, plano sem cartão
- *  salvo). Falha aqui não é fatal: o prazo expira sozinho. */
+/** Devolve o arrendamento sem terminar a operação — usada quando ela é
+ *  abandonada depois de reivindicada (troca: cartão recusado, plano sem
+ *  cartão salvo; cancelar/pausar/retomar: a chamada à Asaas falhou).
+ *  Falha aqui não é fatal: o prazo expira sozinho. */
 export async function liberarTroca(id) {
   const { error } = await supabase
     .from('assinaturas')

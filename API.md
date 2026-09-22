@@ -1175,6 +1175,16 @@ separadamente.
 | `400` | `planoId`/`documento` ausentes ou CPF/CNPJ inválido |
 | `401` | Chave ausente ou inválida |
 | `404` | Nenhuma assinatura nesse estado para esse plano/documento (cancelar já cancelada também cai aqui) |
+| `409` | Já existe outra operação em andamento nesta assinatura — outra chamada de cancelar/pausar/retomar, ou uma troca de plano ainda não concluída |
+
+> **Desde 22/09/2026, as três rotas se excluem mutuamente (e excluem
+> uma troca de plano em andamento) na mesma assinatura.** Antes disso
+> não havia guarda nenhuma contra chamadas concorrentes — duas chamadas
+> simultâneas de `/cancelar-assinatura`, ou um `/pausar-assinatura`
+> cruzando com um `/cancelar-assinatura`, agiam as duas sobre o mesmo
+> estado. Um `409` aqui significa "tente de novo em instantes", nunca
+> "sua operação falhou" —
+> `docs/erros/2026-09-22-cancelar-pausar-retomar-nao-tinham-guarda-de-corrida.md`.
 
 ---
 

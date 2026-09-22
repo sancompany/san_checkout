@@ -25,11 +25,15 @@
  *
  * ── Por que a checagem é no texto-fonte ─────────────────────────────
  *
- * `assinaturaController` usa import direto (não injeção de dependência),
- * então exercitar `cancelarAssinatura` de verdade exigiria refatorar o
- * módulo inteiro só para testá-lo. Grosseira e presente vale mais que
- * elegante e inexistente — mesmo argumento do guarda de `arquivado_em`
- * em `pedidoService.js`.
+ * Esta suíte nasceu antes de `assinaturaController.js` ganhar o padrão
+ * de fábrica com `deps` injetáveis (22/09/2026, AUD-005) — hoje dá para
+ * exercitar `cancelarAssinatura` de verdade (`criarAssinaturaController`
+ * tem autoteste próprio, embutido no controlador). A checagem por
+ * texto-fonte continua aqui porque a REGRA que ela trava
+ * (`statusAceitos` do cancelar tem que cobrir o do pausar) é sobre a
+ * FORMA do código, não sobre o comportamento de uma chamada — nenhum
+ * teste de comportamento pegaria alguém esquecendo `'pausada'` na lista
+ * sem também testar cada combinação de status possível.
  *
  * `cancelada` NÃO precisa estar na lista, e é de propósito: a busca
  * ordena por `criado_em` desc e devolve uma só, então numa renovação
@@ -109,7 +113,11 @@ for (const status of aceitosNoCancelar) {
    webhook `evento: 'cancelada'` saía, quebrando a seta que o `API.md`
    §7.4 desenha para este endpoint (achado testando uma assinatura real
    de ponta a ponta). */
-const corpoDoCancelar = /export async function cancelarAssinatura[\s\S]*?\n\}/.exec(fonte);
+// `(?:export\s+)?` cobre os dois formatos: exportada direto (como era até
+// 22/09/2026) ou declarada dentro de `criarAssinaturaController` (como é
+// agora) — o fechamento é `\n  \}` porque a função vive indentada dentro
+// da fábrica, não mais em `\n\}` na coluna zero.
+const corpoDoCancelar = /(?:export\s+)?async function cancelarAssinatura[\s\S]*?\n  \}/.exec(fonte);
 conferir(corpoDoCancelar !== null, 'não achei o corpo de cancelarAssinatura');
 conferir(
   /notificarAssinaturaCancelada\(/.test(corpoDoCancelar[0]),
