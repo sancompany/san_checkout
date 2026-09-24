@@ -9,7 +9,9 @@
  * em outra coisa.
  */
 
-import { getConfigAsaas, montarCallbackPadrao } from '../config/asaas.js';
+import crypto, { createHash } from 'node:crypto';
+import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
+import { supabase } from '../config/supabase.js';
 
 /**
  * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
@@ -199,8 +201,125 @@ export async function tipoDaContaMae() {
   };
 }
 
-/** Busca cliente por CPF/CNPJ; cria se não existir. */
-export async function buscarOuCriarCliente({ nome, email, documento }) {
+/**
+ * Cliente por documento — IDEMPOTENTE deste lado (H-05 da auditoria de
+ * 24/09/2026).
+ *
+ * A doc oficial de `POST /v3/customers` (lida em 24/09/2026) diz, em
+ * português claro: "A API permite a criação de clientes duplicados. Se
+ * sua integração exigir unicidade cadastral, consulte os clientes
+ * existentes antes da criação." Não há chave de idempotência na API.
+ * Então busca-então-cria é corrida: duas requisições simultâneas do
+ * mesmo comprador não acham nada e criam dois clientes.
+ *
+ * A unicidade mora na NOSSA tabela `clientes_asaas` (migration 0015), e
+ * a reivindicação acontece ANTES de falar com a Asaas — a primeira
+ * versão gravava DEPOIS, o que só decidia qual id ficava e deixava as
+ * N requisições simultâneas criarem N clientes lá (achado ao escrever
+ * o teste de concorrência, 24/09/2026):
+ *  1. já temos o id para este documento neste ambiente → devolve;
+ *  2. não temos → INSERE uma reivindicação (`pendente:<uuid>`) na chave
+ *     primária. Quem venceu busca na Asaas por `cpfCnpj` (cliente que
+ *     existia antes desta tabela) e, sem achar, cria — UMA vez — e
+ *     grava o id real por cima da reivindicação;
+ *  3. quem perdeu ESPERA a reivindicação virar id (até o teto de uma
+ *     chamada à Asaas). Se o vencedor morreu no meio, a reivindicação
+ *     envelhece e o próximo assume.
+ *
+ * Documento só em hash: o que se precisa depois é o id do cliente,
+ * nunca o documento de volta (Lei 10).
+ */
+const PREFIXO_REIVINDICACAO = 'pendente:';
+const SEGUNDOS_ATE_REIVINDICACAO_ENVELHECER = 30;
+const INTERVALO_ESPERA_MS = 250;
+
+const dependenciasDeCliente = {
+  lerConhecido: async (ambiente, documentoHash) => {
+    const { data } = await supabase
+      .from('clientes_asaas').select('asaas_customer_id, criado_em')
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).maybeSingle();
+    return data ?? null;
+  },
+  reivindicar: async (ambiente, documentoHash, marca) => {
+    const { error } = await supabase
+      .from('clientes_asaas')
+      .insert({ ambiente, documento_hash: documentoHash, asaas_customer_id: marca });
+    if (!error) return true;
+    if (error.code === '23505') return false;
+    throw error;
+  },
+  assumirEnvelhecida: async (ambiente, documentoHash, marca, limiteIso) => {
+    const { data, error } = await supabase
+      .from('clientes_asaas')
+      .update({ asaas_customer_id: marca, criado_em: new Date().toISOString() })
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash)
+      .like('asaas_customer_id', `${PREFIXO_REIVINDICACAO}%`)
+      .lt('criado_em', limiteIso)
+      .select('documento_hash');
+    if (error) throw error;
+    return Array.isArray(data) && data.length === 1;
+  },
+  gravar: async (ambiente, documentoHash, marca, clienteId) => {
+    const { error } = await supabase
+      .from('clientes_asaas')
+      .update({ asaas_customer_id: clienteId })
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).eq('asaas_customer_id', marca);
+    if (error) console.error('[asaasService.buscarOuCriarCliente] não gravou clientes_asaas:', error.message);
+  },
+  liberar: async (ambiente, documentoHash, marca) => {
+    await supabase.from('clientes_asaas').delete()
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).eq('asaas_customer_id', marca);
+  },
+  buscarOuCriarNaAsaas: (dados) => buscarOuCriarClienteNaAsaas(dados),
+  dormir: (ms) => new Promise((r) => setTimeout(r, ms)),
+  agora: () => Date.now(),
+  ambiente: () => ambienteAsaas(),
+  tetoEsperaMs: () => TIMEOUT_ASAAS_MS
+};
+
+export function criarBuscadorDeCliente(deps = dependenciasDeCliente) {
+  const ehReivindicacao = (id) => typeof id === 'string' && id.startsWith(PREFIXO_REIVINDICACAO);
+
+  return async function buscarOuCriarCliente({ nome, email, documento }) {
+    const ambiente = deps.ambiente();
+    const documentoHash = createHash('sha256').update(String(documento)).digest('hex');
+    const marca = `${PREFIXO_REIVINDICACAO}${crypto.randomUUID()}`;
+
+    const conhecido = await deps.lerConhecido(ambiente, documentoHash);
+    if (conhecido && !ehReivindicacao(conhecido.asaas_customer_id)) return conhecido.asaas_customer_id;
+
+    let venceu = !conhecido && await deps.reivindicar(ambiente, documentoHash, marca);
+
+    if (!venceu) {
+      // Outra requisição está criando (ou já criou). Espera o id real.
+      const inicio = deps.agora();
+      while (deps.agora() - inicio < deps.tetoEsperaMs()) {
+        const atual = await deps.lerConhecido(ambiente, documentoHash);
+        if (atual && !ehReivindicacao(atual.asaas_customer_id)) return atual.asaas_customer_id;
+        if (atual) {
+          const limite = new Date(deps.agora() - SEGUNDOS_ATE_REIVINDICACAO_ENVELHECER * 1000).toISOString();
+          if (new Date(atual.criado_em).getTime() < new Date(limite).getTime()
+            && await deps.assumirEnvelhecida(ambiente, documentoHash, marca, limite)) { venceu = true; break; }
+        } else if (await deps.reivindicar(ambiente, documentoHash, marca)) { venceu = true; break; }
+        await deps.dormir(INTERVALO_ESPERA_MS);
+      }
+      if (!venceu) throw new Error('Não foi possível obter o cadastro do pagador a tempo. Tente de novo em instantes.');
+    }
+
+    try {
+      const clienteId = await deps.buscarOuCriarNaAsaas({ nome, email, documento });
+      await deps.gravar(ambiente, documentoHash, marca, clienteId);
+      return clienteId;
+    } catch (erro) {
+      await deps.liberar(ambiente, documentoHash, marca).catch(() => {});
+      throw erro;
+    }
+  };
+}
+
+export const buscarOuCriarCliente = criarBuscadorDeCliente();
+
+async function buscarOuCriarClienteNaAsaas({ nome, email, documento }) {
   const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });
   if (busca.data?.length) return busca.data[0].id;
 
@@ -383,7 +502,8 @@ export async function criarSessaoAsaasCheckout({
   subscription,
   customerData,
   splits,
-  minutesToExpire = 60
+  externalReference,
+  minutesToExpire = MINUTOS_DE_SESSAO_DE_CHECKOUT
 }) {
   const resposta = await chamarAsaas('/v3/checkouts', {
     method: 'POST',
@@ -393,6 +513,14 @@ export async function criarSessaoAsaasCheckout({
       minutesToExpire,
       items: itens,
       callback: montarCallbackPadrao(),
+      /* `externalReference` = `reserva-<id da linha local>` (C-04):
+         conferido na doc de `POST /v3/checkouts` em 24/09/2026
+         ("Identificador do checkout no seu sistema"), e medido em
+         tráfego real que `CHECKOUT_PAID` o devolve em
+         `checkout.externalReference`. É por ele que uma sessão cuja
+         resposta se perdeu (timeout) ainda encontra a reserva local
+         quando o webhook chegar. */
+      ...(externalReference ? { externalReference } : {}),
       ...(installment ? { installment } : {}),
       ...(subscription ? { subscription } : {}),
       ...(customerData ? { customerData } : {}),
@@ -401,6 +529,26 @@ export async function criarSessaoAsaasCheckout({
   });
 
   return { asaasCheckoutId: resposta.id };
+}
+
+/** Quanto tempo uma sessão de pop-up fica pagável. A reserva local
+ *  (`cobrancaService.reservarCobrancaPopup`) usa o MESMO número, mais
+ *  folga, para considerar travada uma reserva cujo `CHECKOUT_EXPIRED`
+ *  nunca chegou. */
+export const MINUTOS_DE_SESSAO_DE_CHECKOUT = 60;
+
+/**
+ * Pagamentos por `externalReference` (H-06): é assim que a reconciliação
+ * descobre se uma reserva local sem `charge_id` — timeout na criação —
+ * virou cobrança de verdade do lado da Asaas. `GET /v3/payments`
+ * aceita o filtro (doc oficial, lida em 24/09/2026).
+ */
+export async function listarPagamentosPorReferenciaExterna(referenciaExterna) {
+  const resposta = await chamarAsaas(
+    `/v3/payments?externalReference=${encodeURIComponent(referenciaExterna)}&limit=10`,
+    { method: 'GET' }
+  );
+  return Array.isArray(resposta?.data) ? resposta.data : [];
 }
 
 /** Status atual de uma cobrança. */
@@ -459,8 +607,12 @@ export async function recuperarCobrancaBoleto(chargeId) {
 }
 
 /**
- * Estorna uma cobrança (tudo ou nada — nunca parcial nesta versão).
- * A Asaas permite parcial de verdade, mas o San Checkout não usa isso.
+ * Estorna uma cobrança — total por padrão, ou PARCIAL quando `valor`
+ * vem (desde 24/09/2026, H-04 da auditoria: antes o Checkout só sabia
+ * tudo-ou-nada, e um estorno parcial feito no painel da Asaas era
+ * colapsado em `estornado`). A Asaas aceita `value` no corpo do
+ * `POST /v3/payments/{id}/refund` para devolver só parte (doc oficial:
+ * "value — valor a ser estornado; se não informado, estorna o total").
  *
  * Boleto usa um ENDPOINT DIFERENTE e um fluxo ASSÍNCRONO (confirmado
  * na doc da Asaas): a chamada abaixo só INICIA o estorno — o pagador
@@ -468,11 +620,13 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * de verdade. Pix/Cartão continuam síncronos, mesmo endpoint de
  * sempre. Ver `refundController.js`, que usa `assincrono` pra decidir
  * entre os status locais `estornado` e `estorno_solicitado`
- * (API.md §5.4).
+ * (API.md §5.4). Boleto parcial não é oferecido: o endpoint de boleto
+ * não documenta `value`, e não foi medido — quem chama com `valor` em
+ * boleto recebe 400 ANTES de chegar aqui.
  * @param {string} chargeId
- * @param {{ metodoPagamento?: string }} [opcoes]
+ * @param {{ metodoPagamento?: string, valor?: number|null }} [opcoes]
  */
-export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
+export async function estornarCobranca(chargeId, { metodoPagamento, valor = null } = {}) {
   const assincrono = metodoPagamento === 'boleto';
   const caminho = assincrono
     ? `/v3/payments/${chargeId}/bankSlip/refund`
@@ -480,7 +634,7 @@ export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
 
   const resultado = await chamarAsaas(caminho, {
     method: 'POST',
-    body: JSON.stringify({})
+    body: JSON.stringify(valor != null ? { value: valor } : {})
   });
 
   return { status: resultado.status, assincrono };

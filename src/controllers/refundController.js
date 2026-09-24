@@ -4,9 +4,17 @@
  * Header: X-Checkout-Key (a MESMA chave do contratante, já usada na
  * consulta de pedido — identifica quem está pedindo o estorno e
  * impede um contratante estornar cobrança de outro)
- * Body: { pedidoId }
+ * Body: { pedidoId, valor? }
  *
- * Sempre tudo ou nada — sem estorno parcial nesta versão.
+ * `valor` ausente = estorno TOTAL. `valor` presente = estorno PARCIAL
+ * (desde 24/09/2026, H-04): devolve só aquela parte, a cobrança fica
+ * `estornado_parcialmente` com `valor_estornado` acumulado, e pode ser
+ * estornada de novo até completar o cobrado — quando completa, vira
+ * `estornado`. A conta é em centavos (`utils/dinheiro.js`): `30` e
+ * `30.000000000000004` são o mesmo dinheiro, e nunca se devolve mais
+ * do que falta. Boleto não oferece parcial (o endpoint assíncrono da
+ * Asaas não documenta `value`, e não foi medido) — recusa com 400 antes
+ * de reivindicar qualquer coisa.
  *
  * Boleto é
  * ASSÍNCRONO — o status local vira 'estorno_solicitado' em vez de
@@ -42,28 +50,66 @@
 import { buscarContratantePorChave } from '../services/pedidoService.js';
 import {
   buscarCobrancaPorPedido,
-  atualizarStatusCobranca,
+  registrarEstorno,
   reivindicarEstorno,
   liberarEstorno
 } from '../services/cobrancaService.js';
 import { estornarCobranca, foiRecusaLimpaDaAsaas } from '../services/asaasService.js';
 import { registrarErro } from '../services/erroService.js';
 import { responderErro } from '../utils/erros.js';
+import { emCentavos, emReais } from '../utils/dinheiro.js';
+import { notificarFatoDePedido } from './webhookController.js';
 
 const dependenciasPadrao = {
   buscarContratantePorChave,
   buscarCobrancaPorPedido,
-  atualizarStatusCobranca,
+  registrarEstorno,
   reivindicarEstorno,
   liberarEstorno,
   estornarCobranca,
-  registrarErro
+  registrarErro,
+  notificarFatoDePedido
 };
+
+/**
+ * Decide o estorno a pedir e o estado em que a cobrança fica depois.
+ * Pura, para o autoteste exercitar as bordas em centavos.
+ *
+ * @returns {{ erro?: string, valorAsaas: number|null, valorEstornadoDepois: number, statusDepois: 'estornado'|'estornado_parcialmente' }}
+ */
+export function planejarEstorno(cobranca, valorPedido) {
+  const cobrado = emCentavos(cobranca.valor_cobrado);
+  const jaEstornado = emCentavos(cobranca.valor_estornado) ?? 0;
+  const parcial = valorPedido !== undefined && valorPedido !== null && valorPedido !== '';
+
+  if (!parcial) {
+    // Total: devolve o que FALTA. Numa linha já parcialmente estornada,
+    // mandar `{}` à Asaas estornaria o restante — e é isso que "total"
+    // significa aqui; o acumulado passa a ser o cobrado.
+    return { valorAsaas: null, valorEstornadoDepois: cobrado != null ? emReais(cobrado) : null, statusDepois: 'estornado' };
+  }
+
+  const pedido = emCentavos(valorPedido);
+  if (pedido == null || pedido <= 0) return { erro: 'valor do estorno inválido — informe um número maior que zero, em reais, ou omita para estornar tudo.' };
+  if (cobranca.metodo_pagamento === 'boleto') return { erro: 'Boleto não aceita estorno parcial — omita `valor` para estornar tudo.' };
+  if (cobrado == null) return { erro: 'Esta cobrança não tem valor cobrado registrado — estorno parcial indisponível.' };
+
+  const restante = cobrado - jaEstornado;
+  if (pedido > restante) {
+    return { erro: `valor do estorno (R$ ${emReais(pedido).toFixed(2)}) maior que o restante estornável (R$ ${emReais(restante).toFixed(2)}).` };
+  }
+  const acumulado = jaEstornado + pedido;
+  return {
+    valorAsaas: emReais(pedido),
+    valorEstornadoDepois: emReais(acumulado),
+    statusDepois: acumulado >= cobrado ? 'estornado' : 'estornado_parcialmente'
+  };
+}
 
 export function criarRefundController(deps = dependenciasPadrao) {
   async function estornar(requisicao, resposta) {
     const chave = requisicao.get('X-Checkout-Key');
-    const { pedidoId } = requisicao.body ?? {};
+    const { pedidoId, valor } = requisicao.body ?? {};
 
     if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
     if (!pedidoId) return resposta.status(400).json({ erro: 'pedidoId é obrigatório.' });
@@ -74,6 +120,9 @@ export function criarRefundController(deps = dependenciasPadrao) {
 
       const cobranca = await deps.buscarCobrancaPorPedido(contratante.id, pedidoId);
       if (!cobranca) return resposta.status(404).json({ erro: 'Cobrança não encontrada pra esse pedido.' });
+
+      const plano = planejarEstorno(cobranca, valor);
+      if (plano.erro) return resposta.status(400).json({ erro: plano.erro });
 
       const reivindicou = await deps.reivindicarEstorno(cobranca.charge_id);
       if (!reivindicou) {
@@ -86,7 +135,8 @@ export function criarRefundController(deps = dependenciasPadrao) {
       let assincrono;
       try {
         ({ assincrono } = await deps.estornarCobranca(cobranca.charge_id, {
-          metodoPagamento: cobranca.metodo_pagamento
+          metodoPagamento: cobranca.metodo_pagamento,
+          valor: plano.valorAsaas
         }));
       } catch (erroAsaas) {
         if (foiRecusaLimpaDaAsaas(erroAsaas)) {
@@ -105,17 +155,39 @@ export function criarRefundController(deps = dependenciasPadrao) {
         throw erroAsaas;
       }
 
-      // Sem clearing de `estornando_em` aqui de propósito: o status
-      // deixa de ser `confirmado` (vira `estornado`/`estorno_solicitado`),
-      // e é o STATUS que a próxima reivindicação exige — uma vez fora
-      // de `confirmado`, a coluna do arrendamento fica inerte pra sempre
-      // nesta linha.
-      const statusLocal = assincrono ? 'estorno_solicitado' : 'estornado';
-      await deps.atualizarStatusCobranca(cobranca.charge_id, statusLocal);
+      // `registrarEstorno` libera o arrendamento junto com o status: num
+      // parcial a linha CONTINUA estornável e o próximo pedido precisa
+      // reivindicar sem esperar o prazo. No total/boleto o status sai do
+      // conjunto estornável, e a coluna fica inerte pra sempre.
+      const statusLocal = assincrono ? 'estorno_solicitado' : plano.statusDepois;
+      await deps.registrarEstorno(cobranca.charge_id, {
+        status: statusLocal,
+        valorEstornado: assincrono ? undefined : plano.valorEstornadoDepois
+      });
+
+      /* O webhook que o API.md §5.4 promete ("depois do estorno você
+         também recebe o webhook correspondente"). Mesma chave do fato:
+         quando o PAYMENT_REFUNDED da Asaas chegar, cai na mesma linha da
+         outbox e ninguém ouve duas vezes. Falha aqui não desfaz o estorno
+         (já aconteceu do lado de lá): vira Lei 8. */
+      try {
+        await deps.notificarFatoDePedido(contratante, { ...cobranca, cotacao_id: cobranca.cotacao_id ?? null }, {
+          chargeId: cobranca.charge_id,
+          statusFinanceiro: statusLocal,
+          valorEstornado: assincrono ? null : plano.valorEstornadoDepois
+        });
+      } catch (erroAviso) {
+        await deps.registrarErro(
+          new Error(`estorno de ${pedidoId} executado, mas o aviso ao contratante não foi enfileirado: ${erroAviso.message}`),
+          { contexto: 'refundController.notificar', rota: 'checkout/estornar', metodo: 'POST' }
+        );
+      }
 
       resposta.json({
         chargeId: cobranca.charge_id,
-        status: statusLocal
+        status: statusLocal,
+        valorEstornado: assincrono ? null : plano.valorEstornadoDepois,
+        estornoParcial: statusLocal === 'estornado_parcialmente'
       });
     } catch (erro) {
       responderErro(resposta, erro, 'refundController.estornar');
@@ -135,24 +207,25 @@ if (process.argv[1]?.endsWith('refundController.js')) {
     const linhas = new Map(); // charge_id -> { status, estornando_em }
     const chamadasAsaas = [];
     const errosRegistrados = [];
+    const avisos = [];
 
-    function fixture(chargeId, status) {
-      linhas.set(chargeId, { status, estornando_em: null });
+    function fixture(chargeId, status, extras = {}) {
+      linhas.set(chargeId, { status, estornando_em: null, valor_cobrado: 100, valor_estornado: null, metodo_pagamento: 'pix', ...extras });
     }
 
     const deps = {
-      buscarContratantePorChave: async (chave) => (chave === 'chave_boa' ? { id: 'c1' } : null),
+      buscarContratantePorChave: async (chave) => (chave === 'chave_boa' ? { id: 'c1', webhook_url: 'https://loja.exemplo/hook' } : null),
 
       buscarCobrancaPorPedido: async (_contratanteId, pedidoId) => {
         const chargeId = `pay_${pedidoId}`;
         const linha = linhas.get(chargeId);
         if (!linha) return null;
-        return { charge_id: chargeId, metodo_pagamento: 'pix', status: linha.status };
+        return { charge_id: chargeId, metodo_pagamento: linha.metodo_pagamento, status: linha.status, valor_cobrado: linha.valor_cobrado, valor_estornado: linha.valor_estornado };
       },
 
       reivindicarEstorno: async (chargeId) => {
         const linha = linhas.get(chargeId);
-        if (!linha || linha.status !== 'confirmado') return false;
+        if (!linha || !['confirmado', 'estornado_parcialmente'].includes(linha.status)) return false;
         if (linha.estornando_em && Date.now() - linha.estornando_em < 5 * 60_000) return false;
         linha.estornando_em = Date.now();
         return true;
@@ -172,17 +245,22 @@ if (process.argv[1]?.endsWith('refundController.js')) {
         return { assincrono: ajuste?.assincrono ?? false };
       },
 
-      atualizarStatusCobranca: async (chargeId, status) => {
+      registrarEstorno: async (chargeId, { status, valorEstornado }) => {
         const linha = linhas.get(chargeId);
-        if (linha) linha.status = status;
+        if (!linha) return;
+        linha.status = status;
+        if (valorEstornado != null) linha.valor_estornado = valorEstornado;
+        linha.estornando_em = null;
       },
 
       registrarErro: async (erro) => { errosRegistrados.push(erro.message); },
 
+      notificarFatoDePedido: async (contratante, cobranca, fato) => { avisos.push({ contratante, cobranca, fato }); },
+
       _ajustes: {}
     };
 
-    return { deps, linhas, chamadasAsaas, errosRegistrados, fixture };
+    return { deps, linhas, chamadasAsaas, errosRegistrados, avisos, fixture };
   }
 
   function respostaFalsa() {
@@ -194,8 +272,8 @@ if (process.argv[1]?.endsWith('refundController.js')) {
     return r;
   }
 
-  function requisicaoFalsa({ chave, pedidoId }) {
-    return { get: (h) => (h === 'X-Checkout-Key' ? chave : undefined), body: { pedidoId } };
+  function requisicaoFalsa({ chave, pedidoId, valor }) {
+    return { get: (h) => (h === 'X-Checkout-Key' ? chave : undefined), body: { pedidoId, ...(valor !== undefined ? { valor } : {}) } };
   }
 
   let checagens = 0;
@@ -350,6 +428,94 @@ if (process.argv[1]?.endsWith('refundController.js')) {
     assert.equal(resposta.codigo, 429);
     assert.ok(linhas.get('pay_p8').estornando_em, '429 é ambíguo mesmo com corpo — rate limit não prova recusa');
     assert.equal(errosRegistrados.length, 1);
+    checagens += 1;
+  }
+
+  // 12. Estorno PARCIAL (H-04): manda `value` à Asaas, acumula em centavos,
+  //     fica `estornado_parcialmente`, e o segundo parcial que completa vira `estornado`.
+  {
+    const { deps, chamadasAsaas, linhas, fixture } = costura();
+    fixture('pay_p9', 'confirmado', { valor_cobrado: 100 });
+    const controller = criarRefundController(deps);
+    const r1 = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p9', valor: 30.1 }), r1);
+    assert.equal(r1.corpo?.status, 'estornado_parcialmente');
+    assert.equal(r1.corpo?.valorEstornado, 30.1);
+    assert.equal(r1.corpo?.estornoParcial, true);
+    assert.equal(chamadasAsaas[0].opcoes.valor, 30.1, 'o valor parcial vai à Asaas como `value`');
+    assert.equal(linhas.get('pay_p9').status, 'estornado_parcialmente');
+    assert.equal(linhas.get('pay_p9').estornando_em, null, 'parcial libera o arrendamento — a linha continua estornável');
+
+    const r2 = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p9', valor: 69.9 }), r2);
+    assert.equal(r2.corpo?.status, 'estornado', '30.10 + 69.90 = 100.00 em centavos — completa, sem ruído de float');
+    assert.equal(r2.corpo?.valorEstornado, 100);
+    assert.equal(chamadasAsaas.length, 2);
+    checagens += 1;
+  }
+
+  // 13. Parcial acima do restante → 400 sem reivindicar nem chamar a Asaas;
+  //     parcial em boleto → 400; valor zero/negativo/texto → 400.
+  {
+    const { deps, chamadasAsaas, linhas, fixture } = costura();
+    fixture('pay_p10', 'estornado_parcialmente', { valor_cobrado: 100, valor_estornado: 80 });
+    fixture('pay_p11', 'confirmado', { metodo_pagamento: 'boleto' });
+    fixture('pay_p12', 'confirmado');
+    const controller = criarRefundController(deps);
+    for (const [pedidoId, valor] of [['p10', 20.01], ['p11', 10], ['p12', 0], ['p12', -5], ['p12', 'dez']]) {
+      const r = respostaFalsa();
+      await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId, valor }), r);
+      assert.equal(r.codigo, 400, `${pedidoId} com valor ${valor} devia dar 400`);
+    }
+    assert.equal(chamadasAsaas.length, 0);
+    assert.equal(linhas.get('pay_p10').estornando_em, null, '400 acontece ANTES de reivindicar');
+    // ...e exatamente o restante passa, completando.
+    const r = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p10', valor: 20 }), r);
+    assert.equal(r.corpo?.status, 'estornado');
+    checagens += 1;
+  }
+
+  // 14. Total depois de um parcial: manda `{}` (sem value) e o acumulado vira o cobrado.
+  {
+    const { deps, chamadasAsaas, fixture } = costura();
+    fixture('pay_p13', 'estornado_parcialmente', { valor_cobrado: 50, valor_estornado: 10 });
+    const controller = criarRefundController(deps);
+    const r = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p13' }), r);
+    assert.equal(r.corpo?.status, 'estornado');
+    assert.equal(r.corpo?.valorEstornado, 50);
+    assert.equal(chamadasAsaas[0].opcoes.valor, null);
+    checagens += 1;
+  }
+
+  // 16. O webhook do §5.4 SAI do /estornar — com a chave do fato (a mesma que o PAYMENT_REFUNDED usa)
+  {
+    const { deps, avisos, fixture } = costura();
+    fixture('pay_p14', 'confirmado', { valor_cobrado: 80 });
+    const controller = criarRefundController(deps);
+    const r = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p14' }), r);
+    assert.equal(avisos.length, 1, 'o contratante é avisado do estorno pedido por ele mesmo');
+    assert.equal(avisos[0].fato.statusFinanceiro, 'estornado');
+    assert.equal(avisos[0].fato.valorEstornado, 80);
+    assert.equal(avisos[0].contratante.webhook_url, 'https://loja.exemplo/hook');
+    // aviso que falha não desfaz o estorno: vira Lei 8 e a resposta continua 200
+    const c2 = costura();
+    c2.fixture('pay_p15', 'confirmado');
+    c2.deps.notificarFatoDePedido = async () => { throw new Error('outbox fora'); };
+    const r2 = respostaFalsa();
+    await criarRefundController(c2.deps).estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p15' }), r2);
+    assert.equal(r2.corpo?.status, 'estornado');
+    assert.equal(c2.errosRegistrados.length, 1);
+    checagens += 1;
+  }
+
+  // 15. planejarEstorno é puro e conta em centavos.
+  {
+    assert.deepEqual(planejarEstorno({ valor_cobrado: 0.3, valor_estornado: 0.1, metodo_pagamento: 'pix' }, 0.2),
+      { valorAsaas: 0.2, valorEstornadoDepois: 0.3, statusDepois: 'estornado' }, '0.1 + 0.2 = 0.3 (em reais seria 0.30000000000000004)');
+    assert.ok(planejarEstorno({ valor_cobrado: 10, valor_estornado: null, metodo_pagamento: 'pix' }, 10.01).erro);
     checagens += 1;
   }
 

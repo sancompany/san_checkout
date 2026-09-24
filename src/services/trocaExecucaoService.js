@@ -180,7 +180,10 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
         documento: documentoAssinante,
         valor: Number(intencao.valor_novo),
         ciclo: intencao.ciclo_novo,
-        acertoCobrado: Number(intencao.valor_acerto)
+        acertoCobrado: Number(intencao.valor_acerto),
+        assinaturaId: intencao.assinatura_id,
+        chargeId: intencao.charge_id ?? null,
+        intencaoId: intencao.id
       });
     }
   }

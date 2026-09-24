@@ -193,7 +193,7 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio, maxParcelas 
      negativo aqui significa resposta corrompida, não compra gratuita. */
   const total = Number(taxa?.valorCobrado);
   if (!Number.isFinite(total) || total <= 0) {
-    throw new Error('Não foi possível calcular o valor desta compra. Recarregue a página ou peça um link novo ao vendedor.');
+    throw new Error('Não foi possível calcular o valor desta compra. Recarregue a página ou peça um link novo à loja.');
   }
 
   cortarParcelas(maxParcelas);
@@ -233,14 +233,100 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio, maxParcelas 
   }
 }
 
+/* ------------------------------------------------------------------
+   A COTAÇÃO (C-02, 24/09/2026)
+
+   O backend manda em `cotacao` o retrato do preço que ESTA tela vai
+   mostrar — id, validade e os totais por método/parcelas — e o POST que
+   cobra exige o id de volta. A tela nunca calcula preço: ela só escolhe,
+   dentro dos totais que recebeu, qual mostrar para o método selecionado.
+   Até aqui o total exibido era sempre o do Pix, e o cartão em 12x era
+   cobrado com outra taxa — o pagador via um número e a pop-up cobrava
+   outro.
+------------------------------------------------------------------ */
+
+let metodoExibido = 'pix';
+let parcelasExibidas = 1;
+
+/** O id que vai no POST. `null` quando a tela não tem cotação (pedido
+ *  indisponível) — e aí o backend recusa, que é o comportamento certo. */
+export function obterCotacaoId() {
+  return contextoResolvido?.cotacao?.id ?? null;
+}
+
+/** Cotação nova vinda de um 409 `cotacao_alterada`: substitui a antiga e
+ *  redesenha TUDO que depende do preço — subtotal, desconto, a lista de
+ *  parcelas (o piso por parcela pode ter cortado opções) e o total do
+ *  método que está na tela. Redesenhar só o total deixava o resumo
+ *  contradizendo o número de baixo (achado na revisão de 24/09/2026). */
+export function aplicarCotacao(cotacao) {
+  if (!contextoResolvido || !cotacao?.id) return;
+  contextoResolvido.cotacao = cotacao;
+  if (cotacao.retrato && typeof cotacao.retrato === 'object') {
+    contextoResolvido.pedido = { ...(contextoResolvido.pedido ?? {}), ...cotacao.retrato };
+    const pedido = contextoResolvido.pedido;
+    const subtotal = Number(pedido.valorCheio ?? pedido.valorComDesconto ?? 0);
+    const desconto = Number(pedido.desconto ?? 0);
+    const elSubtotal = document.getElementById('order-subtotal');
+    if (elSubtotal) elSubtotal.textContent = `R$ ${formatarMoeda(subtotal)}`;
+    const elDesconto = document.getElementById('order-desconto');
+    if (elDesconto) elDesconto.textContent = desconto > 0 ? `- R$ ${formatarMoeda(desconto)}` : 'R$ 0,00';
+    document.getElementById('breakdown-desconto-row')?.classList.toggle('tem-valor', desconto > 0);
+  }
+  cortarParcelas(cotacao.totais?.maxParcelas);
+  const seletor = document.getElementById('cartao-parcelas');
+  if (seletor && metodoExibido === 'cartao') parcelasExibidas = Number(seletor.value) || 1;
+  atualizarTotalExibido(metodoExibido, parcelasExibidas);
+}
+
+/** Os botões que cobram. Sem total confiável na tela, nenhum deles
+ *  pode ficar clicável — é a mesma regra do carregamento inicial
+ *  (`aplicarNoResumo`), aplicada de novo depois de um 409. */
+const BOTOES_QUE_COBRAM = ['btn-generate-pix', 'btn-continuar-cartao', 'btn-gerar-boleto'];
+function travarBotoesQueCobram(travar) {
+  for (const id of BOTOES_QUE_COBRAM) {
+    const botao = document.getElementById(id);
+    if (botao) botao.disabled = travar;
+  }
+}
+
+/** Redesenha o total para o método (e parcelas) escolhidos, a partir dos
+ *  totais da cotação. Sem total para a combinação → travessão, nunca zero. */
+export function atualizarTotalExibido(metodo = metodoExibido, parcelas = parcelasExibidas) {
+  metodoExibido = metodo;
+  parcelasExibidas = Number(parcelas) || 1;
+  const totais = contextoResolvido?.cotacao?.totais;
+  if (!totais) return;
+
+  const total = metodo === 'cartao'
+    ? totais.cartao?.[parcelasExibidas] ?? null
+    : totais[metodo] ?? null;
+
+  const elTotal = document.getElementById('order-amount');
+  const elTaxa = document.getElementById('order-taxa');
+  const valor = Number(total?.valorCobrado);
+  if (!Number.isFinite(valor) || valor <= 0) {
+    if (elTotal) elTotal.textContent = '—';
+    if (elTaxa) elTaxa.textContent = '—';
+    travarBotoesQueCobram(true);
+    return;
+  }
+  travarBotoesQueCobram(false);
+  const taxas = Number(total.taxasTotais ?? 0);
+  if (elTotal) elTotal.textContent = formatarMoeda(valor);
+  if (elTaxa) elTaxa.textContent = taxas > 0 ? `+ R$ ${formatarMoeda(taxas)}` : 'R$ 0,00';
+
+  const parcela = document.getElementById('order-parcela');
+  if (parcela) {
+    parcela.textContent = metodo === 'cartao' && parcelasExibidas > 1
+      ? `${parcelasExibidas}x de R$ ${formatarMoeda(Number(total.valorParcela ?? valor / parcelasExibidas))}`
+      : '';
+  }
+}
+
 /** Dados do pagador, pré-preenchidos se o pedido já trouxe (opcional). */
 export function obterPagadorPreenchido() {
   return contextoResolvido?.pedido?.pagador ?? null;
-}
-
-export function obterIdsResolvidos() {
-  if (!contextoResolvido) return null;
-  return { contratanteId: contextoResolvido.contratanteId, pedidoId: contextoResolvido.pedidoId };
 }
 
 /** O pedido cru, como veio do contratante — usado pra decidir, por

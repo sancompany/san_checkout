@@ -272,13 +272,22 @@ Duas telas: **login** e **painel**.
 |---|---|
 | Carregando | cada seção carrega sob demanda; a derivação da senha no login leva alguns segundos, por desenho (scrypt) |
 | Sucesso | a seção pedida, com os dados |
-| Vazio | texto próprio por seção: "Nenhum contratante cadastrado" (com "Cadastre o primeiro projeto que vai usar o checkout."), "Nenhuma subconta criada", "Nenhuma cobrança no período", "Nada arquivado", "Nenhum webhook recebido ainda" |
+| Vazio | texto próprio por seção: "Nenhum contratante cadastrado" (com "Cadastre o primeiro projeto que vai usar o checkout."), "Nenhuma subconta criada", "Nenhuma cobrança no período", "Nada arquivado", "Nenhum webhook recebido ainda", e na aba **Filas** (desde 24/09/2026) "Nenhum evento na inbox" / "Nenhuma notificação na outbox" |
 | Erro | mensagem do backend em toast, sem detalhe interno |
 | **Sem permissão** | Cloudflare Access barra antes da página; sem token válido, `401`; **backend sem as variáveis de admin devolve `503`, não `401`** — "admin desativado" é diferente de "senha errada"; mais de 5 tentativas de login por minuto, `429` |
 | Lista longa demais | a aba Webhook pede os **100** eventos mais recentes e o backend limita a **200** (padrão 50); as demais listas são pequenas por natureza — um operador, poucos contratantes |
 
 Sem sessão guardada em cookie: o token fica no `sessionStorage` da aba e
 vai em todo request (limite declarado em `CONSTRAINTS.md` §2.6).
+
+A aba **Filas** (24/09/2026) mostra as duas filas persistentes — inbox
+(Asaas → Checkout, RN-39) e outbox (Checkout → contratante, RN-43) —
+com filtro por status e um botão por linha: **reenfileirar** (inbox) e
+**reenviar** (outbox), sempre com o mesmo id, nunca criando linha nova.
+O contador ao lado do nome da aba é o número de linhas `falhou`
+esgotadas mais `abandonada` — o que pede gente. A listagem da outbox
+não mostra o payload (leva `documento`); a `api_key` de contratante
+aparece só pelos 4 últimos caracteres em toda listagem (RN-46).
 
 ### 4.4 Termos, Privacidade, 404 e fechar pop-up
 
@@ -881,6 +890,92 @@ o caso mais caro sendo cancelar no meio de uma troca com acerto ainda
 não aprovado. *Quem vê:* o contratante, como `409` — "já existe outra
 operação em andamento".
 `docs/erros/2026-09-22-cancelar-pausar-retomar-nao-tinham-guarda-de-corrida.md`.
+
+**RN-39 · O evento da Asaas é guardado antes de ser respondido, e
+processado a partir do guardado.** `POST /api/webhooks/asaas` grava o
+corpo mínimo em `webhook_inbox` (idempotente pelo `id` do evento), só
+então responde `200`, e processa a partir da linha — inline, para
+preservar a ordem que a Asaas garante em `SEQUENTIALLY`; falhou, um
+worker reprocessa com recuo, e o operador vê e reenfileira no painel
+(aba Filas). O `200` só não sai quando a inbox não grava (`503`, e a
+Asaas reenvia). *Violada:* um erro no processamento virava `200` e o
+evento sumia — pagamento confirmado na Asaas e `pendente` aqui, para
+sempre. *Quem vê:* o comprador (pagou e nada libera) e o contratante
+(nunca avisado). Auditoria de 24/09/2026, C-01.
+
+**RN-40 · Toda mudança de status passa pela máquina de estados, com
+carimbo.** `transicoesFinanceiras.js` diz de qual status se vai para
+qual; o `dateCreated` do evento fica em `status_evento_em`, e um evento
+anterior ao que gravou o status atual não regride nada; a escrita é
+condicional (`where status = <o que li>`), e quem perde a corrida
+relê. Vale para `PAYMENT_*` e `CHECKOUT_*`. *Violada:* um
+`PAYMENT_CONFIRMED` atrasado depois de um `PAYMENT_REFUNDED` devolvia a
+cobrança a `confirmado`; um `CHECKOUT_PAID` reprocessado no painel
+fazia o mesmo. *Quem vê:* o contratante, que libera de novo o que foi
+devolvido. C-03.
+
+**RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
+a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
+(índice único: pedido+método, ou plano+documento+método) e só então
+criam na Asaas, com `externalReference = reserva-<id>`. Quem esbarra
+na reserva reaproveita o que ela tem. Falha ambígua da Asaas NÃO libera
+a reserva: o reconciliador (5 min) pergunta à Asaas pela referência,
+completa a linha quando existe cobrança lá e reenfileira os eventos já
+consumidos; libera só depois de 65 min sem nada. *Violada:* dez cliques
+simultâneos abriam dez sessões pagáveis. *Quem vê:* o comprador, com
+dez cobranças no app. C-04/H-06.
+
+**RN-42 · O preço cobrado é o preço mostrado.** `GET /pedido` e
+`GET /plano` gravam a cotação (retrato financeiro + totais por método e
+parcela, 30 min); o `POST` que cobra exige o id, reconsulta o
+contratante, compara em centavos e cobra o retrato — divergência ou
+cotação vencida é `409 cotacao_alterada`/`cotacao_ausente` com a
+cotação nova, e a tela redesenha tudo (subtotal, parcelas, total) e
+pede reconfirmação; sem total utilizável, os botões travam. O valor da
+parcela vem da cotação, nunca é dividido na tela. *Violada:* o
+contratante mudava o preço entre a tela e o clique, e o pagador pagava
+o que não viu. *Quem vê:* o pagador. C-02, `API.md` §9.3.
+
+**RN-43 · O aviso ao contratante é durável e tem identidade.** Todo
+fato vira UMA linha em `outbox_notificacoes`, com chave do fato
+(`pedido|charge|status`, `assinatura|charge|evento|status`, e o
+acumulado em centavos nos parciais); a linha carrega o `eventoId` que
+o contratante recebe e pelo qual deduplica; um worker entrega com recuo
+finito (1 min … 24 h) e depois marca `abandonada`, que o operador
+reenvia com o mesmo id. Mesmo fato por outro caminho (estorno pedido
+em `/estornar`, reentrega da Asaas, reprocessamento) cai na mesma linha.
+Um fato que se REPETE de verdade (baixa desfeita e refeita) ganha linha
+nova. *Violada:* reiniciar o processo entre duas tentativas perdia o
+aviso; e o contratante creditava um ciclo duas vezes por não ter como
+distinguir reenvio de fato novo. *Quem vê:* o contratante. H-01/H-02,
+provado por `tests/outbox-sobrevive-a-reinicio.js` com dois processos.
+
+**RN-44 · Um pagador é um cliente na Asaas, e a reivindicação vem
+antes da chamada.** `clientes_asaas` (documento em hash) é reivindicada
+antes de `POST /v3/customers`; quem perde espera o id do vencedor, e
+uma reivindicação de processo morto (30 s) é assumida. *Violada:* dez
+requisições simultâneas criavam dez clientes na Asaas. *Quem vê:* o
+operador, com cadastro duplicado no painel da Asaas. H-05.
+
+**RN-45 · Estorno parcial existe, e é aritmética de centavos.**
+`POST /estornar` aceita `valor`; a cobrança fica
+`estornado_parcialmente` com `valor_estornado` acumulado e pode ser
+estornada de novo até completar; estorno parcial feito no painel da
+Asaas chega como tal, com o acumulado, e um segundo parcial é fato
+novo. Boleto continua tudo-ou-nada. A assinatura nasce e a antiga
+(renovação) é cancelada SÓ no `confirmado` da primeira cobrança —
+nunca num `em_analise` ou `recusado` que chegue antes. *Violada:* o
+contratante revogava o pedido inteiro por uma devolução de parte; uma
+renovação com cartão recusado cancelava a assinatura que ainda pagava.
+*Quem vê:* o pagador. H-04, `CONSTRAINTS.md` §1.7.
+
+**RN-46 · A chave de um contratante aparece inteira uma vez.** Na
+resposta de criação e na de rotação — quem acabou de gerá-la. Em toda
+listagem e edição do painel vai `api_key_final` (4 últimos), nunca
+`api_key`; o mesmo para subcontas. *Violada:* abrir o painel devolvia
+todas as chaves de todos os contratantes — um XSS no admin ou um token
+de sessão vazado levava tudo de uma vez. *Quem vê:* todos os
+contratantes, sem saber. H-08, `tests/segredo-nao-sai-do-admin.js`.
 
 ---
 

@@ -112,7 +112,7 @@ PR #40 ainda não mesclada no momento em que este HANDOFF foi escrito.
 
 ## What is working
 
-Tudo que a suíte cobre (46 suítes, `npm test`/`npm run check` verdes em
+Tudo que a suíte cobre (57 suítes, `npm test`/`npm run check` verdes em
 cada commit) e o que foi conferido ao vivo contra produção antes de
 cada `ALTER TABLE` (ver "External systems touched").
 

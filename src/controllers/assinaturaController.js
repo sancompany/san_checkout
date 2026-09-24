@@ -130,7 +130,9 @@ export function criarAssinaturaController(deps = dependenciasPadrao) {
       // abaixo já confirma pra quem chamou; o webhook é só pra manter o
       // MESMO canal que os outros dois desfechos de 'cancelada' usam
       // (API.md §7.4 promete essa seta, e até 16/09/2026 ela não existia).
-      deps.notificarAssinaturaCancelada(contratante, { planoId, documento });
+      deps.notificarAssinaturaCancelada(contratante, {
+        planoId, documento, assinaturaId: assinatura.id, ciclo: assinatura.ciclo ?? null, valor: assinatura.valor ?? null
+      });
 
       resposta.json({ assinaturaId: assinatura.id, status: 'cancelada' });
     } catch (erro) {

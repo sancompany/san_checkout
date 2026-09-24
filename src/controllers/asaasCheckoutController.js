@@ -43,7 +43,11 @@
  */
 
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
-import { taxaComParcelasQueCabem } from '../services/taxaService.js';
+import { exigirCotacaoParaCobrar, montarTotaisPedido, montarTotaisPlano, marcarCotacaoUsada } from '../services/cotacaoService.js';
+import { resolverCicloDoPlano } from './planoController.js';
+import { foiRecusaLimpaDaAsaas } from '../services/asaasService.js';
+import { reservarCobrancaPopup, completarReservaPopup, liberarReservaCobranca } from '../services/cobrancaService.js';
+import { registrarErro } from '../services/erroService.js';
 import {
   criarSessaoAsaasCheckout,
   criarAutorizacaoPixAutomatico,
@@ -72,6 +76,47 @@ export const CICLOS_VALIDOS = [
   'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'BIMONTHLY',
   'QUARTERLY', 'SEMIANNUALLY', 'YEARLY'
 ];
+
+/**
+ * RESERVA → SESSÃO → COMPLETA (C-04): a coreografia das duas pop-ups.
+ * A linha local nasce ANTES de `POST /v3/checkouts`; a sessão leva
+ * `externalReference = reserva-<id>`; a linha é completada com o id da
+ * sessão depois. Segunda requisição concorrente encontra a reserva da
+ * primeira e REAPROVEITA a sessão dela (se já existir) — nunca abre uma
+ * segunda sessão pagável.
+ *
+ * @returns {{tipo:'criada', asaasCheckoutId}|{tipo:'reaproveitada', asaasCheckoutId}|{tipo:'em_andamento'}}
+ */
+const dependenciasDaReserva = { reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas };
+
+export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }, deps = dependenciasDaReserva) {
+  const r = await deps.reservarCobrancaPopup(reserva);
+  if (!r.reservada) {
+    if (r.existente?.asaas_checkout_id) return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
+    return { tipo: 'em_andamento' };
+  }
+
+  let asaasCheckoutId;
+  try {
+    ({ asaasCheckoutId } = await criarSessao(`reserva-${r.id}`));
+  } catch (erroAsaas) {
+    if (deps.foiRecusaLimpaDaAsaas(erroAsaas)) {
+      await deps.liberarReservaCobranca(r.id);
+    } else {
+      // Ambíguo: a sessão pode existir. A reserva FICA — o webhook
+      // `CHECKOUT_*` a encontra pela referência externa, e o
+      // reconciliador expira o que nunca virou sessão.
+      await deps.registrarErro(
+        new Error(`${contexto}: criação da sessão na Asaas falhou de forma AMBÍGUA (reserva ${r.id}): ${erroAsaas.message}. Reserva mantida; externalReference "reserva-${r.id}".`),
+        { contexto, rota: `checkout/${contexto}`, metodo: 'POST' }
+      );
+    }
+    throw erroAsaas;
+  }
+
+  await completar(r.id, asaasCheckoutId);
+  return { tipo: 'criada', asaasCheckoutId, reservaId: r.id };
+}
 
 /**
  * TETO DO NOME DO ITEM NO CHECKOUT DA ASAAS — 30 caracteres.
@@ -105,7 +150,8 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   const { contratanteId, pedidoId } = requisicao.params;
   let {
     nome, email, documento, telefone, parcelas,
-    endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge
+    endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
+    cotacaoId
   } = requisicao.body ?? {};
 
   if (!nome || !email || !documento || !telefone) {
@@ -140,36 +186,27 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   try {
     const { contratante, pedido } = await resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'cartao' });
 
-    const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);
-    if (!valorValido(valorBase)) {
-      return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
-    }
+    /* A COTAÇÃO (C-02): o total do cartão em N parcelas é o que a tela
+       mostrou para N parcelas — `totais.cartao[N]` — e o piso por
+       parcela já está resolvido lá (`maxParcelas`). Pull novo divergindo
+       do retrato → 409, e a tela reconfirma. */
+    const totaisNovos = montarTotaisPedido(pedido);
+    if (!totaisNovos) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
+    const cotacao = await exigirCotacaoParaCobrar({
+      cotacaoId, contratanteId: contratante.id, tipo: 'pedido', referenciaId: pedidoId, origemNova: pedido, totaisNovos
+    });
+    const totais = cotacao.totais;
+    const valorBase = Number(totais.valorBase);
 
-    /* O PISO DA ASAAS É POR PARCELA, não só sobre o total.
-
-       R$ 24,00 em 12x dá R$ 2,00 por parcela, e a Asaas recusa a
-       cobrança. Pior: `POST /v3/checkouts` ACEITA a sessão assim
-       (medido), então sem isto a pop-up abre, o comprador escolhe 12x,
-       digita o cartão, e só aí é recusado — dentro da pop-up, com
-       mensagem de provedor.
-
-       A conta mora em `taxaService.taxaComParcelasQueCabem`, junto da
-       taxa, porque as duas se determinam uma à outra: a taxa depende da
-       faixa de parcelas, e quantas parcelas cabem depende do valor com
-       taxa. Ofertar menos em vez de recusar: um pedido de R$ 24,00
-       fecha em R$ 26,15 e sai em 5x de R$ 5,23 — uma venda que a Asaas
-       faz sem reclamar, e que recusar jogaria fora. */
-    const { parcelas: parcelasOfertadas, taxa } = taxaComParcelasQueCabem(
-      valorBase,
-      numeroParcelas,
-      Boolean(pedido.isentarTaxa)
-    );
+    /* O PISO DA ASAAS É POR PARCELA (medido em 17/09/2026): a tela já
+       recebeu `maxParcelas` e cortou a lista; aqui, pedir mais do que
+       cabe cai no maior número que cabe — ofertar menos em vez de
+       recusar a venda. */
+    const parcelasOfertadas = Math.min(Math.max(1, numeroParcelas), Number(totais.maxParcelas) || 1);
+    const taxa = totais.cartao?.[parcelasOfertadas];
+    if (!taxa) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
     const { taxaAsaas, taxaPropria, valorCobrado } = taxa;
 
-    // Ver a nota do piso em `utils/validadores.js`. No cartão isto
-    // poupa o comprador de preencher endereço inteiro (exigência
-    // antifraude da Asaas) para receber um 400 no fim. Vale para o
-    // TOTAL; o piso por parcela é o laço acima.
     if (!valorCobradoAceitavel(valorCobrado)) {
       return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
     }
@@ -178,46 +215,9 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       ? [{ walletId: contratante.wallet_id, fixedValue: valorBase }]
       : undefined;
 
-    const { asaasCheckoutId } = await criarSessaoAsaasCheckout({
-      billingTypes: ['CREDIT_CARD'],
-      chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
-      itens: [{
-        name: nomeItemAsaas(pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine'),
-        description: pedido.descricao ?? undefined,
-        quantity: 1,
-        value: valorCobrado
-      }],
-      ...(parcelasOfertadas > 1 ? { installment: { maxInstallmentCount: parcelasOfertadas } } : {}),
-      customerData: {
-        name: nome,
-        email,
-        cpfCnpj: documento,
-        phone: telefone,
-        address: endereco,
-        addressNumber: enderecoNumero,
-        ...(complemento ? { complement: complemento } : {}),
-        province: bairro,
-        postalCode: String(cep).replace(/\D/g, ''),
-        city: Number(cidadeIbge)
-      },
-      splits
-    });
-
-    await registrarCobrancaPendentePopup({
-      asaasCheckoutId,
+    const dadosDaLinha = {
       contratanteId,
-      pedidoId,
-      documento,
-      email,
-      telefone,
-      endereco,
-      enderecoNumero,
-      complemento,
-      bairro,
-      cep,
-      cidade,
-      uf,
-      cidadeIbge,
+      documento, email, telefone, endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
       itens: pedido.itens ?? null,
       valorCheio: pedido.valorCheio,
       desconto: pedido.desconto,
@@ -230,15 +230,45 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       taxaIsenta: Boolean(pedido.isentarTaxa),
       valorCobrado,
       metodoPagamento: 'cartao_credito',
-      /* O que se grava é o que foi OFERTADO, não o que foi pedido: é
-         esse número que limita o que o comprador pode escolher na
-         pop-up, e a conciliação tem de bater com a realidade. */
-      parcelas: parcelasOfertadas
+      // O que se grava é o que foi OFERTADO — é o teto da pop-up.
+      parcelas: parcelasOfertadas,
+      cotacaoId: cotacao.id
+    };
+
+    const sessao = await abrirSessaoComReserva({
+      contexto: 'cartao',
+      reserva: { contratanteId, pedidoId, documento, metodoPagamento: 'cartao_credito' },
+      criarSessao: (externalReference) => criarSessaoAsaasCheckout({
+        billingTypes: ['CREDIT_CARD'],
+        chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
+        itens: [{
+          name: nomeItemAsaas(pedido.descricao ?? 'Pagamento via SAN & CO. Pay Engine'),
+          description: pedido.descricao ?? undefined,
+          quantity: 1,
+          value: valorCobrado
+        }],
+        ...(parcelasOfertadas > 1 ? { installment: { maxInstallmentCount: parcelasOfertadas } } : {}),
+        customerData: {
+          name: nome, email, cpfCnpj: documento, phone: telefone,
+          address: endereco, addressNumber: enderecoNumero,
+          ...(complemento ? { complement: complemento } : {}),
+          province: bairro, postalCode: String(cep).replace(/\D/g, ''), city: Number(cidadeIbge)
+        },
+        splits,
+        externalReference
+      }),
+      completar: (reservaId, asaasCheckoutId) => completarReservaPopup(reservaId, { ...dadosDaLinha, asaasCheckoutId })
     });
 
+    if (sessao.tipo === 'em_andamento') {
+      return resposta.status(409).json({ erro: 'Já existe uma janela de pagamento sendo aberta para este pedido. Tente novamente em instantes.' });
+    }
+    if (sessao.tipo === 'criada') void marcarCotacaoUsada(cotacao.id);
+
     resposta.json({
-      checkoutUrl: montarUrlCheckoutSession(asaasCheckoutId),
-      asaasCheckoutId
+      checkoutUrl: montarUrlCheckoutSession(sessao.asaasCheckoutId),
+      asaasCheckoutId: sessao.asaasCheckoutId,
+      ...(sessao.tipo === 'reaproveitada' ? { reaproveitada: true } : {})
     });
   } catch (erro) {
     if (erro.corpoAsaas) console.error('[checkout/cartao] corpoAsaas:', erro.corpoAsaas);
@@ -279,7 +309,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   let {
     nome, email, documento, telefone,
     endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
-    renovar
+    renovar, cotacaoId
   } = requisicao.body ?? {};
 
   if (!nome || !email || !documento || !telefone) {
@@ -308,27 +338,28 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   try {
     const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura' });
 
-    const valor = Number(plano.valor ?? 0);
-    if (!valorValido(valor)) {
-      return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
-    }
+    /* O ciclo vem da API do contratante em qualquer dos três vocabulários
+       (`utils/ciclos.js`), e é conferido contra o que ESTE contratante
+       vende (M-10). Sem default silencioso: `MONTHLY` por omissão foi o
+       bug de 15/09/2026. */
+    const { ciclo, erro: erroCiclo } = resolverCicloDoPlano(plano, contratante);
+    if (erroCiclo) return resposta.status(400).json({ erro: erroCiclo });
+    const planoNormalizado = { ...plano, ciclo };
+
+    /* A COTAÇÃO (C-02): valor e ciclo cobrados são os do retrato que a
+       tela mostrou; divergência do pull novo → 409 com cotação nova. */
+    const totaisNovos = montarTotaisPlano(planoNormalizado);
+    if (!totaisNovos) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    const cotacao = await exigirCotacaoParaCobrar({
+      cotacaoId, contratanteId: contratante.id, tipo: 'plano', referenciaId: planoId, origemNova: planoNormalizado, totaisNovos
+    });
+    const valor = Number(cotacao.totais?.assinatura?.valorCobrado);
+    if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
 
     // Assinatura não leva taxa nossa — o valor do plano é o valor
-    // cobrado, e o piso de R$ 5,00 vale por CICLO (medido em
-    // `POST /v3/subscriptions`, ver `utils/validadores.js`).
+    // cobrado, e o piso de R$ 5,00 vale por CICLO.
     if (!valorCobradoAceitavel(valor)) {
       return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
-    }
-
-    // O ciclo vem da API do contratante, então é entrada externa e é
-    // checada aqui. Antes ia direto pra Asaas: um valor errado só
-    // falhava lá, com mensagem da Asaas, difícil de rastrear até o
-    // plano do parceiro.
-    const ciclo = plano.ciclo ?? 'MONTHLY';
-    if (!CICLOS_VALIDOS.includes(ciclo)) {
-      return resposta.status(400).json({
-        erro: `Ciclo de assinatura inválido: "${ciclo}". Valores aceitos: ${CICLOS_VALIDOS.join(', ')}.`
-      });
     }
 
     // RENOVAÇÃO (link com `&renovar={token}`): o assinante está
@@ -364,71 +395,58 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       ? [{ walletId: contratante.wallet_id, fixedValue: valor }]
       : undefined;
 
-    const { asaasCheckoutId } = await criarSessaoAsaasCheckout({
-      billingTypes: ['CREDIT_CARD'],
-      chargeTypes: ['RECURRENT'],
-      itens: [{
-        name: nomeItemAsaas(plano.nome ?? 'Assinatura via SAN & CO. Pay Engine'),
-        description: plano.nome ?? undefined,
-        quantity: 1,
-        value: valor
-      }],
-      subscription: {
-        cycle: ciclo,
-        nextDueDate: formatarDataHoraAsaas(new Date())
-      },
-      customerData: {
-        name: nome,
-        email,
-        cpfCnpj: documento,
-        phone: telefone,
-        address: endereco,
-        addressNumber: enderecoNumero,
-        ...(complemento ? { complement: complemento } : {}),
-        province: bairro,
-        postalCode: String(cep).replace(/\D/g, ''),
-        city: Number(cidadeIbge)
-      },
-      splits
-    });
-
-    await registrarCobrancaPendentePopup({
-      asaasCheckoutId,
+    const dadosDaLinha = {
       contratanteId,
-      planoId,
-      documento,
-      email,
-      telefone,
-      endereco,
-      enderecoNumero,
-      complemento,
-      bairro,
-      cep,
-      cidade,
-      uf,
-      cidadeIbge,
+      documento, email, telefone, endereco, enderecoNumero, complemento, bairro, cep, cidade, uf, cidadeIbge,
       valorCheio: valor,
       valorComDesconto: valor,
       taxaAsaas: 0,
       taxaPropria: 0,
-      taxaIsenta: true, // nesta leva, assinatura nunca aplica taxa — não é uma isenção concedida, é a simplificação atual
+      taxaIsenta: true, // nesta leva, assinatura nunca aplica taxa — simplificação atual, não isenção concedida
       valorCobrado: valor,
       metodoPagamento: 'assinatura',
       substituiAssinaturaId: assinaturaSubstituida?.id ?? null,
       parcelas: 1,
-      // O MESMO `ciclo` já validado acima e já mandado pra Asaas em
-      // `subscription.cycle` — gravado agora, não esperando o webhook
-      // ecoar de volta. Achado em 15/09/2026: nem CHECKOUT_PAID nem
-      // PAYMENT_CONFIRMED confiavelmente trazem esse campo de volta, e
-      // essa cobrança já sabe o valor certo antes de existir qualquer
-      // webhook — é o que `webhookController.amarrarAssinaturaACobranca`
-      // lê na hora de criar a linha em `assinaturas`.
-      ciclo
+      // O MESMO `ciclo` mandado à Asaas em `subscription.cycle`, gravado
+      // na CRIAÇÃO — nenhum webhook o traz de volta (15/09/2026).
+      ciclo,
+      cotacaoId: cotacao.id
+    };
+
+    const sessao = await abrirSessaoComReserva({
+      contexto: 'assinatura',
+      reserva: { contratanteId, planoId, documento, metodoPagamento: 'assinatura' },
+      criarSessao: (externalReference) => criarSessaoAsaasCheckout({
+        billingTypes: ['CREDIT_CARD'],
+        chargeTypes: ['RECURRENT'],
+        itens: [{
+          name: nomeItemAsaas(plano.nome ?? 'Assinatura via SAN & CO. Pay Engine'),
+          description: plano.nome ?? undefined,
+          quantity: 1,
+          value: valor
+        }],
+        subscription: { cycle: ciclo, nextDueDate: formatarDataHoraAsaas(new Date()) },
+        customerData: {
+          name: nome, email, cpfCnpj: documento, phone: telefone,
+          address: endereco, addressNumber: enderecoNumero,
+          ...(complemento ? { complement: complemento } : {}),
+          province: bairro, postalCode: String(cep).replace(/\D/g, ''), city: Number(cidadeIbge)
+        },
+        splits,
+        externalReference
+      }),
+      completar: (reservaId, asaasCheckoutId) => completarReservaPopup(reservaId, { ...dadosDaLinha, asaasCheckoutId })
     });
 
+    if (sessao.tipo === 'em_andamento') {
+      return resposta.status(409).json({ erro: 'Já existe uma janela de pagamento sendo aberta para esta assinatura. Tente novamente em instantes.' });
+    }
+    if (sessao.tipo === 'criada') void marcarCotacaoUsada(cotacao.id);
+
     resposta.json({
-      checkoutUrl: montarUrlCheckoutSession(asaasCheckoutId),
-      asaasCheckoutId
+      checkoutUrl: montarUrlCheckoutSession(sessao.asaasCheckoutId),
+      asaasCheckoutId: sessao.asaasCheckoutId,
+      ...(sessao.tipo === 'reaproveitada' ? { reaproveitada: true } : {})
     });
   } catch (erro) {
     if (erro.corpoAsaas) console.error('[checkout/assinatura] corpoAsaas:', erro.corpoAsaas);
@@ -472,7 +490,7 @@ export async function consultarStatusCheckout(requisicao, resposta) {
  */
 export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
-  let { nome, email, documento, telefone } = requisicao.body ?? {};
+  let { nome, email, documento, telefone, cotacaoId } = requisicao.body ?? {};
 
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
@@ -492,18 +510,25 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
   try {
-    const { plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });
+    const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });
 
-    const valor = Number(plano.valor ?? 0);
+    // Mesma camada canônica de ciclos da assinatura por cartão (M-10).
+    const { ciclo, erro: erroCiclo } = resolverCicloDoPlano(plano, contratante);
+    if (erroCiclo) return resposta.status(400).json({ erro: erroCiclo });
+    const planoNormalizado = { ...plano, ciclo };
+
+    /* A COTAÇÃO (C-02) vale aqui também — a tela manda o id, e este
+       caminho a ignorava (achado na revisão de 24/09/2026). O método
+       está desligado nesta conta (CONSTRAINTS §2.4), mas a invariante
+       "nunca cobra Y depois de mostrar X" não pode depender disso. */
+    const totaisNovos = montarTotaisPlano(planoNormalizado);
+    if (!totaisNovos) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    const cotacao = await exigirCotacaoParaCobrar({
+      cotacaoId, contratanteId: contratante.id, tipo: 'plano', referenciaId: planoId, origemNova: planoNormalizado, totaisNovos
+    });
+    const valor = Number(cotacao.totais?.assinatura?.valorCobrado);
     if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
     if (!valorCobradoAceitavel(valor)) return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
-
-    const ciclo = plano.ciclo ?? 'MONTHLY';
-    if (!CICLOS_VALIDOS.includes(ciclo)) {
-      return resposta.status(400).json({
-        erro: `Ciclo de assinatura inválido: "${ciclo}". Valores aceitos: ${CICLOS_VALIDOS.join(', ')}.`
-      });
-    }
 
     // O Pix Automático cobre menos ciclos que a assinatura por cartão —
     // recusa aqui, com o motivo, em vez de deixar a Asaas rejeitar com
@@ -545,6 +570,7 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
       valorCobrado: valor,
       metodoPagamento: 'assinatura_pix',
       parcelas: 1,
+      cotacaoId: cotacao.id,
       // Mesmo motivo da assinatura por cartão (criarCheckoutAssinatura):
       // `ciclo` já validado acima, gravado na criação em vez de esperado
       // de um campo não confirmado do payload da Asaas — sem isso,

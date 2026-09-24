@@ -46,9 +46,20 @@ cupom e desconto vindo da API dele. Se um dia houver order bump, o
 parceiro devolve as ofertas no próprio `GET /pedido/{id}` — o checkout
 nunca guarda produto.
 
-### 1.7 Estorno parcial — FORA DE ESCOPO
-Sempre tudo ou nada. Para cancelar parte de um pedido, estorna-se tudo e
-cria-se um pedido novo com o que sobrou.
+### 1.7 Estorno parcial — CONSTRUÍDO em 24/09/2026 (era FORA DE ESCOPO)
+Até 24/09/2026 era sempre tudo ou nada, e um estorno parcial feito no
+painel da Asaas (`PAYMENT_PARTIALLY_REFUNDED`) era colapsado em
+`estornado` — o contratante revogava o pedido inteiro por uma devolução
+de parte (H-04 da auditoria externa, `docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md`).
+Agora: `POST /estornar` aceita `valor` opcional (a única exceção
+registrada à regra "nenhum valor vem do corpo" — é valor a DEVOLVER,
+autenticado pela chave do contratante e limitado pelo servidor ao que
+falta estornar); a cobrança fica `estornado_parcialmente` com
+`valor_estornado` acumulado em centavos, pode ser estornada de novo até
+completar, e o contratante recebe `valorEstornado` + `estornoParcial`
+em todo evento de estorno (API.md §4.3.3, §5.4). **Boleto continua
+tudo-ou-nada**: o endpoint assíncrono de estorno de boleto da Asaas não
+documenta `value`, e não foi medido.
 
 ### 1.8 Sandbox para o parceiro — FECHADO EM 11/09/2026
 Exigiria dois clientes Asaas vivos no mesmo processo e roteamento por

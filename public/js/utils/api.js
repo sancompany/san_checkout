@@ -26,6 +26,15 @@ export async function chamarApi(caminho, opcoes = {}) {
     const erro = new Error(corpo.erro || `O servidor respondeu ${resposta.status}.`);
     erro.status = resposta.status;
     erro.corpo = corpo;
+    /* A COTAÇÃO MUDOU (C-02): o servidor recusou cobrar porque o preço
+       que a tela mostrou não é mais o que o contratante responde — e
+       manda a cotação NOVA no corpo. Quem redesenha o total e pede
+       reconfirmação é o `app.js`, por este evento; o handler que fez o
+       POST só mostra a mensagem, que já vem pronta. */
+    if (resposta.status === 409 && typeof corpo.codigo === 'string' && corpo.codigo.startsWith('cotacao_') && corpo.cotacao) {
+      erro.tratadoPelaTela = true; // o `app.js` mostra UMA mensagem, pelo código; o handler não repete
+      window.dispatchEvent(new CustomEvent('checkout:cotacao-alterada', { detail: { cotacao: corpo.cotacao, codigo: corpo.codigo } }));
+    }
     throw erro;
   }
 

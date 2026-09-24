@@ -92,7 +92,7 @@ export async function gerarBoleto({ contratanteId, pedidoId, dadosPagador, mostr
       }
     });
   } catch (erro) {
-    mostrarToast(erro.message || 'Não foi possível gerar o boleto agora.', 'erro');
+    if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível gerar o boleto agora.', 'erro');
     botao.disabled = false;
   }
 }

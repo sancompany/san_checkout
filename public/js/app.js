@@ -1,10 +1,16 @@
-import { resolverContexto, obterPagadorPreenchido, obterPedidoResolvido, obterMetodosHabilitados, iniciarCronometroExpiracao } from './modules/pedidoHandler.js';
-import { resolverAssinatura, obterIdsAssinaturaResolvidos, obterPagadorPreenchidoAssinatura, rotularCiclo, obterMetodosDoPlano } from './modules/assinaturaHandler.js';
+import {
+  resolverContexto, obterPagadorPreenchido, obterPedidoResolvido, obterMetodosHabilitados, iniciarCronometroExpiracao,
+  obterCotacaoId, aplicarCotacao, atualizarTotalExibido
+} from './modules/pedidoHandler.js';
+import {
+  resolverAssinatura, obterIdsAssinaturaResolvidos, obterPagadorPreenchidoAssinatura, rotularCiclo, obterMetodosDoPlano,
+  obterCotacaoIdAssinatura, aplicarCotacaoAssinatura
+} from './modules/assinaturaHandler.js';
 import { gerarPix, copiarCodigoPix, pararPolling as pararPollingPix } from './modules/pixHandler.js';
 import { continuarComCartao, pararPollingCartao } from './modules/cartaoHandler.js';
 import { gerarBoleto, copiarCodigoBoleto, pararPollingBoleto } from './modules/boletoHandler.js';
 import { assinarAgora } from './modules/assinaturaCheckoutHandler.js';
-import { assinarComPix, pararPollingAssinaturaPix } from './modules/assinaturaPixHandler.js';
+import { assinarComPix } from './modules/assinaturaPixHandler.js';
 import { mascararDocumento, mascararTelefone, mascararCep } from './utils/masks.js';
 import { validarDocumento, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
 import { buscarEnderecoPorCep } from './utils/cep.js';
@@ -193,6 +199,12 @@ function selecionarMetodo(idMetodo) {
   // Boleto (cobrança direta) não precisam disso.
   document.getElementById('endereco-fieldset')?.classList.toggle('hidden', idMetodo !== 'cartao');
 
+  /* O TOTAL SEGUE O MÉTODO (C-02, 24/09/2026): cada método tem taxa
+     própria, e cartão parcelado tem uma por faixa. O número que a tela
+     mostra é o da cotação para ESTA combinação — o mesmo que o backend
+     cobra. Até aqui era sempre o total do Pix. */
+  atualizarTotalExibido(idMetodo, document.getElementById('cartao-parcelas')?.value ?? 1);
+
   if (idMetodo !== 'pix') pararPollingPix();
   if (idMetodo !== 'cartao') pararPollingCartao();
   if (idMetodo !== 'boleto') pararPollingBoleto();
@@ -245,7 +257,7 @@ async function iniciarModoPedido() {
       if (!termosAceitos()) return;
       if (!validarDadosPagador()) return;
       mostrarLinkPermanente(ids, 'pix');
-      return gerarPix({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: coletarDadosPagador(), mostrarToast });
+      return gerarPix({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: { ...coletarDadosPagador(), cotacaoId: obterCotacaoId() }, mostrarToast });
     }
 
     if (id === 'btn-continuar-cartao') {
@@ -258,7 +270,7 @@ async function iniciarModoPedido() {
         contratanteId: ids.contratanteId,
         pedidoId: ids.pedidoId,
         parcelas,
-        dadosPagador: { ...coletarDadosPagador(), ...coletarEndereco() },
+        dadosPagador: { ...coletarDadosPagador(), ...coletarEndereco(), cotacaoId: obterCotacaoId() },
         mostrarToast,
         aoNaoConcluir: oferecerPixAposFalhaNoCartao
       });
@@ -269,8 +281,23 @@ async function iniciarModoPedido() {
       if (!termosAceitos()) return;
       if (!validarDadosPagador()) return;
       mostrarLinkPermanente(ids, 'boleto');
-      return gerarBoleto({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: coletarDadosPagador(), mostrarToast });
+      return gerarBoleto({ contratanteId: ids.contratanteId, pedidoId: ids.pedidoId, dadosPagador: { ...coletarDadosPagador(), cotacaoId: obterCotacaoId() }, mostrarToast });
     }
+  });
+
+  // Parcelas mudam a taxa, e a taxa muda o total mostrado.
+  document.getElementById('cartao-parcelas')?.addEventListener('change', (evento) => {
+    atualizarTotalExibido('cartao', evento.target.value);
+  });
+
+  /* 409 `cotacao_alterada` (C-02): o servidor recusou cobrar porque o
+     preço mudou desde que a tela abriu, e mandou a cotação nova. A tela
+     redesenha o total e o pagador confirma de novo — nunca se cobra Y
+     depois de mostrar X. Os botões voltam a ficar clicáveis: quem os
+     desabilitou foi o handler do método, e ele os religa no `catch`. */
+  window.addEventListener('checkout:cotacao-alterada', (evento) => {
+    aplicarCotacao(evento.detail?.cotacao);
+    mostrarToast(mensagemDeCotacao(evento.detail?.codigo, 'compra'), 'erro');
   });
 
   if (!ids) {
@@ -356,9 +383,20 @@ function aplicarMetodosHabilitados() {
   if (primeiroDisponivel) selecionarMetodo(primeiroDisponivel.dataset.method);
 }
 
+/** A frase do 409 de cotação, pelo código: expirar não é "mudou". */
+function mensagemDeCotacao(codigo, oQue) {
+  if (codigo === 'cotacao_ausente') {
+    return `Esta tela ficou aberta tempo demais e o preço foi reconferido. Confira o valor ${oQue === 'plano' ? 'do plano' : 'da compra'} e confirme de novo.`;
+  }
+  return oQue === 'plano'
+    ? 'O valor deste plano mudou. Confira o novo valor e confirme de novo.'
+    : 'O valor desta compra mudou. Confira o novo total e confirme de novo.';
+}
+
 /* ------------------------------------------------------------------
-   MODO ASSINATURA — plano recorrente, sem lista de métodos (só
-   cartão, via Asaas Checkout RECURRENT — ver INTEGRACAO.md 6.1)
+   MODO ASSINATURA — plano recorrente. Cartão via Asaas Checkout
+   RECURRENT (`assinaturaCheckoutHandler.js`) e, quando o contratante
+   tem o método, Pix Automático (`assinaturaPixHandler.js`) — API.md §7.
 ------------------------------------------------------------------ */
 async function iniciarModoAssinatura() {
   document.getElementById('payment-methods').classList.add('hidden');
@@ -413,7 +451,7 @@ async function iniciarModoAssinatura() {
       return assinarComPix({
         contratanteId: ids.contratanteId,
         planoId: ids.planoId,
-        dadosPagador: coletarDadosPagador(),
+        dadosPagador: { ...coletarDadosPagador(), cotacaoId: obterCotacaoIdAssinatura() },
         mostrarToast
       });
     }
@@ -442,10 +480,17 @@ async function iniciarModoAssinatura() {
       dadosPagador: {
         ...coletarDadosPagador(),
         ...coletarEndereco(),
-        renovar: new URLSearchParams(window.location.search).get('renovar') ?? undefined
+        renovar: new URLSearchParams(window.location.search).get('renovar') ?? undefined,
+        cotacaoId: obterCotacaoIdAssinatura()
       },
       mostrarToast
     });
+  });
+
+  // Mesmo tratamento do 409 de cotação do pedido — ver `iniciarModoPedido`.
+  window.addEventListener('checkout:cotacao-alterada', (evento) => {
+    aplicarCotacaoAssinatura(evento.detail?.cotacao);
+    mostrarToast(mensagemDeCotacao(evento.detail?.codigo, 'plano'), 'erro');
   });
 
   if (falhou) {

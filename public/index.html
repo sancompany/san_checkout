@@ -90,6 +90,13 @@
               <span>Total</span>
               <span><span class="currency-symbol">R$</span> <span class="order-amount" id="order-amount">0,00</span></span>
             </div>
+            <!-- Cartão parcelado: "Nx de R$ …", com o valor da parcela
+                 vindo da cotação (C-02, `totais.cartao[n].valorParcela`).
+                 Vazio nos demais métodos. -->
+            <div class="breakdown-row breakdown-parcela" aria-live="polite">
+              <span></span>
+              <span id="order-parcela"></span>
+            </div>
           </div>
         </section>
       </header>
@@ -179,8 +186,9 @@
           <input type="hidden" id="address-ibge" />
         </fieldset>
 
-        <!-- Lista de métodos — só Pix nesta leva. Estrutura pronta pra
-             Cartão/Boleto/Assinatura entrarem depois, sem redesenhar. -->
+        <!-- Lista de métodos: Pix, Cartão e Boleto. Assinatura usa o
+             bloco próprio abaixo. O que aparece é decidido pelo servidor
+             (`_checkout.metodosHabilitados` / `metodosHabilitados`). -->
         <section class="payment-methods" id="payment-methods" aria-label="Forma de Pagamento">
           <div class="payment-method active" data-method="pix">
             <button type="button" class="method-row" id="method-pix" aria-expanded="true">

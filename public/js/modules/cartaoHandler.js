@@ -135,7 +135,7 @@ export async function continuarComCartao({ contratanteId, pedidoId, parcelas, da
       }, ESPERA_POS_FECHAMENTO_MS);
     });
   } catch (erro) {
-    mostrarToast(erro.message || 'Não foi possível iniciar o pagamento por cartão.', 'erro');
+    if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível iniciar o pagamento por cartão.', 'erro');
     botao.disabled = false;
     botao.textContent = textoOriginal;
   }

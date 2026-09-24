@@ -83,7 +83,7 @@ de titular de terceiro é publicado em lugar nenhum.
 
 | Onde | O quê | Observação |
 |---|---|---|
-| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado nas sete tabelas (as cinco de negócio mais as duas de auditoria da seção 7.1); só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil**. `intencoes_troca_plano` (migration 0011, 21/09/2026) é a quinta de negócio — ver nota abaixo |
+| Supabase (Postgres) | Tudo das seções 1-3 | RLS habilitado em todas as tabelas; só o backend acessa, com `service_role`. Região `sa-east-1` — **Brasil**. `intencoes_troca_plano` (migration 0011, 21/09/2026) — ver nota abaixo. **Quatro tabelas novas em 24/09/2026 (migration 0015)** — ver 5.2 |
 | Asaas | Cliente, cobrança, assinatura, subconta | Operador de pagamento; sub-processador. Provedor brasileiro |
 | Northflank | Logs da aplicação | Ver seção 7. Região `southamerica-east` — **Brasil**, medido pela API do provedor em 17/09/2026. **Esta linha dizia "Render" até 17/09/2026**, e o Render deixou de ser usado em 12/09: inventário que nomeia o fornecedor errado aponta a transferência internacional errada, que é o pior lugar para estar desatualizado |
 | Cloudflare Pages | Nada em repouso — front estático | Não recebe dado pessoal em repouso. Mas trata **dado técnico de conexão em trânsito** (IP, agente do navegador, metadados), porque é ela que entrega a página |
@@ -91,6 +91,15 @@ de titular de terceiro é publicado em lugar nenhum.
 | Cloudflare Access | Identidade do operador no login administrativo | Camada de borda do `/admin`; trata o e-mail do operador para autorizar |
 | Contratante | Payload do webhook e da conciliação | Não inclui endereço; inclui `pedidoId`, valores e, em assinatura, `documento` |
 | Contratante (navegação de volta) | Só o `pedidoId`, na URL de retorno | Desde 15/09/2026. O `returnUrl` leva o comprador de volta à loja depois de pagar e carrega **um** parâmetro, `pedido` — um id que o próprio contratante gerou e já conhece. Nenhum dado pessoal, e nenhum status de pagamento, viaja por aí (`API.md` §3.1). O destino é sempre origem do próprio contratante, conferida no servidor |
+
+### 5.2 As quatro tabelas da consolidação financeira (migration 0015, 24/09/2026)
+
+| Tabela | Guarda | Dado pessoal? | Retenção |
+|---|---|---|---|
+| `webhook_inbox` | O evento da Asaas, gravado ANTES do `200`, por **lista branca** de campos (ids, status, valores, datas, `refunds`). O `externalReference` só entra quando é a nossa referência (`reserva-<uuid>`, `troca:<id>`) — cobranças anteriores a 22/09 levavam o CPF nesse campo, e ele fica de fora | **Não** — nome, e-mail, documento, telefone, endereço e cartão nunca entram | 90 dias para `processado`/`ignorado` (expurgo diário); `falhou` esgotado fica até alguém olhar |
+| `outbox_notificacoes` | O aviso ao contratante, com o payload que ele recebe — que, em assinatura, leva `documento` (o mesmo que a seção "Contratante" acima já declara) | **Sim, `documento`**, no payload de assinatura | 90 dias para `enviada` e `abandonada` (expurgo diário) |
+| `cotacoes` | O retrato do preço mostrado ao pagador (campos financeiros do pedido/plano, descrição, itens) | **Não** — o `pagador` pré-preenchido pelo contratante NÃO entra no retrato | 24 h depois de vencida (expurgo diário) |
+| `clientes_asaas` | `hash(documento)` → id do cliente na Asaas | Documento só em **hash SHA-256**, irreversível; o id da Asaas é pseudônimo | Enquanto houver cobrança; entra no expurgo por titular quando ele pedir exclusão |
 
 ### 5.1 `intencoes_troca_plano` — nasceu em 21/09/2026, e o que ela NÃO guarda
 

@@ -68,7 +68,7 @@ import { notificarPlanoTrocado } from './webhookController.js';
 /* Os sete ciclos moram lá porque é lá que a assinatura NASCE, e o front
    espelha a mesma lista apontando para aquele arquivo. Importar em vez
    de repetir: uma segunda lista de ciclos é uma lista que envelhece. */
-import { CICLOS_VALIDOS } from './asaasCheckoutController.js';
+import { resolverCicloDoPlano } from './planoController.js';
 import {
   documentoValido,
   normalizarDocumento,
@@ -192,12 +192,11 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
       }
 
-      const cicloNovo = planoNovo?.ciclo ?? 'MONTHLY';
-      if (!CICLOS_VALIDOS.includes(cicloNovo)) {
-        return resposta.status(400).json({
-          erro: `Ciclo de assinatura inválido: "${cicloNovo}". Valores aceitos: ${CICLOS_VALIDOS.join(', ')}.`
-        });
-      }
+      /* Mesma camada canônica de ciclos da criação (M-10,
+         `utils/ciclos.js`): qualquer dos três vocabulários, conferido
+         contra o que este contratante vende, sem `MONTHLY` por omissão. */
+      const { ciclo: cicloNovo, erro: erroCiclo } = resolverCicloDoPlano(planoNovo, contratante);
+      if (erroCiclo) return resposta.status(400).json({ erro: erroCiclo });
 
       /* Estado VIVO na Asaas, não o nosso: é dela a data de vencimento
          que o acerto proporcionaliza, e é dela o ciclo (se divergir do
@@ -368,7 +367,8 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         documento,
         valor: valorNovo,
         ciclo: cicloNovo,
-        acertoCobrado: 0
+        acertoCobrado: 0,
+        assinaturaId: assinatura.id
       });
 
       resposta.json({

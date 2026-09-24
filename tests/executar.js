@@ -32,6 +32,13 @@ const SUITES = [
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
+  'src/utils/dinheiro.js',           // centavos inteiros: `Number('')`/`Number(null)` nunca viram zero (M-05)
+  'src/utils/ciclos.js',             // a camada canônica de ciclos: mensal/3/QUARTERLY são o mesmo ciclo, e nada cai em MONTHLY por omissão (M-10)
+  'src/services/transicoesFinanceiras.js', // a máquina de estados: CONFIRMED atrasado nunca desfaz um estorno (C-03)
+  'src/services/webhookInboxService.js',   // a inbox: corpo mínimo sem pessoa, idempotência por id do evento (C-01)
+  'src/services/outboxService.js',         // a outbox: entrega assinada, id único, recuo finito (H-01)
+  'src/services/cotacaoService.js',        // a cotação: o retrato do preço mostrado, comparado em centavos (C-02)
+  'src/services/reconciliacaoService.js',  // reserva órfã que virou cobrança na Asaas é completada, nunca liberada (H-06)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
   'src/services/proporcionalService.js', // o acerto da troca de plano: as sete regras do dono, em aritmética
   'src/services/classificacaoFinanceiraService.js', // veredito único PAID/DECLINED_FINAL/UNKNOWN — status ambíguo nunca é recusa por suposição
@@ -62,7 +69,11 @@ const SUITES = [
   'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
   'tests/nome-do-item-nao-passa-do-teto-da-asaas.js', // items[].name > 30 caracteres quebrava Cartão/Assinatura por inteiro
   'tests/rodape-nao-cita-identidade-antiga.js', // reidentificação pra CPF (17/09) não tocou o rodapé das telas
-  'tests/popup-fecha-ao-confirmar.js' // pop-up da Asaas ficava aberta pra sempre depois do pagamento
+  'tests/popup-fecha-ao-confirmar.js', // pop-up da Asaas ficava aberta pra sempre depois do pagamento
+  'tests/dez-cliques-uma-sessao.js',   // C-04: dez requisições simultâneas, UMA sessão/cobrança na Asaas
+  'tests/cliente-asaas-uma-vez-por-documento.js', // H-05: dez requisições simultâneas, UM cliente na Asaas
+  'tests/outbox-sobrevive-a-reinicio.js', // H-01: o aviso ao contratante sobrevive à morte do processo (dois processos de verdade)
+  'tests/segredo-nao-sai-do-admin.js'  // H-08: api_key inteira só na criação/rotação; listagem leva os 4 últimos
 ];
 
 /**

@@ -141,6 +141,37 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟢 Consolidação financeira — auditoria externa de 24/09/2026 (Codex), 22 achados + revisão própria
+
+Tudo em `docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md` (matriz,
+evidência, o que foi construído). Resumo do que FICOU aberto depois
+dela, cada item com o caminho de fechamento:
+
+- **Recusa síncrona de cartão nunca medida ao vivo** (troca de plano):
+  o desenho é conservador (nunca deriva recusa definitiva de status
+  síncrono), então não bloqueia. Fecha com um cartão de teste recusado
+  no sandbox e o payload anotado.
+- **`intencoes_troca_plano` sem expurgo próprio**: sem dado pessoal
+  direto; fecha com uma linha no `expurgarFilas` do `server.js`.
+- **`PAYMENT_DELETED` desmarcado** (`CONSTRAINTS.md` §2.2, decisão):
+  consequência achada em 24/09 — um Pix pendente apagado no painel da
+  Asaas deixa a linha local `pendente` com `charge_id`, e `POST /pix`
+  desse pedido responde `409` até alguém apagar a linha; o reconciliador
+  só olha reservas SEM `charge_id`. Fecha marcando o evento e
+  mapeando-o para `cancelado`, ou com o reconciliador reconferindo
+  `pendente` com `charge_id` velho.
+- **M-01 (token de webhook da Asaas é bearer estático)**: a Asaas não
+  oferece assinatura de corpo; o que existe é o token + a idempotência
+  pelo `id` do evento na inbox + a máquina de estados. É o teto do
+  provedor, registrado, não um furo nosso a fechar.
+- **AUD-004 (ordem dos webhooks)**: FECHADO por medição em 24/09 —
+  `GET /v3/webhooks` responde `sendType: SEQUENTIALLY`. A inbox processa
+  inline e em ordem de recebimento por isso.
+- **Fencing token verdadeiro nos arrendamentos por tempo** e
+  **`buscarOuCriarCliente` busca-então-cria** (SUS-002): o segundo
+  FECHOU em 24/09 (reivindicação antes da Asaas, RN-44); o primeiro
+  continua declarado abaixo.
+
 ### ✅ Trocar de plano redireciona o pagador ao Checkout — achado 20/09, construído e no ar em 21/09/2026
 Reabria a decisão de 17/09/2026 ("não existe tela, pagador não decide
 plano pelo checkout") depois de o dono testar o MostrAí e ver a

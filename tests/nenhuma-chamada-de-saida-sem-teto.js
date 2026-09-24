@@ -89,7 +89,7 @@ assert.deepEqual(
    o motivo de cada um. */
 const tetos = [
   ['src/services/pedidoService.js', 'TIMEOUT_MS = 45000', 'pull do contratante: tolera cold start de hospedagem gratuita, com o comprador esperando a tela'],
-  ['src/controllers/webhookController.js', 'TIMEOUT_NOTIFICACAO_MS = 10_000', 'aviso ao contratante: a Asaas espera o nosso 200, e lentidão conta como falha'],
+  ['src/services/outboxService.js', 'TIMEOUT_NOTIFICACAO_MS = 10_000', 'aviso ao contratante (outbox, desde 24/09/2026): um endpoint pendurado não pode travar a fila dos outros contratantes'],
   ['src/services/asaasService.js', 'TIMEOUT_ASAAS_MS = 20_000', 'chamada à Asaas: acima do pior tempo de sandbox, abaixo da paciência de quem está pagando']
 ];
 

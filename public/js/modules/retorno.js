@@ -54,10 +54,6 @@ export function definirRetorno(url, nomeContratante) {
   nomeDaLoja = typeof nomeContratante === 'string' && nomeContratante ? nomeContratante : null;
 }
 
-export function temRetorno() {
-  return destinoAprovado !== null;
-}
-
 /**
  * `?returnUrl=…` da URL do checkout, pronto para repassar ao backend.
  * Devolve string vazia quando não veio nada — o checkout funciona igual
@@ -135,10 +131,4 @@ export function ativarRetorno() {
   for (const evento of ['click', 'keydown', 'wheel', 'touchmove']) {
     window.addEventListener(evento, () => cancelarContagem(), { once: true });
   }
-}
-
-/** Interrompe o retorno automático — usado quando a tela sai do estado
- *  de sucesso (troca de método, por exemplo). */
-export function pararRetorno() {
-  cancelarContagem();
 }

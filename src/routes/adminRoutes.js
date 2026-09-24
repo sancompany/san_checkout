@@ -14,7 +14,12 @@ import {
   arquivarSubconta,
   listarAuditoriaWebhook,
   obterResumoWebhook,
-  listarErrosCapturados
+  listarErrosCapturados,
+  listarFilaInbox,
+  reenfileirarInbox,
+  listarFilaOutbox,
+  reenviarOutbox,
+  obterResumoFilas
 } from '../controllers/adminController.js';
 
 const router = Router();
@@ -42,5 +47,12 @@ router.get('/metricas', obterMetricas);
 router.get('/webhook/eventos', listarAuditoriaWebhook);
 router.get('/webhook/resumo', obterResumoWebhook);
 router.get('/erros', listarErrosCapturados);
+/* As filas (M-07, 24/09/2026): ver e reenviar pelo MESMO id — o reenvio
+   nunca cria um evento novo, só volta a linha para a fila. */
+router.get('/filas/resumo', obterResumoFilas);
+router.get('/filas/inbox', listarFilaInbox);
+router.post('/filas/inbox/:id/reenfileirar', reenfileirarInbox);
+router.get('/filas/outbox', listarFilaOutbox);
+router.post('/filas/outbox/:id/reenviar', reenviarOutbox);
 
 export default router;
