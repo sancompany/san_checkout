@@ -64,13 +64,22 @@ export async function assinarComPix({ contratanteId, planoId, dadosPagador, most
           document.querySelector('#assinatura-pix-resultado .status-text').textContent =
             'Assinatura ativa — os próximos pagamentos serão automáticos.';
           ativarRetorno();
+        } else if (status === 'CHECKOUT_CANCELED' || status === 'CHECKOUT_EXPIRED') {
+          // Estado terminal sem pagamento: parar de perguntar e devolver
+          // o botão — a mesma regra do polling da pop-up (`iniciarPollingPopup`).
+          pararPollingAssinaturaPix();
+          document.getElementById('assinatura-pix-resultado').classList.add('hidden');
+          botao.classList.remove('hidden');
+          botao.disabled = false;
+          botao.textContent = textoOriginal;
+          mostrarToast('A autorização expirou sem pagamento. Gere um QR Code novo.', 'erro');
         }
       } catch {
         // falha pontual de rede não derruba o polling
       }
     }, INTERVALO_POLLING_MS);
   } catch (erro) {
-    mostrarToast(erro.message || 'Não foi possível gerar a assinatura por Pix.', 'erro');
+    if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível gerar a assinatura por Pix.', 'erro');
     botao.disabled = false;
     botao.textContent = textoOriginal;
   }

@@ -542,8 +542,12 @@ export async function recuperarCobrancaBoleto(chargeId) {
 }
 
 /**
- * Estorna uma cobrança (tudo ou nada — nunca parcial nesta versão).
- * A Asaas permite parcial de verdade, mas o San Checkout não usa isso.
+ * Estorna uma cobrança — total por padrão, ou PARCIAL quando `valor`
+ * vem (desde 24/09/2026, H-04 da auditoria: antes o Checkout só sabia
+ * tudo-ou-nada, e um estorno parcial feito no painel da Asaas era
+ * colapsado em `estornado`). A Asaas aceita `value` no corpo do
+ * `POST /v3/payments/{id}/refund` para devolver só parte (doc oficial:
+ * "value — valor a ser estornado; se não informado, estorna o total").
  *
  * Boleto usa um ENDPOINT DIFERENTE e um fluxo ASSÍNCRONO (confirmado
  * na doc da Asaas): a chamada abaixo só INICIA o estorno — o pagador
@@ -551,11 +555,13 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * de verdade. Pix/Cartão continuam síncronos, mesmo endpoint de
  * sempre. Ver `refundController.js`, que usa `assincrono` pra decidir
  * entre os status locais `estornado` e `estorno_solicitado`
- * (API.md §5.4).
+ * (API.md §5.4). Boleto parcial não é oferecido: o endpoint de boleto
+ * não documenta `value`, e não foi medido — quem chama com `valor` em
+ * boleto recebe 400 ANTES de chegar aqui.
  * @param {string} chargeId
- * @param {{ metodoPagamento?: string }} [opcoes]
+ * @param {{ metodoPagamento?: string, valor?: number|null }} [opcoes]
  */
-export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
+export async function estornarCobranca(chargeId, { metodoPagamento, valor = null } = {}) {
   const assincrono = metodoPagamento === 'boleto';
   const caminho = assincrono
     ? `/v3/payments/${chargeId}/bankSlip/refund`
@@ -563,7 +569,7 @@ export async function estornarCobranca(chargeId, { metodoPagamento } = {}) {
 
   const resultado = await chamarAsaas(caminho, {
     method: 'POST',
-    body: JSON.stringify({})
+    body: JSON.stringify(valor != null ? { value: valor } : {})
   });
 
   return { status: resultado.status, assincrono };

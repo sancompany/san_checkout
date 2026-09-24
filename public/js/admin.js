@@ -123,10 +123,13 @@ const admin = {
 /* ------------------------------------------------------------------
    Utilidades de tela
 ------------------------------------------------------------------ */
+/* Escapa os CINCO caracteres — `textContent → innerHTML` só cobre
+   `& < >`, e este arquivo interpola dentro de atributos (`title="…"`,
+   `data-…="…"`), onde aspas sem escape fecham o atributo. */
 function escapar(texto) {
-  const div = document.createElement('div');
-  div.textContent = texto ?? '';
-  return div.innerHTML;
+  return String(texto ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function mostrarToast(mensagem, tipo = 'ok') {
@@ -293,7 +296,7 @@ async function rotacionarChaveContratante(id) {
   const nome = alvo?.nome ?? id;
 
   const ok = await confirmar({
-    titulo: `Trocar a chave de ${escapar(nome)}?`,
+    titulo: `Trocar a chave de ${nome}?`,
     corpo: `
       <p>A chave atual <strong>para de valer na hora</strong>. Enquanto
       o outro lado não colar a nova, este contratante não resolve pedido
@@ -325,7 +328,7 @@ async function alternarArquivoContratante(id, arquivar) {
 
   if (arquivar) {
     const ok = await confirmar({
-      titulo: `Arquivar ${escapar(nome)}?`,
+      titulo: `Arquivar ${nome}?`,
       corpo: `
         <p>O cadastro e todo o histórico de cobranças <strong>continuam
         guardados</strong> — nada é apagado.</p>
@@ -358,7 +361,7 @@ async function alternarArquivoSubconta(id, arquivar) {
 
   if (arquivar) {
     const ok = await confirmar({
-      titulo: `Arquivar ${escapar(nome)}?`,
+      titulo: `Arquivar ${nome}?`,
       corpo: `
         <p>A conta <strong>continua existindo na Asaas</strong> e continua
         recebendo split. Arquivar aqui só tira da lista deste painel.</p>

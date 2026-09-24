@@ -77,7 +77,7 @@ export async function gerarPix({ contratanteId, pedidoId, dadosPagador, mostrarT
       }
     });
   } catch (erro) {
-    mostrarToast(erro.message || 'Não foi possível gerar o Pix agora.', 'erro');
+    if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível gerar o Pix agora.', 'erro');
     btnGerar.disabled = false;
   }
 }

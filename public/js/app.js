@@ -10,7 +10,7 @@ import { gerarPix, copiarCodigoPix, pararPolling as pararPollingPix } from './mo
 import { continuarComCartao, pararPollingCartao } from './modules/cartaoHandler.js';
 import { gerarBoleto, copiarCodigoBoleto, pararPollingBoleto } from './modules/boletoHandler.js';
 import { assinarAgora } from './modules/assinaturaCheckoutHandler.js';
-import { assinarComPix, pararPollingAssinaturaPix } from './modules/assinaturaPixHandler.js';
+import { assinarComPix } from './modules/assinaturaPixHandler.js';
 import { mascararDocumento, mascararTelefone, mascararCep } from './utils/masks.js';
 import { validarDocumento, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
 import { buscarEnderecoPorCep } from './utils/cep.js';
@@ -296,8 +296,8 @@ async function iniciarModoPedido() {
      depois de mostrar X. Os botões voltam a ficar clicáveis: quem os
      desabilitou foi o handler do método, e ele os religa no `catch`. */
   window.addEventListener('checkout:cotacao-alterada', (evento) => {
-    aplicarCotacao(evento.detail);
-    mostrarToast('O valor desta compra mudou. Confira o novo total e confirme de novo.', 'erro');
+    aplicarCotacao(evento.detail?.cotacao);
+    mostrarToast(mensagemDeCotacao(evento.detail?.codigo, 'compra'), 'erro');
   });
 
   if (!ids) {
@@ -383,9 +383,20 @@ function aplicarMetodosHabilitados() {
   if (primeiroDisponivel) selecionarMetodo(primeiroDisponivel.dataset.method);
 }
 
+/** A frase do 409 de cotação, pelo código: expirar não é "mudou". */
+function mensagemDeCotacao(codigo, oQue) {
+  if (codigo === 'cotacao_ausente') {
+    return `Esta tela ficou aberta tempo demais e o preço foi reconferido. Confira o valor ${oQue === 'plano' ? 'do plano' : 'da compra'} e confirme de novo.`;
+  }
+  return oQue === 'plano'
+    ? 'O valor deste plano mudou. Confira o novo valor e confirme de novo.'
+    : 'O valor desta compra mudou. Confira o novo total e confirme de novo.';
+}
+
 /* ------------------------------------------------------------------
-   MODO ASSINATURA — plano recorrente, sem lista de métodos (só
-   cartão, via Asaas Checkout RECURRENT — ver INTEGRACAO.md 6.1)
+   MODO ASSINATURA — plano recorrente. Cartão via Asaas Checkout
+   RECURRENT (`assinaturaCheckoutHandler.js`) e, quando o contratante
+   tem o método, Pix Automático (`assinaturaPixHandler.js`) — API.md §7.
 ------------------------------------------------------------------ */
 async function iniciarModoAssinatura() {
   document.getElementById('payment-methods').classList.add('hidden');
@@ -478,8 +489,8 @@ async function iniciarModoAssinatura() {
 
   // Mesmo tratamento do 409 de cotação do pedido — ver `iniciarModoPedido`.
   window.addEventListener('checkout:cotacao-alterada', (evento) => {
-    aplicarCotacaoAssinatura(evento.detail);
-    mostrarToast('O valor deste plano mudou. Confira o novo valor e confirme de novo.', 'erro');
+    aplicarCotacaoAssinatura(evento.detail?.cotacao);
+    mostrarToast(mensagemDeCotacao(evento.detail?.codigo, 'plano'), 'erro');
   });
 
   if (falhou) {

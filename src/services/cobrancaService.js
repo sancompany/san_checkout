@@ -821,12 +821,38 @@ export async function reivindicarEstorno(chargeId) {
     .from('cobrancas')
     .update({ estornando_em: new Date().toISOString() })
     .eq('charge_id', chargeId)
-    .eq('status', 'confirmado')
+    .in('status', STATUS_ESTORNAVEIS)
     .or(`estornando_em.is.null,estornando_em.lt.${limite}`)
     .select('id');
 
   if (error) throw error;
   return Array.isArray(data) && data.length === 1;
+}
+
+/** De onde se pode estornar: `confirmado`, e `estornado_parcialmente`
+ *  (um segundo estorno parcial, ou o restante — H-04, 24/09/2026). */
+export const STATUS_ESTORNAVEIS = ['confirmado', 'estornado_parcialmente'];
+
+/**
+ * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`):
+ * status novo + `valor_estornado` acumulado. O arrendamento é liberado
+ * junto, porque num estorno PARCIAL a linha continua estornável e o
+ * próximo pedido precisa poder reivindicar sem esperar os 5 minutos.
+ */
+export async function registrarEstorno(chargeId, { status, valorEstornado }) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({
+      ...camposDeStatus(status),
+      ...(valorEstornado != null ? { valor_estornado: valorEstornado } : {}),
+      estornando_em: null
+    })
+    .eq('charge_id', chargeId);
+
+  if (error) {
+    console.error('[cobrancaService.registrarEstorno]', error.message);
+    throw error;
+  }
 }
 
 /** Devolve o arrendamento sem estornar nada — usada quando a Asaas

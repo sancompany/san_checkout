@@ -10,9 +10,8 @@
  *
  * Exercitado ao vivo em 15-16/09/2026 contra o sandbox: criação de
  * sessão (`checkoutUrl`/`asaasCheckoutId` reais, plano QUARTERLY e
- * YEARLY do testemaster), polling de status, e o pagamento em si —
- * a metade que só um cartão de teste no pop-up completa — segue no
- * `docs/pendencias.md`, gated no dono.
+ * YEARLY do testemaster), polling de status, e o pagamento em si,
+ * com cartão de teste no pop-up (`sub_qut6521d50496vkn`, 16/09/2026).
  */
 
 import { post, get } from '../utils/api.js';
@@ -129,10 +128,9 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
       }, ESPERA_POS_FECHAMENTO_MS);
     });
   } catch (erro) {
-    mostrarToast(erro.message || 'Não foi possível iniciar a assinatura agora.', 'erro');
+    if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível iniciar a assinatura agora.', 'erro');
     botao.disabled = false;
     botao.textContent = textoOriginal;
   }
 }
 
-export { pararPolling as pararPollingAssinatura };

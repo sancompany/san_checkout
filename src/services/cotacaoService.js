@@ -29,7 +29,7 @@
 
 import { createHash } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
-import { emCentavos, mesmoDinheiro } from '../utils/dinheiro.js';
+import { emCentavos, emReais, mesmoDinheiro } from '../utils/dinheiro.js';
 import { calcularTaxa, taxaComParcelasQueCabem } from './taxaService.js';
 import { valorValido, valorCobradoAceitavel, MAXIMO_DE_PARCELAS_DO_CHECKOUT } from '../utils/validadores.js';
 
@@ -56,7 +56,10 @@ export function montarTotaisPedido(pedido) {
   const cartao = {};
   for (let n = 1; n <= maxParcelas; n += 1) {
     const { taxa } = taxaComParcelasQueCabem(valorBase, n, isentar);
-    cartao[n] = taxa;
+    // O valor da parcela é decidido AQUI, em centavos — a tela só exibe
+    // (`index.html`, linha "Nx de R$ …"); nunca divide por conta própria.
+    const centavos = emCentavos(taxa?.valorCobrado);
+    cartao[n] = { ...taxa, valorParcela: centavos == null ? null : emReais(Math.round(centavos / n)) };
   }
   return {
     valorBase,
@@ -96,7 +99,7 @@ export async function exigirCotacaoParaCobrar({ cotacaoId, contratanteId, tipo, 
   );
   erro.status = 409;
   erro.codigo = cotacao ? 'cotacao_alterada' : 'cotacao_ausente';
-  erro.cotacao = { id: nova.id, expiraEm: nova.expiraEm, totais: totaisNovos, camposAlterados: diff ?? [] };
+  erro.cotacao = { id: nova.id, expiraEm: nova.expiraEm, totais: totaisNovos, retrato: nova.retrato, camposAlterados: diff ?? [] };
   throw erro;
 }
 

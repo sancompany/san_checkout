@@ -488,7 +488,7 @@ export async function consultarStatusCheckout(requisicao, resposta) {
  */
 export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   const { contratanteId, planoId } = requisicao.params;
-  let { nome, email, documento, telefone } = requisicao.body ?? {};
+  let { nome, email, documento, telefone, cotacaoId } = requisicao.body ?? {};
 
   if (!nome || !email || !documento) {
     return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
@@ -510,13 +510,23 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   try {
     const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });
 
-    const valor = Number(plano.valor ?? 0);
-    if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
-    if (!valorCobradoAceitavel(valor)) return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
-
     // Mesma camada canônica de ciclos da assinatura por cartão (M-10).
     const { ciclo, erro: erroCiclo } = resolverCicloDoPlano(plano, contratante);
     if (erroCiclo) return resposta.status(400).json({ erro: erroCiclo });
+    const planoNormalizado = { ...plano, ciclo };
+
+    /* A COTAÇÃO (C-02) vale aqui também — a tela manda o id, e este
+       caminho a ignorava (achado na revisão de 24/09/2026). O método
+       está desligado nesta conta (CONSTRAINTS §2.4), mas a invariante
+       "nunca cobra Y depois de mostrar X" não pode depender disso. */
+    const totaisNovos = montarTotaisPlano(planoNormalizado);
+    if (!totaisNovos) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    const cotacao = await exigirCotacaoParaCobrar({
+      cotacaoId, contratanteId: contratante.id, tipo: 'plano', referenciaId: planoId, origemNova: planoNormalizado, totaisNovos
+    });
+    const valor = Number(cotacao.totais?.assinatura?.valorCobrado);
+    if (!valorValido(valor)) return resposta.status(400).json({ erro: 'Valor do plano inválido.' });
+    if (!valorCobradoAceitavel(valor)) return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
 
     // O Pix Automático cobre menos ciclos que a assinatura por cartão —
     // recusa aqui, com o motivo, em vez de deixar a Asaas rejeitar com
@@ -558,6 +568,7 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
       valorCobrado: valor,
       metodoPagamento: 'assinatura_pix',
       parcelas: 1,
+      cotacaoId: cotacao.id,
       // Mesmo motivo da assinatura por cartão (criarCheckoutAssinatura):
       // `ciclo` já validado acima, gravado na criação em vez de esperado
       // de um campo não confirmado do payload da Asaas — sem isso,

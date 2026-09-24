@@ -84,6 +84,13 @@ for (const caminho of CONTROLADORES) {
       .filter(Boolean);
 
     for (const campo of campos) {
+      /* A ÚNICA exceção decidida: `valor` no `POST /estornar` é o valor a
+         DEVOLVER, não o valor a cobrar — rota autenticada pela
+         X-Checkout-Key do contratante, e o servidor o limita ao que
+         falta estornar da própria cobrança (`planejarEstorno`,
+         `refundController.js`). Estorno parcial: CONSTRAINTS.md §1.7,
+         construído em 24/09/2026 (H-04). */
+      if (caminho.endsWith('refundController.js') && campo === 'valor') { checagens += 1; continue; }
       assert.ok(
         !PROIBIDOS.includes(campo),
         `${caminho}: o corpo da requisição não pode trazer "${campo}". ` +

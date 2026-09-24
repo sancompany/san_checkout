@@ -67,7 +67,7 @@ export async function resolverAssinatura() {
        deixando o total em `R$ —` e recusando o clique. */
     const valor = Number(plano?.valor);
     if (!Number.isFinite(valor) || valor <= 0 || valor > 100000) {
-      return { ids, erro: 'Este plano está sem valor definido. Peça um link novo ao vendedor.' };
+      return { ids, erro: 'Este plano está sem valor definido. Peça um link novo à loja.' };
     }
 
     /* BLOQUEIO DECIDIDO NO SERVIDOR (piso de valor da Asaas).
@@ -102,18 +102,41 @@ export function obterCotacaoIdAssinatura() {
   return contextoResolvido?.plano?._checkout?.cotacao?.id ?? null;
 }
 
-/** Cotação nova vinda de um 409: substitui e redesenha o valor. */
+/** Cotação nova vinda de um 409: substitui e redesenha o que o retrato
+ *  cobre — nome, ciclo e valor do plano (`CAMPOS_FINANCEIROS_PLANO` no
+ *  servidor). Um plano que mudou de MONTHLY para YEARLY não pode mostrar
+ *  o valor novo debaixo de "cobrança mensal". Sem valor utilizável, o
+ *  botão de assinar trava — mesma regra do carregamento. */
 export function aplicarCotacaoAssinatura(cotacao) {
   if (!contextoResolvido?.plano?._checkout || !cotacao?.id) return;
   contextoResolvido.plano._checkout.cotacao = cotacao;
+  const plano = contextoResolvido.plano;
+  if (cotacao.retrato && typeof cotacao.retrato === 'object') {
+    for (const campo of ['nome', 'ciclo', 'valor']) {
+      if (campo in cotacao.retrato) plano[campo] = cotacao.retrato[campo];
+    }
+    const titulo = document.getElementById('order-title');
+    if (titulo) titulo.textContent = plano.nome ?? 'Plano';
+    const descricao = document.getElementById('order-description');
+    if (descricao) {
+      const cicloTexto = plano.ciclo ? ` — cobrança ${rotularCiclo(plano.ciclo)}` : '';
+      descricao.textContent = `${plano.descricao ?? ''}${cicloTexto}`.trim();
+      descricao.classList.toggle('hidden', !descricao.textContent);
+    }
+  }
   const valor = Number(cotacao.totais?.assinatura?.valorCobrado);
-  const texto = Number.isFinite(valor) && valor > 0
+  const utilizavel = Number.isFinite(valor) && valor > 0;
+  const texto = utilizavel
     ? valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : '—';
   const subtotal = document.getElementById('order-subtotal');
   const total = document.getElementById('order-amount');
   if (subtotal) subtotal.textContent = `R$ ${texto}`;
   if (total) total.textContent = texto;
+  for (const id of ['btn-assinar', 'btn-assinar-pix']) {
+    const botao = document.getElementById(id);
+    if (botao) botao.disabled = !utilizavel;
+  }
 }
 
 export function rotularCiclo(ciclo) {

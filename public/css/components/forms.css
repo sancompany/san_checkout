@@ -62,7 +62,7 @@ select:focus { border-color: var(--border-focus); box-shadow: var(--shadow-input
 @keyframes spin { to { transform: rotate(360deg); } }
 .pix-copy-group { width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .copy-input-wrapper { display: flex; gap: 8px; }
-.copy-input-wrapper input { font-size: 0.8125rem; color: var(--text-secondary); background-color: var(--bg-summary); }
+.copy-input-wrapper input { min-width: 0; font-size: 0.8125rem; color: var(--text-secondary); background-color: var(--bg-summary); }
 .pix-status-tracker { display: inline-flex; align-items: center; gap: 8px; background-color: var(--bg-summary); border: 1px solid var(--border-color); padding: 8px 14px; border-radius: 20px; }
 .status-pulse { width: 8px; height: 8px; border-radius: 50%; background-color: var(--status-warning); animation: pulse 1.8s infinite; }
 @keyframes pulse { 0% { transform: scale(0.95); } 70% { transform: scale(1); } 100% { transform: scale(0.95); } }

@@ -529,7 +529,13 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     // nada a gravar de status; o vínculo já foi feito em vincularPrimeiraCobrancaDoCheckout
   } else {
     const decisao = decidirTransicao(cobranca, novoStatus, ocorridoEm);
-    if (decisao.acao === 'ignorar') {
+    /* Um SEGUNDO estorno parcial chega com o MESMO status e um acumulado
+       maior — "mesmo status" aqui não é reentrega, é dinheiro novo saindo.
+       Só o valor avança; se não avançou, é reentrega de verdade. */
+    const segundoParcial = decisao.acao === 'ignorar'
+      && novoStatus === 'estornado_parcialmente' && cobranca.status === 'estornado_parcialmente'
+      && valorEstornado !== null && (emCentavos(valorEstornado) ?? 0) > (emCentavos(cobranca.valor_estornado) ?? 0);
+    if (decisao.acao === 'ignorar' && !segundoParcial) {
       if (cobranca.status !== novoStatus) console.log(`[webhook/pagamento] ${chargeId}: ${decisao.motivo} — ignorado`);
       return;
     }
@@ -821,10 +827,14 @@ export function montarPayloadAssinatura(cobranca, { evento, assinaturaId, charge
 
 /** Chave de idempotência do FATO: o mesmo fato, por qualquer caminho,
  *  cai na mesma linha da outbox. */
-function chaveDoFato({ tipo, evento, chargeId, assinaturaId, statusFinanceiro, cobranca }) {
-  if (tipo === 'pedido') return `pedido|${chargeId}|${statusFinanceiro}`;
+function chaveDoFato({ tipo, evento, chargeId, assinaturaId, statusFinanceiro, valorEstornado, cobranca }) {
+  /* Cada estorno PARCIAL é um fato próprio — dois parciais sobre a mesma
+     cobrança têm acumulados diferentes, e o segundo não pode cair na
+     linha do primeiro (que já foi entregue). */
+  const sufixoParcial = statusFinanceiro === 'estornado_parcialmente' ? `|${emCentavos(valorEstornado) ?? 0}` : '';
+  if (tipo === 'pedido') return `pedido|${chargeId}|${statusFinanceiro}${sufixoParcial}`;
   const referencia = chargeId ?? assinaturaId ?? cobranca?.asaas_checkout_id ?? cobranca?.id;
-  return `assinatura|${referencia}|${evento}${statusFinanceiro ? `|${statusFinanceiro}` : ''}`;
+  return `assinatura|${referencia}|${evento}${statusFinanceiro ? `|${statusFinanceiro}` : ''}${sufixoParcial}`;
 }
 
 async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEstornado, ocorridoEm }, deps) {
@@ -834,7 +844,7 @@ async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEsto
     contratante,
     tipo: 'pedido',
     evento: statusFinanceiro,
-    chave: chaveDoFato({ tipo: 'pedido', chargeId, statusFinanceiro }),
+    chave: chaveDoFato({ tipo: 'pedido', chargeId, statusFinanceiro, valorEstornado }),
     payload: montarPayloadConfirmacaoPedido(cobranca, chargeId, statusFinanceiro, { valorEstornado }),
     ocorridoEm
   });
@@ -1077,6 +1087,18 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', valor_cobrado: 100 } });
   await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1' } }, deps);
   assert.equal(deps.chamou('aplicarTransicao')[0].args[1].valorEstornado, null, 'sem refunds no payload, valorEstornado é null — nunca 0');
+  // SEGUNDO parcial: mesmo status, acumulado maior — grava e notifica com chave própria
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado_parcialmente', valor_cobrado: 100, valor_estornado: 30 } });
+  await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1', refunds: [{ status: 'DONE', value: 30 }, { status: 'DONE', value: 20 }] } }, deps);
+  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].valorEstornado, 50, 'segundo parcial avança o acumulado');
+  n = deps.notificados();
+  assert.equal(n.length, 1);
+  assert.equal(n[0].chave, 'pedido|pay_1|estornado_parcialmente|5000', 'cada parcial é um fato próprio — chave leva o acumulado em centavos');
+  // ...mas a REENTREGA do mesmo parcial (acumulado igual) é ignorada
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado_parcialmente', valor_cobrado: 100, valor_estornado: 30 } });
+  await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1', refunds: [{ status: 'DONE', value: 30 }] } }, deps);
+  assert.equal(deps.chamou('aplicarTransicao').length, 0, 'reentrega do mesmo parcial não grava');
+  assert.equal(deps.notificados().length, 0, 'nem notifica');
 
   // 5. evento desconhecido / corpo vazio: nenhum efeito
   deps = depsFalsas();

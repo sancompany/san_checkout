@@ -160,6 +160,8 @@ input, select { font-family: inherit; font-size: inherit; }
   border-radius: var(--radius-card); box-shadow: var(--shadow-elevated); overflow: hidden;
 }
 .tabela-rolagem { overflow-x: auto; }
+.painel-topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--border-color); }
+.painel-titulo { font-size: 0.875rem; font-weight: 600; margin: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 thead th {
   text-align: left; font-weight: 600; font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase;
