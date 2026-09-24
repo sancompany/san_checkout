@@ -87,8 +87,10 @@ export const CICLOS_VALIDOS = [
  *
  * @returns {{tipo:'criada', asaasCheckoutId}|{tipo:'reaproveitada', asaasCheckoutId}|{tipo:'em_andamento'}}
  */
-async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }) {
-  const r = await reservarCobrancaPopup(reserva);
+const dependenciasDaReserva = { reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas };
+
+export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }, deps = dependenciasDaReserva) {
+  const r = await deps.reservarCobrancaPopup(reserva);
   if (!r.reservada) {
     if (r.existente?.asaas_checkout_id) return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
     return { tipo: 'em_andamento' };
@@ -98,13 +100,13 @@ async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto
   try {
     ({ asaasCheckoutId } = await criarSessao(`reserva-${r.id}`));
   } catch (erroAsaas) {
-    if (foiRecusaLimpaDaAsaas(erroAsaas)) {
-      await liberarReservaCobranca(r.id);
+    if (deps.foiRecusaLimpaDaAsaas(erroAsaas)) {
+      await deps.liberarReservaCobranca(r.id);
     } else {
       // Ambíguo: a sessão pode existir. A reserva FICA — o webhook
       // `CHECKOUT_*` a encontra pela referência externa, e o
       // reconciliador expira o que nunca virou sessão.
-      await registrarErro(
+      await deps.registrarErro(
         new Error(`${contexto}: criação da sessão na Asaas falhou de forma AMBÍGUA (reserva ${r.id}): ${erroAsaas.message}. Reserva mantida; externalReference "reserva-${r.id}".`),
         { contexto, rota: `checkout/${contexto}`, metodo: 'POST' }
       );

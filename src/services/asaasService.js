@@ -9,7 +9,7 @@
  * em outra coisa.
  */
 
-import { createHash } from 'node:crypto';
+import crypto, { createHash } from 'node:crypto';
 import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
 import { supabase } from '../config/supabase.js';
 
@@ -212,47 +212,112 @@ export async function tipoDaContaMae() {
  * Então busca-então-cria é corrida: duas requisições simultâneas do
  * mesmo comprador não acham nada e criam dois clientes.
  *
- * A unicidade mora na NOSSA tabela `clientes_asaas` (migration 0015):
+ * A unicidade mora na NOSSA tabela `clientes_asaas` (migration 0015), e
+ * a reivindicação acontece ANTES de falar com a Asaas — a primeira
+ * versão gravava DEPOIS, o que só decidia qual id ficava e deixava as
+ * N requisições simultâneas criarem N clientes lá (achado ao escrever
+ * o teste de concorrência, 24/09/2026):
  *  1. já temos o id para este documento neste ambiente → devolve;
- *  2. não temos → busca na Asaas por `cpfCnpj` (cliente que existia
- *     antes desta tabela) e, sem achar, cria;
- *  3. grava o par (documento em hash, id). Se OUTRA requisição gravou
- *     primeiro (chave primária), o id dela vence e é o que se devolve —
- *     o cliente que esta chamada criou fica sem uso, o que é qualidade
- *     de cadastro na Asaas, nunca cobrança em dobro.
+ *  2. não temos → INSERE uma reivindicação (`pendente:<uuid>`) na chave
+ *     primária. Quem venceu busca na Asaas por `cpfCnpj` (cliente que
+ *     existia antes desta tabela) e, sem achar, cria — UMA vez — e
+ *     grava o id real por cima da reivindicação;
+ *  3. quem perdeu ESPERA a reivindicação virar id (até o teto de uma
+ *     chamada à Asaas). Se o vencedor morreu no meio, a reivindicação
+ *     envelhece e o próximo assume.
  *
  * Documento só em hash: o que se precisa depois é o id do cliente,
  * nunca o documento de volta (Lei 10).
  */
-export async function buscarOuCriarCliente({ nome, email, documento }) {
-  const ambiente = ambienteAsaas();
-  const documentoHash = createHash('sha256').update(String(documento)).digest('hex');
+const PREFIXO_REIVINDICACAO = 'pendente:';
+const SEGUNDOS_ATE_REIVINDICACAO_ENVELHECER = 30;
+const INTERVALO_ESPERA_MS = 250;
 
-  const { data: conhecido } = await supabase
-    .from('clientes_asaas')
-    .select('asaas_customer_id')
-    .eq('ambiente', ambiente)
-    .eq('documento_hash', documentoHash)
-    .maybeSingle();
-  if (conhecido?.asaas_customer_id) return conhecido.asaas_customer_id;
-
-  const clienteId = await buscarOuCriarClienteNaAsaas({ nome, email, documento });
-
-  const { error } = await supabase
-    .from('clientes_asaas')
-    .insert({ ambiente, documento_hash: documentoHash, asaas_customer_id: clienteId });
-  if (error?.code === '23505') {
-    const { data: vencedor } = await supabase
+const dependenciasDeCliente = {
+  lerConhecido: async (ambiente, documentoHash) => {
+    const { data } = await supabase
+      .from('clientes_asaas').select('asaas_customer_id, criado_em')
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).maybeSingle();
+    return data ?? null;
+  },
+  reivindicar: async (ambiente, documentoHash, marca) => {
+    const { error } = await supabase
       .from('clientes_asaas')
-      .select('asaas_customer_id')
-      .eq('ambiente', ambiente)
-      .eq('documento_hash', documentoHash)
-      .maybeSingle();
-    return vencedor?.asaas_customer_id ?? clienteId;
-  }
-  if (error) console.error('[asaasService.buscarOuCriarCliente] não gravou clientes_asaas:', error.message);
-  return clienteId;
+      .insert({ ambiente, documento_hash: documentoHash, asaas_customer_id: marca });
+    if (!error) return true;
+    if (error.code === '23505') return false;
+    throw error;
+  },
+  assumirEnvelhecida: async (ambiente, documentoHash, marca, limiteIso) => {
+    const { data, error } = await supabase
+      .from('clientes_asaas')
+      .update({ asaas_customer_id: marca, criado_em: new Date().toISOString() })
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash)
+      .like('asaas_customer_id', `${PREFIXO_REIVINDICACAO}%`)
+      .lt('criado_em', limiteIso)
+      .select('documento_hash');
+    if (error) throw error;
+    return Array.isArray(data) && data.length === 1;
+  },
+  gravar: async (ambiente, documentoHash, marca, clienteId) => {
+    const { error } = await supabase
+      .from('clientes_asaas')
+      .update({ asaas_customer_id: clienteId })
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).eq('asaas_customer_id', marca);
+    if (error) console.error('[asaasService.buscarOuCriarCliente] não gravou clientes_asaas:', error.message);
+  },
+  liberar: async (ambiente, documentoHash, marca) => {
+    await supabase.from('clientes_asaas').delete()
+      .eq('ambiente', ambiente).eq('documento_hash', documentoHash).eq('asaas_customer_id', marca);
+  },
+  buscarOuCriarNaAsaas: (dados) => buscarOuCriarClienteNaAsaas(dados),
+  dormir: (ms) => new Promise((r) => setTimeout(r, ms)),
+  agora: () => Date.now(),
+  ambiente: () => ambienteAsaas(),
+  tetoEsperaMs: () => TIMEOUT_ASAAS_MS
+};
+
+export function criarBuscadorDeCliente(deps = dependenciasDeCliente) {
+  const ehReivindicacao = (id) => typeof id === 'string' && id.startsWith(PREFIXO_REIVINDICACAO);
+
+  return async function buscarOuCriarCliente({ nome, email, documento }) {
+    const ambiente = deps.ambiente();
+    const documentoHash = createHash('sha256').update(String(documento)).digest('hex');
+    const marca = `${PREFIXO_REIVINDICACAO}${crypto.randomUUID()}`;
+
+    const conhecido = await deps.lerConhecido(ambiente, documentoHash);
+    if (conhecido && !ehReivindicacao(conhecido.asaas_customer_id)) return conhecido.asaas_customer_id;
+
+    let venceu = !conhecido && await deps.reivindicar(ambiente, documentoHash, marca);
+
+    if (!venceu) {
+      // Outra requisição está criando (ou já criou). Espera o id real.
+      const inicio = deps.agora();
+      while (deps.agora() - inicio < deps.tetoEsperaMs()) {
+        const atual = await deps.lerConhecido(ambiente, documentoHash);
+        if (atual && !ehReivindicacao(atual.asaas_customer_id)) return atual.asaas_customer_id;
+        if (atual) {
+          const limite = new Date(deps.agora() - SEGUNDOS_ATE_REIVINDICACAO_ENVELHECER * 1000).toISOString();
+          if (new Date(atual.criado_em).getTime() < new Date(limite).getTime()
+            && await deps.assumirEnvelhecida(ambiente, documentoHash, marca, limite)) { venceu = true; break; }
+        } else if (await deps.reivindicar(ambiente, documentoHash, marca)) { venceu = true; break; }
+        await deps.dormir(INTERVALO_ESPERA_MS);
+      }
+      if (!venceu) throw new Error('Não foi possível obter o cadastro do pagador a tempo. Tente de novo em instantes.');
+    }
+
+    try {
+      const clienteId = await deps.buscarOuCriarNaAsaas({ nome, email, documento });
+      await deps.gravar(ambiente, documentoHash, marca, clienteId);
+      return clienteId;
+    } catch (erro) {
+      await deps.liberar(ambiente, documentoHash, marca).catch(() => {});
+      throw erro;
+    }
+  };
 }
+
+export const buscarOuCriarCliente = criarBuscadorDeCliente();
 
 async function buscarOuCriarClienteNaAsaas({ nome, email, documento }) {
   const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });

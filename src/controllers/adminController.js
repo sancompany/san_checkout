@@ -136,7 +136,7 @@ export async function listarContratantes(requisicao, resposta) {
 }
 
 /** `api_key` → `api_key_final` (últimos 4). Nunca a chave inteira. */
-function mascararChave(contratante) {
+export function mascararChave(contratante) {
   if (!contratante) return contratante;
   const { api_key: chave, ...resto } = contratante;
   return { ...resto, api_key_final: typeof chave === 'string' && chave.length >= 4 ? chave.slice(-4) : null };
@@ -480,7 +480,8 @@ export async function listarSubcontas(requisicao, resposta) {
 
   const { data, error } = await consulta;
   if (error) return responderErro(resposta, error, 'admin.listarSubcontas');
-  resposta.json(data);
+  // A chave da subconta também não sai em listagem (H-08).
+  resposta.json((data ?? []).map(mascararChave));
 }
 
 /**
