@@ -54,6 +54,7 @@ import {
 } from '../services/asaasService.js';
 import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
+import { VERSAO_WEBHOOK } from './webhookController.js';
 
 /** Status locais em que ainda faz sentido mostrar como pagar. */
 /* ⚠️ A MESMA lista existe em `services/metricaService.js`, com o nome
@@ -343,7 +344,7 @@ export async function consultarCobranca(requisicao, resposta) {
     // o contratante reaproveita o código que já escreveu pra tratar a
     // notificação, sem um segundo parser.
     resposta.json({
-      versao: 1,
+      versao: VERSAO_WEBHOOK,
       pedidoId: cobranca.pedido_id,
       chargeId: cobranca.charge_id,
       status,
@@ -438,7 +439,7 @@ export async function consultarAssinatura(requisicao, resposta) {
     const assinaturaViva = await assinaturaAtualizada(assinatura);
 
     resposta.json({
-      versao: 1,
+      versao: VERSAO_WEBHOOK,
       tipo: 'assinatura',
       planoId,
       documento,
