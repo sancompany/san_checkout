@@ -4,10 +4,10 @@
 > quem retomar lê isto primeiro.
 
 ## Fase atual
-**Checkpoint C/D construídos e testados (53/53), migration 0015 aplicada
-em produção (sandbox financeiro).** Falta: E/F (docs de contrato v2 +
-lado MostrAí), H/I/J (front, legado, testes novos), K–O (matriz, E2E
-sandbox, deploy, break test, Access), P (relatório final).
+**Concluída em 24/09/2026.** PR #42 mesclado e no ar (`899fa5f`),
+MostrAí `78235a7` no ar, E2E sandbox e matriz MostrAí × Checkout verdes,
+Access ON. Relatório: `docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md`.
+Resta o PR #43 (consultas 5.2/5.3 com `versao: 2` + este relatório).
 
 ## Estado provado em 24/09/2026 (Fase 0)
 | item | valor | como se provou |
@@ -38,8 +38,8 @@ sandbox, deploy, break test, Access), P (relatório final).
 - `contratantes.ciclos_permitidos`; `mostrai` = MONTHLY/QUARTERLY/SEMIANNUALLY/YEARLY
 
 ## Último commit / deploy
-- origin/main servido: `f7b1cb9` (backend e Pages)
-- branch `claude/nifty-meitner-4ffp9s`: checkpoint C/D (ver `git log`)
+- origin/main servido: `899fa5f` (Northflank `deployedSHA` conferido; Pages em `main`)
+- MostrAí: `main = 78235a7`, deployado (Northflank `mostrai`)
 - migrations: 0001–0015 aplicadas
 - Access: ON
 
@@ -49,6 +49,5 @@ aplicada ANTES do deploy de propósito (código antigo ignora as tabelas
 novas; código novo sem as tabelas quebraria o receptor de webhook).
 
 ## Próxima ação
-Checkpoint E/F: `API.md`/`INTEGRACAO.md`/`docs/funcional.md` para o
-contrato v2; lado MostrAí (`/home/user/mostrai`); depois testes novos
-obrigatórios, E2E sandbox, mescla em `main`.
+Nenhuma automática. Do dono: troca da Asaas para produção (hard gate).
+Declarados em `docs/pendencias.md` ("Consolidação financeira").
