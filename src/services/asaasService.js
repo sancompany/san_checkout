@@ -9,7 +9,9 @@
  * em outra coisa.
  */
 
-import { getConfigAsaas, montarCallbackPadrao } from '../config/asaas.js';
+import { createHash } from 'node:crypto';
+import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
+import { supabase } from '../config/supabase.js';
 
 /**
  * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
@@ -199,8 +201,60 @@ export async function tipoDaContaMae() {
   };
 }
 
-/** Busca cliente por CPF/CNPJ; cria se não existir. */
+/**
+ * Cliente por documento — IDEMPOTENTE deste lado (H-05 da auditoria de
+ * 24/09/2026).
+ *
+ * A doc oficial de `POST /v3/customers` (lida em 24/09/2026) diz, em
+ * português claro: "A API permite a criação de clientes duplicados. Se
+ * sua integração exigir unicidade cadastral, consulte os clientes
+ * existentes antes da criação." Não há chave de idempotência na API.
+ * Então busca-então-cria é corrida: duas requisições simultâneas do
+ * mesmo comprador não acham nada e criam dois clientes.
+ *
+ * A unicidade mora na NOSSA tabela `clientes_asaas` (migration 0015):
+ *  1. já temos o id para este documento neste ambiente → devolve;
+ *  2. não temos → busca na Asaas por `cpfCnpj` (cliente que existia
+ *     antes desta tabela) e, sem achar, cria;
+ *  3. grava o par (documento em hash, id). Se OUTRA requisição gravou
+ *     primeiro (chave primária), o id dela vence e é o que se devolve —
+ *     o cliente que esta chamada criou fica sem uso, o que é qualidade
+ *     de cadastro na Asaas, nunca cobrança em dobro.
+ *
+ * Documento só em hash: o que se precisa depois é o id do cliente,
+ * nunca o documento de volta (Lei 10).
+ */
 export async function buscarOuCriarCliente({ nome, email, documento }) {
+  const ambiente = ambienteAsaas();
+  const documentoHash = createHash('sha256').update(String(documento)).digest('hex');
+
+  const { data: conhecido } = await supabase
+    .from('clientes_asaas')
+    .select('asaas_customer_id')
+    .eq('ambiente', ambiente)
+    .eq('documento_hash', documentoHash)
+    .maybeSingle();
+  if (conhecido?.asaas_customer_id) return conhecido.asaas_customer_id;
+
+  const clienteId = await buscarOuCriarClienteNaAsaas({ nome, email, documento });
+
+  const { error } = await supabase
+    .from('clientes_asaas')
+    .insert({ ambiente, documento_hash: documentoHash, asaas_customer_id: clienteId });
+  if (error?.code === '23505') {
+    const { data: vencedor } = await supabase
+      .from('clientes_asaas')
+      .select('asaas_customer_id')
+      .eq('ambiente', ambiente)
+      .eq('documento_hash', documentoHash)
+      .maybeSingle();
+    return vencedor?.asaas_customer_id ?? clienteId;
+  }
+  if (error) console.error('[asaasService.buscarOuCriarCliente] não gravou clientes_asaas:', error.message);
+  return clienteId;
+}
+
+async function buscarOuCriarClienteNaAsaas({ nome, email, documento }) {
   const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });
   if (busca.data?.length) return busca.data[0].id;
 
@@ -383,7 +437,8 @@ export async function criarSessaoAsaasCheckout({
   subscription,
   customerData,
   splits,
-  minutesToExpire = 60
+  externalReference,
+  minutesToExpire = MINUTOS_DE_SESSAO_DE_CHECKOUT
 }) {
   const resposta = await chamarAsaas('/v3/checkouts', {
     method: 'POST',
@@ -393,6 +448,14 @@ export async function criarSessaoAsaasCheckout({
       minutesToExpire,
       items: itens,
       callback: montarCallbackPadrao(),
+      /* `externalReference` = `reserva-<id da linha local>` (C-04):
+         conferido na doc de `POST /v3/checkouts` em 24/09/2026
+         ("Identificador do checkout no seu sistema"), e medido em
+         tráfego real que `CHECKOUT_PAID` o devolve em
+         `checkout.externalReference`. É por ele que uma sessão cuja
+         resposta se perdeu (timeout) ainda encontra a reserva local
+         quando o webhook chegar. */
+      ...(externalReference ? { externalReference } : {}),
       ...(installment ? { installment } : {}),
       ...(subscription ? { subscription } : {}),
       ...(customerData ? { customerData } : {}),
@@ -401,6 +464,26 @@ export async function criarSessaoAsaasCheckout({
   });
 
   return { asaasCheckoutId: resposta.id };
+}
+
+/** Quanto tempo uma sessão de pop-up fica pagável. A reserva local
+ *  (`cobrancaService.reservarCobrancaPopup`) usa o MESMO número, mais
+ *  folga, para considerar travada uma reserva cujo `CHECKOUT_EXPIRED`
+ *  nunca chegou. */
+export const MINUTOS_DE_SESSAO_DE_CHECKOUT = 60;
+
+/**
+ * Pagamentos por `externalReference` (H-06): é assim que a reconciliação
+ * descobre se uma reserva local sem `charge_id` — timeout na criação —
+ * virou cobrança de verdade do lado da Asaas. `GET /v3/payments`
+ * aceita o filtro (doc oficial, lida em 24/09/2026).
+ */
+export async function listarPagamentosPorReferenciaExterna(referenciaExterna) {
+  const resposta = await chamarAsaas(
+    `/v3/payments?externalReference=${encodeURIComponent(referenciaExterna)}&limit=10`,
+    { method: 'GET' }
+  );
+  return Array.isArray(resposta?.data) ? resposta.data : [];
 }
 
 /** Status atual de uma cobrança. */

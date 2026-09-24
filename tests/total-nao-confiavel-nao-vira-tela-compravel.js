@@ -52,14 +52,23 @@ conferir(valorValido(100001) === false, 'valorValido deve recusar acima do teto'
 
 // 2. Leitura do pedido: a rota que a tela consulta não pode publicar
 //    taxa (e portanto total) para uma base que a cobrança recusaria.
+/* Desde 24/09/2026 (C-02) a régua mora em `cotacaoService.montarTotaisPedido`:
+   ela devolve `null` quando `valorValido(valorBase)` falha, e o
+   controlador publica `taxa: totais?.pix ?? null` — o mesmo `null` que
+   derruba a tela para o estado Indisponível. */
 const pedidoController = ler('src/controllers/pedidoController.js');
+const cotacaoService = ler('src/services/cotacaoService.js');
 conferir(
-  /import\s*\{[^}]*\bvalorValido\b[^}]*\}\s*from\s*'\.\.\/utils\/validadores\.js'/.test(pedidoController),
-  'pedidoController deve importar valorValido — é a régua do caminho que cobra'
+  /import\s*\{[^}]*\bmontarTotaisPedido\b[^}]*\}\s*from\s*'\.\.\/services\/cotacaoService\.js'/.test(pedidoController),
+  'pedidoController deve montar os totais pela cotação — é lá que mora a régua do caminho que cobra'
 );
 conferir(
-  /valorValido\(valorBase\)\s*\r?\n?\s*\?\s*calcularTaxa\(/.test(pedidoController),
-  'pedidoController só pode calcular taxa quando valorValido(valorBase) — senão anuncia total que a cobrança vai recusar'
+  /if \(!valorValido\(valorBase\)\) return null;/.test(cotacaoService),
+  'montarTotaisPedido devolve null quando valorValido(valorBase) falha — senão anuncia total que a cobrança vai recusar'
+);
+conferir(
+  /const taxa = totais\?\.pix \?\? null;/.test(pedidoController),
+  'pedidoController publica taxa: null quando não há totais — é isso que a tela lê como Indisponível'
 );
 
 // 3. Tela do pedido: o guarda que derruba o carregamento quando o total

@@ -26,7 +26,7 @@
  */
 
 import { resolverPedido } from '../services/pedidoService.js';
-import { calcularTaxa } from '../services/taxaService.js';
+import { exigirCotacaoParaCobrar, montarTotaisPedido, marcarCotacaoUsada } from '../services/cotacaoService.js';
 import {
   buscarOuCriarCliente,
   criarCobrancaPix,
@@ -43,7 +43,7 @@ import {
   buscarCobrancaPendenteDoPedido
 } from '../services/cobrancaService.js';
 import {
-  documentoValido, emailValido, valorValido, nomeValido, telefoneValido,
+  documentoValido, emailValido, nomeValido, telefoneValido,
   normalizarDocumento,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
 } from '../utils/validadores.js';
@@ -66,6 +66,8 @@ function gerarReferenciaExterna(reservaId) {
 
 const dependenciasPadrao = {
   resolverPedido,
+  exigirCotacaoParaCobrar,
+  marcarCotacaoUsada,
   buscarOuCriarCliente,
   criarCobrancaPix,
   criarCobrancaBoleto,
@@ -148,9 +150,30 @@ async function cobrarComReserva(deps, { contratanteId, pedidoId, metodoPagamento
 }
 
 export function criarCheckoutController(deps = dependenciasPadrao) {
+  /**
+   * O PORTÃO DA COTAÇÃO (C-02), compartilhado por Pix e Boleto. Relê o
+   * pull (o pedido pode ter sido pago/cancelado/expirado desde a tela),
+   * exige a cotação que a tela recebeu, e devolve os TOTAIS gravados
+   * nela — é isso que se cobra, nunca o pull novo. Divergência vira 409
+   * com cotação nova (a tela reconfirma).
+   */
+  async function cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo }) {
+    const { contratante, pedido } = await deps.resolverPedido(contratanteId, pedidoId, { metodoRequerido: metodo });
+    const totaisNovos = montarTotaisPedido(pedido);
+    if (!totaisNovos) {
+      const erro = new Error('Valor do pedido inválido.');
+      erro.status = 400;
+      throw erro;
+    }
+    const cotacao = await deps.exigirCotacaoParaCobrar({
+      cotacaoId, contratanteId: contratante.id, tipo: 'pedido', referenciaId: pedidoId, origemNova: pedido, totaisNovos
+    });
+    return { contratante, pedido, cotacao, total: cotacao.totais?.[metodo] ?? null };
+  }
+
   async function gerarPix(requisicao, resposta) {
     const { contratanteId, pedidoId } = requisicao.params;
-    let { nome, email, documento, telefone } = requisicao.body ?? {};
+    let { nome, email, documento, telefone, cotacaoId } = requisicao.body ?? {};
 
     if (!nome || !email || !documento) {
       return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
@@ -164,9 +187,9 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
     try {
-      const { contratante, pedido } = await deps.resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'pix' });
-
-      // Antes de criar: esse pedido já tem Pix pendente e pagável?
+      // Antes de criar: esse pedido já tem Pix pendente e pagável? Um
+      // Pix já criado foi cobrado pela cotação da hora dele — reaproveitar
+      // é o que impede o segundo Pix igualmente pagável.
       const jaExiste = await reaproveitarCobrancaPendente(deps, {
         contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
       });
@@ -179,12 +202,10 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         });
       }
 
-      const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);
-      if (!valorValido(valorBase)) {
-        return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
-      }
-
-      const { taxaAsaas, taxaPropria, valorCobrado } = calcularTaxa(valorBase, 'pix', 1, Boolean(pedido.isentarTaxa));
+      const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'pix' });
+      if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
+      const { taxaAsaas, taxaPropria, valorCobrado } = total;
+      const valorBase = Number(cotacao.totais.valorBase);
 
       if (!valorCobradoAceitavel(valorCobrado)) {
         return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
@@ -239,8 +260,10 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         taxaAsaas,
         taxaPropria,
         taxaIsenta: Boolean(pedido.isentarTaxa),
-        valorCobrado
+        valorCobrado,
+        cotacaoId: cotacao.id
       });
+      void deps.marcarCotacaoUsada(cotacao.id);
 
       resposta.json({ chargeId, qrCodeBase64, copiaECola });
     } catch (erro) {
@@ -266,7 +289,7 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
    */
   async function gerarBoleto(requisicao, resposta) {
     const { contratanteId, pedidoId } = requisicao.params;
-    let { nome, email, documento, telefone } = requisicao.body ?? {};
+    let { nome, email, documento, telefone, cotacaoId } = requisicao.body ?? {};
 
     if (!nome || !email || !documento) {
       return resposta.status(400).json({ erro: 'Nome, e-mail e CPF/CNPJ são obrigatórios.' });
@@ -279,15 +302,6 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
 
     try {
-      const { contratante, pedido } = await deps.resolverPedido(contratanteId, pedidoId, { metodoRequerido: 'boleto' });
-
-      // Reforço de segurança — o front já esconde o Boleto quando o
-      // pedido tem expiraEm (API.md §4.1), mas o backend NUNCA
-      // confia só na validação do front.
-      if (pedido.expiraEm) {
-        return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });
-      }
-
       // Boleto duplicado é pior que Pix duplicado: o antigo segue pagável
       // por dias. Mesma checagem, mesmo motivo.
       const jaExiste = await reaproveitarCobrancaPendente(deps, {
@@ -304,12 +318,17 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         });
       }
 
-      const valorBase = Number(pedido.valorComDesconto ?? 0) + Number(pedido.frete ?? 0);
-      if (!valorValido(valorBase)) {
-        return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
-      }
+      const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'boleto' });
 
-      const { taxaAsaas, taxaPropria, valorCobrado } = calcularTaxa(valorBase, 'boleto', 1, Boolean(pedido.isentarTaxa));
+      // Reforço de segurança — o front já esconde o Boleto quando o
+      // pedido tem expiraEm (API.md §4.1), mas o backend NUNCA
+      // confia só na validação do front.
+      if (pedido.expiraEm) {
+        return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });
+      }
+      if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
+      const { taxaAsaas, taxaPropria, valorCobrado } = total;
+      const valorBase = Number(cotacao.totais.valorBase);
 
       if (!valorCobradoAceitavel(valorCobrado)) {
         return resposta.status(400).json({ erro: MENSAGEM_PISO_ASAAS });
@@ -366,8 +385,10 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         taxaAsaas,
         taxaPropria,
         taxaIsenta: Boolean(pedido.isentarTaxa),
-        valorCobrado
+        valorCobrado,
+        cotacaoId: cotacao.id
       });
+      void deps.marcarCotacaoUsada(cotacao.id);
 
       resposta.json({ chargeId, boletoUrl, linhaDigitavel, codigoBarras, vencimento });
     } catch (erro) {
@@ -427,6 +448,20 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
         contratante: { id: 'c1', wallet_id: null },
         pedido: { ...PEDIDO_BASE, ...ajustes.pedido }
       }),
+      /* A cotação (C-02) no dublê: o portão real está no autoteste de
+         `cotacaoService`; aqui ele devolve o retrato do próprio pedido
+         (o que a tela teria mostrado) — ou lança o 409 quando o teste
+         pede, para provar que o POST não cobra sem cotação válida. */
+      exigirCotacaoParaCobrar: async ({ cotacaoId, totaisNovos }) => {
+        anotar('exigirCotacaoParaCobrar', [cotacaoId]);
+        if (ajustes.cotacaoDivergente) {
+          const erro = new Error('O valor desta cobrança mudou.');
+          erro.status = 409; erro.codigo = 'cotacao_alterada'; erro.cotacao = { id: 'cot_nova', totais: totaisNovos };
+          throw erro;
+        }
+        return { id: cotacaoId ?? 'cot_1', totais: ajustes.totaisDaCotacao ?? totaisNovos };
+      },
+      marcarCotacaoUsada: async (id) => { anotar('marcarCotacaoUsada', [id]); },
       buscarOuCriarCliente: async () => { anotar('buscarOuCriarCliente', []); return 'cus_1'; },
       criarCobrancaPix: async (dados) => {
         anotar('criarCobrancaPix', [dados]);
@@ -486,7 +521,26 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
     return r;
   }
 
-  const corpoValido = { nome: 'Fulano de Tal', email: 'f@teste.com', documento: '11144477735' };
+  const corpoValido = { nome: 'Fulano de Tal', email: 'f@teste.com', documento: '11144477735', cotacaoId: 'cot_1' };
+
+  /* --- 0. C-02: sem cotação válida NÃO cobra; cobra o que a cotação diz --- */
+  {
+    const tc = costura({ cotacaoDivergente: true });
+    const rc = respostaFalsa();
+    await tc.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_0' }, corpoValido), rc);
+    conferir(rc.codigo === 409 && rc.corpo?.codigo === 'cotacao_alterada', `cotação divergente responde 409 cotacao_alterada, veio ${rc.codigo}`);
+    conferir(rc.corpo?.cotacao?.id === 'cot_nova', 'e leva a cotação NOVA no corpo, para a tela reconfirmar');
+    conferir(!tc.chamou('reservarCobranca') && !tc.chamou('criarCobrancaPix'), 'C-02: com cotação divergente, NADA é reservado nem criado na Asaas');
+
+    // o total cobrado é o da COTAÇÃO, não o do pull novo
+    const totaisAntigos = { valorBase: 100, pix: { taxaAsaas: 1, taxaPropria: 1.4, taxasTotais: 2.4, valorCobrado: 102.4 } };
+    const t0 = costura({ totaisDaCotacao: totaisAntigos, pedido: { valorComDesconto: 999 } });
+    await t0.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_0b' }, corpoValido), respostaFalsa());
+    const criada = t0.chamadas.find((c) => c.nome === 'criarCobrancaPix');
+    conferir(criada?.args[0].valor === 102.4, `C-02: cobra o total da cotação (102.4), nunca o pull novo (veio ${criada?.args[0].valor})`);
+    const completada = t0.chamadas.find((c) => c.nome === 'completarCobranca');
+    conferir(completada?.args[1].cotacaoId === 'cot_1', 'a cobrança guarda de qual cotação nasceu');
+  }
 
   /* --- 1. caminho feliz: reserva ANTES de chamar a Asaas ------------ */
   let t = costura();

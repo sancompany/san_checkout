@@ -90,6 +90,12 @@
               <span>Total</span>
               <span><span class="currency-symbol">R$</span> <span class="order-amount" id="order-amount">0,00</span></span>
             </div>
+            <!-- Cartão parcelado: "Nx de R$ …", preenchido pela cotação
+                 (C-02). Vazio nos demais métodos; nunca calculado aqui. -->
+            <div class="breakdown-row breakdown-parcela" aria-live="polite">
+              <span></span>
+              <span id="order-parcela"></span>
+            </div>
           </div>
         </section>
       </header>

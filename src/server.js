@@ -39,6 +39,11 @@ import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
 import { expurgarDadoPessoal } from './services/expurgoService.js';
 import { varrerUmaVez as varrerIntencoesDeTroca } from './services/trocaSweeperService.js';
+import { reprocessarInbox } from './controllers/webhookController.js';
+import { expurgarInbox, resumoInbox } from './services/webhookInboxService.js';
+import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from './services/outboxService.js';
+import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
+import { expurgarCotacoes } from './services/cotacaoService.js';
 
 const app = express();
 const PORTA = process.env.PORT || 3001;
@@ -231,6 +236,20 @@ app.get('/api/saude', async (_req, resposta) => {
   // lido por ninguém, e a integração cairia sem aviso.
   const alertasChaveAsaas = obterAlertasChaveApi();
 
+  /* Os WORKERS (24/09/2026): inbox do webhook, outbox das notificações e
+     o reconciliador de reservas. `filas` diz o que está pendente e o que
+     esgotou; `workers` diz quando cada um rodou pela última vez — um
+     worker que parou de rodar é queda silenciosa do caminho do dinheiro,
+     e é isto que um monitor externo lê. Sem segredo nenhum no corpo. */
+  let filas = null;
+  try {
+    const [inbox, outbox] = await Promise.all([resumoInbox(), resumoOutbox()]);
+    filas = { inbox, outbox };
+  } catch {
+    filas = null;
+  }
+  const workers = Object.fromEntries(Object.entries(ultimaRodadaDosWorkers).map(([nome, em]) => [nome, em ? new Date(em).toISOString() : null]));
+
   // O status reflete a saúde de verdade, e o HTTP acompanha: banco fora
   // do ar é o serviço fora do ar (nada cobra, nada concilia). Sem isso a
   // rota devolvia `200 ok` com o Supabase caído, e um monitor externo de
@@ -246,9 +265,14 @@ app.get('/api/saude', async (_req, resposta) => {
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
     supabaseConfigurado: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
     supabaseRespondendo: supabaseAtivo,
-    alertasChaveAsaas
+    alertasChaveAsaas,
+    filas,
+    workers
   });
 });
+
+/** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
+const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null };
 
 // ---------------------------------------------------------------------
 // FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
@@ -465,6 +489,7 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
   const UM_MINUTO_MS = 60 * 1000;
   const rodarVarreduraDeTroca = () => varrerIntencoesDeTroca()
     .then((relatorio) => {
+      ultimaRodadaDosWorkers.trocaDePlano = Date.now();
       if (relatorio.avancadas > 0 || relatorio.escaladas > 0) {
         console.log(`[troca-de-plano] varredura: ${relatorio.avancadas} avançada(s), ${relatorio.escaladas} escalonada(s) para reconciliação.`);
       }
@@ -473,4 +498,41 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
 
   rodarVarreduraDeTroca();
   setInterval(rodarVarreduraDeTroca, UM_MINUTO_MS).unref();
+
+  /* OS TRÊS WORKERS DA CONSOLIDAÇÃO (24/09/2026). Uma instância só
+     (medido no Northflank: `instances: 1`), então `setInterval` basta —
+     e cada passada é idempotente por CAS, então uma segunda instância
+     um dia não duplicaria trabalho, só o dividiria.
+
+     - inbox (60 s): reprocessa evento da Asaas que falhou ao processar
+       (C-01) — o que antes virava 200 e sumia;
+     - outbox (30 s): entrega ao contratante o que ficou pendente/falhou
+       (H-01) — sobrevive a reinício porque lê do banco;
+     - reconciliador (5 min): completa reserva órfã que virou cobrança na
+       Asaas e libera a que nunca virou nada (H-06). */
+  const rodarInbox = () => reprocessarInbox()
+    .then((r) => { ultimaRodadaDosWorkers.inbox = Date.now(); if (r.examinadas > 0) console.log(`[inbox] reprocessamento: ${r.processadas} ok, ${r.falhas} falha(s).`); })
+    .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message));
+  rodarInbox();
+  setInterval(rodarInbox, UM_MINUTO_MS).unref();
+
+  const rodarOutbox = () => enviarOutbox()
+    .then((r) => { ultimaRodadaDosWorkers.outbox = Date.now(); if (r.examinadas > 0) console.log(`[outbox] ${r.enviadas} enviada(s), ${r.falhas} falha(s), ${r.abandonadas} abandonada(s).`); })
+    .catch((erro) => console.error('[outbox] envio falhou:', erro.message));
+  rodarOutbox();
+  setInterval(rodarOutbox, 30 * 1000).unref();
+
+  const rodarReconciliador = () => reconciliarReservas()
+    .then((r) => { ultimaRodadaDosWorkers.reconciliador = Date.now(); if (r.examinadas > 0) console.log(`[reconciliador] ${r.completadas} completada(s), ${r.liberadas} liberada(s), ${r.aguardando} aguardando.`); })
+    .catch((erro) => console.error('[reconciliador] falhou:', erro.message));
+  rodarReconciliador();
+  setInterval(rodarReconciliador, 5 * UM_MINUTO_MS).unref();
+
+  /* Expurgos diários das tabelas novas: inbox/outbox já processadas
+     (90 dias — o payload da outbox leva o documento do pagador, Lei 10)
+     e cotações vencidas (1 dia). */
+  const rodarExpurgoDasFilas = () => Promise.all([expurgarInbox(), expurgarOutbox(), expurgarCotacoes()])
+    .catch((erro) => console.error('[expurgo-filas]', erro.message));
+  rodarExpurgoDasFilas();
+  setInterval(rodarExpurgoDasFilas, UM_DIA_MS).unref();
 });

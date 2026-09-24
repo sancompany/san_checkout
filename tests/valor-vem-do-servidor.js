@@ -107,11 +107,22 @@ for (const caminho of ['src/controllers/checkoutController.js', 'src/controllers
     /resolverPedido\(|resolverPlano\(/.test(fonte),
     `${caminho}: precisa resolver o pedido/plano na fonte antes de cobrar.`
   );
+  /* Desde 24/09/2026 (C-02) o valor cobrado sai da COTAÇÃO — o retrato
+     que a tela mostrou —, e a régua (`valorValido`) mora em
+     `cotacaoService.montarTotais*`. O controlador passa pelo portão
+     (`exigirCotacaoParaCobrar`) ou pela régua direta; um dos dois. */
   assert.ok(
-    /valorValido\(/.test(fonte),
-    `${caminho}: precisa passar o valor resolvido por valorValido() antes de cobrar.`
+    /valorValido\(/.test(fonte) || /exigirCotacaoParaCobrar\(/.test(fonte),
+    `${caminho}: precisa passar o valor resolvido por valorValido() ou pelo portão da cotação antes de cobrar.`
   );
   checagens += 2;
+}
+{
+  const cotacao = readFileSync(join(RAIZ, 'src/services/cotacaoService.js'), 'utf8');
+  assert.ok(/valorValido\(valorBase\)/.test(cotacao) && /valorValido\(valor\)/.test(cotacao), 'cotacaoService: os totais do pedido e do plano passam por valorValido() — é a régua que os controladores delegam');
+  assert.ok(/exigirCotacaoParaCobrar/.test(readFileSync(join(RAIZ, 'src/controllers/checkoutController.js'), 'utf8')), 'checkoutController cobra pela cotação (C-02)');
+  assert.ok(/exigirCotacaoParaCobrar/.test(readFileSync(join(RAIZ, 'src/controllers/asaasCheckoutController.js'), 'utf8')), 'asaasCheckoutController cobra pela cotação (C-02)');
+  checagens += 3;
 }
 
 console.log(`valor-vem-do-servidor: ${checagens} checagens OK`);

@@ -52,18 +52,24 @@ function pedidoDe(valor) {
 }
 
 const { default: express } = await import('express');
+/* A cotação (C-02) é gravada no banco pela rota real; aqui um dublê
+   devolve o id sem tocar em nada — o que este teste mede é o piso. */
+const criarCotacaoFalsa = async ({ totais }) => ({ id: '11111111-1111-4111-8111-111111111111', expiraEm: new Date(Date.now() + 60_000).toISOString(), totais });
+
 const app = express();
 app.get('/pedido/:contratanteId/:pedidoId', criarObterPedido({
   resolverPedido: async (_c, pedidoId) => ({
     contratante: contratanteFalso,
     pedido: pedidoDe(Number(pedidoId))
-  })
+  }),
+  criarCotacao: criarCotacaoFalsa
 }));
 app.get('/plano/:contratanteId/:planoId', criarObterPlano({
   resolverPlano: async (_c, planoId) => ({
     contratante: contratanteFalso,
     plano: { nome: 'Plano de teste', valor: Number(planoId), ciclo: 'MONTHLY' }
-  })
+  }),
+  criarCotacao: criarCotacaoFalsa
 }));
 
 const servidor = app.listen(0);
@@ -231,14 +237,20 @@ ok(
   const corpo = fonte.slice(inicio, fim === -1 ? undefined : fim);
 
   ok(inicio !== -1 && corpo.length > 500, 'controle positivo: a varredura achou o corpo de criarCheckoutCartao');
-  ok(corpo.includes('taxaComParcelasQueCabem('), 'o cartão capa as parcelas pelo piso por parcela');
 
-  /* Fatia depois do FECHO da chamada, não do começo: `numeroParcelas` é
-     legitimamente o argumento dela. A primeira versão desta assertiva
-     cortava do começo e reprovava o código correto — corrigida antes de
-     confiar nela. */
-  const abertura = corpo.indexOf('taxaComParcelasQueCabem(');
-  const depoisDoCap = corpo.slice(corpo.indexOf(');', abertura) + 2);
+  /* Desde 24/09/2026 (C-02) o cap mora na COTAÇÃO: `cotacaoService.
+     montarTotaisPedido` chama `taxaComParcelasQueCabem` e publica
+     `maxParcelas`; o controlador só escolhe dentro do que a tela já
+     recebeu. O que se trava: o serviço capa, e o controlador capa pelo
+     número da cotação (nunca pelo pedido cru). */
+  const cotacaoFonte = readFileSync(join(RAIZ, 'src', 'services', 'cotacaoService.js'), 'utf8');
+  ok(cotacaoFonte.includes('taxaComParcelasQueCabem('), 'a cotação capa as parcelas pelo piso por parcela');
+  ok(/parcelasOfertadas\s*=\s*Math\.min\([\s\S]{0,80}?totais\.maxParcelas/.test(corpo), 'o cartão capa pelo maxParcelas da cotação');
+
+  /* Fatia depois do cap: `numeroParcelas` é legitimamente o argumento
+     dele. Depois disso, o número PEDIDO não pode mais aparecer. */
+  const abertura = corpo.indexOf('parcelasOfertadas = Math.min(');
+  const depoisDoCap = corpo.slice(corpo.indexOf(';', abertura) + 1);
   ok(
     abertura !== -1 && depoisDoCap.length > 200,
     'controle positivo: há corpo depois da chamada para varrer'

@@ -185,6 +185,25 @@ function blocoSegredo(valor, rotulo, { rotacionarId } = {}) {
   `;
 }
 
+/**
+ * A chave que a listagem NÃO traz (H-08, 24/09/2026): só o final, para
+ * o operador reconhecer qual está em uso, e o botão de trocar. A chave
+ * inteira aparece uma vez só — na resposta da criação e da rotação —
+ * e fica em memória nesta aba até recarregar.
+ */
+function blocoChaveMascarada(final4, rotacionarId) {
+  return `
+    <span class="segredo">
+      <span class="segredo-valor" title="Só os 4 últimos caracteres saem do servidor">${'•'.repeat(12)}${escapar(final4 ?? '????')}</span>
+      <button class="segredo-btn segredo-btn--trocar" type="button" data-rotacionar="${escapar(rotacionarId)}"
+              title="Trocar api_key — a atual para de valer na hora"
+              aria-label="Trocar api_key de ${escapar(rotacionarId)}">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11A8 8 0 0 0 6.3 6.3L3 9"/><path d="M3 4v5h5"/><path d="M4 13a8 8 0 0 0 13.7 4.7L21 15"/><path d="M21 20v-5h-5"/></svg>
+      </button>
+    </span>
+  `;
+}
+
 /** Delegação única pros botões de revelar/copiar de qualquer segredo na
  *  tela — em vez de religar listener a cada redesenho de tabela. */
 document.addEventListener('click', (evento) => {
@@ -446,7 +465,7 @@ async function carregarArquivados() {
 /* ------------------------------------------------------------------
    Navegação entre seções
 ------------------------------------------------------------------ */
-const SECOES = ['contratantes', 'subcontas', 'arquivados', 'metricas', 'webhook', 'erros'];
+const SECOES = ['contratantes', 'subcontas', 'arquivados', 'metricas', 'webhook', 'filas', 'erros'];
 
 document.querySelectorAll('.nav-item').forEach((item) => {
   item.addEventListener('click', () => {
@@ -458,8 +477,100 @@ document.querySelectorAll('.nav-item').forEach((item) => {
     if (item.dataset.secao === 'webhook') carregarWebhook();
     if (item.dataset.secao === 'arquivados') carregarArquivados();
     if (item.dataset.secao === 'erros') carregarErros();
+    if (item.dataset.secao === 'filas') carregarFilas();
   });
 });
+
+/* ------------------------------------------------------------------
+   Filas (M-07): inbox do webhook e outbox das notificações
+------------------------------------------------------------------ */
+
+function linhaInbox(l) {
+  const podeReenfileirar = ['falhou', 'ignorado'].includes(l.status);
+  return `
+    <tr>
+      <td class="celula-principal">${formatarQuando(l.recebido_em)}</td>
+      <td><code class="badge-id">${escapar(l.tipo_evento ?? '—')}</code><br><span class="celula-fraca">${escapar(l.referencia_id ?? '')}</span></td>
+      <td>${escapar(l.status)}${l.tentativas ? `<span class="celula-fraca"> · ${escapar(String(l.tentativas))} tent.</span>` : ''}</td>
+      <td>${escapar(l.ultimo_erro ?? '—')}</td>
+      <td>${podeReenfileirar ? `<button class="btn btn-secundario btn-mini" type="button" data-reenfileirar="${escapar(l.id)}">Reprocessar</button>` : ''}</td>
+    </tr>`;
+}
+
+function linhaOutbox(l) {
+  const podeReenviar = ['falhou', 'abandonada', 'enviada'].includes(l.status);
+  return `
+    <tr>
+      <td class="celula-principal">${formatarQuando(l.criado_em)}</td>
+      <td><code class="badge-id">${escapar(l.tipo)}/${escapar(l.evento)}</code><br><span class="celula-fraca">${escapar(l.contratante_id ?? '')} · ${escapar(l.chave_idempotencia ?? '')}</span></td>
+      <td>${escapar(l.status)}${l.tentativas ? `<span class="celula-fraca"> · ${escapar(String(l.tentativas))} tent.</span>` : ''}${l.ultimo_status_http ? `<span class="celula-fraca"> · HTTP ${escapar(String(l.ultimo_status_http))}</span>` : ''}</td>
+      <td>${escapar(l.ultimo_erro ?? '—')}</td>
+      <td>${podeReenviar ? `<button class="btn btn-secundario btn-mini" type="button" data-reenviar="${escapar(l.id)}">Reenviar</button>` : ''}</td>
+    </tr>`;
+}
+
+async function carregarFilas() {
+  try {
+    const [resumo, inbox, outbox] = await Promise.all([
+      admin.get('/filas/resumo'),
+      admin.get(`/filas/inbox?limite=100${$('filas-inbox-filtro').value ? `&status=${$('filas-inbox-filtro').value}` : ''}`),
+      admin.get(`/filas/outbox?limite=100${$('filas-outbox-filtro').value ? `&status=${$('filas-outbox-filtro').value}` : ''}`)
+    ]);
+
+    const pendentes = (resumo.inbox?.esgotadas ?? 0) + (resumo.outbox?.abandonadas ?? 0);
+    const contador = $('contador-filas');
+    contador.hidden = pendentes === 0;
+    contador.textContent = String(pendentes);
+    contador.classList.toggle('nav-contador--alerta', pendentes > 0);
+
+    $('filas-resumo').innerHTML = `
+      <div class="cartao-metrica ${resumo.inbox?.esgotadas ? 'cartao-metrica--destaque' : ''}">
+        <p class="cartao-metrica-rotulo">Inbox (Asaas → Checkout)</p>
+        <p class="cartao-metrica-valor">${escapar(String(resumo.inbox?.pendentes ?? 0))}</p>
+        <p class="cartao-metrica-nota">pendentes · ${escapar(String(resumo.inbox?.esgotadas ?? 0))} esgotadas</p>
+      </div>
+      <div class="cartao-metrica ${resumo.outbox?.abandonadas ? 'cartao-metrica--destaque' : ''}">
+        <p class="cartao-metrica-rotulo">Outbox (Checkout → contratante)</p>
+        <p class="cartao-metrica-valor">${escapar(String(resumo.outbox?.pendentes ?? 0))}</p>
+        <p class="cartao-metrica-nota">pendentes · ${escapar(String(resumo.outbox?.abandonadas ?? 0))} abandonadas</p>
+      </div>
+    `;
+
+    $('vazio-inbox').hidden = inbox.linhas.length > 0;
+    $('tabela-inbox').innerHTML = inbox.linhas.map(linhaInbox).join('');
+    $('vazio-outbox').hidden = outbox.linhas.length > 0;
+    $('tabela-outbox').innerHTML = outbox.linhas.map(linhaOutbox).join('');
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
+document.addEventListener('click', async (evento) => {
+  const botao = evento.target.closest('[data-reenfileirar], [data-reenviar]');
+  if (!botao) return;
+  const ehInbox = botao.hasAttribute('data-reenfileirar');
+  const id = botao.dataset.reenfileirar ?? botao.dataset.reenviar;
+  const ok = await confirmar({
+    titulo: ehInbox ? 'Reprocessar este evento?' : 'Reenviar esta notificação?',
+    corpo: ehInbox
+      ? '<p>O evento da Asaas volta para a fila e é processado de novo a partir do corpo guardado. A máquina de estados impede regressão: se já foi aplicado, nada muda.</p>'
+      : '<p>A notificação volta para a fila com o <strong>mesmo eventoId</strong> — o contratante deduplica por ele, então reenviar nunca credita duas vezes.</p>',
+    rotuloAcao: ehInbox ? 'Reprocessar' : 'Reenviar'
+  });
+  if (!ok) return;
+  try {
+    await admin.post(ehInbox ? `/filas/inbox/${id}/reenfileirar` : `/filas/outbox/${id}/reenviar`, {});
+    mostrarToast(ehInbox ? 'Evento reenfileirado.' : 'Notificação reenviada.');
+    carregarFilas();
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+});
+
+for (const id of ['filas-inbox-filtro', 'filas-outbox-filtro']) {
+  document.getElementById(id)?.addEventListener('change', carregarFilas);
+}
+document.getElementById('btn-recarregar-filas')?.addEventListener('click', carregarFilas);
 
 /* ------------------------------------------------------------------
    Contratantes
@@ -495,7 +606,9 @@ function desenharContratantes() {
             ${metodos.map((m) => `<span class="pill pill-metodo">${escapar(NOME_METODO[m] ?? m)}</span>`).join('')}
           </span>
         </td>
-        <td>${blocoSegredo(c.api_key, 'api_key', { rotacionarId: c.id })}</td>
+        <td>${c.api_key
+          ? blocoSegredo(c.api_key, 'api_key', { rotacionarId: c.id })
+          : blocoChaveMascarada(c.api_key_final, c.id)}</td>
         <td>
           <div class="acoes-linha">
             <button class="btn btn-secundario btn-mini" type="button" data-editar-contratante="${escapar(c.id)}">Editar</button>

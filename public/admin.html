@@ -81,6 +81,11 @@
         Webhook
         <span class="nav-contador" id="contador-webhook" hidden>0</span>
       </button>
+      <button class="nav-item" type="button" data-secao="filas">
+        <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12H3"/><path d="M21 6H3"/><path d="M21 18H3"/><path d="m17 3 4 3-4 3"/><path d="m7 15-4 3 4 3"/></svg>
+        <span>Filas</span>
+        <span class="nav-contador" id="contador-filas" hidden>0</span>
+      </button>
       <button class="nav-item" type="button" data-secao="erros">
         <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
         <span>Erros</span>
@@ -382,6 +387,73 @@
           </div>
         </div>
       </section>
+      <section id="secao-filas" hidden>
+        <div class="secao-header">
+          <div>
+            <h2 class="secao-titulo">Filas</h2>
+            <p class="secao-descricao">
+              As duas filas do caminho do dinheiro. <strong>Inbox</strong>:
+              cada evento da Asaas é guardado antes do 200 e processado a
+              partir da linha — o que falha fica aqui e é reprocessado com
+              recuo, até esgotar. <strong>Outbox</strong>: cada aviso ao
+              contratante é uma linha com id único; o que ele não
+              confirmou é reenviado com recuo por ~2 dias e depois fica
+              <strong>abandonado</strong> até alguém reenviar. Reenviar usa
+              o mesmo id — o contratante deduplica, nunca credita em dobro.
+              Nenhum dado de pessoa aparece aqui.
+            </p>
+          </div>
+          <div class="secao-header-acoes">
+            <button class="btn btn-secundario" id="btn-recarregar-filas" type="button">Recarregar</button>
+          </div>
+        </div>
+
+        <div class="cartoes-metrica" id="filas-resumo"></div>
+
+        <div class="painel">
+          <div class="painel-topo">
+            <h3 class="painel-titulo">Inbox — Asaas → Checkout</h3>
+            <select class="campo-input" id="filas-inbox-filtro" aria-label="Filtrar a inbox" style="width:auto">
+              <option value="">Todos</option>
+              <option value="falhou">Só os que falharam</option>
+              <option value="ignorado">Só os ignorados (sem ramo)</option>
+              <option value="processado">Só os processados</option>
+            </select>
+          </div>
+          <p class="vazio" id="vazio-inbox" hidden>Nenhum evento na inbox.</p>
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr><th>recebido</th><th>evento</th><th>status</th><th>último erro</th><th></th></tr>
+              </thead>
+              <tbody id="tabela-inbox"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="painel">
+          <div class="painel-topo">
+            <h3 class="painel-titulo">Outbox — Checkout → contratante</h3>
+            <select class="campo-input" id="filas-outbox-filtro" aria-label="Filtrar a outbox" style="width:auto">
+              <option value="">Todas</option>
+              <option value="falhou">Só as que falharam</option>
+              <option value="abandonada">Só as abandonadas</option>
+              <option value="pendente">Só as pendentes</option>
+              <option value="enviada">Só as enviadas</option>
+            </select>
+          </div>
+          <p class="vazio" id="vazio-outbox" hidden>Nenhuma notificação na outbox.</p>
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr><th>criada</th><th>evento</th><th>status</th><th>último erro</th><th></th></tr>
+              </thead>
+              <tbody id="tabela-outbox"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section id="secao-erros" hidden>
         <div class="secao-header">
           <div>

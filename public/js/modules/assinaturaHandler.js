@@ -96,6 +96,26 @@ export function obterPagadorPreenchidoAssinatura() {
   return contextoResolvido?.plano?.pagador ?? null;
 }
 
+/** A cotação do plano (C-02) — vem em `_checkout.cotacao`; o POST exige
+ *  o id de volta. */
+export function obterCotacaoIdAssinatura() {
+  return contextoResolvido?.plano?._checkout?.cotacao?.id ?? null;
+}
+
+/** Cotação nova vinda de um 409: substitui e redesenha o valor. */
+export function aplicarCotacaoAssinatura(cotacao) {
+  if (!contextoResolvido?.plano?._checkout || !cotacao?.id) return;
+  contextoResolvido.plano._checkout.cotacao = cotacao;
+  const valor = Number(cotacao.totais?.assinatura?.valorCobrado);
+  const texto = Number.isFinite(valor) && valor > 0
+    ? valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—';
+  const subtotal = document.getElementById('order-subtotal');
+  const total = document.getElementById('order-amount');
+  if (subtotal) subtotal.textContent = `R$ ${texto}`;
+  if (total) total.textContent = texto;
+}
+
 export function rotularCiclo(ciclo) {
   return ROTULOS_CICLO[ciclo] ?? String(ciclo ?? '').toLowerCase();
 }

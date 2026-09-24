@@ -85,6 +85,7 @@ export async function completarCobranca(id, dados) {
       taxa_propria: dados.taxaPropria,
       taxa_isenta: dados.taxaIsenta ?? false,
       valor_cobrado: dados.valorCobrado,
+      cotacao_id: dados.cotacaoId ?? null,
       atualizado_em: new Date().toISOString()
     })
     .eq('id', id);
@@ -149,11 +150,174 @@ export async function liberarReservaCobranca(id) {
   }
 }
 
+/** Folga sobre `MINUTOS_DE_SESSAO_DE_CHECKOUT` (asaasService) para
+ *  considerar travada uma reserva de pop-up cujo `CHECKOUT_EXPIRED`
+ *  nunca chegou. */
+const MINUTOS_ATE_RESERVA_DE_POPUP_TRAVAR = 60 + 5;
+
+/**
+ * Reserva o direito de abrir UMA sessão de pop-up (cartão avulso ou
+ * assinatura) ANTES de chamar `POST /v3/checkouts` — C-04 da auditoria
+ * de 24/09/2026. Até aqui a ordem era a inversa (sessão na Asaas,
+ * depois `registrarCobrancaPendentePopup`): duas requisições
+ * simultâneas do mesmo comprador criavam duas sessões pagáveis, e a
+ * segunda linha local batia no índice único e sumia — uma sessão órfã
+ * cobrando dinheiro que ninguém do nosso lado conhecia.
+ *
+ * Mesmo padrão de `reservarCobranca` (Pix/Boleto): a linha nasce
+ * `pendente` sem `asaas_checkout_id`; quem esbarra no `23505` recebe a
+ * linha vencedora e reaproveita a sessão dela (`existente.asaas_
+ * checkout_id`) em vez de abrir outra. Cartão avulso reserva por
+ * (contratante, pedido, método) — índice da 0001; assinatura por
+ * (contratante, plano, documento, método) — índice da 0015.
+ *
+ * Reserva travada: uma sessão pendente mais velha que o prazo de
+ * expiração da Asaas mais folga é de um `CHECKOUT_EXPIRED` que nunca
+ * chegou. Ela é marcada `expirado` (CAS) e a reserva é tentada de novo —
+ * senão esse comprador nunca mais conseguiria pagar esse pedido.
+ *
+ * @returns {Promise<{reservada: true, id: string}|{reservada: false, existente: object|null}>}
+ */
+export async function reservarCobrancaPopup({ contratanteId, pedidoId = null, planoId = null, documento, metodoPagamento }, { segundaVez = false } = {}) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .insert({
+      ambiente: ambienteAsaas(),
+      contratante_id: contratanteId,
+      pedido_id: pedidoId,
+      plano_id: planoId,
+      documento,
+      metodo_pagamento: metodoPagamento,
+      status: 'pendente'
+    })
+    .select('id')
+    .single();
+
+  if (!error) return { reservada: true, id: data.id };
+  if (error.code !== '23505') throw error;
+
+  let consulta = supabase
+    .from('cobrancas')
+    .select('*')
+    .eq('contratante_id', contratanteId)
+    .eq('metodo_pagamento', metodoPagamento)
+    .eq('status', 'pendente')
+    .order('criado_em', { ascending: false })
+    .limit(1);
+  consulta = pedidoId ? consulta.eq('pedido_id', pedidoId) : consulta.eq('plano_id', planoId).eq('documento', documento).is('pedido_id', null);
+  const { data: existente } = await consulta.maybeSingle();
+
+  const travada = existente
+    && new Date(existente.criado_em).getTime() < Date.now() - MINUTOS_ATE_RESERVA_DE_POPUP_TRAVAR * 60_000;
+  if (travada && !segundaVez) {
+    const { data: expirada } = await supabase
+      .from('cobrancas')
+      .update({ status: 'expirado', atualizado_em: new Date().toISOString() })
+      .eq('id', existente.id)
+      .eq('status', 'pendente')
+      .select('id');
+    if (Array.isArray(expirada) && expirada.length === 1) {
+      return reservarCobrancaPopup({ contratanteId, pedidoId, planoId, documento, metodoPagamento }, { segundaVez: true });
+    }
+  }
+
+  return { reservada: false, existente: existente ?? null };
+}
+
+/** Preenche a reserva de pop-up com a sessão criada e os dados reais —
+ *  MESMA linha. `asaas_checkout_id` é o que o webhook `CHECKOUT_*` busca. */
+export async function completarReservaPopup(id, dados) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({
+      asaas_checkout_id: dados.asaasCheckoutId,
+      documento: dados.documento,
+      email: dados.email ?? null,
+      telefone: dados.telefone ?? null,
+      endereco: dados.endereco ?? null,
+      endereco_numero: dados.enderecoNumero ?? null,
+      endereco_complemento: dados.complemento ?? null,
+      bairro: dados.bairro ?? null,
+      cep: dados.cep ?? null,
+      cidade: dados.cidade ?? null,
+      uf: dados.uf ?? null,
+      cidade_ibge: dados.cidadeIbge ? Number(dados.cidadeIbge) : null,
+      itens: dados.itens ?? null,
+      valor_cheio: dados.valorCheio,
+      desconto: dados.desconto ?? 0,
+      cupom: dados.cupom ?? null,
+      valor_com_desconto: dados.valorComDesconto,
+      frete: dados.frete ?? 0,
+      taxa_do_projeto: dados.taxaDoProjeto ?? 0,
+      taxa_asaas: dados.taxaAsaas,
+      taxa_propria: dados.taxaPropria,
+      taxa_isenta: dados.taxaIsenta ?? false,
+      valor_cobrado: dados.valorCobrado,
+      substitui_assinatura_id: dados.substituiAssinaturaId ?? null,
+      parcelas: dados.parcelas ?? 1,
+      ciclo: dados.ciclo ?? null,
+      cotacao_id: dados.cotacaoId ?? null,
+      atualizado_em: new Date().toISOString()
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('[cobrancaService.completarReservaPopup]', error.message);
+    await registrarErro(
+      new Error(
+        `completarReservaPopup falhou para a reserva ${id} (contratante ${dados.contratanteId}, método ` +
+        `${dados.metodoPagamento}) — a sessão JÁ EXISTE na Asaas com asaasCheckoutId ${dados.asaasCheckoutId} ` +
+        `e externalReference "reserva-${id}": ${error.message}. O webhook CHECKOUT_PAID ainda a encontra pela ` +
+        'referência (webhookController.processarEventoCheckout), mas o valor e o pagador não estão na linha.'
+      ),
+      { contexto: 'cobrancaService.completarReservaPopup', rota: 'checkout/cartao-ou-assinatura', metodo: 'POST' }
+    );
+    return false;
+  }
+  return true;
+}
+
+/** A linha pela referência externa `reserva-<id>` que a sessão/cobrança
+ *  levou para a Asaas — é como o webhook acha uma reserva cujo
+ *  `completar` falhou ou cuja criação deu timeout. */
+export async function buscarCobrancaPorReferenciaExterna(referencia) {
+  const id = typeof referencia === 'string' && referencia.startsWith('reserva-') ? referencia.slice('reserva-'.length) : null;
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('*, contratantes(webhook_url, nome, api_key)')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+/** Reservas sem cobrança e sem sessão há mais de N minutos — o que o
+ *  reconciliador (H-06) confere contra a Asaas. */
+export async function listarReservasTravadas({ minutos = 3, limite = 50 } = {}) {
+  const corte = new Date(Date.now() - minutos * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('id, contratante_id, pedido_id, plano_id, metodo_pagamento, criado_em')
+    .eq('status', 'pendente')
+    .is('charge_id', null)
+    .is('asaas_checkout_id', null)
+    .lt('criado_em', corte)
+    .order('criado_em', { ascending: true })
+    .limit(limite);
+  if (error) throw error;
+  return data ?? [];
+}
+
 /**
  * Registra uma cobrança do fluxo POP-UP (Cartão/Boleto/Assinatura) —
  * criada ANTES de existir charge_id, só com asaas_checkout_id. O
  * charge_id de verdade é preenchido depois, via
  * `vincularChargeIdAoCheckout`, quando o webhook CHECKOUT_PAID chegar.
+ *
+ * Desde 24/09/2026 só o Pix Automático (`criarAssinaturaPixAutomatico`)
+ * usa isto; cartão avulso e assinatura por cartão reservam ANTES
+ * (`reservarCobrancaPopup` + `completarReservaPopup`).
  */
 export async function registrarCobrancaPendentePopup(dados) {
   const { error } = await supabase.from('cobrancas').insert({
@@ -592,6 +756,36 @@ export async function atualizarStatusCobranca(chargeId, status) {
     .eq('charge_id', chargeId);
 
   if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);
+}
+
+/**
+ * Grava uma transição de status DECIDIDA pela máquina de estados
+ * (`transicoesFinanceiras.decidirTransicao`, C-03) — por UPDATE
+ * condicional: só escreve se a linha ainda está em `de`. Dois eventos
+ * concorrentes sobre a mesma cobrança nunca gravam os dois; o perdedor
+ * recebe `false`, relê e reavalia.
+ *
+ * Leva junto o carimbo do evento (`status_evento_em`) e, nos estornos,
+ * `valor_estornado` (H-04) — o que permite distinguir estorno parcial de
+ * total sem inventar estado.
+ */
+export async function aplicarTransicao(chargeId, { de, para, ocorridoEm = null, valorEstornado } = {}) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .update({
+      ...camposDeStatus(para),
+      ...(ocorridoEm ? { status_evento_em: ocorridoEm } : {}),
+      ...(valorEstornado !== undefined ? { valor_estornado: valorEstornado } : {})
+    })
+    .eq('charge_id', chargeId)
+    .eq('status', de)
+    .select('id');
+
+  if (error) {
+    console.error('[cobrancaService.aplicarTransicao]', error.message);
+    throw error;
+  }
+  return Array.isArray(data) && data.length === 1;
 }
 
 /** Prazo do arrendamento do estorno. Mesmo valor de

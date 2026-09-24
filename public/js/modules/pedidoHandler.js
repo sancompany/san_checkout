@@ -233,6 +233,67 @@ function aplicarNoResumo({ contratanteNome, pedido, taxa, bloqueio, maxParcelas 
   }
 }
 
+/* ------------------------------------------------------------------
+   A COTAÇÃO (C-02, 24/09/2026)
+
+   O backend manda em `cotacao` o retrato do preço que ESTA tela vai
+   mostrar — id, validade e os totais por método/parcelas — e o POST que
+   cobra exige o id de volta. A tela nunca calcula preço: ela só escolhe,
+   dentro dos totais que recebeu, qual mostrar para o método selecionado.
+   Até aqui o total exibido era sempre o do Pix, e o cartão em 12x era
+   cobrado com outra taxa — o pagador via um número e a pop-up cobrava
+   outro.
+------------------------------------------------------------------ */
+
+let metodoExibido = 'pix';
+let parcelasExibidas = 1;
+
+/** O id que vai no POST. `null` quando a tela não tem cotação (pedido
+ *  indisponível) — e aí o backend recusa, que é o comportamento certo. */
+export function obterCotacaoId() {
+  return contextoResolvido?.cotacao?.id ?? null;
+}
+
+/** Cotação nova vinda de um 409 `cotacao_alterada`: substitui a antiga e
+ *  redesenha o total para o método que está na tela. */
+export function aplicarCotacao(cotacao) {
+  if (!contextoResolvido || !cotacao?.id) return;
+  contextoResolvido.cotacao = cotacao;
+  atualizarTotalExibido(metodoExibido, parcelasExibidas);
+}
+
+/** Redesenha o total para o método (e parcelas) escolhidos, a partir dos
+ *  totais da cotação. Sem total para a combinação → travessão, nunca zero. */
+export function atualizarTotalExibido(metodo = metodoExibido, parcelas = parcelasExibidas) {
+  metodoExibido = metodo;
+  parcelasExibidas = Number(parcelas) || 1;
+  const totais = contextoResolvido?.cotacao?.totais;
+  if (!totais) return;
+
+  const total = metodo === 'cartao'
+    ? totais.cartao?.[parcelasExibidas] ?? null
+    : totais[metodo] ?? null;
+
+  const elTotal = document.getElementById('order-amount');
+  const elTaxa = document.getElementById('order-taxa');
+  const valor = Number(total?.valorCobrado);
+  if (!Number.isFinite(valor) || valor <= 0) {
+    if (elTotal) elTotal.textContent = '—';
+    if (elTaxa) elTaxa.textContent = '—';
+    return;
+  }
+  const taxas = Number(total.taxasTotais ?? 0);
+  if (elTotal) elTotal.textContent = formatarMoeda(valor);
+  if (elTaxa) elTaxa.textContent = taxas > 0 ? `+ R$ ${formatarMoeda(taxas)}` : 'R$ 0,00';
+
+  const parcela = document.getElementById('order-parcela');
+  if (parcela) {
+    parcela.textContent = metodo === 'cartao' && parcelasExibidas > 1
+      ? `${parcelasExibidas}x de R$ ${formatarMoeda(valor / parcelasExibidas)}`
+      : '';
+  }
+}
+
 /** Dados do pagador, pré-preenchidos se o pedido já trouxe (opcional). */
 export function obterPagadorPreenchido() {
   return contextoResolvido?.pedido?.pagador ?? null;

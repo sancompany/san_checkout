@@ -27,10 +27,13 @@ import { senhaConfere } from '../utils/senhaAdmin.js';
 import { emitirToken, verificarToken, VALIDADE_SEGUNDOS } from '../utils/sessaoAdmin.js';
 import { responderErro } from '../utils/erros.js';
 import { listarErros } from '../services/erroService.js';
+import { listarInbox, reenfileirar as reenfileirarNaInbox, resumoInbox } from '../services/webhookInboxService.js';
+import { listarOutbox, reenviar as reenviarNaOutbox, resumoOutbox } from '../services/outboxService.js';
 import { FUSO, inicioDoDiaCivil, ultimosDiasCivis } from '../utils/diaCivil.js';
 import { agregarMetricas } from '../services/metricaService.js';
 import { criarSubconta as criarSubcontaNaAsaas, tipoDaContaMae } from '../services/asaasService.js';
 import { METODOS_VALIDOS } from '../services/pedidoService.js';
+import { CICLOS_ASAAS } from '../utils/ciclos.js';
 import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
 import { origemPermitida } from '../utils/retornoSeguro.js';
 import {
@@ -114,16 +117,29 @@ export async function listarContratantes(requisicao, resposta) {
   // poder desarquivar o que arquivou por engano.
   const incluirArquivados = requisicao.query?.incluirArquivados === '1';
 
+  /* A `api_key` NÃO sai na listagem (H-08, 24/09/2026). Até aqui a tela
+     recebia todas as chaves de todos os contratantes a cada abertura, e
+     um XSS no admin (ou um token de sessão vazado) levava tudo de uma
+     vez. A chave inteira só aparece UMA vez: na resposta de criação e na
+     de rotação — quem precisa dela é quem acabou de gerá-la. Aqui vai
+     só o final, para o operador reconhecer qual está em uso. */
   let consulta = supabase
     .from('contratantes')
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, criado_em, arquivado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, ciclos_permitidos, criado_em, arquivado_em')
     .order('criado_em', { ascending: false });
 
   if (!incluirArquivados) consulta = consulta.is('arquivado_em', null);
 
   const { data, error } = await consulta;
   if (error) return responderErro(resposta, error, 'admin.listarContratantes');
-  resposta.json(data);
+  resposta.json((data ?? []).map(mascararChave));
+}
+
+/** `api_key` → `api_key_final` (últimos 4). Nunca a chave inteira. */
+function mascararChave(contratante) {
+  if (!contratante) return contratante;
+  const { api_key: chave, ...resto } = contratante;
+  return { ...resto, api_key_final: typeof chave === 'string' && chave.length >= 4 ? chave.slice(-4) : null };
 }
 
 /**
@@ -300,7 +316,17 @@ export async function criarContratante(requisicao, resposta) {
  */
 export async function atualizarContratante(requisicao, resposta) {
   const { id } = requisicao.params;
-  const { nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados, retornoDominios } = requisicao.body ?? {};
+  const { nome, apiBaseUrl, webhookUrl, walletId, metodosHabilitados, retornoDominios, ciclosPermitidos } = requisicao.body ?? {};
+
+  /* `ciclosPermitidos` (M-10): lista no vocabulário da Asaas, ou `null`
+     para "sem restrição". Qualquer coisa fora do conjunto fechado é 400
+     nomeando os aceitos. */
+  let ciclos;
+  if (ciclosPermitidos !== undefined) {
+    if (ciclosPermitidos === null || (Array.isArray(ciclosPermitidos) && ciclosPermitidos.length === 0)) ciclos = null;
+    else if (Array.isArray(ciclosPermitidos) && ciclosPermitidos.every((c) => CICLOS_ASAAS.includes(c)) && ciclosPermitidos.length <= CICLOS_ASAAS.length) ciclos = [...new Set(ciclosPermitidos)];
+    else return resposta.status(400).json({ erro: `ciclosPermitidos precisa ser uma lista com valores entre: ${CICLOS_ASAAS.join(', ')} — ou vazia para sem restrição.` });
+  }
 
   if (apiBaseUrl !== undefined && !urlValida(apiBaseUrl)) {
     return resposta.status(400).json({ erro: 'apiBaseUrl precisa ser https e de host público (a chave do contratante viaja nesse endereço).' });
@@ -320,6 +346,7 @@ export async function atualizarContratante(requisicao, resposta) {
   if (walletId !== undefined) patch.wallet_id = walletId || null;
   if (metodos !== undefined) patch.metodos_habilitados = metodos;
   if (dominios !== undefined) patch.retorno_dominios = dominios;
+  if (ciclos !== undefined) patch.ciclos_permitidos = ciclos;
 
   if (Object.keys(patch).length === 0) return resposta.status(400).json({ erro: 'Nenhum campo pra atualizar.' });
 
@@ -327,13 +354,13 @@ export async function atualizarContratante(requisicao, resposta) {
     .from('contratantes')
     .update(patch)
     .eq('id', id)
-    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, criado_em')
+    .select('id, nome, api_base_url, api_key, webhook_url, wallet_id, metodos_habilitados, retorno_dominios, ciclos_permitidos, criado_em')
     .maybeSingle();
 
   if (error) return responderErro(resposta, error, 'admin.atualizarContratante');
   if (!data) return resposta.status(404).json({ erro: 'Contratante não encontrado.' });
 
-  resposta.json(data);
+  resposta.json(mascararChave(data));
 }
 
 /**
@@ -766,6 +793,62 @@ export async function obterResumoWebhook(requisicao, resposta) {
  * Ordenada por `ultima_vez`: o que está acontecendo agora vem primeiro,
  * e `ocorrencias` diz se é rajada ou caso isolado.
  */
+/* ------------------------------------------------------------------
+   As FILAS (M-07): inbox do webhook, outbox das notificações, e o
+   reenvio administrativo — pelo MESMO id, nunca um evento novo.
+------------------------------------------------------------------ */
+
+export async function listarFilaInbox(requisicao, resposta) {
+  try {
+    resposta.json({ linhas: await listarInbox({ limite: requisicao.query.limite, status: requisicao.query.status || undefined }) });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.listarFilaInbox');
+  }
+}
+
+export async function reenfileirarInbox(requisicao, resposta) {
+  try {
+    const ok = await reenfileirarNaInbox(String(requisicao.params.id));
+    if (!ok) return resposta.status(404).json({ erro: 'Evento não encontrado, ou ainda em processamento.' });
+    resposta.json({ reenfileirado: true });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.reenfileirarInbox');
+  }
+}
+
+export async function listarFilaOutbox(requisicao, resposta) {
+  try {
+    resposta.json({
+      linhas: await listarOutbox({
+        limite: requisicao.query.limite,
+        status: requisicao.query.status || undefined,
+        contratanteId: requisicao.query.contratante || undefined
+      })
+    });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.listarFilaOutbox');
+  }
+}
+
+export async function reenviarOutbox(requisicao, resposta) {
+  try {
+    const ok = await reenviarNaOutbox(String(requisicao.params.id));
+    if (!ok) return resposta.status(404).json({ erro: 'Notificação não encontrada, ou ainda sendo enviada.' });
+    resposta.json({ reenviada: true });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.reenviarOutbox');
+  }
+}
+
+export async function obterResumoFilas(_req, resposta) {
+  try {
+    const [inbox, outbox] = await Promise.all([resumoInbox(), resumoOutbox()]);
+    resposta.json({ inbox, outbox });
+  } catch (erro) {
+    responderErro(resposta, erro, 'admin.obterResumoFilas');
+  }
+}
+
 export async function listarErrosCapturados(requisicao, resposta) {
   try {
     resposta.json({ erros: await listarErros({ limite: requisicao.query.limite }) });

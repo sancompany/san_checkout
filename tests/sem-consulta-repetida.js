@@ -66,8 +66,11 @@ for (const caminho of CONTROLADORES) {
      haver contratante desestruturado do resolvedor. */
   const usaSplit = /wallet_id/.test(fonte);
   if (usaSplit) {
+    /* `cotarParaCobrar` (24/09/2026, C-02) é o portão da cotação de
+       Pix/Boleto e é ELE quem chama `deps.resolverPedido` uma vez —
+       o contratante desestruturado dele vem do mesmo resolvedor. */
     const vindoDoResolvedor = [...fonte.matchAll(
-      /const\s*\{[^}]*\bcontratante\b[^}]*\}\s*=\s*await\s+(?:deps\.)?resolver(?:Pedido|Plano)\s*\(/g
+      /const\s*\{[^}]*\bcontratante\b[^}]*\}\s*=\s*await\s+(?:deps\.)?(?:resolver(?:Pedido|Plano)|cotarParaCobrar)\s*\(/g
     )];
     assert.ok(
       vindoDoResolvedor.length > 0,

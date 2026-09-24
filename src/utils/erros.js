@@ -41,7 +41,12 @@ export function responderErro(resposta, erro, contexto, statusPadrao = 502) {
   if (erro.status) {
     return resposta.status(erro.status).json({
       erro: erro.message,
-      ...(erro.pedido ? { pedido: erro.pedido } : {})
+      ...(erro.pedido ? { pedido: erro.pedido } : {}),
+      /* `codigo` e `cotacao` (C-02): o 409 de cotação divergente leva a
+         cotação NOVA no corpo, para a tela mostrar o valor novo e pedir
+         reconfirmação sem uma segunda ida ao servidor. */
+      ...(erro.codigo ? { codigo: erro.codigo } : {}),
+      ...(erro.cotacao ? { cotacao: erro.cotacao } : {})
     });
   }
   resposta.status(statusPadrao).json({ erro: 'Erro interno — tente novamente em instantes.' });

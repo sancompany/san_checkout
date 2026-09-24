@@ -88,7 +88,14 @@ const FICAM_EM_COBRANCAS = new Set([
      explícita, desta vez tomada NA MESMA mudança que criou a coluna,
      pra não repetir a lição de 18/09/2026 (migration `not null` que
      nasceu fora desta lista). */
-  'estornando_em'
+  'estornando_em',
+  /* Migration 0015 (24/09/2026): `valor_estornado` é dinheiro da cobrança
+     (fica pela mesma razão de `valor_cobrado`); `status_evento_em` é
+     carimbo técnico da máquina de estados; `cotacao_id` é ponteiro para
+     um retrato sem dado de pessoa. Decididas NA MESMA mudança que criou
+     as colunas — a lição de 18/09 e a de hoje (ver `mutation_version`
+     abaixo). */
+  'valor_estornado', 'status_evento_em', 'cotacao_id'
 ]);
 
 /**
@@ -110,7 +117,15 @@ const FICAM_EM_ASSINATURAS = new Set([
      lista pelo mesmo motivo dos outros dois: decisão explícita, não
      esquecimento. Achado no ciclo de revisão de 18/09/2026 — as três
      colunas nasceram depois desta lista e nunca foram decididas. */
-  'plano_anterior_id', 'trocado_em', 'trocando_em'
+  'plano_anterior_id', 'trocado_em', 'trocando_em',
+  /* `mutation_version` (migration 0011, `not null default 0`) — achado
+     na consolidação de 24/09/2026, e é a MESMA falha de 18/09 reaberta
+     três dias depois por outra migration: a coluna nasceu fora desta
+     lista, e o retrato do autoteste (`COLUNAS_REAIS`) também não a
+     tinha, então a checagem que existe para pegar isto não pegou. Toda
+     anonimização de uma assinatura cancelada falharia na constraint,
+     calada. É contador de concorrência, nunca dado de pessoa. */
+  'mutation_version'
 ]);
 
 /**
@@ -466,14 +481,42 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
       'atualizado_em', 'telefone', 'endereco', 'endereco_numero', 'endereco_complemento',
       'bairro', 'cep', 'cidade', 'uf', 'cidade_ibge', 'email', 'asaas_subscription_id',
       'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em',
-      'ambiente', 'e_teste', 'estornando_em'
+      'ambiente', 'e_teste', 'estornando_em',
+      'valor_estornado', 'status_evento_em', 'cotacao_id'
     ],
     assinaturas: [
       'id', 'contratante_id', 'documento', 'valor', 'ciclo', 'status',
       'proxima_cobranca', 'criado_em', 'plano_id',
-      'plano_anterior_id', 'trocado_em', 'trocando_em'
+      'plano_anterior_id', 'trocado_em', 'trocando_em', 'mutation_version'
     ]
   };
+
+  /* --- 0. O RETRATO ACIMA BATE COM AS MIGRATIONS ---
+     Achado em 24/09/2026: `mutation_version` (0011) ficou fora do
+     retrato E da lista branca, e a checagem 1 (lista branca ⊆ retrato)
+     passou — porque comparava a lista branca contra um retrato tirado à
+     mão. Agora o retrato é conferido contra o que as migrations REALMENTE
+     declaram: toda `add column`/`create table` de `cobrancas` e
+     `assinaturas` tem de estar aqui. */
+  {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { join, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const dir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'supabase', 'migrations');
+    const sql = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort().map((f) => readFileSync(join(dir, f), 'utf8')).join('\n');
+    for (const tabela of TABELAS_EXPURGADAS) {
+      const declaradas = new Set();
+      const bloco = sql.match(new RegExp(`create table if not exists ${tabela} \\(([\\s\\S]*?)\\n\\);`, 'i'))?.[1] ?? '';
+      for (const linha of bloco.split('\n')) {
+        const m = linha.match(/^\s*([a-z_]+)\s+(?:uuid|text|numeric|integer|boolean|timestamptz|jsonb|date)/i);
+        if (m) declaradas.add(m[1]);
+      }
+      for (const m of sql.matchAll(new RegExp(`alter table ${tabela}\\s+add column if not exists ([a-z_]+)`, 'gi'))) declaradas.add(m[1]);
+      const faltamNoRetrato = [...declaradas].filter((c) => !COLUNAS_REAIS[tabela].includes(c));
+      igual(faltamNoRetrato, [], `${tabela}: coluna declarada nas migrations e ausente do retrato do autoteste (e portanto sem decisão na lista branca): ${faltamNoRetrato}`);
+      ok(declaradas.size >= 10, `controle positivo: a varredura das migrations achou colunas de ${tabela} (achou ${declaradas.size})`);
+    }
+  }
 
   /* --- 1. AS DUAS LISTAS COBREM O BANCO REAL ---
      A lista branca não pode citar coluna que não existe (erro de
