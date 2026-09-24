@@ -1,7 +1,7 @@
 # San Checkout — Documentação da API
 
 **SAN & CO. Pay Engine** — referência completa de integração.
-Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança em `&renovar=`, ver seção 7.3)
+Versão do contrato: **2** · Atualizado em 24/09/2026 (consolidação financeira: `eventoId`, outbox durável, cotação, estorno parcial — ver seções 4.3 e 10)
 
 > Este é o documento **de fronteira**: tudo que atravessa a linha entre o
 > San Checkout e o seu projeto. Um desenvolvedor que nunca viu este
@@ -16,7 +16,7 @@ Versão do contrato: **1** · Atualizado em 16/09/2026 (correção de segurança
 > local. Contrato paráfraseado envelhece calado: em 14/09/2026 um
 > integrador construiu contra um resumo herdado e implementou coisas que
 > este contrato nunca descreveu. Todo payload carrega `versao` (hoje
-> `1`); se a sua cópia não fala de `versao`, ela não é este contrato.
+> `2`); se a sua cópia não fala de `versao`, ela não é este contrato.
 >
 > ### Implementação de referência — leia o código, não só a prosa
 > Existe um **contratante de teste** completo, versionado e no ar, que
@@ -504,10 +504,18 @@ POST {seu_webhook_url}
 Content-Type: application/json
 X-Checkout-Signature: sha256={hmac hex do corpo}
 X-Checkout-Timestamp: {epoch em segundos}
+X-Checkout-Event-Id: {uuid — o mesmo `eventoId` do corpo}
+X-Checkout-Idempotency-Key: {a chave do FATO — ver 4.3.6}
 ```
 
 Responda **200 rápido**. Não precisa processar antes: responda 200 e
 processe depois.
+
+> **Desde 24/09/2026 (contrato v2) todo evento tem um `eventoId`**, no
+> corpo e no header. É por ele que você deduplica: o mesmo `eventoId`
+> chegando duas vezes é a MESMA entrega repetida (a nossa fila reenvia
+> até você responder 2xx — seção 4.3.6). Dois `eventoId` diferentes são
+> dois fatos diferentes, mesmo que o resto do payload pareça igual.
 
 #### 4.3.1 ⚠️ Verifique a assinatura — passo obrigatório
 
@@ -624,16 +632,22 @@ if (evento.tipo === 'assinatura') { /* seção 4.3.4 */ }
 else                              { /* seção 4.3.3 — pedido avulso */ }
 ```
 
-O payload de pedido **não tem** o campo `tipo`.
+Desde o contrato v2 o payload de pedido **também traz `tipo: "pedido"`**
+— antes não trazia. `evento.tipo === 'assinatura'` continua sendo o
+teste que separa os dois; não teste "tem `tipo`".
 
 #### 4.3.3 Payload de pedido avulso
 
 ```json
 {
-  "versao": 1,
+  "versao": 2,
+  "tipo": "pedido",
+  "eventoId": "3f2b1c9e-7d4a-4e0b-9c1d-5a6b7c8d9e0f",
+  "ocorridoEm": "2026-09-24T17:03:11.000Z",
   "pedidoId": "550e8400-e29b-41d4-a716-446655440000",
   "chargeId": "pay_8392017465",
   "status": "confirmado",
+  "statusFinanceiro": "confirmado",
   "valorCheio": 460.00,
   "desconto": 20.00,
   "cupom": "LOTE1PROMO",
@@ -645,16 +659,26 @@ O payload de pedido **não tem** o campo `tipo`.
   "taxaIsenta": false,
   "taxasTotais": 9.30,
   "metodoPagamento": "cartao_credito",
-  "valorCobrado": 449.30
+  "valorCobrado": 449.30,
+  "valorEstornado": null,
+  "estornoParcial": false,
+  "cotacaoId": "8d1c4e6a-…"
 }
 ```
 
 | Campo | Descrição |
 |---|---|
-| `versao` | Versão do contrato. Hoje sempre `1` (seção 10) |
+| `versao` | Versão do contrato. Hoje `2` (seção 10) |
+| `tipo` | `"pedido"` (v2). Ausente na v1 |
+| `eventoId` | Id ÚNICO desta notificação. Deduplique por ele (seção 4.3.6). Também vai no header `X-Checkout-Event-Id` |
+| `ocorridoEm` | Quando o fato aconteceu do lado da Asaas (ISO 8601, UTC). Dois eventos do mesmo `chargeId` se ordenam por ele |
 | `pedidoId` | O mesmo id que você mandou no link |
-| `chargeId` | Id da cobrança na Asaas. Pode ser `null` em alguns eventos de pop-up |
+| `chargeId` | Id da cobrança na Asaas. **Nunca `null` desde o v2**: o aviso de pedido só sai no evento que traz o id |
 | `status` | Ver a tabela abaixo |
+| `statusFinanceiro` | Igual a `status` — é o mesmo vocabulário, com o nome que o contrato de assinatura usa (4.3.4). Use um ou outro |
+| `valorEstornado` | Soma do que já foi devolvido ao pagador; `null` quando nunca houve estorno. Em `estornado` é igual a `valorCobrado`; em `estornado_parcialmente`, menor |
+| `estornoParcial` | `true` só em `estornado_parcialmente` |
+| `cotacaoId` | A cotação (preço mostrado na tela) que originou a cobrança — só para auditoria; `null` em cobranças anteriores a 24/09/2026 |
 | `valorCheio` … `taxaDoProjeto` | Exatamente o que a sua API devolveu — repassado de volta para conciliar |
 | `taxaAsaas` | Custo real da Asaas naquele método |
 | `taxaPropria` | Margem do San Checkout |
@@ -672,7 +696,8 @@ O payload de pedido **não tem** o campo `tipo`.
 | `recusado` | Antifraude reprovou, ou a captura do cartão falhou | Não será pago. Pode devolver o estoque/vaga |
 | `vencido` | Passou do vencimento sem pagar (boleto) | Idem |
 | `chargeback` | O portador contestou a compra no banco | **Suspenda a entrega/acesso.** A disputa corre fora do checkout |
-| `estornado` | Estorno concluído | Reverta o pedido do seu lado |
+| `estornado` | Estorno concluído, **total** | Reverta o pedido do seu lado |
+| `estornado_parcialmente` | Parte do valor foi devolvida (`valorEstornado` diz quanto; `estornoParcial: true`). Pode chegar mais de uma vez, com `valorEstornado` crescendo, e virar `estornado` quando completar | **Não** reverta o pedido inteiro: ajuste o que a devolução cobre. Novo em 24/09/2026 — antes era colapsado em `estornado` |
 | `estorno_solicitado` | Só boleto — estorno iniciado, aguardando o pagador (seção 5.4) | Aguarde o `estornado` |
 | `estorno_negado` | A Asaas recusou o estorno | O pagamento continua válido |
 | `pendente` | Uma baixa manual foi desfeita na Asaas | Trate como não pago de novo |
@@ -689,23 +714,46 @@ O payload de pedido **não tem** o campo `tipo`.
 
 ```json
 {
-  "versao": 1,
+  "versao": 2,
   "tipo": "assinatura",
+  "eventoId": "0c7a2d1e-4b6f-4a8c-9e2d-1f3a5b7c9d0e",
+  "ocorridoEm": "2026-10-24T13:00:02.000Z",
+  "evento": "cobranca_confirmada",
   "planoId": "plano-vitrina-9f2c",
   "documento": "11144477735",
-  "evento": "cobranca_confirmada"
+  "assinaturaId": "sub_000123456789",
+  "chargeId": "pay_5566778899",
+  "statusFinanceiro": "confirmado",
+  "valor": 267.30,
+  "ciclo": "QUARTERLY",
+  "cicloCanonico": "trimestral",
+  "metodoPagamento": "assinatura",
+  "valorEstornado": null,
+  "estornoParcial": false
 }
 ```
 
 | `evento` | Quando chega |
 |---|---|
-| `criada` | Assinatura criada e **primeira cobrança paga** |
+| `criada` | Assinatura criada e **primeira cobrança paga**. Desde 24/09/2026 sai no evento de PAGAMENTO, com `chargeId` e `assinaturaId` preenchidos (antes saía no evento de sessão, sem os dois) |
 | `cobranca_confirmada` | Um ciclo foi cobrado com sucesso |
 | `cobranca_falhou` | Um ciclo não entrou — cartão recusado ou cobrança vencida. **Mande o link de renovação** (seção 7.3) |
-| `cobranca_estornada` | Um ciclo foi estornado |
+| `cobranca_estornada` | Um ciclo foi estornado (total ou parcial — olhe `statusFinanceiro`/`estornoParcial`) |
 | `cobranca_contestada` | Chargeback num ciclo — **suspenda o acesso** |
 | `plano_trocado` | O assinante passou para outro plano (seção 5.6) |
+| `troca_revertida` | O **acerto** de uma troca de plano foi estornado ou contestado depois de a troca ter acontecido. Leva `planoAnterior` e `acertoCobrado`. **Novo em 24/09/2026** — antes o assinante ficava com o plano novo e o dinheiro de volta, sem ninguém saber |
 | `cancelada` | Assinatura encerrada |
+
+**Os campos do v2**, todos presentes em todo evento de assinatura:
+
+| Campo | Descrição |
+|---|---|
+| `eventoId` / `ocorridoEm` | Como no pedido (4.3.3) |
+| `assinaturaId` | Id da assinatura na Asaas. `null` só quando o fato acontece antes de ela existir (pop-up nova cancelada) |
+| `chargeId` | Id da cobrança do ciclo a que o evento se refere. `null` em `cancelada` pedida por você e em `criada` de Pix Automático |
+| `statusFinanceiro` | O status da cobrança no vocabulário de 4.3.3 (`confirmado`, `estornado`, `estornado_parcialmente`, `chargeback`, …); `null` quando o evento não é sobre uma cobrança |
+| `valor` / `ciclo` / `cicloCanonico` | O que ESTA cobrança cobrou e o ciclo da assinatura — `ciclo` no vocabulário da Asaas (`MONTHLY`…), `cicloCanonico` em português (`mensal`, `trimestral`, `semestral`, `anual`, …). Os dois dizem a mesma coisa (seção 7.1) |
+| `valorEstornado` / `estornoParcial` | Como no pedido |
 
 O par `planoId` + `documento` é a chave: é por ele que você localiza o
 assinante do seu lado, e é ele que você manda ao cancelar, pausar ou
@@ -719,30 +767,38 @@ retomar.
 > pontuação do seu antes de comparar** — é a única coisa que muda para
 > quem já integra, e só muda para quem guarda o CPF pontuado.
 
-> O payload de assinatura **não carrega valores** de propósito: o valor é
-> o do plano que você já tem cadastrado. Se precisar do valor exato de um
-> ciclo específico, ele está no painel da Asaas.
+> Até o v1 o payload de assinatura **não carregava valores**; desde o v2
+> carrega `valor` e `ciclo` em todo evento — é o que foi de fato cobrado
+> naquele ciclo, e é isso que você deve registrar (promoção, desconto de
+> parceiro e troca de plano mudam o valor de assinante para assinante).
 >
-> **`plano_trocado` é a única exceção, e por necessidade:** nele o
-> `planoId` que você conhece *acabou de mudar*, então o payload leva
-> quatro campos a mais — `planoAnterior` (sem ele você não acha o
-> próprio registro), `valor`, `ciclo` e `acertoCobrado`. Os três últimos
-> existem porque **avisar o assinante da mudança de preço é obrigação
-> sua** (RN-35), e um aviso sem o número novo não serve:
+> **`plano_trocado` leva dois campos a mais:** `planoAnterior` (sem ele
+> você não acha o próprio registro) e `acertoCobrado`. Existem porque
+> **avisar o assinante da mudança de preço é obrigação sua** (RN-35), e
+> um aviso sem o número novo não serve:
 >
 > ```json
 > {
->   "versao": 1,
+>   "versao": 2,
 >   "tipo": "assinatura",
+>   "eventoId": "…",
+>   "evento": "plano_trocado",
 >   "planoId": "plano-vitrina-pro-3a81",
 >   "planoAnterior": "plano-vitrina-9f2c",
 >   "documento": "11144477735",
->   "evento": "plano_trocado",
+>   "assinaturaId": "sub_000123456789",
+>   "chargeId": "pay_do_acerto",
 >   "valor": 160.00,
 >   "ciclo": "MONTHLY",
+>   "cicloCanonico": "mensal",
 >   "acertoCobrado": 30.00
 > }
 > ```
+>
+> `troca_revertida` tem o mesmo formato, com `statusFinanceiro` dizendo
+> o que aconteceu com o acerto (`estornado`, `estornado_parcialmente`,
+> `chargeback`) — e o `planoId` é o plano NOVO, que o assinante ainda
+> tem do nosso lado. Voltar ao anterior é decisão sua.
 >
 > `acertoCobrado` vem `0` quando não houve cobrança (rebaixamento, ou
 > acerto absorvido por ser menor que R$ 5,00).
@@ -772,57 +828,50 @@ Nem todo desfecho gera webhook. Não espere um:
 A ausência de notificação nunca significa "pago". Se precisa ter certeza
 sobre um pedido específico, pergunte (seção 5.2).
 
-#### 4.3.6 Política de novas tentativas
+#### 4.3.6 Política de novas tentativas — e como deduplicar
 
-Se o seu endpoint não responder `200`, o checkout tenta de novo **3
-vezes: 1 min, 5 min e 15 min** depois. Esgotadas, ele desiste e registra
-no próprio log.
+**A notificação vive num banco, não na memória** (desde 24/09/2026 —
+até então a fila de retry era em memória e reiniciar o checkout entre
+duas tentativas perdia o aviso). Se o seu endpoint não responder `2xx`,
+o checkout tenta de novo com recuo crescente: **1 min, 5 min, 15 min,
+1 h, 4 h, 12 h e 24 h** depois. Esgotadas, a linha fica `abandonada`
+no painel do checkout, de onde o operador pode reenviá-la — **com o
+mesmo `eventoId`**.
 
-Duas consequências práticas:
+Consequências práticas:
 
-- **A fila de retry é em memória.** Se o processo do checkout reiniciar
-  entre as tentativas, aquela notificação se perde.
-- **O pagamento continua confirmado do lado do checkout** — o dinheiro
-  entrou. O que se perde é só o aviso.
+- **Reiniciar o checkout não perde aviso.** O que está na fila
+  sobrevive ao processo (isto é provado por teste, com dois processos
+  de verdade).
+- **O pagamento continua confirmado do lado do checkout** enquanto a
+  fila tenta — o dinheiro entrou. O que espera é só o aviso.
+- A conciliação da seção 5.2/5.3 continua valendo: rode uma vez por dia
+  sobre tudo que ainda está "aguardando" do seu lado. Fila que esgotou
+  as tentativas só é reenviada por gente.
 
-Por isso a conciliação da seção 5.2 não é opcional para quem leva
-dinheiro a sério: rode uma vez por dia sobre tudo que ainda está
-"aguardando pagamento" do seu lado.
+**Deduplicação.** Uma notificação pode chegar **mais de uma vez** (uma
+tentativa cuja resposta se perdeu). A chave é o **`eventoId`**:
 
-Webhook pode chegar **mais de uma vez** para o mesmo fato (uma tentativa
-que na verdade chegou, mas cuja resposta se perdeu). Trate o
-processamento como **idempotente** — e a chave natural **depende do
-payload**:
-
-| payload | chave de idempotência |
+| chegou | é |
 |---|---|
-| **Pedido** (§4.3.2) | `chargeId` + `status` |
-| **Assinatura** (§4.3.4) | `planoId` + `documento` + `evento` |
+| mesmo `eventoId` | a MESMA notificação, reentregue. Responda `200` e não processe de novo |
+| `eventoId` diferente, mesmo `chargeId`+`status` | um fato NOVO sobre a mesma cobrança — por exemplo uma baixa desfeita e refeita (`confirmado` → `pendente` → `confirmado`), ou dois estornos parciais (`valorEstornado` cresce). Processe |
 
-> ⚠️ **O payload de assinatura não tem `chargeId`, e isso é de
-> propósito** (§4.3.4): a assinatura é identificada pelo par
-> `planoId` + `documento`, e um ciclo, pelo `evento`. Até 15/09/2026
-> esta seção dizia só "a chave é `chargeId` + `status`", sem ressalva —
-> e um integrador que leu isto ao pé da letra recusou creditar uma
-> assinatura paga, esperando um campo que nunca existiu naquele
-> payload. Ele estava certo em recusar; o texto é que estava incompleto.
->
-> **Não invente um `chargeId` para assinatura, e não espere um.** Se o
-> seu código precisa de um identificador de cobrança individual para
-> conciliar, ele está na seção 5.3.
->
-> ⚠️ **`planoId` + `documento` + `evento` deduplica RETRY, não CICLO.**
-> O `evento` é o mesmo texto (`cobranca_confirmada`, por exemplo) em
-> TODO ciclo recorrente do mesmo assinante — não existe nada no payload
-> que diferencie o pagamento de setembro do de outubro. Se o seu código
-> trata "já processei este `evento` pra este assinante" como motivo pra
-> ignorar a notificação, ele vai descartar o 2º, o 3º… ciclo como
-> "duplicata" do 1º, e o contratante para de creditar cobranças reais em
-> silêncio. A chave da tabela acima só serve pra não processar duas
-> vezes a MESMA tentativa de notificação (o retry de §4.3.6); para saber
-> se já processou um ciclo específico, use a sua própria consulta
-> periódica (seção 5.3, campo `ultimaCobranca.criadoEm`) como fonte de
-> verdade, não a deduplicação do webhook.
+Um `eventoId` identifica um **fato**: o mesmo fato, chegando por
+qualquer caminho (webhook da Asaas, reenvio administrativo, estorno que
+você mesmo pediu em `/estornar`), tem sempre o mesmo `eventoId`. O
+header `X-Checkout-Idempotency-Key` carrega a chave interna desse fato
+(`pedido|<chargeId>|<status>`, `assinatura|<chargeId>|<evento>|…`) — é
+informativa; deduplique pelo `eventoId`.
+
+> ⚠️ **Quem deduplicava pela v1 (`chargeId`+`status` no pedido,
+> `planoId`+`documento`+`evento` na assinatura) continua funcionando** —
+> nenhum desses campos mudou de nome ou de significado. Mas a chave da
+> v1 para assinatura deduplicava RETRY, não CICLO (dois ciclos do mesmo
+> assinante tinham payload idêntico), e você precisava da seção 5.3 para
+> saber qual ciclo era. **Com `eventoId` e `chargeId` no payload isso
+> acabou**: cada ciclo é uma cobrança, cada cobrança tem `chargeId`, e
+> cada notificação tem `eventoId`. Migre para ele.
 
 ---
 
@@ -893,10 +942,12 @@ mais, `criadoEm` e `chargeId`.
 
 ```json
 {
-  "versao": 1,
+  "versao": 2,
+  "tipo": "pedido",
   "pedidoId": "550e8400-...",
   "chargeId": "pay_8392017465",
   "status": "confirmado",
+  "statusFinanceiro": "confirmado",
   "valorCheio": 460.00,
   "desconto": 20.00,
   "cupom": "LOTE1PROMO",
@@ -909,9 +960,13 @@ mais, `criadoEm` e `chargeId`.
   "taxasTotais": 9.30,
   "metodoPagamento": "pix",
   "valorCobrado": 449.30,
+  "valorEstornado": null,
+  "estornoParcial": false,
   "criadoEm": "2026-09-10T14:02:11.482Z"
 }
 ```
+
+(Sem `eventoId`/`ocorridoEm`: isto é uma consulta, não um evento.)
 
 | Código | Significa |
 |---|---|
@@ -952,7 +1007,7 @@ documento em caminho de URL vaza para log de acesso, histórico e referer.
 
 ```json
 {
-  "versao": 1,
+  "versao": 2,
   "tipo": "assinatura",
   "planoId": "plano-vitrina-9f2c",
   "documento": "11144477735",
@@ -1076,20 +1131,29 @@ POST {BASE}/api/checkout/estornar
 X-Checkout-Key: {sua chave}
 Content-Type: application/json
 
-{ "pedidoId": "550e8400-..." }
+{ "pedidoId": "550e8400-...", "valor": 30.00 }
 ```
+
+`valor` é **opcional**: sem ele, estorna tudo (o que ainda não foi
+devolvido); com ele, devolve só aquela parte — **estorno parcial**,
+desde 24/09/2026. O `valor` é em reais, tem de ser maior que zero e
+não pode passar do que ainda falta estornar.
 
 **Resposta 200:**
 
 ```json
-{ "chargeId": "pay_8392017465", "status": "estornado" }
+{ "chargeId": "pay_8392017465", "status": "estornado_parcialmente", "valorEstornado": 30.00, "estornoParcial": true }
 ```
 
-- **Sempre tudo ou nada.** Não existe estorno parcial de um item dentro
-  de um pedido. Para cancelar só parte, estorne tudo e crie um pedido
-  novo com o que sobrou.
+- Estorno parcial deixa a cobrança em `estornado_parcialmente`, com
+  `valorEstornado` acumulando; pode ser chamado de novo até completar —
+  quando completa, o status vira `estornado`. A conta é em centavos.
+- **Boleto continua tudo-ou-nada**: `valor` num boleto responde `400`
+  (o estorno de boleto na Asaas é assíncrono e não documenta valor
+  parcial; não foi medido).
 - Depois do estorno você também recebe o webhook correspondente
-  (seção 4.3.3).
+  (seção 4.3.3) — com o **mesmo `eventoId`** que o evento da Asaas
+  produziria, então nunca ouve duas vezes.
 
 **Exceção — boleto não é instantâneo.** Pix e cartão estornam numa
 chamada só. Boleto não: a Asaas gera um link que o **pagador** precisa
@@ -1101,14 +1165,15 @@ intermediário real, não erro.
 | Código | Significa |
 |---|---|
 | `200` | Estorno executado ou solicitado |
-| `400` | `pedidoId` ausente |
+| `400` | `pedidoId` ausente; `valor` inválido, maior que o restante estornável, ou em boleto |
 | `401` | Chave ausente ou inválida |
 | `404` | Nenhuma cobrança encontrada para esse pedido |
-| `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha) |
+| `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada por inteiro, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha). `estorno_negado` volta a ser estornável |
 | `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
 
-> **Desde 22/09/2026, só uma cobrança `confirmado` pode ser estornada,
-> e só uma vez.** Antes disso a rota não checava o estado da cobrança
+> **Desde 22/09/2026, só uma cobrança `confirmado` (ou, desde 24/09,
+> `estornado_parcialmente`/`estorno_negado`) pode ser estornada — e cada
+> pedido de estorno, uma vez só.** Antes disso a rota não checava o estado da cobrança
 > nenhum antes de chamar a Asaas — duas chamadas simultâneas para o
 > mesmo pedido podiam as duas tentar estornar (achado de auditoria
 > externa, `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
@@ -1501,6 +1566,21 @@ Os sete, exatamente como escritos:
 Qualquer outro valor é recusado com `400` nomeando os aceitos — o
 checkout nunca repassa ciclo desconhecido para a Asaas.
 
+**A camada canônica de ciclos (desde 24/09/2026).** O checkout aceita
+no `GET /plano` o vocabulário da Asaas acima, **ou** o nome em
+português (`semanal`, `quinzenal`, `mensal`, `bimestral`, `trimestral`,
+`semestral`, `anual`), **ou** o número de meses (`1`, `3`, `6`, `12`) —
+e normaliza tudo para o nome da Asaas antes de gravar ou cobrar. O que
+sai nas notificações é sempre os dois: `ciclo` (Asaas) e
+`cicloCanonico` (português). **Não há mais default silencioso**: plano
+sem `ciclo` reconhecível é recusado com `400`, nunca vira `MONTHLY`.
+
+Além disso, cada contratante tem uma lista de **ciclos permitidos**,
+combinada com quem administra o checkout (seção 2). Plano com ciclo
+fora dela é recusado com `400` — é a proteção contra um catálogo seu
+vender, por engano, um ciclo que o seu produto não tem. Sem lista
+combinada, valem os sete.
+
 `BIWEEKLY` e `BIMONTHLY` não existem no Pix Automático. Um plano com
 esses ciclos recebe `400` explicando e **continua funcionando
 normalmente por cartão**.
@@ -1653,6 +1733,10 @@ não um erro que trava o pagador.
         │         │
         │         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
         │                                          (pausada TAMBÉM cancela — seção 5.5)
+        │
+        ├──► POST /trocar-plano ──► webhook  evento: plano_trocado
+        │         │
+        │         └──► acerto estornado/contestado ─► webhook  evento: troca_revertida
         │
         └──► POST /cancelar-assinatura ─► webhook  evento: cancelada
                                           (definitivo)
@@ -2052,11 +2136,50 @@ Brasil (`20`) e prefixo de fixo que não existe (`1`, `6`) passam, porque
 recusar comprador legítimo no caminho do dinheiro é pior do que aceitar
 um número estranho que o provedor aprova.
 
+### 9.3 A cotação — o preço que a tela mostrou é o preço cobrado
+
+Desde 24/09/2026 o checkout **nunca cobra Y depois de mostrar X**. Quando
+a tela carrega o seu pedido/plano (`GET /pedido`, `GET /plano`), o
+checkout grava um **retrato** do que você respondeu (os campos
+financeiros: `valorCheio`, `desconto`, `valorComDesconto`, `frete`,
+`taxaDoProjeto`, `isentarTaxa`; `valor`, `ciclo`, `nome` no plano) e os
+totais que a tela exibiu por método de pagamento e por número de
+parcelas. Esse retrato é a **cotação**, válida por 30 minutos.
+
+No clique, o checkout consulta a sua API **de novo** e compara com o
+retrato, em centavos:
+
+- **igual** → cobra os totais do retrato (que são os que a tela mostrou);
+- **diferente**, ou cotação vencida → **não cobra**: responde `409` para
+  a tela, com a cotação nova, e o pagador vê o preço novo e confirma de
+  novo. Você não recebe nada — nada aconteceu.
+
+O que isso pede de você: **a sua resposta de `/pedido` e `/plano` tem
+de ser determinística** enquanto o pedido está aberto. Se ela mudar a
+cada chamada (um desconto calculado pelo relógio, um frete que oscila),
+o pagador cai no `409` a cada clique e nunca paga. Preço que muda é
+pedido novo.
+
+O `cotacaoId` da cobrança volta para você no webhook (4.3.3), só para
+auditoria.
+
 ---
 
 ## 10. Compatibilidade e versionamento
 
-Todo payload traz `versao` (hoje `1`).
+Todo payload traz `versao` (hoje `2`, desde 24/09/2026).
+
+**O que mudou de 1 para 2, e por que ninguém quebrou:** só foram
+ACRESCENTADOS campos (`eventoId`, `ocorridoEm`, `tipo` no pedido,
+`statusFinanceiro`, `valorEstornado`, `estornoParcial`, `cotacaoId`;
+`assinaturaId`, `chargeId`, `valor`, `ciclo`, `cicloCanonico`,
+`metodoPagamento` na assinatura), um status (`estornado_parcialmente`)
+e um evento (`troca_revertida`). Nenhum campo foi removido nem mudou de
+significado — uma integração v1 que ignora campos desconhecidos (a regra
+2 abaixo) continua funcionando sem tocar em nada. A única mudança de
+comportamento é de PRECISÃO, não de forma: `criada` passou a sair no
+evento de pagamento (com `chargeId`), não no de sessão. Por isso o
+número subiu sem uma "v1 em paralelo": não há v1 a manter.
 
 **O compromisso do San Checkout com você:**
 
@@ -2064,8 +2187,8 @@ Todo payload traz `versao` (hoje `1`).
 - Podemos **adicionar** valores novos de `status` e de `evento`.
 - **Nunca** removemos nem renomeamos um campo existente.
 - **Nunca** mudamos o significado de um campo existente.
-- Se algo precisar quebrar de verdade, vira `versao: 2`, e a `versao: 1`
-  continua sendo enviada para quem já integrou.
+- Se algo precisar quebrar de verdade, vira `versao: 3`, e a versão
+  anterior continua sendo enviada para quem já integrou.
 
 **O que isso exige de você** — duas linhas de cuidado que evitam que uma
 melhoria nossa derrube a sua integração:
@@ -2088,7 +2211,7 @@ melhoria nossa derrube a sua integração:
 - [ ] Preencher `expiraEm` se a venda tem prazo (e saber que isso desliga o boleto)
 - [ ] Expor o `webhook_url` respondendo `200` rápido
 - [ ] **Verificar a assinatura HMAC** de todo webhook antes de confiar nele
-- [ ] Tratar o processamento do webhook como idempotente (`chargeId` + `status`)
+- [ ] Tratar o processamento do webhook como idempotente pelo **`eventoId`** (seção 4.3.6)
 - [ ] Ignorar campos, status e eventos desconhecidos
 - [ ] Emitir a sua nota fiscal e mandar o seu e-mail ao comprador no `confirmado`
 - [ ] Guardar a chave só no servidor
@@ -2099,6 +2222,8 @@ melhoria nossa derrube a sua integração:
 - [ ] (Recorrência) se você oferece upgrade/downgrade, tratar **`plano_trocado`** (§4.3.4): ele é o ÚNICO evento de assinatura cujo `planoId` mudou, e o `planoAnterior` vem junto para você achar o próprio registro. E **avisar o assinante da mudança de preço é sua obrigação** — e-mail e aviso no site (RN-35)
 - [ ] (Recorrência) creditar o ciclo tanto em **`criada`** (a **primeira** cobrança da assinatura chega com esse evento, não `cobranca_confirmada`) quanto em `cobranca_confirmada` (os ciclos seguintes) — creditar só num dos dois perde o primeiro ou todos os demais. Ver seção 4.3.4
 - [ ] Ao receber `cobranca_falhou`, mandar o link `&renovar={token}` — gerando o token você mesmo (seção 7.3), nunca `&renovar=1`
+- [ ] Tratar `estornado_parcialmente` (e `estornoParcial`/`valorEstornado`) sem reverter o pedido inteiro; tratar `troca_revertida` (o acerto de uma troca voltou) sem deixar o assinante com plano novo e dinheiro de volta
+- [ ] (Recorrência) usar o `valor` do próprio evento como o que foi cobrado — não recalcular do catálogo
 
 **Combinado com quem administra o checkout:**
 

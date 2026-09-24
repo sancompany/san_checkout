@@ -500,11 +500,22 @@ Nesta ordem, da resposta mais rápida para a mais cara:
    rajada ou caso isolado; `ultima_vez`, se ainda está acontecendo.
    É o primeiro lugar, porque responde "o quê e onde" sem login em
    provedor nenhum.
-2. **Painel `/admin` → aba Webhook.** Se o sintoma é "o contratante não
-   foi avisado" ou "o pedido ficou pendente", o evento da Asaas está
-   aqui — inclusive o que o código ainda não trata.
-3. **`GET /api/saude`.** Diz se banco e chave da Asaas estão de pé, e
-   traz o alerta de chave prestes a expirar.
+2. **Painel `/admin` → aba Filas** (desde 24/09/2026). Se o sintoma é
+   "o contratante não foi avisado" ou "o pedido ficou pendente", olhe
+   primeiro aqui: a **inbox** lista todo evento da Asaas com o desfecho
+   (`processado`, `falhou` + último erro, `ignorado`), e a **outbox**
+   toda notificação ao contratante com o status HTTP que ele devolveu.
+   Os dois botões (**reenfileirar** / **reenviar**) refazem a operação
+   com o MESMO id — o contratante deduplica, então reenviar nunca credita
+   duas vezes. Só depois a aba Webhook (auditoria redigida, inclusive do
+   que o código não trata).
+3. **`GET /api/saude`.** Diz se banco e chave da Asaas estão de pé,
+   traz o alerta de chave prestes a expirar e, desde 24/09/2026,
+   `filas` (`inbox.pendentes/esgotadas`, `outbox.pendentes/abandonadas`)
+   e `workers` (a última rodada de cada worker: inbox 60 s, outbox 30 s,
+   reconciliador de reservas 5 min). `esgotadas`/`abandonadas` acima de
+   zero é trabalho para gente; `workers` sem rodada recente com o
+   processo de pé é bug.
 4. **Log do Northflank.** Retenção curta, e é o único lugar com 4xx e
    com o que aconteceu antes do erro. Último recurso, não o primeiro.
    **Só pelo painel:** `app.northflank.com` → projeto `san-checkout` →
@@ -733,6 +744,9 @@ A pergunta que esta tabela responde é a única que importa às 3 da manhã:
 | a fila de webhook pausou | Asaas (e o sintoma: pagamento pago e não confirmado) | 15 falhas seguidas | reativar no painel e **conciliar** (`API.md` §5.2 e §5.3) |
 | `/api/saude` devolvendo 503 | curl, ou o ping de 10 min do cron-job.org | banco inalcançável | §6.1, item 3 e 4; se for o Supabase, §6 (restaurar) só depois de confirmar que não é rede |
 | aba **Erros** do painel crescendo | captura de exceção (migration 0007) | 5xx acontecendo agora | `ocorrencias` + `ultima_vez` dizem se é rajada; §6.1 |
+| `/api/saude` → `filas.inbox.esgotadas > 0` | curl / aba Filas | um evento da Asaas falhou 8 vezes no processamento (o `200` já foi dado; o evento está guardado) | ler `ultimo_erro` na aba Filas; corrigir a causa; **reenfileirar** — nunca pedir reenvio à Asaas |
+| `/api/saude` → `filas.outbox.abandonadas > 0` | curl / aba Filas | o contratante recusou 8 vezes (1 min … 24 h) | ver `ultimo_status_http`; avisar o contratante; **reenviar** quando ele voltar — mesmo `eventoId`, ele deduplica |
+| `/api/saude` → `workers.*` parado | curl | o processo está de pé mas um `setInterval` morreu | reiniciar o serviço (§4); abrir erro |
 | build ou deploy vermelho | Northflank / GitHub Actions | o que está no ar continua o commit anterior | §3 e §4; CI vermelho **não** publica |
 
 **O que NÃO existe, e é decisão registrada:** alerta que acorda alguém.
