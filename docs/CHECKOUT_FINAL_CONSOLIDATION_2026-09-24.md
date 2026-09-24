@@ -2,8 +2,7 @@
 
 > Relatório da consolidação executada em 24/09/2026 sobre a auditoria
 > externa (`docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md`) e a auditoria
-> própria. **Em construção enquanto a sessão roda** — a seção 1 diz o
-> que está pronto e o que falta; o estado curto e retomável está em
+> própria. O estado curto e retomável está em
 > `docs/CHECKOUT_CONSOLIDATION_STATE.md`.
 
 ## 1. Sumário executivo
@@ -17,8 +16,10 @@
 | Suítes | 57, todas verdes em Node 22 (`npm run check`) |
 | Migration 0015 | **aplicada** em `zacuaroarelaqnzjjlcz` (24/09), registrada no histórico |
 | Contrato v2 Checkout → contratante | documentado (`API.md`), lado MostrAí ajustado (seção 8) |
-| Deploy | pendente de mescla em `main` (seção 10) |
-| Access | ON (nunca desligado nesta sessão) |
+| Deploy | **no ar**: PR #42 mesclado (`899fa5f`), Northflank `deployedSHA = 899fa5f`, Pages servindo o front novo; MostrAí `main = 78235a7` deployado antes (seção 10) |
+| E2E sandbox | Pix criado → pago (cash, no sandbox) → inbox `processado` → `confirmado` com carimbo → outbox `enviada` (200 do contratante de teste); 10 POST simultâneos → 1 cobrança; cotação falsa/ausente → 409; sessões de cartão e assinatura com reserva e cotação (seção 10) |
+| Matriz MostrAí × Checkout | 12 planos × ciclos, promoção, parceiro, ciclo inválido, token de renovação, HMAC e `criada` v2 — tudo ok (seção 10) |
+| Access | ON (nunca desligado nesta sessão; smoke na seção 10) |
 
 ## 2. Estado inicial provado (Fase 0)
 
@@ -128,10 +129,56 @@ expurgoService (71).
 
 ## 10. Deploy, validação online, Access
 
-_A preencher ao final da sessão (mescla em `main`, deployedSHA, smoke,
-Access ON)._
+**Ordem deliberada:** MostrAí primeiro (com `eventoId` o MostrAí antigo
+creditaria cada ciclo duas vezes), Checkout depois.
 
-## 11. Bloqueadores
+| passo | evidência |
+|---|---|
+| MostrAí `main` | `78235a7` (merge de `claude/checkout-contrato-v2` sobre o `a91f967` do PR #58); Northflank `mostrai` build SUCCESS, deploy COMPLETED, `deployedSHA 78235a7`; `/health` `{"ok":true}`. 397/397 testes verdes em banco local antes do push |
+| Checkout PR #42 | CI `testes` verde nos 6 commits da branch; workflow Segurança: `segredos` reprovou uma vez (chave de MENTIRA `sk_…` num teste — trocada, `.gitleaksignore` para o commit histórico), depois verde; `estatica`/`dependencias` verdes; mesclado por squash em `899fa5f` |
+| Checkout no ar | Northflank `san-checkout` `deployedSHA 899fa5f`, deploy COMPLETED; `/api/saude` traz `filas` e `workers` (só o código novo tem); Pages serve `api.js`/`pedidoHandler.js` novos e a linha de parcela no `index.html` |
+| Migration | 0015 já estava aplicada antes do deploy — nenhuma escrita falhou (inbox/outbox/cotações/clientes gravadas ao vivo abaixo) |
 
-Nenhum que impeça a mescla. Fora do código: troca da Asaas para
-produção (decisão do dono — hard gate), primeiro pagamento real.
+**E2E no ar (sandbox Asaas, contratante `testemaster`):**
+
+| cenário | resultado |
+|---|---|
+| `GET /pedido/ped_completo` | cotação com id, totais por método (pix 11,08 · boleto 11,08 · cartão 1x 10,77 · 2x com `valorParcela` 5,41), `maxParcelas 2` (piso por parcela) |
+| `GET /pedido/ped_teste` (R$ 1,00) | `bloqueio valor_abaixo_do_piso`, sem cotação — correto |
+| `POST /pix` com cotação falsa / sem cotação | `409 cotacao_ausente` com cotação nova no corpo |
+| 10 `POST /pix` simultâneos em `ped_isento` | 1 × 200 + 9 × 409 "em andamento"; **um `chargeId` só** (`pay_kw9lv5m0x8pr6jsi`), uma linha, com `cotacao_id` |
+| pagamento simulado (`receiveInCash` dentro do contêiner) | `PAYMENT_RECEIVED` → `webhook_inbox` `processado` → `cobrancas` `confirmado` com `status_evento_em`/`confirmado_em` → `outbox_notificacoes` `enviada`, HTTP 200, chave `pedido|pay_…|confirmado` |
+| `POST /estornar` parcial (R$ 2,00) | Asaas recusa cobrança recebida "em dinheiro" (`400 Somente é possível estornar cobranças recebidas ou confirmadas`) — recusa limpa: arrendamento liberado, status intacto. **Estorno parcial não é mensurável ao vivo com pagamento simulado**; fica provado pelos autotestes (refundController 16, webhookController 220) |
+| `POST /cartao/ped_completo` e `POST /assinatura/plano_trimestral` | sessões criadas (`asaasCheckoutId`), linhas com reserva completada, `cotacao_id` e `ciclo QUARTERLY`; `GET /plano` traz `cicloCanonico trimestral`; `consultar-assinatura` 200 (acusou `versao: 1` — corrigido em seguida, PR #43) |
+| `clientes_asaas` | uma linha (hash do documento → `cus_…`) para todas as chamadas do mesmo pagador |
+| quebra | sem chave → 401; JSON quebrado → 400; nome de 1 KB com `<script>` → 400; corpo de 300 KB → 413; pedido já pago → 409; contratante inexistente → 404; nada virou 500 |
+
+**Matriz MostrAí × Checkout** (código real dos dois repos, banco local
+do MostrAí com as 87 migrations): Essencial/Pro/Prime × 1/3/6/12 meses →
+`MONTHLY/QUARTERLY/SEMIANNUALLY/YEARLY`, canônico
+`mensal/trimestral/semestral/anual`, cobrado = valor do ciclo (99 ·
+267,30 · 504,90 · 950,40 · 249 · 672,30 · 1.269,90 · 2.390,40 · 449 ·
+1.212,30 · 2.289,90 · 4.310,40), todos acima do piso e permitidos; plano
+de 2 meses → MostrAí responde `ciclo: null` e o Checkout recusa
+(`BIMONTHLY` recusado por não estar em `ciclos_permitidos`; `trimestral`
+e `6` normalizados); promoção 30 % (672,30 → 522,90) e parceiro 10 %
+(→ 605,07) refletidos na cotação, promoção vencida volta ao normal;
+token de renovação do MostrAí válido no Checkout (e não com outro
+documento, nem `renovar=1`); HMAC do Checkout aceito pelo MostrAí (e
+recusado quando errado); `criada` v2 entregue duas vezes credita **uma**
+cobrança com o valor do evento, ativa a assinatura e registra
+`eventoId` + `chargeId|status`.
+
+**Access:** `checkout.sancocore.com.br/admin.html`, `/admin` e
+`san-checkout.pages.dev/admin.html` → 302 para o login do Access;
+`/api/admin/*` sem token → 401. ON do começo ao fim.
+
+## 11. Bloqueadores e o que fica
+
+Nenhum bloqueador. Fora do código, e só do dono: a troca da Asaas para
+produção (hard gate) e o primeiro pagamento real. Declarado (seção 6):
+estorno parcial e recusa síncrona de cartão sem medição ao vivo;
+`intencoes_troca_plano` sem expurgo; `PAYMENT_DELETED`; fencing token.
+Observação operacional: no teste de 10 requisições simultâneas, nove
+recebem `409 "em andamento"` (a tela mostra o aviso e o pagador clica de
+novo) — comportamento documentado, não erro.
