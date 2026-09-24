@@ -613,28 +613,49 @@ Duas lições que valem para a troca:
 ### Passo 3 — limpar os registros de teste
 
 ```bash
-npm run limpar-teste          # mostra o que apagaria, não apaga
-npm run limpar-teste -- --apagar --confirmo-que-e-sandbox
+# o corte é a hora de início do processo que subiu com as variáveis de produção
+northflank exec service --project san-checkout --service san-checkout --cmd "stat -c %y /proc/1"
+
+npm run limpar-teste -- --ate=<corte ISO, UTC>          # simulação: mostra, não apaga
+npm run limpar-teste -- --ate=<corte> --apagar --confirmo-que-e-sandbox
 ```
 
-O script tem **dois guardas, nessa ordem**. O primeiro é automático e
-não tem como ser contornado: desde a migration 0009, `cobrancas.ambiente`
-diz de onde cada cobrança veio (RN-33), e havendo **uma** linha de
-produção ele recusa apagar qualquer coisa, inclusive com as duas
-bandeiras. O segundo é a bandeira `--confirmo-que-e-sandbox`, que
-continua exigida porque as outras quatro tabelas não têm a coluna e
-apagar histórico de cobrança não tem volta.
+Apaga os registros operacionais de sandbox em **dez tabelas** —
+`cobrancas`, `assinaturas`, `intencoes_troca_plano`, `webhook_inbox`,
+`outbox_notificacoes`, `cotacoes`, `clientes_asaas`, `webhook_eventos`,
+`webhook_rejeicoes`, `erros` — e nunca toca `contratantes` nem
+`subcontas`. Tudo numa **transação única**: ou apaga o conjunto inteiro,
+ou nada.
 
-Até 17/09/2026 só existia o segundo, e este parágrafo dizia que o script
-"não tem como saber" — era verdade enquanto nenhuma coluna marcasse a
-origem. Ele imprime a quebra por ambiente antes de perguntar qualquer
-coisa; confira essa lista e a das assinaturas antes de confirmar.
+"De sandbox" é o que foi gravado **antes do corte** `--ate` (obrigatório,
+sem padrão: depois da troca, "agora" incluiria linha de produção nas
+tabelas que não marcam o ambiente), e em `clientes_asaas` é
+`ambiente = 'sandbox'`. As travas rodam na simulação e de novo dentro da
+transação, e qualquer uma desfaz tudo: tabela de `public` sem
+classificação no script; cobrança do conjunto com `ambiente` diferente de
+`sandbox`; cliente de produção anterior ao corte (corte tarde demais);
+assinatura, cotação ou intenção do conjunto ligada a linha que fica; e,
+depois dos `delete`, contagem de `contratantes`/`subcontas` alterada ou
+`testemaster`/`mostrai` ausentes.
+
+**Rodado em 24/09/2026, depois da troca** (corte `2026-09-24T23:28:57Z`,
+início do PID 1 do contêiner de produção): 121 linhas apagadas, os dois
+contratantes intactos. Antes disso, as seis travas foram provadas por
+sabotagem dentro de transação desfeita — inclusive a última, que só
+dispara depois dos 121 `delete` e deixou o banco igual. A versão anterior
+do script era de antes das migrations 0011 e 0015 e ignorava cinco
+tabelas; a trava de classificação existe para a próxima migration não
+repetir isso.
 
 **Antes da troca, não depois.** O motivo está no `API.md §11.1`:
 assinatura de sandbox que sobrevive no nosso registro vira zumbi —
 `/cancelar-assinatura` chama a Asaas de produção com um id de sandbox,
 leva 404, e a linha que gravaria o status novo nunca roda. O registro
-fica `ativa` para sempre, incancelável pela API.
+fica `ativa` para sempre, incancelável pela API. Rodar logo depois da
+troca também serve — foi o que aconteceu em 24/09 —, porque o corte
+`--ate` separa o que o processo de sandbox gravou; o que não serve é
+deixar para depois de haver tráfego real, quando um zumbi já pode ter
+sido consultado pelo contratante.
 
 ### Passo 4 — as três variáveis no Northflank
 
