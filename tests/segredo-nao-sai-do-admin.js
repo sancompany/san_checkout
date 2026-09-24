@@ -40,7 +40,7 @@ const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 
 /* 1. A máscara */
 {
-  const m = mascararChave({ id: 'x', nome: 'Loja', api_key: 'sk_1234567890abcdef', webhook_url: 'https://l' });
+  const m = mascararChave({ id: 'x', nome: 'Loja', api_key: 'chave-de-mentira-cdef', webhook_url: 'https://l' });
   ok(!('api_key' in m), 'api_key não sobrevive à máscara');
   igual(m.api_key_final, 'cdef', 'só os 4 últimos');
   igual(m.nome, 'Loja', 'o resto passa intacto');

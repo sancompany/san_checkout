@@ -1,0 +1,4 @@
+# Falsos positivos do gitleaks (fingerprint = commit:arquivo:regra:linha).
+# Uma chave de MENTIRA num teste (H-08), já trocada por um valor sem cara de segredo;
+# o commit histórico continua no scan e é o que se ignora aqui.
+e6a7aac5f1f94e01ab2520fc56b735dc0d406136:tests/segredo-nao-sai-do-admin.js:generic-api-key:43
