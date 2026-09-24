@@ -273,7 +273,9 @@ export async function expurgarOutbox({ dias = 90 } = {}) {
   const { error } = await supabase
     .from('outbox_notificacoes')
     .delete()
-    .eq('status', 'enviada')
+    // `abandonada` sai junto: o payload leva `documento`, e uma linha que
+    // ninguém vai reenviar não pode guardar CPF para sempre (Lei 10).
+    .in('status', ['enviada', 'abandonada'])
     .lt('criado_em', corte);
   if (error) console.error('[outbox.expurgar]', error.message);
 }

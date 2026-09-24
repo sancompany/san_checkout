@@ -47,7 +47,9 @@ export const VALIDADE_COTACAO_MIN = 30;
  * `null` em `cartao` quando o valor não cabe em parcela nenhuma.
  */
 export function montarTotaisPedido(pedido) {
-  const valorBase = Number(pedido?.valorComDesconto ?? 0) + Number(pedido?.frete ?? 0);
+  // Em centavos e de volta: `0.1 + 0.2` não pode virar `fixedValue` do split.
+  const somaCentavos = (emCentavos(pedido?.valorComDesconto) ?? 0) + (emCentavos(pedido?.frete) ?? 0);
+  const valorBase = emReais(somaCentavos);
   if (!valorValido(valorBase)) return null;
   const isentar = Boolean(pedido?.isentarTaxa);
   const pix = calcularTaxa(valorBase, 'pix', 1, isentar);

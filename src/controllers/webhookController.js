@@ -61,7 +61,9 @@ import {
   buscarCobrancaPorCheckoutId,
   buscarCobrancaPorReferenciaExterna,
   vincularChargeIdAoCheckout,
+  vincularSessaoAReserva,
   atualizarStatusPorCheckoutId,
+  aplicarTransicaoPorCheckoutId,
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
   registrarCicloAssinatura,
@@ -113,7 +115,9 @@ const dependenciasPadrao = {
   buscarCobrancaPorCheckoutId,
   buscarCobrancaPorReferenciaExterna,
   vincularChargeIdAoCheckout,
+  vincularSessaoAReserva,
   atualizarStatusPorCheckoutId,
+  aplicarTransicaoPorCheckoutId,
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
   registrarCicloAssinatura,
@@ -129,16 +133,27 @@ const dependenciasPadrao = {
    * escrita local — a rede fica com o worker, então um contratante
    * pendurado nunca segura a resposta à Asaas (CONSTRAINTS.md §2.3).
    */
-  notificar: async ({ contratante, tipo, evento, chave, payload, ocorridoEm }) => {
-    const { id, nova } = await enfileirarNotificacao({
+  notificar: async ({ contratante, tipo, evento, chave, payload, ocorridoEm, aplicada = false }) => {
+    const enfileirar = (chaveIdempotencia) => enfileirarNotificacao({
       contratanteId: contratante?.id ?? payload?.contratanteId ?? null,
       url: contratante?.webhook_url,
       tipo,
       evento,
-      chaveIdempotencia: chave,
+      chaveIdempotencia,
       payload,
       ocorridoEm
     });
+    let { id, nova } = await enfileirar(chave);
+    /* O MESMO fato, de novo, de verdade: a transição foi APLICADA agora
+       (não é reentrega) e a chave do fato já existia — é uma cobrança
+       que voltou a `confirmado` depois de `pendente` (baixa desfeita e
+       refeita), ou um chargeback vencido. O contratante precisa ouvir
+       a segunda vez; uma reentrega ou um evento equivalente
+       (`PAYMENT_RECEIVED` depois de `PAYMENT_CONFIRMED`) NÃO aplica
+       transição e cai na chave do fato, que já existe → nada. */
+    if (!nova && aplicada && id) {
+      ({ id, nova } = await enfileirar(`${chave}|r${ocorridoEm ?? new Date().toISOString()}`));
+    }
     if (nova) tentarAgora(id);
     return { id, nova };
   },
@@ -271,7 +286,9 @@ export function ocorridoEmDoEvento(corpo) {
  *  sem ela): ausência, nunca zero. */
 export function valorEstornadoDoPayment(payment) {
   if (!Array.isArray(payment?.refunds)) return null;
-  const concluidos = payment.refunds.filter((r) => r && (r.status === 'DONE' || r.status === undefined));
+  // `status` ausente conta como concluído nas DUAS formas: `undefined`
+  // no corpo cru e `null` no corpo mínimo da inbox (`podar` normaliza).
+  const concluidos = payment.refunds.filter((r) => r && (r.status === 'DONE' || r.status == null));
   if (concluidos.length === 0) return null;
   return somarReais(concluidos.map((r) => r.value));
 }
@@ -499,11 +516,22 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
   let cobranca = await deps.buscarCobranca(chargeId);
 
   /* Primeira cobrança de um pop-up: o `charge_id` só existe AQUI
-     (`payment.checkoutSession` aponta para a sessão — medido em 15/09). */
-  let primeiraDoCheckout = false;
-  if (!cobranca) {
-    cobranca = await vincularPrimeiraCobrancaDoCheckout(payment, deps);
-    primeiraDoCheckout = Boolean(cobranca);
+     (`payment.checkoutSession` aponta para a sessão — medido em 15/09).
+     Só VINCULA o charge à linha; amarrar assinatura e cancelar a antiga
+     é depois, e só quando o status for `confirmado` (abaixo). */
+  if (!cobranca) cobranca = await vincularPrimeiraCobrancaDoCheckout(payment, deps);
+
+  /* Pix/Boleto direto cuja resposta do `POST /v3/payments` se perdeu
+     (H-06): a linha existe como RESERVA, sem `charge_id`, e a Asaas nos
+     dá a referência de volta. Vincula pela linha e segue — sem isto o
+     `PAYMENT_CONFIRMED` era consumido sem efeito e o pago ficava
+     `pendente` para sempre (revisão de 24/09/2026). */
+  if (!cobranca && typeof payment?.externalReference === 'string' && payment.externalReference.startsWith('reserva-')) {
+    const reserva = await deps.buscarCobrancaPorReferenciaExterna(payment.externalReference);
+    if (reserva && !reserva.charge_id) {
+      await deps.vincularSessaoAReserva(reserva.id, { chargeId });
+      cobranca = { ...reserva, charge_id: chargeId };
+    }
   }
 
   if (!cobranca) {
@@ -517,45 +545,69 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     if (!cobranca) return;
   }
 
-  /* A MÁQUINA DE ESTADOS (C-03). `primeiraDoCheckout` fura a guarda de
-     "mesmo status" de propósito: o `CHECKOUT_PAID` já marcou a sessão
-     `confirmado`, e este evento é o que traz o id que faltava — mas
-     NÃO fura a matriz: um `PAYMENT_CONFIRMED` sobre uma sessão que já
-     virou `estornado` continua recusado. */
+  /* A MÁQUINA DE ESTADOS (C-03). */
   const valorEstornado = ['estornado', 'estornado_parcialmente'].includes(novoStatus) ? valorEstornadoDoPayment(payment) : undefined;
   let statusGravado = novoStatus;
+  let aplicada = false;
 
-  if (primeiraDoCheckout && cobranca.status === novoStatus) {
-    // nada a gravar de status; o vínculo já foi feito em vincularPrimeiraCobrancaDoCheckout
-  } else {
-    const decisao = decidirTransicao(cobranca, novoStatus, ocorridoEm);
-    /* Um SEGUNDO estorno parcial chega com o MESMO status e um acumulado
-       maior — "mesmo status" aqui não é reentrega, é dinheiro novo saindo.
-       Só o valor avança; se não avançou, é reentrega de verdade. */
-    const segundoParcial = decisao.acao === 'ignorar'
-      && novoStatus === 'estornado_parcialmente' && cobranca.status === 'estornado_parcialmente'
-      && valorEstornado !== null && (emCentavos(valorEstornado) ?? 0) > (emCentavos(cobranca.valor_estornado) ?? 0);
-    if (decisao.acao === 'ignorar' && !segundoParcial) {
-      if (cobranca.status !== novoStatus) console.log(`[webhook/pagamento] ${chargeId}: ${decisao.motivo} — ignorado`);
-      return;
-    }
+  const decisao = decidirTransicao(cobranca, novoStatus, ocorridoEm);
+  /* Um SEGUNDO estorno parcial chega com o MESMO status e um acumulado
+     maior — "mesmo status" aqui não é reentrega, é dinheiro novo saindo.
+     Só o valor avança; se não avançou, é reentrega de verdade. */
+  const segundoParcial = decisao.acao === 'ignorar'
+    && novoStatus === 'estornado_parcialmente' && cobranca.status === 'estornado_parcialmente'
+    && valorEstornado !== null && (emCentavos(valorEstornado) ?? 0) > (emCentavos(cobranca.valor_estornado) ?? 0);
+  const mesmoStatus = cobranca.status === novoStatus && !segundoParcial;
+
+  if (decisao.acao === 'ignorar' && !segundoParcial && !mesmoStatus) {
+    console.log(`[webhook/pagamento] ${chargeId}: ${decisao.motivo} — ignorado`);
+    return;
+  }
+  if (!mesmoStatus) {
     const gravou = await deps.aplicarTransicao(chargeId, { de: cobranca.status, para: novoStatus, ocorridoEm, valorEstornado });
     if (!gravou) {
-      // Outro evento venceu a corrida entre a leitura e a escrita: relê e
-      // deixa a inbox/worker decidir de novo se ainda houver o que fazer.
-      console.log(`[webhook/pagamento] ${chargeId}: transição ${cobranca.status} → ${novoStatus} perdeu a corrida — ignorado`);
-      return;
+      /* Outro evento venceu a corrida entre a leitura e a escrita. LANÇA:
+         a inbox marca `falhou`, relê a linha no reprocessamento e decide
+         de novo — marcar "processado" aqui descartava o evento perdedor
+         (um estorno que chegou junto com a confirmação, por exemplo). */
+      throw new Error(`transição ${cobranca.status} → ${novoStatus} de ${chargeId} perdeu a corrida do UPDATE condicional; reprocessar`);
     }
+    aplicada = true;
   }
+  /* `mesmoStatus` NÃO devolve aqui de propósito: a notificação ainda é
+     tentada com a chave do fato. Se a transição foi gravada numa
+     tentativa anterior e a outbox falhou logo depois, é este caminho
+     que recupera o aviso; se já foi enfileirada, a chave única faz o
+     resto (revisão de 24/09/2026). */
 
   /* Estorno parcial que devolve TUDO: é estorno total, e o contratante
      precisa ouvir isso — mesmo que a Asaas tenha chamado de "parcial". */
   if (novoStatus === 'estornado_parcialmente' && valorEstornado !== null && emCentavos(valorEstornado) >= emCentavos(cobranca.valor_cobrado ?? 0) && emCentavos(cobranca.valor_cobrado ?? 0) > 0) {
     statusGravado = 'estornado';
     await deps.aplicarTransicao(chargeId, { de: 'estornado_parcialmente', para: 'estornado', ocorridoEm, valorEstornado });
+    aplicada = true;
   }
 
-  const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm };
+  /* A ASSINATURA nasce AQUI — no primeiro `confirmado` de uma cobrança de
+     pop-up que ainda não tem `asaas_subscription_id`. Derivado da LINHA,
+     não de "foi este evento que vinculou o charge": um `em_analise`
+     que chegue antes vincula o charge e NÃO ativa nada, e o
+     `PAYMENT_CONFIRMED` seguinte, achando a linha pelo charge, ativa.
+     Antes, qualquer primeiro PAYMENT_* ativava a assinatura e cancelava
+     a antiga (renovação) — inclusive um cartão RECUSADO. */
+  let primeiraConfirmacaoDaAssinatura = false;
+  if (
+    statusGravado === 'confirmado'
+    && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
+    && payment?.subscription
+    && !cobranca.asaas_subscription_id
+  ) {
+    await amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps);
+    cobranca = { ...cobranca, asaas_subscription_id: payment.subscription };
+    primeiraConfirmacaoDaAssinatura = true;
+  }
+
+  const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
 
   /* O ACERTO DE UMA TROCA DE PLANO (H-03). Confirmação é anunciada pela
      própria troca (`plano_trocado`); mas uma REVERSÃO do acerto —
@@ -576,10 +628,12 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
   }
 
   if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
-    /* A PRIMEIRA cobrança de uma assinatura anuncia `criada` — AQUI, no
-       evento que traz `chargeId` e `payment.subscription` (H-02). O
-       `CHECKOUT_PAID` não traz nenhum dos dois e não anuncia mais nada. */
-    const eventoAssinatura = primeiraDoCheckout && statusGravado === 'confirmado'
+    /* `criada` é a PRIMEIRA cobrança da assinatura confirmando — a linha
+       da pop-up (tem `asaas_checkout_id`; os ciclos 2+ não têm). Também
+       derivado da linha, para o reprocessamento chegar ao mesmo
+       veredito que a primeira passagem (H-02). */
+    const primeiraDaAssinatura = primeiraConfirmacaoDaAssinatura || Boolean(cobranca.asaas_checkout_id);
+    const eventoAssinatura = primeiraDaAssinatura && statusGravado === 'confirmado'
       ? 'criada'
       : mapearEventoAssinatura(statusGravado);
     if (!eventoAssinatura) return;
@@ -640,10 +694,13 @@ async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPa
   if (!cobranca && payment?.externalReference) {
     // Reserva cuja resposta de `POST /v3/checkouts` se perdeu (C-04/H-06):
     // a sessão existe na Asaas com a nossa referência, mas a linha ficou
-    // sem `asaas_checkout_id`. Amarra agora.
+    // sem `asaas_checkout_id`. Amarra sessão E charge pela LINHA (o
+    // `where asaas_checkout_id` não casaria — ele é nulo aqui).
     cobranca = await deps.buscarCobrancaPorReferenciaExterna(payment.externalReference);
     if (cobranca && !cobranca.asaas_checkout_id) {
-      await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
+      if (cobranca.charge_id) return null; // reserva já completada por outro caminho
+      await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId, chargeId: payment.id });
+      return { ...cobranca, asaas_checkout_id: asaasCheckoutId, charge_id: payment.id };
     }
   }
   if (!cobranca) {
@@ -656,16 +713,7 @@ async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPa
   if (cobranca.charge_id) return null; // já vinculada — este é um ciclo, não a primeira
 
   await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
-
-  if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment.subscription) {
-    await amarrarAssinaturaACobranca(cobranca, payment, payment.id, deps);
-  }
-
-  return {
-    ...cobranca,
-    charge_id: payment.id,
-    asaas_subscription_id: payment.subscription ?? cobranca.asaas_subscription_id ?? null
-  };
+  return { ...cobranca, charge_id: payment.id };
 }
 
 async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) {
@@ -719,52 +767,55 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao, ocorrid
 
   let cobranca = await deps.buscarCobrancaPorCheckoutId(asaasCheckoutId);
   if (!cobranca && corpo?.checkout?.externalReference) {
-    // A reserva cuja sessão nasceu mas a resposta se perdeu (C-04/H-06).
+    // A reserva cuja sessão nasceu mas a resposta se perdeu (C-04/H-06):
+    // amarra pela LINHA — `asaas_checkout_id` é nulo, um update por ele
+    // não casaria nada (revisão de 24/09/2026).
     cobranca = await deps.buscarCobrancaPorReferenciaExterna(corpo.checkout.externalReference);
     if (cobranca && !cobranca.asaas_checkout_id) {
-      await deps.vincularChargeIdAoCheckout(asaasCheckoutId, cobranca.charge_id ?? null);
-      // ↑ grava só o vínculo da sessão; o charge chega no PAYMENT_CONFIRMED
+      await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId });
       cobranca = { ...cobranca, asaas_checkout_id: asaasCheckoutId };
     }
   }
   if (!cobranca) return;
 
+  const STATUS_DA_SESSAO = { CHECKOUT_PAID: 'confirmado', CHECKOUT_CANCELED: 'cancelado', CHECKOUT_EXPIRED: 'expirado' };
+  const novoStatus = STATUS_DA_SESSAO[evento];
+  if (!novoStatus) return;
+
+  /* A mesma máquina de estados dos eventos de pagamento (C-03): um
+     `CHECKOUT_PAID` reprocessado depois de um estorno não regride a
+     linha, e um `CHECKOUT_EXPIRED` atrasado não apaga uma confirmação. */
+  const decisao = decidirTransicao(cobranca, novoStatus, ocorridoEm);
+  if (decisao.acao === 'ignorar') {
+    if (cobranca.status !== novoStatus) console.log(`[webhook/sessao] ${asaasCheckoutId}: ${decisao.motivo} — ignorado`);
+    return;
+  }
+  const gravou = await deps.aplicarTransicaoPorCheckoutId(asaasCheckoutId, { de: cobranca.status, para: novoStatus, ocorridoEm });
+  if (!gravou) throw new Error(`transição ${cobranca.status} → ${novoStatus} da sessão ${asaasCheckoutId} perdeu a corrida; reprocessar`);
+
   if (evento === 'CHECKOUT_PAID') {
-    const payment = corpo?.checkout?.payment ?? corpo?.payment ?? null;
-    const chargeId = payment?.id ?? null;
-    if (chargeId) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
-    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'confirmado');
-
-    const chargeIdFinal = chargeId ?? cobranca.charge_id;
-    if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && payment?.subscription && chargeIdFinal) {
-      await amarrarAssinaturaACobranca(cobranca, payment, chargeIdFinal, deps);
-    }
-
-    /* NENHUM aviso sai daqui (mudança de 24/09/2026). O `CHECKOUT_PAID`
-       real não traz `payment`, então não há `chargeId` nem
-       `subscription` para o contratante deduplicar/vincular; quem avisa
-       — `confirmado` no pedido, `criada` na assinatura — é o
-       `PAYMENT_CONFIRMED`, 279 ms depois, com os dois ids. O que
+    /* O `CHECKOUT_PAID` real não traz `payment` (medido em 15/09); se um
+       dia trouxer, o charge é vinculado, e a assinatura é amarrada no
+       `PAYMENT_CONFIRMED`, que é quem confirma dinheiro. NENHUM aviso
+       sai daqui: quem avisa — `confirmado` no pedido, `criada` na
+       assinatura — é o `PAYMENT_CONFIRMED`, com os dois ids. O que
        acontece AQUI é o que a tela precisa: a sessão vira `confirmado`
        e o polling da pop-up fecha. */
+    const chargeId = corpo?.checkout?.payment?.id ?? corpo?.payment?.id ?? null;
+    if (chargeId && !cobranca.charge_id) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
     return;
   }
 
   if (evento === 'CHECKOUT_CANCELED') {
-    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'cancelado');
     // Renovação abandonada NÃO é a assinatura sendo cancelada (RN-20).
     if (cobranca.substitui_assinatura_id) return;
     if (METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
-      return notificarAssinatura(cobranca, { evento: 'cancelada', assinaturaId: cobranca.asaas_subscription_id ?? null, chargeId: cobranca.charge_id ?? null, statusFinanceiro: 'cancelado', ocorridoEm }, deps);
+      return notificarAssinatura(cobranca, { evento: 'cancelada', assinaturaId: cobranca.asaas_subscription_id ?? null, chargeId: cobranca.charge_id ?? null, statusFinanceiro: 'cancelado', ocorridoEm, aplicada: true }, deps);
     }
-    return; // pedido avulso: tentativa abandonada não tem status no vocabulário de pedido
+    // pedido avulso: tentativa abandonada não tem status no vocabulário de pedido
   }
-
-  if (evento === 'CHECKOUT_EXPIRED') {
-    await deps.atualizarStatusPorCheckoutId(asaasCheckoutId, 'expirado');
-    // Sem notificação (API.md §4.3.5): a pop-up expirada é ausência de
-    // pagamento, não um fato sobre uma cobrança que existiu.
-  }
+  // CHECKOUT_EXPIRED: sem notificação (API.md §4.3.5) — a pop-up expirada é
+  // ausência de pagamento, não um fato sobre uma cobrança que existiu.
 }
 
 /* ------------------------------------------------------------------
@@ -837,7 +888,7 @@ function chaveDoFato({ tipo, evento, chargeId, assinaturaId, statusFinanceiro, v
   return `assinatura|${referencia}|${evento}${statusFinanceiro ? `|${statusFinanceiro}` : ''}${sufixoParcial}`;
 }
 
-async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEstornado, ocorridoEm }, deps) {
+async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEstornado, ocorridoEm, aplicada = false }, deps) {
   const contratante = contratanteDaCobranca(cobranca);
   if (!contratante.webhook_url) return;
   return deps.notificar({
@@ -846,7 +897,28 @@ async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEsto
     evento: statusFinanceiro,
     chave: chaveDoFato({ tipo: 'pedido', chargeId, statusFinanceiro, valorEstornado }),
     payload: montarPayloadConfirmacaoPedido(cobranca, chargeId, statusFinanceiro, { valorEstornado }),
-    ocorridoEm
+    ocorridoEm,
+    aplicada
+  });
+}
+
+/**
+ * Um fato sobre um PEDIDO produzido por NÓS, fora do webhook — hoje, o
+ * estorno pedido em `POST /estornar`. Mesma chave do fato: quando o
+ * `PAYMENT_REFUNDED` da Asaas chegar, cai na mesma linha da outbox e
+ * não avisa duas vezes. Antes, o §5.4 do API.md prometia esse webhook e
+ * ele nunca saía (revisão de 24/09/2026).
+ */
+export async function notificarFatoDePedido(contratante, cobranca, { chargeId, statusFinanceiro, valorEstornado = null }, deps = dependenciasPadrao) {
+  if (!contratante?.webhook_url) return;
+  return deps.notificar({
+    contratante,
+    tipo: 'pedido',
+    evento: statusFinanceiro,
+    chave: chaveDoFato({ tipo: 'pedido', chargeId, statusFinanceiro, valorEstornado }),
+    payload: montarPayloadConfirmacaoPedido(cobranca, chargeId, statusFinanceiro, { valorEstornado }),
+    ocorridoEm: new Date().toISOString(),
+    aplicada: false
   });
 }
 
@@ -859,7 +931,8 @@ async function notificarAssinatura(cobranca, dados, deps) {
     evento: dados.evento,
     chave: chaveDoFato({ tipo: 'assinatura', ...dados, cobranca }),
     payload: montarPayloadAssinatura(cobranca, dados),
-    ocorridoEm: dados.ocorridoEm
+    ocorridoEm: dados.ocorridoEm,
+    aplicada: Boolean(dados.aplicada)
   });
 }
 
@@ -1007,6 +1080,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     }
     // aplicarTransicao devolve true por padrão (a escrita venceu)
     if (!('aplicarTransicao' in retornos)) deps.aplicarTransicao = async (...args) => { chamadas.push({ nome: 'aplicarTransicao', args }); return true; };
+    if (!('aplicarTransicaoPorCheckoutId' in retornos)) deps.aplicarTransicaoPorCheckoutId = async (...args) => { chamadas.push({ nome: 'aplicarTransicaoPorCheckoutId', args }); return true; };
     deps.inbox = {};
     for (const nome of Object.keys(dependenciasPadrao.inbox)) {
       deps.inbox[nome] = async (...args) => {
@@ -1028,7 +1102,10 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   let deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado' } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').length, 0, 'status já era esse: não regrava');
-  assert.equal(deps.notificados().length, 0, 'e não notifica de novo');
+  let n = deps.notificados();
+  assert.equal(n.length, 1, 'mas AINDA tenta enfileirar com a chave do fato — é o que recupera um aviso perdido depois da transição gravada');
+  assert.equal(n[0].aplicada, false, 'sem transição aplicada: a chave do fato, que já existe, não vira segunda linha');
+  assert.equal(n[0].chave, 'pedido|pay_1|confirmado');
 
   // 2. caminho feliz do Pix: grava por CAS e enfileira com a chave do fato
   deps = depsFalsas({ buscarCobranca: cobrancaPix });
@@ -1037,8 +1114,9 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.deepEqual(deps.chamou('aplicarTransicao')[0].args[1].de, 'pendente');
   assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado');
   assert.equal(deps.chamou('aplicarTransicao')[0].args[1].ocorridoEm, '2026-09-24T13:00:00.000Z', 'o carimbo do evento vai para a linha');
-  let n = deps.notificados();
+  n = deps.notificados();
   assert.equal(n.length, 1, 'primeira vez notifica o contratante');
+  assert.equal(n[0].aplicada, true, 'transição aplicada agora: um fato repetido de verdade ganha linha nova');
   assert.equal(n[0].contratante.webhook_url, contratante.webhook_url);
   assert.equal(n[0].chave, 'pedido|pay_1|confirmado', 'a chave de idempotência é o fato');
   assert.equal(n[0].payload.status, 'confirmado');
@@ -1063,9 +1141,9 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(deps.chamou('aplicarTransicao')[0].args[1].valorEstornado, 99);
   assert.equal(deps.notificados()[0].payload.status, 'estornado');
   assert.equal(deps.notificados()[0].payload.valorEstornado, 99);
-  // e a corrida perdida no CAS não notifica
+  // e a corrida perdida no CAS LANÇA (a inbox reprocessa depois de reler) — nunca notifica
   deps = depsFalsas({ buscarCobranca: cobrancaPix, aplicarTransicao: () => false });
-  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps);
+  await assert.rejects(() => processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, deps), /perdeu a corrida/);
   assert.equal(deps.notificados().length, 0, 'perdeu a corrida do UPDATE condicional: não notifica');
 
   // 4. H-04: estorno parcial preservado
@@ -1098,7 +1176,8 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado_parcialmente', valor_cobrado: 100, valor_estornado: 30 } });
   await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1', refunds: [{ status: 'DONE', value: 30 }] } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').length, 0, 'reentrega do mesmo parcial não grava');
-  assert.equal(deps.notificados().length, 0, 'nem notifica');
+  assert.equal(deps.notificados()[0].aplicada, false, 'e só reencosta na chave do fato (acumulado igual → mesma linha da outbox)');
+  assert.equal(deps.notificados()[0].chave, 'pedido|pay_1|estornado_parcialmente|3000');
 
   // 5. evento desconhecido / corpo vazio: nenhum efeito
   deps = depsFalsas();
@@ -1182,8 +1261,12 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   const cobrancaAssinaturaCrua = { ...cobrancaPix, metodo_pagamento: 'assinatura', charge_id: null, asaas_checkout_id: 'chk_real', plano_id: 'plano_x', documento: '52998224725', contratante_id: 'mostrai', substitui_assinatura_id: null, ciclo: 'QUARTERLY', valor_cobrado: 267.3 };
   deps = depsFalsas({ buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua });
   await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } }, deps);
-  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_real', 'confirmado'], 'a sessão vira confirmado (é o que o polling da pop-up lê)');
+  assert.deepEqual(deps.chamou('aplicarTransicaoPorCheckoutId')[0].args, ['chk_real', { de: 'pendente', para: 'confirmado', ocorridoEm: null }], 'a sessão vira confirmado pela máquina de estados (é o que o polling da pop-up lê)');
   assert.equal(deps.notificados().length, 0, 'CHECKOUT_PAID não avisa nada: não tem chargeId nem subscription');
+  // reprocessamento administrativo de um CHECKOUT_PAID sobre uma linha já estornada: NÃO regride
+  deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'estornado' } });
+  await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } }, deps);
+  assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'C-03 vale para a sessão também: estornado não volta a confirmado');
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
   assert.deepEqual(deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_real', 'pay_real'], 'o charge_id é gravado aqui (bug de 15/09)');
@@ -1203,12 +1286,31 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 1);
   assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado', 'com a sessão ainda pendente, a transição é gravada');
   assert.equal(deps.notificados()[0].payload.evento, 'criada');
-  // segundo PAYMENT_CONFIRMED (reentrega já processada) sobre a mesma sessão: nada
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado' } });
+  // segundo PAYMENT_CONFIRMED (reentrega já processada) sobre a mesma sessão: não amarra de novo,
+  // e o `criada` sai com a MESMA chave (que já existe na outbox → nada é enviado)
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real' } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
-  assert.equal(deps.notificados().length, 0, 'reentrega: nada');
+  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'reentrega: a assinatura não é amarrada de novo');
+  assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0);
+  n = deps.notificados();
+  assert.equal(n[0].payload.evento, 'criada', 'derivado da LINHA (tem asaas_checkout_id): o reprocessamento chega ao mesmo veredito');
+  assert.equal(n[0].chave, 'assinatura|pay_real|criada|confirmado');
+  assert.equal(n[0].aplicada, false);
+  // um evento NÃO-confirmado chegando primeiro vincula o charge, mas NÃO ativa nem cancela nada
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga' } });
+  await processarWebhook({ event: 'PAYMENT_AWAITING_RISK_ANALYSIS', payment: { id: 'pay_risco', subscription: 'sub_nova', checkoutSession: 'chk_real' } }, deps);
+  assert.deepEqual(deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_real', 'pay_risco'], 'o charge é vinculado');
+  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'em_analise NÃO ativa a assinatura');
+  assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0, 'e NÃO cancela a antiga (renovação recusada deixava o pagador sem nenhuma)');
+  assert.equal(deps.notificados().length, 0, 'em_analise não tem evento de assinatura');
+  // ...e o PAYMENT_CONFIRMED seguinte, achando a linha pelo charge, é quem ativa e cancela a antiga
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_risco', status: 'em_analise', substitui_assinatura_id: 'sub_antiga' } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_risco', subscription: 'sub_nova', checkoutSession: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_nova', 'agora sim: a assinatura nasce no confirmado');
+  assert.deepEqual(deps.chamou('cancelarAssinaturaNaAsaas')[0].args, ['sub_antiga']);
+  assert.equal(deps.notificados()[0].payload.evento, 'criada');
   // ciclo 2 com checkoutSession: não sobrescreve o vínculo da primeira
-  const cicloNovo = { ...cobrancaAssinaturaCrua, charge_id: 'pay_ciclo2', status: 'pendente', asaas_subscription_id: 'sub_real' };
+  const cicloNovo = { ...cobrancaAssinaturaCrua, charge_id: 'pay_ciclo2', status: 'pendente', asaas_subscription_id: 'sub_real', asaas_checkout_id: null };
   let leituras = 0;
   deps = depsFalsas({
     buscarCobranca: () => (leituras++ === 0 ? null : cicloNovo),
@@ -1242,7 +1344,27 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   });
   await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_perdido', externalReference: 'reserva-abc' } }, deps);
   assert.deepEqual(deps.chamou('buscarCobrancaPorReferenciaExterna')[0].args, ['reserva-abc'], 'sem linha pela sessão, procura pela reserva');
-  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_perdido', 'confirmado'], 'e a reserva perdida vira confirmado');
+  assert.deepEqual(deps.chamou('vincularSessaoAReserva')[0].args, ['abc', { asaasCheckoutId: 'chk_perdido' }], 'a sessão é amarrada pela LINHA (asaas_checkout_id é nulo — um update por ele não casaria)');
+  assert.deepEqual(deps.chamou('aplicarTransicaoPorCheckoutId')[0].args, ['chk_perdido', { de: 'pendente', para: 'confirmado', ocorridoEm: null }], 'e a reserva perdida vira confirmado');
+  // PAYMENT_CONFIRMED citando a sessão perdida: amarra sessão E charge pela linha, e avisa
+  deps = depsFalsas({
+    buscarCobranca: null, buscarCobrancaPorCheckoutId: null,
+    buscarCobrancaPorReferenciaExterna: (ref) => (ref === 'reserva-abc' ? { ...cobrancaCartaoCrua, asaas_checkout_id: null, id: 'abc' } : null)
+  });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_perdido', checkoutSession: 'chk_perdido', externalReference: 'reserva-abc' } }, deps);
+  assert.deepEqual(deps.chamou('vincularSessaoAReserva')[0].args, ['abc', { asaasCheckoutId: 'chk_perdido', chargeId: 'pay_perdido' }]);
+  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado');
+  assert.equal(deps.notificados()[0].payload.chargeId, 'pay_perdido', 'o pagamento de uma sessão perdida chega ao contratante');
+  // Pix/Boleto direto cuja resposta do POST /v3/payments se perdeu: a reserva é achada pela referência
+  deps = depsFalsas({
+    buscarCobranca: null,
+    buscarCobrancaPorReferenciaExterna: (ref) => (ref === 'reserva-pix1' ? { ...cobrancaPix, charge_id: null, id: 'pix1' } : null)
+  });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_pix_perdido', externalReference: 'reserva-pix1' } }, deps);
+  assert.deepEqual(deps.chamou('vincularSessaoAReserva')[0].args, ['pix1', { chargeId: 'pay_pix_perdido' }], 'H-06: o charge é amarrado à reserva pela linha');
+  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado', 'e o status é aplicado — antes o evento era consumido sem efeito');
+  assert.equal(deps.notificados()[0].payload.chargeId, 'pay_pix_perdido');
+  assert.equal(deps.chamou('registrarCicloAssinatura').length, 0);
 
   // 15. renovação: antiga cancelada DEPOIS da nova confirmar; falha vira Lei 8
   const cobrancaRenovacao = { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga' };
@@ -1263,7 +1385,11 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga_intocada' } });
   await processarWebhook({ event: 'CHECKOUT_CANCELED', checkout: { id: 'chk_real' } }, deps);
   assert.equal(deps.notificados().length, 0, 'renovação abandonada não pode mandar cancelada');
-  assert.deepEqual(deps.chamou('atualizarStatusPorCheckoutId')[0].args, ['chk_real', 'cancelado']);
+  assert.deepEqual(deps.chamou('aplicarTransicaoPorCheckoutId')[0].args, ['chk_real', { de: 'pendente', para: 'cancelado', ocorridoEm: null }]);
+  // CHECKOUT_EXPIRED atrasado sobre uma sessão já paga: não apaga a confirmação
+  deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' } });
+  await processarWebhook({ event: 'CHECKOUT_EXPIRED', checkout: { id: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'confirmado → expirado não existe na matriz');
 
   // 17. rotas: classificação bate com o ramo que roda
   const CASOS_DE_ROTA = [

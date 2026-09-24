@@ -35,9 +35,12 @@ export const STATUS_FINANCEIROS = [
   'chargeback'
 ];
 
-/** Estados dos quais NADA sai por evento de pagamento. `cancelado` e
- *  `expirado` são de sessão de pop-up (a cobrança nunca existiu). */
-export const STATUS_TERMINAIS = ['estornado', 'cancelado', 'expirado'];
+/** Estados dos quais NADA sai por evento de pagamento. `cancelado` é de
+ *  sessão de pop-up abandonada (a cobrança nunca existiu). `expirado`
+ *  NÃO está aqui: o prazo local de 65 min pode vencer antes de a
+ *  pop-up pagar (a Asaas não nos avisa do `CHECKOUT_EXPIRED` sempre), e
+ *  o `PAYMENT_CONFIRMED` que vier depois tem de valer. */
+export const STATUS_TERMINAIS = ['estornado', 'cancelado'];
 
 /**
  * De cada estado, para quais outros um evento da Asaas pode levar.
@@ -50,9 +53,9 @@ const TRANSICOES = {
   recusado:               ['confirmado', 'em_analise'],              // nova tentativa de captura na mesma cobrança
   vencido:                ['confirmado', 'pendente'],                // boleto pago depois do vencimento; prazo estendido
   cancelado:              [],
-  expirado:               [],
+  expirado:               ['confirmado'],                            // o prazo LOCAL (65 min) venceu, mas a pop-up ainda pagou
   estorno_solicitado:     ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
-  estorno_negado:         ['estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'],
+  estorno_negado:         ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'], // negado = o pagamento continua válido
   estornado_parcialmente: ['estornado', 'estorno_solicitado', 'chargeback'],
   estornado:              [],
   chargeback:             ['confirmado', 'estornado']                // disputa vencida devolve ao pago; perdida vira estorno
@@ -120,6 +123,8 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
     for (const p of paras) assert.ok(STATUS_FINANCEIROS.includes(p), `matriz cita destino desconhecido: ${p}`);
   }
   for (const t of STATUS_TERMINAIS) assert.deepEqual(TRANSICOES[t], [], `terminal ${t} não pode ter saída`);
+  assert.deepEqual(TRANSICOES.expirado, ['confirmado'], 'expirado (prazo LOCAL) ainda aceita a confirmação tardia da pop-up — e só ela');
+  assert.ok(transicaoPermitida('estorno_negado', 'confirmado'), 'estorno negado devolve a cobrança a confirmado — não é beco sem saída');
 
   // o caminho feliz
   assert.ok(transicaoPermitida('pendente', 'confirmado'));
@@ -133,7 +138,7 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   assert.ok(!transicaoPermitida('chargeback', 'pendente'), 'CASH_UNDONE depois de chargeback');
   assert.ok(!transicaoPermitida('estornado', 'pendente'));
   assert.ok(!transicaoPermitida('cancelado', 'confirmado'));
-  assert.ok(!transicaoPermitida('expirado', 'confirmado'));
+  assert.ok(!transicaoPermitida('expirado', 'estornado'), 'expirado só sai para confirmado (pop-up que pagou depois do prazo local)');
 
   // reversões legítimas do PSP continuam possíveis
   assert.ok(transicaoPermitida('confirmado', 'pendente'), 'baixa manual desfeita');

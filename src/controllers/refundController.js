@@ -58,6 +58,7 @@ import { estornarCobranca, foiRecusaLimpaDaAsaas } from '../services/asaasServic
 import { registrarErro } from '../services/erroService.js';
 import { responderErro } from '../utils/erros.js';
 import { emCentavos, emReais } from '../utils/dinheiro.js';
+import { notificarFatoDePedido } from './webhookController.js';
 
 const dependenciasPadrao = {
   buscarContratantePorChave,
@@ -66,7 +67,8 @@ const dependenciasPadrao = {
   reivindicarEstorno,
   liberarEstorno,
   estornarCobranca,
-  registrarErro
+  registrarErro,
+  notificarFatoDePedido
 };
 
 /**
@@ -163,6 +165,24 @@ export function criarRefundController(deps = dependenciasPadrao) {
         valorEstornado: assincrono ? undefined : plano.valorEstornadoDepois
       });
 
+      /* O webhook que o API.md §5.4 promete ("depois do estorno você
+         também recebe o webhook correspondente"). Mesma chave do fato:
+         quando o PAYMENT_REFUNDED da Asaas chegar, cai na mesma linha da
+         outbox e ninguém ouve duas vezes. Falha aqui não desfaz o estorno
+         (já aconteceu do lado de lá): vira Lei 8. */
+      try {
+        await deps.notificarFatoDePedido(contratante, { ...cobranca, cotacao_id: cobranca.cotacao_id ?? null }, {
+          chargeId: cobranca.charge_id,
+          statusFinanceiro: statusLocal,
+          valorEstornado: assincrono ? null : plano.valorEstornadoDepois
+        });
+      } catch (erroAviso) {
+        await deps.registrarErro(
+          new Error(`estorno de ${pedidoId} executado, mas o aviso ao contratante não foi enfileirado: ${erroAviso.message}`),
+          { contexto: 'refundController.notificar', rota: 'checkout/estornar', metodo: 'POST' }
+        );
+      }
+
       resposta.json({
         chargeId: cobranca.charge_id,
         status: statusLocal,
@@ -187,13 +207,14 @@ if (process.argv[1]?.endsWith('refundController.js')) {
     const linhas = new Map(); // charge_id -> { status, estornando_em }
     const chamadasAsaas = [];
     const errosRegistrados = [];
+    const avisos = [];
 
     function fixture(chargeId, status, extras = {}) {
       linhas.set(chargeId, { status, estornando_em: null, valor_cobrado: 100, valor_estornado: null, metodo_pagamento: 'pix', ...extras });
     }
 
     const deps = {
-      buscarContratantePorChave: async (chave) => (chave === 'chave_boa' ? { id: 'c1' } : null),
+      buscarContratantePorChave: async (chave) => (chave === 'chave_boa' ? { id: 'c1', webhook_url: 'https://loja.exemplo/hook' } : null),
 
       buscarCobrancaPorPedido: async (_contratanteId, pedidoId) => {
         const chargeId = `pay_${pedidoId}`;
@@ -234,10 +255,12 @@ if (process.argv[1]?.endsWith('refundController.js')) {
 
       registrarErro: async (erro) => { errosRegistrados.push(erro.message); },
 
+      notificarFatoDePedido: async (contratante, cobranca, fato) => { avisos.push({ contratante, cobranca, fato }); },
+
       _ajustes: {}
     };
 
-    return { deps, linhas, chamadasAsaas, errosRegistrados, fixture };
+    return { deps, linhas, chamadasAsaas, errosRegistrados, avisos, fixture };
   }
 
   function respostaFalsa() {
@@ -463,6 +486,28 @@ if (process.argv[1]?.endsWith('refundController.js')) {
     assert.equal(r.corpo?.status, 'estornado');
     assert.equal(r.corpo?.valorEstornado, 50);
     assert.equal(chamadasAsaas[0].opcoes.valor, null);
+    checagens += 1;
+  }
+
+  // 16. O webhook do §5.4 SAI do /estornar — com a chave do fato (a mesma que o PAYMENT_REFUNDED usa)
+  {
+    const { deps, avisos, fixture } = costura();
+    fixture('pay_p14', 'confirmado', { valor_cobrado: 80 });
+    const controller = criarRefundController(deps);
+    const r = respostaFalsa();
+    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p14' }), r);
+    assert.equal(avisos.length, 1, 'o contratante é avisado do estorno pedido por ele mesmo');
+    assert.equal(avisos[0].fato.statusFinanceiro, 'estornado');
+    assert.equal(avisos[0].fato.valorEstornado, 80);
+    assert.equal(avisos[0].contratante.webhook_url, 'https://loja.exemplo/hook');
+    // aviso que falha não desfaz o estorno: vira Lei 8 e a resposta continua 200
+    const c2 = costura();
+    c2.fixture('pay_p15', 'confirmado');
+    c2.deps.notificarFatoDePedido = async () => { throw new Error('outbox fora'); };
+    const r2 = respostaFalsa();
+    await criarRefundController(c2.deps).estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p15' }), r2);
+    assert.equal(r2.corpo?.status, 'estornado');
+    assert.equal(c2.errosRegistrados.length, 1);
     checagens += 1;
   }
 

@@ -31,6 +31,7 @@
 
 import { listarReservasTravadas, liberarReservaCobranca, completarCobranca } from './cobrancaService.js';
 import { listarPagamentosPorReferenciaExterna } from './asaasService.js';
+import { reenfileirarPorReferencia } from './webhookInboxService.js';
 import { registrarErro } from './erroService.js';
 import { METODOS_DE_ASSINATURA } from './pedidoService.js';
 
@@ -61,6 +62,7 @@ const dependenciasPadrao = {
   liberarReservaCobranca,
   completarCobranca,
   listarPagamentosPorReferenciaExterna,
+  reenfileirarPorReferencia,
   registrarErro,
   agora: () => new Date()
 };
@@ -89,9 +91,10 @@ export function criarReconciliador(deps = dependenciasPadrao) {
           if (vivo?.id) {
             /* A cobrança EXISTE do lado de lá. Completa a linha com o que
                a Asaas sabe; dado do pagador não está aqui (ficou na
-               requisição que morreu) e não é inventado. O status vem
-               mapeado — se já está paga, o contratante é avisado pelo
-               webhook (que agora acha a linha pelo `charge_id`). */
+               requisição que morreu) e não é inventado. Os eventos dela
+               que já chegaram (e foram consumidos sem achar a linha) são
+               REENFILEIRADOS na inbox: reprocessados agora, acham a linha
+               pelo `charge_id`, aplicam o status e avisam o contratante. */
             await deps.completarCobranca(reserva.id, {
               chargeId: vivo.id,
               documento: null,
@@ -103,6 +106,8 @@ export function criarReconciliador(deps = dependenciasPadrao) {
               valorCobrado: vivo.value ?? null
             });
             relatorio.completadas += 1;
+            const reenfileiradas = await deps.reenfileirarPorReferencia(vivo.id);
+            relatorio.reenfileiradas = (relatorio.reenfileiradas ?? 0) + reenfileiradas;
             await deps.registrarErro(
               new Error(`reconciliação: a reserva ${reserva.id} (${reserva.metodo_pagamento}, pedido ${reserva.pedido_id}) EXISTIA na Asaas como ${vivo.id} (${vivo.status}) e foi completada — o pagador/valor da requisição original não foram recuperados.`),
               { contexto: 'reconciliacaoService.completada', rota: 'reconciliador', metodo: 'INTERNO', status: 500 }
@@ -154,6 +159,7 @@ if (process.argv[1]?.endsWith('reconciliacaoService.js')) {
       liberarReservaCobranca: async (id) => { chamadas.push(['liberar', id]); },
       completarCobranca: async (id, dados) => { chamadas.push(['completar', id, dados]); },
       listarPagamentosPorReferenciaExterna: async (ref) => { chamadas.push(['buscar', ref]); return naAsaas[ref] ?? []; },
+      reenfileirarPorReferencia: async (ref) => { chamadas.push(['reenfileirar', ref]); return 2; },
       registrarErro: async (e) => { chamadas.push(['erro', e.message]); },
       agora: () => agora
     };
@@ -166,10 +172,11 @@ if (process.argv[1]?.endsWith('reconciliacaoService.js')) {
     naAsaas: { 'reserva-r1': [{ id: 'pay_x', status: 'RECEIVED', value: 50 }] }
   });
   let rel = await t.reconciliarUmaVez();
-  assert.deepEqual(rel, { examinadas: 1, completadas: 1, liberadas: 0, aguardando: 0, erros: 0 });
+  assert.deepEqual(rel, { examinadas: 1, completadas: 1, liberadas: 0, aguardando: 0, erros: 0, reenfileiradas: 2 });
   assert.deepEqual(t.chamadas[0], ['buscar', 'reserva-r1']);
   assert.equal(t.chamadas[1][0], 'completar');
   assert.equal(t.chamadas[1][2].chargeId, 'pay_x', 'H-06: a linha órfã ganha o charge_id real');
+  assert.deepEqual(t.chamadas[2], ['reenfileirar', 'pay_x'], 'os eventos já consumidos desse charge voltam à inbox — é o que aplica o status e avisa o contratante');
   assert.ok(!t.chamadas.some((c) => c[0] === 'liberar'), 'e NUNCA é liberada — existe dinheiro do lado de lá');
 
   // Pix que NÃO existe na Asaas: aguarda até o prazo, depois libera

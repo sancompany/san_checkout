@@ -445,7 +445,13 @@ export async function registrarCicloAssinatura(dados) {
   });
 
   if (error?.code === '23505') return { duplicado: true };
-  if (error) console.error('[cobrancaService.registrarCicloAssinatura]', error.message);
+  if (error) {
+    // Qualquer outro erro LANÇA: engolir aqui deixava o ciclo sem linha e
+    // sem aviso, e a inbox marcava o evento como processado (revisão de
+    // 24/09/2026). Lançando, a inbox reprocessa e, esgotando, escala.
+    console.error('[cobrancaService.registrarCicloAssinatura]', error.message);
+    throw error;
+  }
   return { duplicado: false };
 }
 
@@ -514,6 +520,29 @@ export async function buscarCobrancaPorCheckoutId(asaasCheckoutId) {
   return data;
 }
 
+/**
+ * Amarra uma RESERVA (linha achada pelo `externalReference`, sem
+ * `asaas_checkout_id`) à sessão e/ou ao charge que a Asaas anunciou —
+ * pelo `id` da linha, porque é exatamente o caso em que
+ * `asaas_checkout_id` ainda é NULL e um `update … where asaas_checkout_id`
+ * não casaria nada (achado da revisão de 24/09/2026: a recuperação de
+ * sessão perdida gravava zero linhas e a reserva era apagada 65 min
+ * depois, com o pagamento feito).
+ */
+export async function vincularSessaoAReserva(reservaId, { asaasCheckoutId = null, chargeId = null } = {}) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .update({
+      ...(asaasCheckoutId ? { asaas_checkout_id: asaasCheckoutId } : {}),
+      ...(chargeId ? { charge_id: chargeId } : {}),
+      atualizado_em: new Date().toISOString()
+    })
+    .eq('id', reservaId)
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
+}
+
 /** Preenche o charge_id de verdade quando o webhook CHECKOUT_PAID
  *  chegar — até então a cobrança só tinha asaas_checkout_id. */
 export async function vincularChargeIdAoCheckout(asaasCheckoutId, chargeId) {
@@ -555,6 +584,22 @@ export async function atualizarStatusPorCheckoutId(asaasCheckoutId, status) {
     .eq('asaas_checkout_id', asaasCheckoutId);
 
   if (error) console.error('[cobrancaService.atualizarStatusPorCheckoutId]', error.message);
+}
+
+/** A mesma transição condicional de `aplicarTransicao`, endereçada pela
+ *  SESSÃO (eventos `CHECKOUT_*`, que não trazem charge). Os eventos de
+ *  sessão passam pela máquina de estados como os de pagamento — antes
+ *  não passavam, e um reprocessamento administrativo de um
+ *  `CHECKOUT_PAID` antigo devolvia uma cobrança estornada a `confirmado`. */
+export async function aplicarTransicaoPorCheckoutId(asaasCheckoutId, { de, para, ocorridoEm = null } = {}) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .update({ ...camposDeStatus(para), ...(ocorridoEm ? { status_evento_em: ocorridoEm } : {}) })
+    .eq('asaas_checkout_id', asaasCheckoutId)
+    .eq('status', de)
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
 }
 
 /** Grava o id da assinatura na Asaas (`subscription`) na cobrança da
@@ -831,7 +876,7 @@ export async function reivindicarEstorno(chargeId) {
 
 /** De onde se pode estornar: `confirmado`, e `estornado_parcialmente`
  *  (um segundo estorno parcial, ou o restante — H-04, 24/09/2026). */
-export const STATUS_ESTORNAVEIS = ['confirmado', 'estornado_parcialmente'];
+export const STATUS_ESTORNAVEIS = ['confirmado', 'estornado_parcialmente', 'estorno_negado'];
 
 /**
  * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`):

@@ -80,6 +80,13 @@ function podar(objeto, permitidas) {
       saida.subscription = { cycle: texto(valor.cycle), nextDueDate: texto(valor.nextDueDate) };
       continue;
     }
+    if (chave === 'externalReference') {
+      // Só as referências que NÓS geramos (`reserva-<uuid>`, `troca:<id>`).
+      // Cobranças anteriores a 22/09/2026 levavam `<documento>-<timestamp>`
+      // — o CPF do pagador —, e um estorno tardio delas gravaria isso aqui.
+      if (typeof valor === 'string' && /^(reserva-[0-9a-f-]{36}|troca:[A-Za-z0-9_-]{1,80})$/i.test(valor)) saida[chave] = valor;
+      continue;
+    }
     if (valor === null || ['string', 'number', 'boolean'].includes(typeof valor)) {
       saida[chave] = typeof valor === 'string' ? valor.slice(0, TETO_TEXTO) : valor;
     }
@@ -150,7 +157,9 @@ export async function registrarNaInbox(corpo, { referenciaTipo, referenciaId } =
       referencia_id: referenciaId ?? null,
       ocorrido_em: ocorridoEm(corpo),
       status: 'recebido',
-      proxima_tentativa_em: new Date().toISOString(),
+      // O worker (60 s) só olha esta linha se o processamento INLINE não
+      // a fechar antes — senão os dois disputam a mesma linha nova.
+      proxima_tentativa_em: new Date(Date.now() + FOLGA_INLINE_S * 1000).toISOString(),
       corpo_hash: hashDoCorpo(corpoMinimo),
       corpo_minimo: corpoMinimo
     })
@@ -169,17 +178,30 @@ export async function registrarNaInbox(corpo, { referenciaTipo, referenciaId } =
   return { id: data.id, duplicado: false };
 }
 
+/** Quanto tempo o processamento inline tem antes de o worker poder
+ *  disputar uma linha recém-gravada. */
+const FOLGA_INLINE_S = 60;
+/** Arrendamento de `processando`: passado isso sem desfecho, o processo
+ *  morreu no meio e a linha volta a ser reivindicável. Sem isto uma
+ *  queda entre reivindicar e gravar o desfecho deixava a linha
+ *  `processando` para sempre — e a reentrega da Asaas recebia 200
+ *  como "duplicado" (revisão de 24/09/2026). */
+export const MINUTOS_DE_ARRENDAMENTO_INBOX = 5;
+
 /**
- * Reivindica a linha para processar (CAS: só sai de `recebido`/`falhou`).
+ * Reivindica a linha para processar (CAS: sai de `recebido`/`falhou`, ou
+ * de um `processando` cujo arrendamento venceu). `proxima_tentativa_em`
+ * faz o papel do arrendamento enquanto a linha está `processando`.
  * Devolve a linha quando esta chamada é a dona; `null` quando outra já
  * pegou ou a linha não está mais pendente.
  */
-export async function reivindicarProcessamento(id) {
+export async function reivindicarProcessamento(id, agora = new Date()) {
+  const arrendamento = new Date(agora.getTime() + MINUTOS_DE_ARRENDAMENTO_INBOX * 60_000).toISOString();
   const { data, error } = await supabase
     .from('webhook_inbox')
-    .update({ status: 'processando' })
+    .update({ status: 'processando', proxima_tentativa_em: arrendamento })
     .eq('id', id)
-    .in('status', ['recebido', 'falhou'])
+    .or(`status.in.(recebido,falhou),and(status.eq.processando,proxima_tentativa_em.lte.${agora.toISOString()})`)
     .select('*');
 
   if (error) throw error;
@@ -228,7 +250,7 @@ export async function listarParaReprocessar({ limite = 50 } = {}) {
   const { data, error } = await supabase
     .from('webhook_inbox')
     .select('*')
-    .in('status', ['recebido', 'falhou'])
+    .in('status', ['recebido', 'falhou', 'processando'])
     .lte('proxima_tentativa_em', new Date().toISOString())
     .order('recebido_em', { ascending: true })
     .limit(limite);
@@ -249,11 +271,28 @@ export async function listarInbox({ limite = 50, status } = {}) {
   return data ?? [];
 }
 
+/** Reenfileira TODAS as linhas de uma referência (charge/sessão), inclusive
+ *  as já processadas — para quando a linha de `cobrancas` que faltava
+ *  acabou de aparecer (reconciliador) e os eventos consumidos antes dela
+ *  precisam ser reaplicados. Idempotente por desenho: reprocessar um
+ *  evento já aplicado cai em "mesmo status". */
+export async function reenfileirarPorReferencia(referenciaId) {
+  if (!referenciaId) return 0;
+  const { data, error } = await supabase
+    .from('webhook_inbox')
+    .update({ status: 'recebido', proxima_tentativa_em: new Date().toISOString(), ultimo_erro: null })
+    .eq('referencia_id', referenciaId)
+    .in('status', ['processado', 'ignorado', 'falhou'])
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) ? data.length : 0;
+}
+
 /** Sinal operacional para `/api/saude`: quantas linhas estão falhando e
  *  quantas esgotaram. */
 export async function resumoInbox() {
   const [{ count: pendentes }, { count: esgotadas }] = await Promise.all([
-    supabase.from('webhook_inbox').select('id', { count: 'exact', head: true }).in('status', ['recebido', 'falhou']).not('proxima_tentativa_em', 'is', null),
+    supabase.from('webhook_inbox').select('id', { count: 'exact', head: true }).in('status', ['recebido', 'falhou', 'processando']).not('proxima_tentativa_em', 'is', null),
     supabase.from('webhook_inbox').select('id', { count: 'exact', head: true }).eq('status', 'falhou').is('proxima_tentativa_em', null)
   ]);
   return { pendentes: pendentes ?? 0, esgotadas: esgotadas ?? 0 };
@@ -303,7 +342,7 @@ if (process.argv[1]?.endsWith('webhookInboxService.js')) {
     id: 'evt_abc&123', event: 'PAYMENT_CONFIRMED', dateCreated: '2026-09-24 14:03:11',
     payment: {
       id: 'pay_1', status: 'CONFIRMED', value: 99.9, subscription: 'sub_1', checkoutSession: 'chk_1',
-      externalReference: 'reserva-x', dateCreated: '2026-09-24',
+      externalReference: 'reserva-0f6b3f1e-9d3c-4b1a-8c6e-2a7d5f9e1b3c', dateCreated: '2026-09-24',
       customer: 'cus_1', description: 'Plano', invoiceUrl: 'https://…',
       creditCard: { creditCardNumber: '1234', creditCardBrand: 'VISA', creditCardToken: 'tok' },
       refunds: [{ status: 'DONE', value: 10, dateCreated: '2026-09-24', extra: 'x' }]
@@ -318,7 +357,11 @@ if (process.argv[1]?.endsWith('webhookInboxService.js')) {
   assert.equal(minimo.payment.id, 'pay_1');
   assert.equal(minimo.payment.subscription, 'sub_1');
   assert.equal(minimo.payment.checkoutSession, 'chk_1');
-  assert.equal(minimo.payment.externalReference, 'reserva-x');
+  assert.equal(minimo.payment.externalReference, 'reserva-0f6b3f1e-9d3c-4b1a-8c6e-2a7d5f9e1b3c');
+  // referência que NÃO é nossa (cobrança anterior a 22/09 levava `<documento>-<timestamp>`): fica de fora
+  const legado = extrairCorpoMinimo({ event: 'PAYMENT_REFUNDED', payment: { id: 'pay_l', externalReference: '52998224725-1726000000000' } });
+  assert.equal(legado.payment.externalReference, undefined, 'CPF numa referência legada nunca entra na inbox');
+  assert.equal(extrairCorpoMinimo({ event: 'X', payment: { id: 'p', externalReference: 'troca:int_abc-1' } }).payment.externalReference, 'troca:int_abc-1');
   assert.deepEqual(minimo.payment.refunds, [{ status: 'DONE', value: 10, dateCreated: '2026-09-24' }]);
 
   // o que é de pessoa ou de cartão NÃO está — nem como chave
@@ -331,8 +374,8 @@ if (process.argv[1]?.endsWith('webhookInboxService.js')) {
   assert.ok(JSON.stringify(real).includes('creditCardNumber'));
 
   // checkout: subscription é objeto, externalReference fica
-  const chk = extrairCorpoMinimo({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_1', status: 'PAID', externalReference: 'reserva-y', subscription: { cycle: 'MONTHLY', nextDueDate: '2026-10-01' }, customerData: { cpfCnpj: '123' } } });
-  assert.equal(chk.checkout.externalReference, 'reserva-y');
+  const chk = extrairCorpoMinimo({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_1', status: 'PAID', externalReference: 'reserva-0f6b3f1e-9d3c-4b1a-8c6e-2a7d5f9e1b3c', subscription: { cycle: 'MONTHLY', nextDueDate: '2026-10-01' }, customerData: { cpfCnpj: '123' } } });
+  assert.equal(chk.checkout.externalReference, 'reserva-0f6b3f1e-9d3c-4b1a-8c6e-2a7d5f9e1b3c');
   assert.deepEqual(chk.checkout.subscription, { cycle: 'MONTHLY', nextDueDate: '2026-10-01' });
   assert.ok(!JSON.stringify(chk).includes('123'));
 
