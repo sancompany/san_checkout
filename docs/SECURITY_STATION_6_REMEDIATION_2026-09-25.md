@@ -93,7 +93,7 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 | ID | Sev. Jules | Classe | Alegação | Triagem (antes do código) | Status final |
 |---|---|---|---|---|---|
 | JULES-001 | HIGH | CR-10 | `buscarCobrancaPorReferenciaExterna`, `buscarCobrancaPorCheckoutId`, `buscarIntencao`, `buscarAssinaturaPorId` sem `contratante_id` permitem A → B | a provar ou refutar: toda busca por id único precisa ser classificada pela ORIGEM do id (webhook autenticado, linha do nosso banco, capacidade não enumerável, ou entrada do contratante) | **FALSE_POSITIVE** — as 142 consultas classificadas pela origem do id: nenhuma leva de A para B; a única frágil (irmãs) coberta por teste |
-| JULES-002 | MEDIUM | CR-11 | `trust proxy 1` estrito demais; contorna rate limit | medir a cadeia real em produção antes de mexer | **EXTERNAL_PENDING** EP-09 — medição em produção depois do deploy: se a sonda da §11 gravar o IP de saída real (160.79.106.132) e não o forjado, vira FALSE_POSITIVE; antes da medição não se afirma |
+| JULES-002 | MEDIUM | CR-11 | `trust proxy 1` estrito demais; contorna rate limit | medir a cadeia real em produção antes de mexer | **FALSE_POSITIVE** — medido em produção (§11.3): com `X-Forwarded-For: 203.0.113.99` forjado, o `b8f3b07` gravou `160.79.106.139`, o IP de saída real desta sessão, e não o forjado nem o do proxy; o `17c3ef6`, servido por engano minutos antes, gravou o forjado — controle positivo de que a sonda distingue |
 | JULES-003 | MEDIUM | CR-09 | `service_role` ignora RLS | arquitetura/defesa em profundidade, salvo exploração demonstrada | **RISK_ACCEPTED** — arquitetura (backend único, `service_role`); defesa em profundidade = INFO-13 |
 | JULES-004 | MEDIUM | CR-05 | reconciliador só olha reservas sem `charge_id` | alvo FIXED com reconciliador **dirigido** (não polling global) | **FIXED** `af6f597` + C1-11 — reconciliador dirigido, que não fica preso nas que não resolve |
 
@@ -159,7 +159,7 @@ As contagens de checagens NÃO ficam neste relatório: cada suíte imprime a sua
 
 ## 5. Achados do Jules
 
-4 numerados (§2.3) e 7 alegações fora da numeração (§2.4). **JULES-001 (HIGH) é FALSE_POSITIVE** — não por palavra: as 142 consultas foram classificadas pela origem do id, e nenhuma leva de um contratante a outro. JULES-002 depende da sonda de produção (§11). JULES-003 é arquitetura (RISK_ACCEPTED, com a defesa em profundidade do INFO-13). JULES-004 FIXED. Das alegações: 2 FIXED (JX-01, JX-05), 2 FALSE_POSITIVE (JX-02, JX-03), 3 DUPLICATE.
+4 numerados (§2.3) e 7 alegações fora da numeração (§2.4). **JULES-001 (HIGH) é FALSE_POSITIVE** — não por palavra: as 142 consultas foram classificadas pela origem do id, e nenhuma leva de um contratante a outro. JULES-002 foi medido em produção e é FALSE_POSITIVE (§11.3). JULES-003 é arquitetura (RISK_ACCEPTED, com a defesa em profundidade do INFO-13). JULES-004 FIXED. Das alegações: 2 FIXED (JX-01, JX-05), 2 FALSE_POSITIVE (JX-02, JX-03), 3 DUPLICATE.
 
 ## 6. Achados novos desta rodada
 
@@ -272,7 +272,7 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP1A-4 | LOW | CR-04 | `PAYMENT_*` de um charge nosso, com a nossa referência `reserva-<uuid>` e sem linha local, voltava calado | **FIXED** — alerta `reservaSemLinha` em `erros` e linha no RUNBOOK §6.3; teste com controle (referência alheia continua ignorada), sabotagem pega |
 | FP1B-1 | INFO | CR-13 | o invólucro de rota passava a `next()` uma falha sem `Error` (`throw undefined`, `reject(null)`, `'route'`) — numa guarda, isso seria seguir adiante | **FIXED** — todo motivo vira `Error`; teste com quatro guardas que falham sem Error, e a sabotagem mostrou as quatro entregando a rota protegida (200) |
 | FP1B-2 | INFO | CR-13 | o `.catch` do receptor lia `erro.message`; uma rejeição com `null` faria o próprio `catch` lançar | **FIXED** — `erro?.message ?? String(erro)` |
-| FP1B-3 | INFO | CR-10 | o limitador chaveia pelo IP exato; um cliente com um /64 IPv6 pode trocar de endereço a cada pedido | **RISK_ACCEPTED** RES-41 — os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (junto do EP-09) |
+| FP1B-3 | INFO | CR-10 | o limitador chaveia pelo IP exato; um cliente com um /64 IPv6 pode trocar de endereço a cada pedido | **RISK_ACCEPTED** RES-41 — os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (a sonda do JULES-002 chegou por IPv4) |
 | FP1C-1 | LOW | CR-09 | a 0020 tira o EXECUTE de `PUBLIC` em todas as funções do `public`; o backend só segue se o `service_role` tiver grant próprio, e nada no repositório confere isso — sem ele, `registrar_erro` falha calado | **DUPLICATE** de INFO-13/EP-02 — a conferência pós-aplicação está escrita na §7 |
 | FP1C-2 | LOW | doc | a §7.1 estava velha: `trocaAprovacaoController.js` sem classificação e contagens de linhas de um commit anterior | **FIXED** — tabela regerada pelo script contra o HEAD |
 | FP1C-3 | INFO | ops | `scripts/limpar-registros-de-teste.mjs` não conhece a tabela `estornos`, e por isso a primeira trava dele recusa rodar | **RISK_ACCEPTED** RES-42 — recusa é o modo seguro; classificar `estornos` (antes de `cobrancas`, pela FK) é decisão para quando o script voltar a ser usado, e nesta rodada nenhum registro se apaga |
@@ -551,7 +551,65 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 
 ## 11. Validação de produção
 
-_(em andamento)_
+Tudo só leitura: nenhum pagamento, estorno, cancelamento ou escrita no banco. O boleto e a assinatura reais existentes não foram tocados.
+
+### 11.1 Deploy — e ele serviu o commit errado primeiro
+
+| Momento (UTC) | Fato |
+|---|---|
+| 22:26:13 | PR #50 mesclada; build de `b8f3b07` criado no Northflank |
+| 22:26:20 | um **segundo** build na `main`, de `17c3ef6` (o merge do relatório do Jules, 06:12, só documento) |
+| 22:26:34 | os dois `SUCCESS`; o de `17c3ef6` terminou por último e foi o implantado (`buildSHA: latest`) |
+| 22:27–22:34 | produção servindo **o código anterior à remediação**: `POST /api/admin/sessao` sem JWT devolvia "Usuário ou senha de admin inválidos." e `/api/saude` não tinha `workersAtrasados` — o painel dizia deploy `COMPLETED` |
+| 22:34:17 | build de `b8f3b07` pedido explicitamente pelo sha (`tense-sponge-142`) |
+| 22:34:47 | `deployedSHA = b8f3b0754f2f575ad4395f86a9b0382a3d300404` = `main` |
+
+Nenhum evento financeiro passou pela janela errada: o último evento da inbox é de 20:18 e a última notificação da outbox de 15:30. O porquê do segundo build não foi descoberto (a API de builds com o token da organização exige `teamId`). O que fica é a regra: `COMPLETED` não diz qual commit, então confere-se o `deployedSHA` **e** o comportamento. Está escrita no `RUNBOOK` §3.
+
+### 11.2 Conferências, depois de `b8f3b07` no ar
+
+| Conferência | Resultado |
+|---|---|
+| `/api/saude` | `200`, `{"status":"ok","supabase":true,"atrasados":[]}` — os workers batem ponto |
+| `/api/admin/sessao`, `/api/admin/contratantes`, `/API/ADMIN/contratantes` sem JWT do Access | `401 acessoRestrito` nas três (o caminho em maiúsculas não contorna) |
+| JWT forjado com `alg` objeto (C1-01) | `401`; `/api/saude` `200` logo depois, e o log mostra só `JWT recusado (formato)` — o processo não caiu |
+| Access na frente do painel | `302` para o login da equipe em `/admin`, `/admin.html` e `/api/admin/*`, no domínio e no `pages.dev` |
+| Webhook sem token / com token errado | `401` / `401`; caminho inventado `404` |
+| Cabeçalhos da API | `nosniff`, `no-store`, CORS de origem única (`checkout.sancocore.com.br`), HSTS de 1 ano |
+| Páginas públicas | `/` `200`; `termos`, `privacidade` e `status.html` `308` para o caminho sem `.html` |
+| Migrations | 0001–0019 no histórico do Supabase; **0020 não aplicada** (EP-02) |
+| Inbox | 7 `processado`, 1 `ignorado`; nada `recebido`, `processando` ou `falhou` |
+| Outbox | 4 `enviada`; nada `pendente`, `enviando`, `falhou` ou `abandonada` |
+| `erros` nas últimas 24 h | só os três do incidente das 01:24 (Pix sem chave; `docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`); nenhum depois do deploy |
+| Webhook na Asaas (lido de dentro do contêiner) | `enabled`, não `interrupted`, `sendType: SEQUENTIALLY`, 0 requisições penalizadas, 61 eventos, dos quais 7 `SUBSCRIPTION_*` |
+| Health check do Northflank | **nenhum configurado** (`healthChecks: []`) — EP-06 continua |
+| `npm audit` | 0 vulnerabilidades |
+
+### 11.3 A sonda de IP forjado (JULES-002, INFO-06)
+
+`POST /api/webhooks/asaas` com token errado e `X-Forwarded-For: 203.0.113.99`, e o IP lido de volta da amostra em `webhook_rejeicoes`:
+
+| Código servido | IP gravado |
+|---|---|
+| `17c3ef6` (antes da remediação, 22:27:36) | `203.0.113.99` — o forjado |
+| `b8f3b07` (22:59:57) | `160.79.106.139` — a saída real desta sessão (o proxy dela roda em `160.79.106.0/24`) |
+
+O servido por engano virou o **controle positivo**: a mesma sonda, contra o código velho, grava o que o atacante escreveu, então ela distingue. Contra o código novo, grava o IP que chegou de fato — nem o forjado, nem o do proxy da Northflank. O limitador chaveia por esse mesmo `req.ip`, então o `trust proxy 1` não é estrito demais nem contornável. **JULES-002 é FALSE_POSITIVE, e INFO-06 está conferido em produção.** Continua não medido se algum cliente chega por IPv6 (RES-41).
+
+### 11.4 O que ficou de fora, e por quê
+
+Nada disto se resolve sem o dono ou sem dinheiro novo:
+
+- **EP-01**: login do operador pelo Access.
+- **EP-02**: aplicar a 0020, e depois conferir o `EXECUTE` do `service_role`. A aplicação pede a aprovação da ferramenta, e contorná-la é proibido.
+- **EP-03**: estorno de parcela no sandbox.
+- **EP-04**: origem real do webhook antes do modo estrito.
+- **EP-05**: prazo de retenção.
+- **EP-06**: health check do Northflank. Ele é mudança de configuração de produção com risco de reinício em laço se o probe estiver errado, então é do dono.
+- **EP-07**: branch protection.
+- **EP-08**: oráculo do `409`.
+- **EP-10**: boleto com estorno negado.
+- **EP-11**: amarração da primeira pop-up no próximo cartão real.
 
 ## 12. Invariantes financeiras
 
@@ -610,14 +668,13 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 
 Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceitou, com a justificativa que está escrita lá (quando o ledger só traz o número, vai a descrição do achado). **RES-03 não existe** — o número foi pulado quando o ledger foi montado, e nenhum achado o cita.
 
-**Nenhum CRITICAL ou HIGH está aberto.** Quatro MEDIUM não estão FIXED, e é aqui que o dono precisa olhar:
+**Nenhum CRITICAL ou HIGH está aberto.** Três MEDIUM não estão FIXED, e é aqui que o dono precisa olhar:
 
 | Achado | Estado | O que é, e o que falta |
 |---|---|---|
 | `C1-05b` | RISK_ACCEPTED (RES-01) | quem tem o CPF do pagador consegue encerrar uma pop-up de assinatura ainda aberta dele (abre uma sessão nova, que substitui a antiga). Não move dinheiro nem dá acesso — derruba uma tentativa de pagamento. Fechar exige um segredo por pagador que a API não tem hoje; **é decisão do dono** se isso vira atualização futura |
 | `JULES-003` | RISK_ACCEPTED | arquitetura: o backend único fala com o banco como `service_role`. A defesa em profundidade é a 0020 (INFO-13, EP-02) |
 | `SEC-018` | EXTERNAL_PENDING (EP-03) | estorno de cartão parcelado bloqueado pela API (`409`) até a semântica da Asaas ser medida em sandbox |
-| `JULES-002` | EXTERNAL_PENDING (EP-09) | o `trust proxy 1` só se prova com a sonda de IP forjado em produção, depois do deploy (§11) |
 
 | RES | Achado(s) no ledger | Por que é aceito (texto do próprio ledger) |
 |---|---|---|
@@ -660,7 +717,7 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 | RES-38 | CP3-18 | o pior efeito é um alerta falso de "não permite decidir"; o raciocínio está no comentário do bloco 15 da suíte |
 | RES-39 | FP1A-2 | janela de milissegundos, ou uma intenção órfã que o sweeper resolve; o desfecho depende de como a Asaas responde a um `PUT` em assinatura removida, não medido; o `PUT` que lança vai a `erros` |
 | RES-40 | FP1A-3 | não medido se a Asaas troca o id na retentativa; o alerta leva um humano à Asaas antes de qualquer estorno |
-| RES-41 | FP1B-3 | os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (junto do EP-09) |
+| RES-41 | FP1B-3 | os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (a sonda do JULES-002 chegou por IPv4) |
 | RES-42 | FP1C-3 | recusa é o modo seguro; classificar `estornos` (antes de `cobrancas`, pela FK) é decisão para quando o script voltar a ser usado, e nesta rodada nenhum registro se apaga |
 | RES-43 | FP1C-5 | só o operador; os dois saem da `main` juntos |
 | RES-44 | FP1RA-3 | nenhum dinheiro se move; alarme a mais |
@@ -695,4 +752,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 205 = FIXED 110 + FALSE_POSITIVE 3 + DUPLICATE 17 + RISK_ACCEPTED 68 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 205 = FIXED 110 + FALSE_POSITIVE 4 + DUPLICATE 17 + RISK_ACCEPTED 68 + EXTERNAL_PENDING 6

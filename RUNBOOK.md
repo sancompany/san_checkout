@@ -267,6 +267,23 @@ northflank get service --project san-checkout --service san-checkout -o json \
 git fetch origin main && git log --oneline -1 origin/main
 ```
 
+**`COMPLETED` não diz qual commit.** Em 25/09/2026 a mescla da PR #50
+(`b8f3b07`) disparou **dois** builds na `main` com 7 s de diferença — o
+segundo de um commit **mais velho** (`17c3ef6`) — e o serviço implanta o
+último build que terminar. O painel dizia build `SUCCESS` e deploy
+`COMPLETED`, e produção serviu o código anterior à remediação por oito
+minutos. Se o `deployedSHA` acima não bater com a `main`, olhe os builds
+e mande construir o sha certo — é deploy normal, não destrói nada:
+
+```bash
+northflank get service builds --project san-checkout --service san-checkout -o json \
+  | python3 -c "import sys,json;[print(b['sha'][:8],b['status'],b['createdAt']) for b in json.load(sys.stdin)['builds'][:5]]"
+northflank start service build --project san-checkout --service san-checkout -i '{"sha":"<sha-da-main>"}'
+```
+
+E confira pelo **comportamento**, não só pelo número: uma rota que
+mudou na mescla responde diferente no código velho.
+
 > Sem isso, a §4 mandava `git revert <sha-ruim>` sem dizer de onde vem o
 > sha — e reverter por palpite é como se troca um bug por dois. Furo
 > achado pelo teste da pessoa número dois (§10) em 17/09/2026: ele
