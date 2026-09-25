@@ -19,9 +19,21 @@ export function mascararDocumento(valor) {
   return saida;
 }
 
+/**
+ * DDD + número, sem o código do país — a MESMA regra do servidor
+ * (`normalizarTelefone`, `src/utils/validadores.js`). O autopreenchimento
+ * entrega `+55 16 98765-4321`, e cortar os primeiros 11 dígitos lia `55`
+ * como DDD (25/09/2026). 12 ou 13 dígitos começando por 55: o 55 é o
+ * país. Número nacional com DDD 55 tem 10 ou 11, e fica como está.
+ */
+export function normalizarTelefone(valor) {
+  const d = apenasDigitos(valor);
+  return /^55\d{10,11}$/.test(d) ? d.slice(2) : d;
+}
+
 /** (00) 00000-0000 — celular com DDD; também aceita fixo (10 dígitos). */
 export function mascararTelefone(valor) {
-  const d = apenasDigitos(valor).slice(0, 11);
+  const d = normalizarTelefone(valor).slice(0, 11);
   if (d.length > 10) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
   if (d.length > 6) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   if (d.length > 2) return `(${d.slice(0, 2)}) ${d.slice(2)}`;

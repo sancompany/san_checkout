@@ -112,9 +112,18 @@ const APRESENTACAO = {
   }
 };
 
+/** Pop-up concluída, dinheiro ainda não confirmado (RN-47): nem
+ *  "aguardando pagamento" (convida a pagar de novo), nem "pago". */
+const PROCESSANDO = {
+  selo: 'Em processamento', classe: 'aguardando',
+  titulo: 'Pagamento em processamento',
+  texto: 'Estamos aguardando a confirmação da operadora. Não é preciso pagar de novo — esta página atualiza sozinha.'
+};
+
 /** Status desconhecido não pode quebrar a tela — mesma regra que
  *  pedimos ao contratante no API.md §10 (compatibilidade). */
-function apresentar(status) {
+function apresentar(status, { emProcessamento = false } = {}) {
+  if (status === 'pendente' && emProcessamento) return PROCESSANDO;
   return APRESENTACAO[status] ?? {
     selo: 'Em processamento', classe: 'neutro',
     titulo: 'Pagamento em processamento',
@@ -153,7 +162,7 @@ function ligarCopiar(idBotao, idCampo, rotulo) {
 }
 
 function renderizar(dados) {
-  const visual = apresentar(dados.status);
+  const visual = apresentar(dados.status, { emProcessamento: dados.emProcessamento === true });
 
   $('selo-status').textContent = visual.selo;
   $('selo-status').className = `status-selo status-selo--${visual.classe}`;

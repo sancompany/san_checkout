@@ -303,6 +303,10 @@ export async function statusPublico(requisicao, resposta) {
     resposta.json({
       pedidoId: cobranca.pedido_id,
       status,
+      // O pagador CONCLUIU a pop-up e o dinheiro ainda não foi confirmado
+      // (RN-47): a tela não pode dizer "aguardando pagamento" — isso
+      // convida a pagar de novo (25/09/2026).
+      emProcessamento: status === 'pendente' && Boolean(cobranca.sessao_concluida_em),
       metodoPagamento: cobranca.metodo_pagamento,
       valorCobrado: cobranca.valor_cobrado,
       criadoEm: cobranca.criado_em,

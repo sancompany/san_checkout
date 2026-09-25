@@ -1,4 +1,4 @@
-import { apenasDigitos } from './masks.js';
+import { apenasDigitos, normalizarTelefone } from './masks.js';
 
 function validarCpf(valor) {
   const cpf = apenasDigitos(valor);
@@ -55,7 +55,7 @@ export function validarObrigatorio(valor) {
 }
 
 export function validarTelefone(valor) {
-  const digitos = apenasDigitos(valor);
+  const digitos = normalizarTelefone(valor);
   return digitos.length === 10 || digitos.length === 11;
 }
 

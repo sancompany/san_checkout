@@ -25,12 +25,21 @@ As quatro correções de código (datas de Brasília, `CHECKOUT_PAID` não é
 dinheiro, Pix recuperável, referência dos eventos) estão feitas e
 cobertas por regressão com os payloads reais. O que **só o dono** decide:
 
-- **A assinatura `sub_39mjscz7vl2jwx7g` (R$ 10,00, anual)**: o 1º ciclo
+- **A assinatura `sub_39mjscz7vl2jwx7g` (R$ 10,00, anual)** — em
+  25/09 a Asaas mostra "aguardando confirmação da operadora" e a API
+  responde `PENDING`; nenhum `PAYMENT_*` chegou, a linha segue `pendente`
+  com a sessão concluída, a tela diz `PROCESSANDO`, e nada foi avisado a
+  contratante nenhum. O 1º ciclo
   `pay_v6f2xr6j98reaxb9` vence em 25/09 e a Asaas deve tentar o cartão
   nesse dia. Deixar cobrar (é também o primeiro `PAYMENT_CONFIRMED` de
   assinatura em produção, o que falta para fechar a 6) ou cancelar antes.
-- **O Pix `pay_x9eixae4vkg6ugzg` (R$ 5,00)**: pendente e pagável, agora
-  com QR. Pagar, ou deixar vencer.
+- ✅ **Pix em produção HOMOLOGADO (25/09/2026, 02:06 UTC).** O dono pagou
+  `pay_x9eixae4vkg6ugzg` (R$ 5,00): Asaas `RECEIVED` → `PAYMENT_RECEIVED`
+  na inbox, processado sem retry → cobrança `confirmado` → outbox
+  `confirmado` entregue ao testemaster com `200` em 0,14 s → o
+  contratante passou o pedido a "pago" (o pull devolve `Este pedido já
+  está com status "pago"`). Filas zeradas. É também o gatilho escrito da
+  exceção de backup (`CONSTRAINTS.md` §3).
 - **Marcar as duas como `e_teste`** (RN-33, mão única): são teste do
   dono em produção e, sem a marca, entram na métrica de sucesso.
 - **Confirmar a chave Pix**: existe uma `EVP` ativa na conta; às 01:24

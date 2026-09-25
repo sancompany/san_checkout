@@ -1452,6 +1452,7 @@ GET {BASE}/api/checkout/status/{contratanteId}/{pedidoId}
 {
   "pedidoId": "550e8400-...",
   "status": "pendente",
+  "emProcessamento": false,
   "metodoPagamento": "pix",
   "valorCobrado": 449.30,
   "criadoEm": "2026-09-10T14:02:11.482Z",
@@ -1461,6 +1462,12 @@ GET {BASE}/api/checkout/status/{contratanteId}/{pedidoId}
   }
 }
 ```
+
+`emProcessamento` (desde 25/09/2026) é `true` quando o pagador já
+concluiu a pop-up de cartão e o dinheiro **ainda não** foi confirmado —
+`status` continua `pendente`, porque não é pago; mostre "em
+processamento", nunca "aguardando pagamento", que convida a pagar de
+novo.
 
 `pagamento` vem `null` quando a cobrança já não é mais pagável, e traz
 `boletoUrl`, `linhaDigitavel`, `codigoBarras` e `vencimento` no caso do

@@ -58,7 +58,7 @@ import { montarUrlCheckoutSession } from '../config/asaas.js';
 import { registrarCobrancaPendentePopup, buscarCobrancaPorCheckoutId } from '../services/cobrancaService.js';
 import { buscarAssinaturaAtiva } from '../services/assinaturaService.js';
 import {
-  documentoValido, emailValido, valorValido, telefoneValido, cepValido, nomeValido,
+  documentoValido, emailValido, valorValido, telefoneValido, normalizarTelefone, cepValido, nomeValido,
   normalizarDocumento, camposDeEnderecoDentroDoTeto,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS,
   parcelasValidas, MAXIMO_DE_PARCELAS_DO_CHECKOUT
@@ -172,6 +172,8 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
+  // Uma forma só daqui para baixo: `+55 16 98765-4321` e `16987654321` são o mesmo telefone.
+  if (telefone) telefone = normalizarTelefone(telefone);
   if (!parcelasValidas(parcelas)) {
     return resposta.status(400).json({ erro: `Número de parcelas inválido (1 a ${MAXIMO_DE_PARCELAS_DO_CHECKOUT}).` });
   }
@@ -332,6 +334,8 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
   documento = normalizarDocumento(documento);
   if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
   if (!telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
+  // Uma forma só daqui para baixo: `+55 16 98765-4321` e `16987654321` são o mesmo telefone.
+  if (telefone) telefone = normalizarTelefone(telefone);
 
   // Antifraude da Asaas pra Cartão — assinatura também é cartão (ver
   // nota no topo do arquivo).
@@ -545,6 +549,8 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
   // 18/09/2026: sem isto, um telefone de 100 KB atravessava e ia gravado
   // cru em `cobrancas`.
   if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
+  // Uma forma só daqui para baixo: `+55 16 98765-4321` e `16987654321` são o mesmo telefone.
+  if (telefone) telefone = normalizarTelefone(telefone);
 
   try {
     const { contratante, plano } = await resolverPlano(contratanteId, planoId, { metodoRequerido: 'assinatura_pix' });

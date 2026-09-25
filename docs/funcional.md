@@ -992,8 +992,13 @@ tela mostrou "Assinatura Ativa ✓" com o 1º ciclo `PENDING` e o cartão
 sem débito, a linha ficou `confirmado`, e a métrica contaria R$ 10,00
 que não entraram; se o cartão fosse recusado no vencimento, a linha
 ficaria `confirmado` para sempre. *Quem vê:* o pagador (sucesso falso),
-o dono (métrica falsa). `tests/sessao-concluida-nao-e-pagamento.js` e
-o autoteste do `webhookController` (seção 16b, payloads reais).
+o dono (métrica falsa). A tela de status pública (`status.html`) também
+recebe `emProcessamento` e diz "Pagamento em processamento — estamos
+aguardando a confirmação da operadora", nunca "aguardando pagamento"; e
+a página que a pop-up abre ao terminar não afirma resultado nenhum (ela
+é a mesma no sucesso, no cancelamento e na expiração).
+`tests/sessao-concluida-nao-e-pagamento.js` e o autoteste do
+`webhookController` (seção 16b, payloads reais).
 
 **RN-48 · Pix que existe se recupera; nunca é beco sem saída.** Se o
 Pix foi criado e só o QR falhou, a linha ganha o `chargeId` e o pagador
@@ -1016,6 +1021,20 @@ do processo já é amanhã — no primeiro pagamento real de assinatura
 cartão não foi cobrado no ato. *Quem vê:* o pagador (não é cobrado
 quando espera) e o contratante (acesso liberado sem pagamento, se
 confiar na tela). `tests/data-para-asaas-e-de-brasilia.js` varre `src/`.
+
+**RN-50 · Telefone é DDD + número, sem o código do país.** Só dígitos; se
+sobrarem 12 ou 13 começando por `55`, o `55` é o país e sai.
+`16987654321`, `(16) 98765-4321`, `+55 16 98765-4321` e
+`55 16 98765-4321` são o MESMO telefone. Número nacional com DDD 55 (RS)
+tem 10 ou 11 dígitos e fica como está. A regra vive no servidor
+(`normalizarTelefone`, `src/utils/validadores.js`) e na tela
+(`public/js/utils/masks.js`), e as duas são conferidas contra o mesmo
+corpus; o campo aceita até 20 caracteres, para o autopreenchimento não
+ser cortado antes da máscara. *Violada:* no primeiro teste real
+(25/09/2026) o navegador preencheu `+55 16 …`, o campo cortava em 15 e a
+máscara pegava os 11 primeiros dígitos — `55` virava DDD. *Quem vê:* o
+pagador, com telefone errado na cobrança; e a Asaas, que recusa telefone
+inválido. `tests/telefone-com-codigo-do-pais.js`.
 
 ---
 

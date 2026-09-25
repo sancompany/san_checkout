@@ -11,7 +11,7 @@ import { continuarComCartao, pararPollingCartao } from './modules/cartaoHandler.
 import { gerarBoleto, copiarCodigoBoleto, pararPollingBoleto } from './modules/boletoHandler.js';
 import { assinarAgora } from './modules/assinaturaCheckoutHandler.js';
 import { assinarComPix } from './modules/assinaturaPixHandler.js';
-import { mascararDocumento, mascararTelefone, mascararCep } from './utils/masks.js';
+import { mascararDocumento, mascararTelefone, mascararCep, normalizarTelefone } from './utils/masks.js';
 import { validarDocumento, validarEmail, validarObrigatorio, validarTelefone, validarCep } from './utils/validators.js';
 import { buscarEnderecoPorCep } from './utils/cep.js';
 
@@ -73,7 +73,7 @@ function coletarDadosPagador() {
     nome: document.getElementById('customer-name').value.trim(),
     email: document.getElementById('customer-email').value.trim(),
     documento: document.getElementById('customer-cpf').value.replace(/\D/g, ''),
-    telefone: document.getElementById('customer-phone').value.replace(/\D/g, '')
+    telefone: normalizarTelefone(document.getElementById('customer-phone').value)
   };
 }
 
@@ -172,13 +172,18 @@ function termosAceitos() {
 }
 
 function ligarMascaras(form) {
-  form.addEventListener('input', (evento) => {
+  /* `change` além de `input`: há navegador que preenche o formulário
+     sozinho (autofill) disparando só `change` — sem ele, `+55 16 …`
+     ficava na tela sem máscara até o pagador digitar algo. */
+  const aplicar = (evento) => {
     const mascara = { 'customer-cpf': mascararDocumento, 'customer-phone': mascararTelefone, 'address-cep': mascararCep }[evento.target.id];
     if (!mascara) return;
     const cursorNoFim = evento.target.selectionEnd === evento.target.value.length;
     evento.target.value = mascara(evento.target.value);
     if (cursorNoFim) evento.target.setSelectionRange(evento.target.value.length, evento.target.value.length);
-  });
+  };
+  form.addEventListener('input', aplicar);
+  form.addEventListener('change', aplicar);
 }
 
 /* ------------------------------------------------------------------
