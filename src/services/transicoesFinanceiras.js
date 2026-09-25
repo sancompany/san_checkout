@@ -32,7 +32,10 @@ export const STATUS_FINANCEIROS = [
   'pendente', 'em_analise', 'confirmado', 'recusado', 'vencido',
   'cancelado', 'expirado',
   'estorno_solicitado', 'estorno_negado', 'estornado_parcialmente', 'estornado',
-  'chargeback'
+  'chargeback',
+  // RN-51 (25/09/2026): o pedido foi pago por OUTRA cobrança, e esta foi
+  // excluída na Asaas pelo cancelador de irmãs (`irmasObsoletasService`).
+  'cancelado_por_outro_pagamento'
 ];
 
 /** Estados dos quais NADA sai por evento de pagamento. `cancelado` é de
@@ -47,18 +50,24 @@ export const STATUS_TERMINAIS = ['estornado', 'cancelado'];
  * `*` não existe de propósito: tudo que não está listado é recusado.
  */
 const TRANSICOES = {
-  pendente:               ['em_analise', 'confirmado', 'recusado', 'vencido', 'cancelado', 'expirado'],
+  pendente:               ['em_analise', 'confirmado', 'recusado', 'vencido', 'cancelado', 'expirado', 'cancelado_por_outro_pagamento'],
   em_analise:             ['confirmado', 'recusado', 'pendente'],
   confirmado:             ['estorno_solicitado', 'estornado_parcialmente', 'estornado', 'chargeback', 'pendente'],
-  recusado:               ['confirmado', 'em_analise'],              // nova tentativa de captura na mesma cobrança
-  vencido:                ['confirmado', 'pendente'],                // boleto pago depois do vencimento; prazo estendido
+  recusado:               ['confirmado', 'em_analise', 'cancelado_por_outro_pagamento'], // nova tentativa de captura na mesma cobrança
+  vencido:                ['confirmado', 'pendente', 'cancelado_por_outro_pagamento'],   // boleto pago depois do vencimento; prazo estendido
   cancelado:              [],
   expirado:               ['confirmado'],                            // o prazo LOCAL (65 min) venceu, mas a pop-up ainda pagou
   estorno_solicitado:     ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
   estorno_negado:         ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'], // negado = o pagamento continua válido
   estornado_parcialmente: ['estornado', 'estorno_solicitado', 'chargeback'],
   estornado:              [],
-  chargeback:             ['confirmado', 'estornado']                // disputa vencida devolve ao pago; perdida vira estorno
+  chargeback:             ['confirmado', 'estornado'],               // disputa vencida devolve ao pago; perdida vira estorno
+  /* Só o DINHEIRO sai daqui: se a Asaas ainda assim liquidar esta
+     cobrança (o pagador pagou no mesmo instante em que ela era
+     excluída), o `PAYMENT_CONFIRMED` tem de valer — é pagamento real, e
+     vira duplicidade (RN-52), nunca evento perdido. `CHECKOUT_*` e
+     `PAYMENT_OVERDUE` atrasados não passam. */
+  cancelado_por_outro_pagamento: ['confirmado']
 };
 
 /** A transição `de → para` é permitida pela semântica? Mesmo estado é
@@ -147,6 +156,15 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   assert.ok(transicaoPermitida('chargeback', 'confirmado'), 'disputa vencida');
   assert.ok(transicaoPermitida('vencido', 'confirmado'), 'boleto pago depois do vencimento');
   assert.ok(transicaoPermitida('recusado', 'confirmado'), 'nova captura');
+
+  // RN-51: a irmã cancelada só sai para o dinheiro que chegou mesmo assim
+  assert.ok(transicaoPermitida('pendente', 'cancelado_por_outro_pagamento'));
+  assert.ok(transicaoPermitida('cancelado_por_outro_pagamento', 'confirmado'), 'pagamento real depois da exclusão não se perde');
+  assert.ok(!transicaoPermitida('cancelado_por_outro_pagamento', 'vencido'), 'PAYMENT_OVERDUE atrasado não ressuscita a irmã');
+  assert.ok(!transicaoPermitida('cancelado_por_outro_pagamento', 'cancelado'), 'CHECKOUT_CANCELED atrasado não troca o motivo');
+  assert.ok(!transicaoPermitida('cancelado_por_outro_pagamento', 'pendente'));
+  assert.ok(!transicaoPermitida('confirmado', 'cancelado_por_outro_pagamento'), 'NUNCA se cancela cobrança paga');
+  assert.ok(!transicaoPermitida('em_analise', 'cancelado_por_outro_pagamento'), 'em análise o pagador já pagou: se confirmar, é duplicidade');
 
   // idempotência e desconhecidos
   assert.ok(transicaoPermitida('confirmado', 'confirmado'));

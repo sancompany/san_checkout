@@ -52,10 +52,24 @@ cobertas por regressão com os payloads reais. O que **só o dono** decide:
 - ✅ **Pedido pago reabria como pagável — corrigido (RN-04.1).** O
   contratante de teste guarda os pagos na memória de cada instância da
   Cloudflare, e `ped_isento`/`ped_dez_cartao` voltaram a abrir. O checkout
-  agora também pergunta ao próprio banco. Fora do escopo, declarado: um
-  Pix/boleto `pendente` de um método continua pagável enquanto o pedido é
-  pago por OUTRO método (o RN-04 é por método) — fechar isso exige
-  cancelar a cobrança pendente na Asaas, e é decisão de produto.
+  agora também pergunta ao próprio banco.
+- ✅ **Pix/boleto de um método continuava pagável depois de o pedido ser
+  pago por OUTRO — corrigido (RN-51/RN-52, decisão do dono em 25/09).**
+  A primeira liquidação torna as irmãs obsoletas e o cancelador as exclui
+  na Asaas (lendo o estado antes, nunca sobre o que está pago); dois
+  pagamentos reais viram duplicidade marcada, sem estorno automático.
+  **Declarado, não medido:** a doc da Asaas não lista de quais status
+  se pode excluir uma cobrança nem o formato do `GET` de uma cobrança
+  removida (`deleted: true` é o esperado, pela analogia com assinatura
+  medida em 16/09) — o código trata qualquer resposta fora do esperado
+  como falha, com recuo e teto, e a primeira exclusão real vai aparecer
+  em `cancelamento_*` da linha. Também não medido: `POST
+  /v3/checkouts/{id}/cancel` sobre sessão já expirada — a sessão com mais
+  de 65 min e não concluída é tratada como morta, sem depender disso.
+  Residual de tela: quem estiver parado na tela do Pix de uma irmã
+  cancelada continua vendo "aguardando" (o polling lê o status da Asaas,
+  e o QR para de funcionar no banco) — sem cobrança possível, só a
+  mensagem.
 - **Marcar as duas como `e_teste`** (RN-33, mão única): são teste do
   dono em produção e, sem a marca, entram na métrica de sucesso.
 - **Confirmar a chave Pix**: existe uma `EVP` ativa na conta; às 01:24

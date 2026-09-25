@@ -43,6 +43,7 @@ import { reprocessarInbox } from './controllers/webhookController.js';
 import { expurgarInbox, resumoInbox } from './services/webhookInboxService.js';
 import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from './services/outboxService.js';
 import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
+import { cancelarIrmasUmaVez } from './services/irmasObsoletasService.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
 const app = express();
@@ -272,7 +273,7 @@ app.get('/api/saude', async (_req, resposta) => {
 });
 
 /** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
-const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null };
+const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null };
 
 // ---------------------------------------------------------------------
 // FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
@@ -527,6 +528,21 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     .catch((erro) => console.error('[reconciliador] falhou:', erro.message));
   rodarReconciliador();
   setInterval(rodarReconciliador, 5 * UM_MINUTO_MS).unref();
+
+  /* O CANCELADOR DE IRMÃS (RN-51, 25/09/2026, 60 s): o Pix/boleto/pop-up
+     de um pedido que outra cobrança já pagou é invalidado na Asaas. O
+     webhook dispara uma passada na hora; esta é a garantia — marca pelo
+     ESTADO (a liquidação pode ter vindo da consulta de status ou do
+     reconciliador, não do webhook) e refaz o que falhou, com recuo e
+     teto gravados na linha. */
+  const rodarCanceladorDeIrmas = () => cancelarIrmasUmaVez()
+    .then((r) => {
+      ultimaRodadaDosWorkers.canceladorDeIrmas = Date.now();
+      if (r.marcadas > 0 || r.tentadas > 0) console.log(`[irmas] ${r.marcadas} marcada(s), ${r.canceladas} cancelada(s), ${r.aguardando} aguardando, ${r.falhas} falha(s), ${r.esgotadas} esgotada(s).`);
+    })
+    .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message));
+  rodarCanceladorDeIrmas();
+  setInterval(rodarCanceladorDeIrmas, UM_MINUTO_MS).unref();
 
   /* Expurgos diários das tabelas novas: inbox/outbox já processadas
      (90 dias — o payload da outbox leva o documento do pagador, Lei 10)

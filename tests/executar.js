@@ -39,6 +39,7 @@ const SUITES = [
   'src/services/outboxService.js',         // a outbox: entrega assinada, id único, recuo finito (H-01)
   'src/services/cotacaoService.js',        // a cotação: o retrato do preço mostrado, comparado em centavos (C-02)
   'src/services/reconciliacaoService.js',  // reserva órfã que virou cobrança na Asaas é completada, nunca liberada (H-06)
+  'src/services/irmasObsoletasService.js', // irmã de pedido pago: lê a Asaas antes de excluir, nunca exclui o que está pago (RN-51)
   'src/services/metricaService.js',  // a conta da métrica: por dia de confirmação, não por 24h
   'src/services/proporcionalService.js', // o acerto da troca de plano: as sete regras do dono, em aritmética
   'src/services/classificacaoFinanceiraService.js', // veredito único PAID/DECLINED_FINAL/UNKNOWN — status ambíguo nunca é recusa por suposição
@@ -63,6 +64,7 @@ const SUITES = [
   'tests/sessao-concluida-nao-e-pagamento.js', // CHECKOUT_PAID com o 1º ciclo PENDING virou "Assinatura Ativa" (25/09)
   'tests/telefone-com-codigo-do-pais.js', // autopreenchimento +55 virava DDD 55: front e servidor com a mesma regra (25/09)
   'tests/pedido-pago-nao-cobra-de-novo.js', // contratante esqueceu o pago e o pedido reabriu: o NOSSO banco também decide (25/09)
+  'tests/pagamento-de-um-pedido-invalida-as-irmas.js', // pago no cartão, o Pix/boleto antigo deixa de ser pagável; dois pagos = duplicidade marcada (RN-51/52)
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
   'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique

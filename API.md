@@ -662,7 +662,9 @@ teste que separa os dois; não teste "tem `tipo`".
   "valorCobrado": 449.30,
   "valorEstornado": null,
   "estornoParcial": false,
-  "cotacaoId": "8d1c4e6a-…"
+  "cotacaoId": "8d1c4e6a-…",
+  "pagamentoDuplicado": false,
+  "duplicadoCom": []
 }
 ```
 
@@ -679,6 +681,8 @@ teste que separa os dois; não teste "tem `tipo`".
 | `valorEstornado` | Soma do que já foi devolvido ao pagador; `null` quando nunca houve estorno. Em `estornado` é igual a `valorCobrado`; em `estornado_parcialmente`, menor |
 | `estornoParcial` | `true` só em `estornado_parcialmente` |
 | `cotacaoId` | A cotação (preço mostrado na tela) que originou a cobrança — só para auditoria; `null` em cobranças anteriores a 24/09/2026 |
+| `pagamentoDuplicado` | `true` quando OUTRA cobrança deste mesmo pedido também foi paga (RN-52, novo em 25/09/2026). Os dois pagamentos são reais: **libere o pedido uma vez só** e devolva um deles por `POST /estornar` (5.4). Normalmente `false` — o Checkout invalida na Asaas o Pix/boleto/pop-up que sobra quando um pagamento do pedido confirma (RN-51); a duplicidade só acontece quando os dois são pagos quase ao mesmo tempo |
+| `duplicadoCom` | Os `chargeId` das outras cobranças pagas deste pedido; `[]` quando não há duplicidade |
 | `valorCheio` … `taxaDoProjeto` | Exatamente o que a sua API devolveu — repassado de volta para conciliar |
 | `taxaAsaas` | Custo real da Asaas naquele método |
 | `taxaPropria` | Margem do San Checkout |

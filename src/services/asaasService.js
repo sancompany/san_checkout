@@ -560,6 +560,47 @@ export async function consultarStatus(chargeId) {
 }
 
 /**
+ * O estado de uma cobrança para quem vai EXCLUÍ-LA (RN-51): o status e
+ * se ela já foi removida. `deleted` é o campo que a Asaas devolve numa
+ * cobrança removida — o mesmo que ela devolve numa assinatura cancelada
+ * (medido em 16/09/2026, `consultarAssinaturaNaAsaas`); na cobrança,
+ * nao-conferido: formato de um GET de cobrança removida, contra a API v3
+ * de produção, 25/09/2026 — por isso quem usa isto lê `deleted` E status.
+ */
+export async function consultarPagamento(chargeId) {
+  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  return { status: cobranca?.status ?? null, excluida: cobranca?.deleted === true };
+}
+
+/**
+ * `DELETE /v3/payments/{id}` — torna a cobrança indisponível para
+ * pagamento (doc oficial "Excluir cobrança", lida em 25/09/2026: "A
+ * remoção não representa estorno, reembolso ou devolução de valores já
+ * pagos"; resposta `{ deleted, id }`). A doc NÃO lista de quais status
+ * se pode excluir — por isso o cancelador de irmãs só chama isto depois
+ * de um `consultarPagamento` dizer PENDING/OVERDUE, e nunca sobre
+ * cobrança paga.
+ */
+export async function excluirCobranca(chargeId) {
+  const resposta = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'DELETE' });
+  return { excluida: resposta?.deleted === true };
+}
+
+/**
+ * `POST /v3/checkouts/{id}/cancel` — encerra a sessão hospedada antes de
+ * ela expirar (doc oficial "Cancelar um checkout", lida em 25/09/2026:
+ * "Use esta operação quando a jornada de pagamento precisar ser
+ * encerrada antes da expiração"; resposta com `status` ACTIVE, CANCELED,
+ * EXPIRED ou PAID). A doc não diz o que acontece com sessão já paga ou
+ * expirada — quem chama lê o `status` devolvido e trata recusa como
+ * "não sei", nunca como "cancelou".
+ */
+export async function cancelarSessaoDeCheckout(asaasCheckoutId) {
+  const resposta = await chamarAsaas(`/v3/checkouts/${asaasCheckoutId}/cancel`, { method: 'POST' });
+  return { status: resposta?.status ?? null };
+}
+
+/**
  * Recupera uma cobrança Pix já criada — QR e copia-e-cola de novo, sem
  * criar outra. Usado quando o comprador volta pra página de um pedido
  * que já tem Pix pendente.
