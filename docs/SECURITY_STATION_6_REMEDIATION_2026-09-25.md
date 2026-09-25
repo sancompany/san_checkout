@@ -352,9 +352,9 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | tira um fragmento de sufixo de chave do documento (INFO-12) |
 | `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md` | +553 −0 | DOCUMENTATION | evidência imutável: baseline pré-correção (hash travado) |
 | `docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md` | +91 −0 | DOCUMENTATION | evidência imutável: revisão do Jules (hash travado) |
-| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +637 −0 | DOCUMENTATION | este relatório |
+| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +647 −0 | DOCUMENTATION | este relatório |
 | `docs/TESTES.md` | +31 −0 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
-| `docs/funcional.md` | +293 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/funcional.md` | +301 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `docs/pendencias.md` | +71 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `functions/api/admin/[[caminho]].js` | +71 −0 | SECURITY_FIX | Pages Function: o painel fala com a API atrás do Access (SEC-015) |
 | `package-lock.json` | +12 −12 | SECURITY_FIX | express 4.22.3 / body-parser / qs 6.16.0 (SEC-033), sem --force |
@@ -376,8 +376,8 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/controllers/asaasCheckoutController.js` | +115 −11 | SECURITY_FIX | sessão só para o mesmo pagador (NEW-02, C1-05), logs sem corpo cru (SEC-028) |
 | `src/controllers/assinaturaController.js` | +88 −12 | CORRECTNESS_FIX | arrendamento devolvido no sucesso, falha local vira erros (SEC-029, SEC-013) |
 | `src/controllers/checkoutController.js` | +265 −39 | CORRECTNESS_FIX | instrumento só volta se ainda é o do pedido, pelo preço da tela (SEC-004/005) |
-| `src/controllers/cobrancaConsultaController.js` | +15 −6 | CORRECTNESS_FIX | CAS e binding de valor na consulta de status; a confirmação descoberta entra pelo webhook (SEC-022, C1-10, FP2RA-1) |
-| `src/controllers/refundController.js` | +147 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002); só avisa se a rota gravou (FP2RA-2) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
+| `src/controllers/cobrancaConsultaController.js` | +26 −6 | CORRECTNESS_FIX | CAS e binding de valor na consulta de status; a confirmação descoberta entra pelo webhook (SEC-022, C1-10, FP2RA-1) |
+| `src/controllers/refundController.js` | +148 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002); só avisa se a rota gravou (FP2RA-2) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
 | `src/controllers/trocaAprovacaoController.js` | +10 −2 | SECURITY_FIX | token da troca só texto e só UUID; handlers com try/catch (CP2-11) |
 | `src/controllers/trocaPlanoController.js` | +51 −12 | RECOVERY | uma troca em voo, aviso com dono (SEC-010/013) |
 | `src/controllers/webhookController.js` | +1024 −80 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2, FP1RA-1/2, FP2A-1 — uma passada por charge) |
@@ -397,7 +397,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/services/assinaturaService.js` | +17 −8 | RECOVERY | upsert/vínculos relançam em vez de engolir (SEC-014) |
 | `src/services/auditoriaWebhookService.js` | +2 −1 | CORRECTNESS_FIX | promessa da descarga de rejeições com dono (SEC-013) |
 | `src/services/cobrancaService.js` | +191 −48 | CORRECTNESS_FIX | escrita condicional, delete condicional, estorno só sobe; 23505 do ciclo só é duplicado se o charge existe (SEC-022/025, NEW-01, FP1A-1) |
-| `src/services/estornoService.js` | +453 −0 | CORRECTNESS_FIX | estorno durável e idempotente, reconciliação que não repete (SEC-002, C1-04, C2-M1, FP2RA-2) |
+| `src/services/estornoService.js` | +457 −0 | CORRECTNESS_FIX | estorno durável e idempotente, reconciliação que não repete (SEC-002, C1-04, C2-M1, FP2RA-2) |
 | `src/services/outboxService.js` | +48 −5 | SECURITY_FIX | entrega sem seguir redirect, destino revalidado, orçamento de passada (SEC-006, C1-07) |
 | `src/services/pedidoService.js` | +30 −10 | SECURITY_FIX | id canônico na URL de saída do pull (SEC-001) |
 | `src/services/transicoesFinanceiras.js` | +85 −8 | CORRECTNESS_FIX | sair de chargeback só por disputa; caminhos para o reconciliador (SEC-019, JULES-004) |
@@ -422,8 +422,8 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/banco-sem-privilegio-publico.js` | +70 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/ci-so-le-e-fixa-o-que-roda.js` | +63 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/erro-da-asaas-nao-vaza.js` | +116 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/escrita-de-estado-e-condicional.js` | +424 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +949 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/escrita-de-estado-e-condicional.js` | +465 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +971 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/executar.js` | +19 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/filtro-or-so-interpola-o-que-o-servidor-fez.js` | +79 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/identificador-canonico-em-toda-fronteira.js` | +219 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
@@ -588,7 +588,7 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 |---|---|---|
 | RES-01 | C1-05b | (o achado) quem tem o CPF cancela a sessão aberta da vítima (sem vazar nada; ela reabre) |
 | RES-02 | SEC-020 | FIXED `8be71d3` + C1-09 (CAS e refeitura idempotente). A semântica "autorização = confirmado" é (método desligado) |
-| RES-04 | FP2A-3, SEC-011 | FIXED `5475d69` (vínculo no 1º evento; recusa do 1º ciclo chama humano). O comportamento da Asaas depois da recusa segue não medido → §14 |
+| RES-04 | FP2A-3, FP2RA-3, RES-53, SEC-011 | FIXED `5475d69` (vínculo no 1º evento; recusa do 1º ciclo chama humano). O comportamento da Asaas depois da recusa segue não medido → §14 |
 | RES-05 | C1-14 | toda migration roda como `postgres` |
 | RES-06 | SEC-030 | EXTERNAL_PENDING EP-05 — o prazo de retenção é decisão jurídica; o hash sem sal é (documento em claro já existe por desenho) |
 | RES-07 | INFO-03 | sem entrada de usuário refletida em estilo; |
@@ -637,8 +637,12 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 | RES-50 | FP2B-4 | as duas camadas continuam exigidas; o Access libera só o e-mail do dono |
 | RES-51 | FP2C-3 | nenhum caminho apaga essas linhas hoje (só reserva sem charge, que nunca tem estorno); é a trava certa para dinheiro que saiu |
 | RES-52 | FP2A-5 | janela de segundos, a cada deploy; o estado segue protegido pelo UPDATE condicional; `CONSTRAINTS.md` §2 manda trocar por arrendamento no banco antes de qualquer réplica |
-| RES-53 | FP2A-3 | dentro da borda do SEC-011/RES-04, cujo comportamento na Asaas não foi medido; o contratante recebe dois fatos diferentes, não o mesmo duas vezes |
+| RES-53 | FP2A-3, FP2RA-3 | dentro da borda do SEC-011/RES-04, cujo comportamento na Asaas não foi medido; o contratante recebe dois fatos diferentes, não o mesmo duas vezes |
 | RES-54 | FP2A-4 | o estado final é o certo e os dois avisos chegam; a ordem é a documentada no `API.md` §4.3.6 (eventos podem chegar fora de ordem) |
+| RES-55 | FP2RA-3 | dentro da borda do SEC-011/RES-04/RES-53; o alerta `primeiroCicloFalhou` já chama um humano |
+| RES-56 | FP2RB-1 | exige credencial vazada; outros charges não são afetados, o estado segue protegido e o limitador vale |
+| RES-57 | FP2RB-2 | troca de vivacidade por correção, escolhida de propósito (FP2A-1) |
+| RES-58 | FP2RC-3 | a fila e a fiação são provadas por autoteste determinístico, que reprova a sabotagem; o caminho do ciclo passa pela mesma fiação |
 
 ## 15. Cobertura do fechamento
 
