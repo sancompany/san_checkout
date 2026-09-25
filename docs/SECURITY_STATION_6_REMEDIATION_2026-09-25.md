@@ -266,6 +266,18 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP3-16 | LOW (teste) | CR-06 | guardas condicionais anteriores a `43635c4`, de que a remediação depende, sem prova: `aplicarTransicaoPorCheckoutId`, CAS e reivindicação da intenção de troca (status e validade), `mutation_version` de `aplicarTrocaDePlano`, filtro de status de `marcarReconciladas` | **FIXED** `dd81e79` — um teste de CAS por escritor, contra o serviço real, cada um com controle positivo |
 | CP3-17 | INFO | CR-09 | as camadas do JWT do Access se cobriam (`alg` no veredito e na assinatura, `kty`), e o teto de 8192 caracteres não tinha teste | **FIXED** `dd81e79` — cada camada sozinha, e o teto com controle logo abaixo |
 | CP3-18 | INFO | CR-02 | tirar o `excetoId` de `restanteEstornavel` não tem efeito observável: nos dois chamadores a própria operação nunca alcança os termos lidos (FAILED_RETRYABLE sob arrendamento; ou CONFIRMED, e aí o CAS do CP3-10 recusa a escrita) | **RISK_ACCEPTED** RES-38 — o pior efeito é um alerta falso de "não permite decidir"; o raciocínio está no comentário do bloco 15 da suíte |
+| FP1A-1 | MEDIUM | CR-06 | `registrarCicloAssinatura` lia QUALQUER `23505` como "charge repetido"; a linha do ciclo 2+ também cai no índice único da reserva de pop-up (`idx_cobrancas_assinatura_pendente_unica`, 0015), e com uma renovação aberta do mesmo plano e documento o ciclo PAGO sumia: nenhuma linha, nenhum aviso, inbox `processado`, reconciliador sem ver. Reproduzido contra o código real | **FIXED** — `duplicado` só se a linha daquele charge existe; senão lança e a inbox refaz com recuo (a reserva se resolve em minutos; os recuos somam ~42 h), esgotado vira `erros`. Regressão com a reserva aberta e depois resolvida, e controle do charge repetido de verdade (RN-23); 2 sabotagens pegas |
+| FP1A-2 | LOW | CR-06 | cancelar entre o `GET` da aprovação e `reivindicarTroca`, ou durante uma intenção órfã em `PROCESSING_PAYMENT` depois do arrendamento, deixa o acerto ser cobrado sobre uma assinatura cancelada — o cancelamento não mexe em `mutation_version` | **RISK_ACCEPTED** RES-39 — janela de milissegundos, ou uma intenção órfã que o sweeper resolve; o desfecho depende de como a Asaas responde a um `PUT` em assinatura removida, não medido; o `PUT` que lança vai a `erros` |
+| FP1A-3 | INFO | CR-04 | se a Asaas der um id NOVO de pagamento a uma retentativa dentro da mesma sessão de pop-up recusada, o pagamento vai para `duplicidadeDeReserva` com o conselho de "estornar um" — o único pagamento real | **RISK_ACCEPTED** RES-40 — não medido se a Asaas troca o id na retentativa; o alerta leva um humano à Asaas antes de qualquer estorno |
+| FP1A-4 | LOW | CR-04 | `PAYMENT_*` de um charge nosso, com a nossa referência `reserva-<uuid>` e sem linha local, voltava calado | **FIXED** — alerta `reservaSemLinha` em `erros` e linha no RUNBOOK §6.3; teste com controle (referência alheia continua ignorada), sabotagem pega |
+| FP1B-1 | INFO | CR-13 | o invólucro de rota passava a `next()` uma falha sem `Error` (`throw undefined`, `reject(null)`, `'route'`) — numa guarda, isso seria seguir adiante | **FIXED** — todo motivo vira `Error`; teste com quatro guardas que falham sem Error, e a sabotagem mostrou as quatro entregando a rota protegida (200) |
+| FP1B-2 | INFO | CR-13 | o `.catch` do receptor lia `erro.message`; uma rejeição com `null` faria o próprio `catch` lançar | **FIXED** — `erro?.message ?? String(erro)` |
+| FP1B-3 | INFO | CR-10 | o limitador chaveia pelo IP exato; um cliente com um /64 IPv6 pode trocar de endereço a cada pedido | **RISK_ACCEPTED** RES-41 — os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (junto do EP-09) |
+| FP1C-1 | LOW | CR-09 | a 0020 tira o EXECUTE de `PUBLIC` em todas as funções do `public`; o backend só segue se o `service_role` tiver grant próprio, e nada no repositório confere isso — sem ele, `registrar_erro` falha calado | **DUPLICATE** de INFO-13/EP-02 — a conferência pós-aplicação está escrita na §7 |
+| FP1C-2 | LOW | doc | a §7.1 estava velha: `trocaAprovacaoController.js` sem classificação e contagens de linhas de um commit anterior | **FIXED** — tabela regerada pelo script contra o HEAD |
+| FP1C-3 | INFO | ops | `scripts/limpar-registros-de-teste.mjs` não conhece a tabela `estornos`, e por isso a primeira trava dele recusa rodar | **RISK_ACCEPTED** RES-42 — recusa é o modo seguro; classificar `estornos` (antes de `cobrancas`, pela FK) é decisão para quando o script voltar a ser usado, e nesta rodada nenhum registro se apaga |
+| FP1C-4 | INFO | CR-05 | `checkoutSession`/`externalReference` agora só vêm do `GET` da Asaas; amarrar a primeira cobrança da pop-up depende de um dos dois estar lá | **EXTERNAL_PENDING** EP-11 — conferir no próximo pagamento real de cartão (§11) |
+| FP1C-5 | INFO | ops | com o backend no ar antes do front, o painel velho chama a API direto e recebe `401` até o deploy do Pages | **RISK_ACCEPTED** RES-43 — só o operador; os dois saem da `main` juntos |
 
 ## 7. Correções
 
@@ -289,7 +301,7 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | `1b6a5b7` | passada limpa #1, 2ª tentativa — CP2-01 |
 | `6ebc923` | passada limpa #1, 2ª tentativa — CP2-10, CP2-11 |
 
-Migrations: **0018** (estornos) e **0019** (uma troca em voo) aplicadas em produção; **0020** (grants públicos) escrita e testada, aplicação pendente (EP-02).
+Migrations: **0018** (estornos) e **0019** (uma troca em voo) aplicadas em produção; **0020** (grants públicos) escrita e testada, aplicação pendente (EP-02). Depois de aplicá-la, conferir `has_function_privilege('service_role', 'public.registrar_erro(…)', 'EXECUTE')` para `registrar_erro`, `registrar_rejeicoes_webhook` e `resumo_rejeicoes_webhook`: a 0020 tira o EXECUTE de `PUBLIC`, e sem o grant próprio do `service_role` a captura de erro — para onde vão os alertas humanos — pararia calada (FP1C-1, provado num Postgres descartável).
 
 ### 7.1 Classificação de todo o diff (`43635c4` → HEAD)
 
@@ -516,4 +528,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 141 = FIXED 89 + FALSE_POSITIVE 3 + DUPLICATE 7 + RISK_ACCEPTED 36 + EXTERNAL_PENDING 6
+TOTAL_LEDGER = 153 = FIXED 94 + FALSE_POSITIVE 3 + DUPLICATE 8 + RISK_ACCEPTED 41 + EXTERNAL_PENDING 7

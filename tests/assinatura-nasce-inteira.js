@@ -76,6 +76,14 @@ async function rodar({ tabelas, falhas = {}, asaas = {}, passos }) {
           resultados.push(await wc.reprocessarInbox());
         }
         if (passo.vincularCheckout) resultados.push(await cobrancas.vincularChargeIdAoCheckout(...passo.vincularCheckout));
+        if (passo.registrarCiclo) resultados.push(await cobrancas.registrarCicloAssinatura(passo.registrarCiclo));
+        if (passo.ajustar) {
+          const estado = JSON.parse(readFileSync(process.env.BANCO_FALSO_ARQUIVO, 'utf8'));
+          const l = estado.tabelas[passo.ajustar.tabela].find((x) => x.id === passo.ajustar.id);
+          Object.assign(l, passo.ajustar.campos);
+          writeFileSync(process.env.BANCO_FALSO_ARQUIVO, JSON.stringify(estado));
+          resultados.push(null);
+        }
       } catch (e) { resultados.push('LANCOU: ' + e.message); }
     }
     await new Promise((r) => setTimeout(r, 200));
@@ -183,6 +191,41 @@ const avisos = (banco, evento) => (banco.outbox_notificacoes ?? []).filter((o) =
   });
   igual(r.banco.cobrancas[0].status, 'recusado', 'CP3-05: o 1º ciclo recusado é aplicado');
   ok((r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.primeiroCicloFalhou'), 'CP3-05: e o humano é chamado mesmo com a leitura da assinatura falhando uma vez');
+}
+
+/* ── E) FP1A-1: o ciclo pago que esbarra na reserva de uma renovação ──
+   A linha do ciclo 2+ (`assinatura`, `pendente`, com plano e documento,
+   sem pedido) cai no índice único da reserva de pop-up. Com a renovação
+   do mesmo plano aberta, o `23505` era lido como "charge repetido": o
+   ciclo pago sumia sem linha, sem aviso e com a inbox `processado`. */
+{
+  const primeiro = linhaDaPopup({ status: 'confirmado', charge_id: 'pay_1', asaas_subscription_id: 'sub_a', criado_em: new Date(Date.now() - 40 * 86400_000).toISOString() });
+  const renovacao = linhaDaPopup({ id: '5e5e5e5e-0000-4000-8000-000000000009', asaas_checkout_id: 'chk_renova', criado_em: new Date(Date.now() - 10 * 60_000).toISOString() });
+  const assinatura = { id: 'sub_a', contratante_id: 'loja', plano_id: 'plano_pro', documento: '11144477735', valor: 50, ciclo: 'MONTHLY', status: 'ativa', mutation_version: 0 };
+  const r = await rodar({
+    tabelas: { cobrancas: [primeiro, renovacao], assinaturas: [assinatura] },
+    asaas: { 'GET /v3/payments/pay_2': pagamento('pay_2', 'CONFIRMED', { externalReference: `reserva-${primeiro.id}` }) },
+    passos: [
+      { receber: evento('evt_e1', 'PAYMENT_CONFIRMED', 'pay_2') },
+      { ajustar: { tabela: 'cobrancas', id: renovacao.id, campos: { status: 'expirado' } } },
+      { reprocessar: true }
+    ]
+  });
+  const ciclo = r.banco.cobrancas.find((c) => c.charge_id === 'pay_2');
+  ok(ciclo && ciclo.status === 'confirmado', `FP1A-1: o ciclo pago NÃO se perde — com a reserva resolvida, a retentativa o grava (veio ${JSON.stringify(ciclo?.status)})`);
+  igual(r.resultados[2], { examinadas: 1, processadas: 1, falhas: 0 }, 'FP1A-1: a primeira passada LANÇOU (a inbox guardou para refazer), não marcou processado');
+  igual((r.banco.webhook_inbox ?? [])[0]?.status, 'processado', 'FP1A-1: e só então o evento fica processado');
+  /* O aviso ao contratante não é conferido aqui: a linha nova do ciclo
+     nasce sem o `contratantes(...)` que o banco falso não junta. */
+}
+/* controle: o `23505` de um charge que JÁ existe continua sendo reentrega */
+{
+  const existente = linhaDaPopup({ status: 'confirmado', charge_id: 'pay_rep', asaas_subscription_id: 'sub_a', asaas_checkout_id: null });
+  const r = await rodar({
+    tabelas: { cobrancas: [existente] },
+    passos: [{ registrarCiclo: { chargeId: 'pay_rep', asaasSubscriptionId: 'sub_a', contratanteId: 'loja', planoId: 'plano_pro', documento: '11144477735', valorCheio: 50, valorComDesconto: 50, valorCobrado: 50 } }]
+  });
+  igual(r.resultados[0], { duplicado: true }, 'controle: charge repetido de verdade continua `duplicado` (a entrega perdedora não notifica — RN-23)');
 }
 
 /* ── C) o vínculo do charge à sessão é CAS ─────────────────────────── */

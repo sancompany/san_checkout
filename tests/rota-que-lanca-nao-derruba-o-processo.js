@@ -157,6 +157,32 @@ igual(classe.resultado?.st, { '/x/async': 500, '/x/sync': 500, '/x/depois-de-res
 igual(classe.resultado?.vistos, ['lançou depois do await', 'lançou síncrono', 'lançou depois de responder', 'lançou num handler de route()', 'no app'], 'e TODA exceção chega ao tratador de erro — nenhuma some');
 ok(classe.resultado?.get === true, 'controle: `app.get(nome)` de uma configuração continua lendo a configuração');
 
+/* ---- 2c. FP1B-1: a guarda que falha SEM um Error não passa adiante ----
+   `throw undefined`, `Promise.reject(null)` ou `'route'` chegavam ao
+   `next()` como "siga": numa guarda (Access, chave de admin), isso era
+   entregar a rota protegida. O motivo tem de virar sempre um Error. */
+const semError = await filho(`
+  const express = (await import('express')).default;
+  const { comRejeicaoTratada, roteador } = await import('./src/utils/rotaSegura.js');
+  const app = comRejeicaoTratada(express());
+  const r = roteador();
+  r.use('/indefinido', async () => { throw undefined; });
+  r.use('/nulo', () => Promise.reject(null));
+  r.use('/rota', async () => { throw 'route'; });
+  r.use('/sincrono', () => { throw undefined; });
+  r.get(['/indefinido', '/nulo', '/rota', '/sincrono'], (_q, res) => res.json({ vazou: true }));
+  app.use('/g', r);
+  app.use((_erro, _q, res, _p) => { res.status(500).json({ erro: 'interno' }); });
+  const s = app.listen(0); await new Promise((ok) => s.once('listening', ok));
+  const base = 'http://127.0.0.1:' + s.address().port;
+  const st = {};
+  for (const c of ['/g/indefinido', '/g/nulo', '/g/rota', '/g/sincrono']) st[c] = (await fetch(base + c)).status;
+  s.close();
+  console.log(JSON.stringify({ st }));
+  process.exit(0);
+`);
+igual(semError.resultado?.st, { '/g/indefinido': 500, '/g/nulo': 500, '/g/rota': 500, '/g/sincrono': 500 }, `FP1B-1: guarda que falha sem Error vira 500 — nunca chega ao handler protegido (${JSON.stringify(semError.resultado)})`);
+
 /* ---- 2b. CP3: TODO método que o invólucro promete, nos dois alvos ----
    Achado da passada CP3 por sabotagem: tirar `use`, `all` ou
    `head`/`options` da lista de métodos de `rotaSegura.js`, ou o ramo que

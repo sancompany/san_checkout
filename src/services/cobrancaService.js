@@ -422,7 +422,7 @@ export async function registrarCobrancaPendentePopup(dados) {
  */
 /**
  * Devolve `{ duplicado: true }` quando o `charge_id` já existe (código
- * Postgres `23505`, violação do `unique` da migration 0001) — a Asaas
+ * Postgres `23505` E a linha deste charge relida — FP1A-1) — a Asaas
  * reenvia webhook (API.md §4.3.6, "pode chegar mais de uma vez"), e sem
  * distinguir esse caso, duas entregas quase simultâneas do MESMO
  * `PAYMENT_CONFIRMED` de um ciclo novo liam a linha como inexistente
@@ -468,7 +468,23 @@ export async function registrarCicloAssinatura(dados) {
     status: 'pendente'
   });
 
-  if (error?.code === '23505') return { duplicado: true };
+  if (error?.code === '23505') {
+    /* FP1A-1: `23505` NÃO quer dizer "este charge_id já existe". A linha
+       do ciclo (`assinatura`, `pendente`, com `plano_id`, sem `pedido_id`)
+       também cai no índice único da RESERVA de pop-up
+       (`idx_cobrancas_assinatura_pendente_unica`, 0015). Com a reserva de
+       uma renovação aberta para o mesmo plano e documento, o ciclo pago
+       era lido como reentrega: nenhuma linha, nenhum aviso, a inbox
+       marcava `processado`, e o reconciliador nunca o via. Só é
+       duplicado se a linha deste charge EXISTE; senão LANÇA — a inbox
+       refaz com recuo (a reserva se resolve em minutos) e, esgotada,
+       escala para `erros`. */
+    const { data: existente, error: erroLeitura } = await supabase
+      .from('cobrancas').select('id').eq('charge_id', dados.chargeId).maybeSingle();
+    if (erroLeitura) throw erroLeitura;
+    if (existente) return { duplicado: true };
+    throw new Error(`o ciclo ${dados.chargeId} da assinatura ${dados.asaasSubscriptionId} esbarrou no índice único de uma reserva pendente do mesmo plano e documento, não num charge repetido — reprocessar quando ela se resolver`);
+  }
   if (error) {
     // Qualquer outro erro LANÇA: engolir aqui deixava o ciclo sem linha e
     // sem aviso, e a inbox marcava o evento como processado (revisão de

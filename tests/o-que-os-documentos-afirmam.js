@@ -306,9 +306,17 @@ const ESTADOS = ['FIXED', 'FALSE_POSITIVE', 'DUPLICATE', 'RISK_ACCEPTED', 'EXTER
 const relatorio = readFileSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md'), 'utf8');
 const contagem = Object.fromEntries(ESTADOS.map((e) => [e, 0]));
 const vistos = new Set();
+const ESTADO_EM_NEGRITO = new RegExp(`\\*\\*(${ESTADOS.join('|')})\\*\\*`);
 for (const linha of relatorio.split('\n')) {
-  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|C\d+-[A-Za-z0-9]+) \|/);
-  if (!m) continue;
+  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|FP\d+[A-Z]-\d+|C\d+-[A-Za-z0-9]+) \|/);
+  /* Uma linha de tabela com estado final na última coluna e um id que o
+     padrão não conhece ficava FORA da conta, calada — foi assim que as
+     linhas FP1*-n nasceram sem entrar no total (25/09/2026). */
+  if (!m) {
+    const ultima = linha.startsWith('| ') ? linha.split('|').map((c) => c.trim()).filter(Boolean).at(-1) ?? '' : '';
+    ok(!ESTADO_EM_NEGRITO.test(ultima) || !/^\| [A-Z][A-Za-z0-9]*-[A-Za-z0-9]+ \|/.test(linha), `ledger: linha com estado final e id fora do padrão contado — ${linha.slice(0, 40)}`);
+    continue;
+  }
   ok(!vistos.has(m[1]), `ledger: ${m[1]} aparece uma vez só`);
   vistos.add(m[1]);
   const celulas = linha.split('|').map((c) => c.trim()).filter(Boolean);

@@ -28,12 +28,16 @@ function envolver(handler) {
   if (Array.isArray(handler)) return handler.map(envolver);
   if (typeof handler !== 'function' || handler.length === 4 || typeof handler.handle === 'function') return handler;
   return function handlerComDono(requisicao, resposta, proximo) {
+    /* FP1B-1: o motivo vira SEMPRE um Error. Um `throw undefined` (ou uma
+       rejeição com `null`, `'route'`) chegava ao `next()` como "siga em
+       frente" — numa guarda, isso era passar adiante em vez de recusar. */
+    const falhar = (erro) => proximo(erro instanceof Error ? erro : new Error(`handler falhou sem Error: ${String(erro)}`));
     try {
       const resultado = handler.call(this, requisicao, resposta, proximo);
-      if (resultado && typeof resultado.then === 'function') resultado.then(undefined, proximo);
+      if (resultado && typeof resultado.then === 'function') resultado.then(undefined, falhar);
       return resultado;
     } catch (erro) {
-      return proximo(erro);
+      return falhar(erro);
     }
   };
 }

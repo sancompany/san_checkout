@@ -697,7 +697,7 @@ export function criarReceptorWebhook(deps = dependenciasPadrao, { tetoDeResposta
          `marcarFalha`), a linha fica `processando` e o arrendamento da
          inbox a devolve ao worker. */
       const processamento = processarLinhaDaInbox(linha, corpo, deps)
-        .catch((erro) => ({ resultado: 'erro', detalhe: `falha ao registrar o desfecho: ${erro.message}` }));
+        .catch((erro) => ({ resultado: 'erro', detalhe: `falha ao registrar o desfecho: ${erro?.message ?? String(erro)}` })); // FP1B-2: rejeição sem Error não derruba o próprio catch
       let temporizador;
       const teto = new Promise((ok) => { temporizador = setTimeout(() => ok(null), tetoDeRespostaMs); temporizador.unref?.(); });
       const noPrazo = await Promise.race([processamento, teto]);
@@ -1041,7 +1041,19 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     if (avancou) return;
 
     // Charge desconhecido: só interessa se for ciclo novo de assinatura.
-    if (!payment?.subscription) return;
+    if (!payment?.subscription) {
+      /* FP1A-4: com a NOSSA referência de reserva e nenhuma linha, é
+         dinheiro nosso sem registro (a reserva sem sessão foi apagada
+         antes de o vínculo chegar, por exemplo). Voltar calado era perder
+         o pagamento de vista; um humano confere. */
+      if (/^reserva-[0-9a-f-]{36}$/i.test(payment?.externalReference ?? '')) {
+        await deps.registrarErro(
+          new Error(`pagamento ${chargeId} (${evento}) traz a referência ${payment.externalReference}, que é nossa, e não há linha em cobrancas — conferir na Asaas e religar à reserva`),
+          { contexto: 'webhookController.reservaSemLinha', rota: 'webhook/asaas', metodo: 'POST' }
+        );
+      }
+      return;
+    }
     cobranca = await registrarNovoCicloAssinatura(payment, deps);
     if (!cobranca) return;
   }

@@ -629,4 +629,21 @@ async function rodar({ tabelas = {}, asaas = {}, passos }) {
   igual(r.avisos('pay_outra_sessao').length, 0, 'CP3-09: e não avisa ninguém');
 }
 
+/* ── FP1A-4) pagamento com a NOSSA referência de reserva e sem linha ──
+   Voltava calado: dinheiro nosso sem registro. Agora chama um humano;
+   um charge alheio (referência que não é nossa) continua ignorado. */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [] },
+    asaas: {
+      'GET /v3/payments/pay_sem_linha': [naAsaas('RECEIVED', { externalReference: `reserva-${uuid(181)}` })],
+      'GET /v3/payments/pay_alheio': [naAsaas('RECEIVED', { externalReference: 'pedido-de-outro-sistema' })]
+    },
+    passos: [{ receber: evento('PAYMENT_CONFIRMED', 'pay_sem_linha') }, { receber: evento('PAYMENT_CONFIRMED', 'pay_alheio') }]
+  });
+  const alertas = r.errosRegistrados().filter((e) => e.contexto === 'webhookController.reservaSemLinha');
+  igual(alertas.length, 1, 'FP1A-4: pagamento com referência de reserva nossa e sem linha chama um humano — e só esse');
+  ok(String(alertas[0]?.mensagem ?? alertas[0]?.message ?? JSON.stringify(alertas[0])).includes('pay_sem_linha'), 'FP1A-4: o alerta nomeia o pagamento');
+}
+
 console.log(`webhook-confere-na-asaas: ${checagens} checagens OK`);

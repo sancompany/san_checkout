@@ -621,6 +621,12 @@ o ciclo duas vezes. *Quem vê:* o contratante, em silêncio. Corrigido:
 Postgres `23505`) e sinaliza `duplicado`; a entrega perdedora não
 notifica nada, confiando que a vencedora já cuidou disso. Achado e
 corrigido em 16/09/2026, verificado por sabotagem.
+*Revisto em 25/09/2026 (FP1A-1):* `23505` sozinho não prova que o
+charge repetiu — a linha do ciclo também cai no índice único da reserva
+de pop-up do mesmo plano e documento (`0015`), e com uma renovação
+aberta o ciclo pago sumia calado. Agora só é `duplicado` se a linha
+daquele `charge_id` existe; se não, o evento lança e a inbox refaz com
+recuo até a reserva se resolver (esgotado, vira `erros`).
 
 **RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
 avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com
