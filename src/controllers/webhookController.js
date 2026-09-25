@@ -1191,11 +1191,12 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
      a mesma chave pode pedir de novo. Também na reentrega — é idempotente. */
   if (statusGravado === 'estorno_negado' && cobranca.id) await deps.reabrirEstornosNegados(cobranca.id);
 
-  /* CP1-I1: assinatura de sessão SUBSTITUÍDA que a Asaas liquidou mesmo
-     assim (RN-70). A de pedido vira duplicidade pelo pedido; a de
+  /* CP1-I1/CP2-01: assinatura de sessão SUBSTITUÍDA que a Asaas liquidou
+     mesmo assim — trocada por outro preço (`cancelado`, RN-70) ou por ter
+     travado 65 min (`expirado`, a reserva abre outra). A de pedido vira duplicidade pelo pedido; a de
      assinatura não tem pedido — se a sessão que a substituiu também
      pagou, são duas assinaturas cobrando. Um humano confere. */
-  if (aplicada && statusGravado === 'confirmado' && cobranca.status === 'cancelado' && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
+  if (aplicada && statusGravado === 'confirmado' && ['cancelado', 'expirado'].includes(cobranca.status) && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
     await deps.registrarErro(
       new Error(`a sessão de assinatura ${cobranca.asaas_checkout_id ?? cobranca.id} tinha sido substituída e foi paga mesmo assim (${chargeId}): conferir se a que a substituiu também pagou — seriam duas assinaturas do mesmo plano cobrando`),
       { contexto: 'webhookController.assinaturaSubstituidaPaga', rota: 'webhook/asaas', metodo: 'POST' }
@@ -2049,6 +2050,10 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_sub', status: 'cancelado', asaas_subscription_id: null } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sub', subscription: 'sub_x', checkoutSession: 'chk_real' } }, deps);
   assert.ok(deps.chamou('registrarErro').some((c) => /substituída e foi paga/.test(c.args[0].message)), 'CP1-I1: a assinatura substituída que pagou chama um humano');
+  // CP2-01: a sessão substituída por TRAVADA (65 min, vira `expirado`) e paga depois também chama um humano
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_sub_exp', status: 'expirado', asaas_subscription_id: null } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sub_exp', subscription: 'sub_y', checkoutSession: 'chk_real' } }, deps);
+  assert.ok(deps.chamou('registrarErro').some((c) => /substituída e foi paga/.test(c.args[0].message)), 'CP2-01: a assinatura expirada/substituída que pagou chama um humano');
   // C1-03: a refeitura depois de a NOVA já estar gravada (crash ou falha entre o upsert e
   // o cancelamento da antiga) ainda cancela a antiga — o portão "a nova não existe" pulava
   // tudo, e o pagador ficava com as duas assinaturas cobrando.

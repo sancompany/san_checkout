@@ -230,6 +230,17 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP1-13 | INFO | CR-11 | corpo menor que o `Content-Length` segura a conexão até o `requestTimeout` padrão (300 s) | **RISK_ACCEPTED** RES-24 — limitador por IP e a borda da Northflank; sem derrubar o processo (medido) |
 | CP1-14 | INFO | CR-12 | POST público sem `cotacaoId` válido cria uma cotação por chamada | **RISK_ACCEPTED** RES-25 — limitado pelo rate limit e pelo expurgo diário |
 
+### 6.5 Na passada limpa #1, segunda tentativa (sobre `d9adebe`) — **não limpa**
+
+| ID | Sev. | Classe | Achado | Status final |
+|---|---|---|---|---|
+| CP2-01 | LOW | CR-08 | o alerta de assinatura substituída e paga (CP1-02) só olhava `cancelado`; a sessão substituída por ter TRAVADO (65 min → `expirado`) e paga depois virava a segunda assinatura cobrando, sem alerta. Reproduzido | **FIXED** — o alerta cobre `cancelado` e `expirado` |
+| CP2-02 | INFO | CR-05 | a confirmação pela consulta de status não dispara irmãs nem aviso; se a linha da inbox já esgotou, o reconciliador vê os dois lados iguais e os efeitos não rodam | **RISK_ACCEPTED** RES-26 — exige o webhook esgotar ANTES da consulta confirmar; o esgotamento já vira `erros` para um humano |
+| CP2-03 | INFO | CR-05 | passo do reconciliador sem respaldo lança e só adia uma hora (log de console) | **RISK_ACCEPTED** RES-27 — a linha esgotada da inbox já está em `erros` |
+| CP2-04 | INFO | CR-06 | o segundo `estorno_solicitado` depois de uma negativa não gera webhook ao contratante (a chave do fato deduplica); a resposta síncrona 200 avisa | **RISK_ACCEPTED** RES-28 |
+| CP2-05 | INFO | CR-02 | corrida estreita da mesma família da RES-14 (negativa velha lendo a Asaas antes do novo pedido e reabrindo depois dele) | **RISK_ACCEPTED** RES-29 — exige as duas coisas no intervalo de uma chamada à Asaas |
+| CP2-06 | INFO | CR-02 | estorno de cartão/Pix tratado como síncrono: um `REFUND_IN_PROGRESS` depois negado deixa a cobrança `estornado` | **RISK_ACCEPTED** RES-30 — termina em `erros` para um humano; o comportamento da Asaas para cartão/Pix não foi medido |
+
 ## 7. Correções
 
 Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os de código:
@@ -456,6 +467,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 | auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
 | passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado — **não limpo**; crash/auth/tenant com ~51 mil requisições hostis e 14 sabotagens — **limpo**; regressões do diff — **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido; 12 INFO classificados | 0 |
+| passada limpa #1 (2ª tentativa) | `d9adebe` | 3 (dinheiro/estado — **não limpo**; os outros dois abaixo) | 1 LOW (CP2-01); 5 INFO classificados | 0 |
 
 ## 14. Riscos residuais
 
@@ -465,4 +477,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 109 = FIXED 72 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 23 + EXTERNAL_PENDING 5
+TOTAL_LEDGER = 115 = FIXED 73 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 28 + EXTERNAL_PENDING 5
