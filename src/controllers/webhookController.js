@@ -457,13 +457,21 @@ const RESPALDO_DO_PROVEDOR = {
   estorno_solicitado: ['estorno_solicitado', 'estornado_parcialmente', 'estornado'],
   estornado: ['estornado'],
   chargeback: ['chargeback', 'estornado'],
-  pendente: ['pendente', 'vencido'] // baixa desfeita: o dinheiro saiu de novo
+  pendente: ['pendente', 'vencido'], // baixa desfeita: o dinheiro saiu de novo
+  /* A negativa de estorno também move dinheiro, ao contrário: desde RN-71
+     ela REABRE a operação e libera um novo pedido. Só vale com o pagamento
+     de volta a pago na Asaas — uma negativa velha, reprocessada depois de
+     um novo pedido aceito, com a Asaas ainda em `REFUND_REQUESTED`,
+     reabriria o pedido vivo e mandaria o estorno de novo (CP1-01). Sem
+     respaldo, lança: a negativa legítima que chegou antes da Asaas
+     refletir é reaplicada com recuo; a velha esgota e vira `erros`. */
+  estorno_negado: ['confirmado', 'estornado_parcialmente']
 };
 export const ALVOS_QUE_MOVEM_DINHEIRO = Object.keys(RESPALDO_DO_PROVEDOR);
 
 /** O alvo do evento tem respaldo no estado atual da Asaas? Alvos
- *  informativos (em análise, recusado, vencido, estorno negado) só
- *  precisam de a cobrança existir e ser nossa. */
+ *  informativos (em análise, recusado, vencido) só precisam de a
+ *  cobrança existir e ser nossa. */
 export function respaldoDoProvedor(alvo, estadoDaAsaas) {
   if (!ALVOS_QUE_MOVEM_DINHEIRO.includes(alvo)) return true;
   return Boolean(estadoDaAsaas) && RESPALDO_DO_PROVEDOR[alvo].includes(estadoDaAsaas);
@@ -1182,6 +1190,17 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
   /* Estorno NEGADO (D-1): a operação que o registrou como pedido reabre, e
      a mesma chave pode pedir de novo. Também na reentrega — é idempotente. */
   if (statusGravado === 'estorno_negado' && cobranca.id) await deps.reabrirEstornosNegados(cobranca.id);
+
+  /* CP1-I1: assinatura de sessão SUBSTITUÍDA que a Asaas liquidou mesmo
+     assim (RN-70). A de pedido vira duplicidade pelo pedido; a de
+     assinatura não tem pedido — se a sessão que a substituiu também
+     pagou, são duas assinaturas cobrando. Um humano confere. */
+  if (aplicada && statusGravado === 'confirmado' && cobranca.status === 'cancelado' && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
+    await deps.registrarErro(
+      new Error(`a sessão de assinatura ${cobranca.asaas_checkout_id ?? cobranca.id} tinha sido substituída e foi paga mesmo assim (${chargeId}): conferir se a que a substituiu também pagou — seriam duas assinaturas do mesmo plano cobrando`),
+      { contexto: 'webhookController.assinaturaSubstituidaPaga', rota: 'webhook/asaas', metodo: 'POST' }
+    );
+  }
 
   const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
 
@@ -2026,6 +2045,10 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
   assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0, 'refeitura: a assinatura antiga que já está cancelada não recebe um segundo DELETE');
+  // CP1-I1: assinatura de sessão substituída e paga chama um humano (duas assinaturas?)
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_sub', status: 'cancelado', asaas_subscription_id: null } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sub', subscription: 'sub_x', checkoutSession: 'chk_real' } }, deps);
+  assert.ok(deps.chamou('registrarErro').some((c) => /substituída e foi paga/.test(c.args[0].message)), 'CP1-I1: a assinatura substituída que pagou chama um humano');
   // C1-03: a refeitura depois de a NOVA já estar gravada (crash ou falha entre o upsert e
   // o cancelamento da antiga) ainda cancela a antiga — o portão "a nova não existe" pulava
   // tudo, e o pagador ficava com as duas assinaturas cobrando.

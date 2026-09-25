@@ -242,6 +242,36 @@ const consultar = `
   igual(op('op-de-outra').estado, 'CONFIRMED', 'e a de outra cobrança não é tocada');
 }
 
+/* ── CP1-01: a negativa VELHA não reabre o pedido que está vivo na Asaas ──
+   Passada limpa 1: a negativa do 1º pedido, reprocessada depois de um 2º
+   pedido aceito, marcava `estorno_negado` e reabria a operação viva — o
+   próximo `/estornar` mandaria o estorno de novo. A negativa só vale com
+   o pagamento DE VOLTA a pago na Asaas. */
+{
+  const { banco } = await rodar({
+    tabelas: {
+      cobrancas: [linha({ id: 'b-vivo', metodo_pagamento: 'boleto', status: 'estorno_solicitado', charge_id: 'pay_vivo' })],
+      estornos: [{ id: 'op-viva', cobranca_id: 'b-vivo', contratante_id: 'loja', charge_id: 'pay_vivo', chave_idempotencia: 'total-b-vivo', valor_centavos: 5000, total: true, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm3' }]
+    },
+    codigo: `
+      globalThis.fetch = async (url) => {
+        const u = new URL(String(url));
+        if (u.hostname === 'api-sandbox.asaas.com' && u.pathname === '/v3/payments/pay_vivo') return new Response(JSON.stringify({ id: 'pay_vivo', status: 'REFUND_REQUESTED', value: 50, externalReference: 'reserva-b-vivo' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      console.error = () => {};
+      const wc = await import('./src/controllers/webhookController.js');
+      const res = { _s: null, status(c) { this._s = c; return this; }, json() { return this; } };
+      await wc.receberWebhookAsaas({ body: { id: 'evt_negativa_velha', event: 'PAYMENT_REFUND_DENIED', dateCreated: '2026-09-25 09:00:00', payment: { id: 'pay_vivo' } }, get: () => undefined, ip: '52.67.12.206' }, res);
+      await new Promise((x) => setTimeout(x, 200));
+      console.log(JSON.stringify(res._s));
+    `
+  });
+  igual(banco.cobrancas[0].status, 'estorno_solicitado', 'CP1-01: com a Asaas mostrando o pedido de estorno em curso, a negativa não é aplicada');
+  igual(banco.estornos[0].estado, 'CONFIRMED', 'CP1-01: e a operação viva não é reaberta — nada de segundo estorno');
+  igual((banco.outbox_notificacoes ?? []).filter((o) => /estorno_negado/.test(JSON.stringify(o.payload ?? {}))).length, 0, 'e o contratante não recebe um "negado" falso');
+}
+
 /* ---- C1-08: a guarda do estorno, na função REAL contra o banco falso ----
    "Só grava sobre status estornável, e o valor estornado só sobe" (SEC-022)
    era provada numa CÓPIA escrita à mão da função — e o banco falso nem
