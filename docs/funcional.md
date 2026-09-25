@@ -639,6 +639,15 @@ gravada pela outra lia "o fato aconteceu de novo" e enfileirava um
 segundo aviso com `eventoId` novo. Agora o webhook processa um charge de
 cada vez (fila em memória; `CONSTRAINTS.md` §2 explica por que isso
 depende de haver uma instância só).
+*E o "aconteceu de novo" é reconhecido pelo que está gravado (FP3A-1,
+FP4A-1):* além da passada que aplicou a transição, vale quando o momento
+gravado do estado atual (`status_evento_em`) é mais de 5 minutos
+posterior ao aviso que já existe — assim a retentativa depois de uma
+queda ainda envia a reconfirmação. A chave desse segundo aviso leva o
+instante em forma canônica (o PostgREST devolve `+00:00`, o JavaScript
+escreve `Z`: o mesmo instante em dois textos virava dois fatos). Resíduo
+aceito: uma reconfirmação a menos de 5 minutos do aviso anterior, somada
+a uma queda naquele instante, ainda se perde (RES-64).
 
 **RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
 avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com

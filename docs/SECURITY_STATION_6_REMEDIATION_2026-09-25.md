@@ -317,6 +317,15 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP3C-2 | INFO | CR-05 | a consulta de status pode esperar atrás de uma passada do mesmo charge e custa um GET a mais na Asaas | **DUPLICATE** de FP2RB-2 |
 | FP3C-3 | INFO | CR-05 | o "de novo" depende do `aplicada` em memória | **DUPLICATE** de FP3A-1 |
 | FP3C-4 | INFO | CR-08 | `consultarAssinatura` lê a assinatura antes da conciliação; se a passada sintética cria a assinatura durante a chamada, aquela resposta traz `assinaturaId: null` | **RISK_ACCEPTED** RES-63 — a chamada seguinte já vem certa; nada se perde |
+| FP4A-1 | MEDIUM | CR-05 | FINANCIAL_INVARIANT, introduzido pelo conserto do FP3A-1: a chave do "de novo" colava o instante como texto, e o mesmo instante chega em dois textos — `…000Z` na passada que aplica (JavaScript) e `…+00:00` na seguinte (o `timestamptz` que o PostgREST devolve, medido num Postgres 16/17). Uma reconfirmação real saía duas vezes, com `eventoId` diferentes — direito sem pagamento. O banco falso guarda o texto como recebeu, e por isso a regressão passava | **FIXED** — `instanteCanonico()` em todo instante que entra numa chave; a regressão do FP3A-1 passou a gravar `status_evento_em` no formato do PostgREST e a entregar um segundo evento do mesmo estado; sabotagem pega (a chave `+00:00` volta a aparecer) |
+| FP4B-1 | MEDIUM | CR-05 | o mesmo, reproduzido pela rota pública de status seguida do `PAYMENT_RECEIVED` | **DUPLICATE** de FP4A-1 |
+| FP4C-1 | MEDIUM | CR-05 | o mesmo, reproduzido por retomada da inbox e por nova entrega | **DUPLICATE** de FP4A-1 |
+| FP4A-2 | INFO | CR-05 | uma reconfirmação a menos de 5 min do aviso anterior, somada a uma queda entre a transição e a outbox, ainda perde o segundo aviso | **RISK_ACCEPTED** RES-64 — a folga existe porque os relógios são de lados diferentes; reconfirmação exige ação humana na Asaas (baixa desfeita) ou uma disputa resolvida, e as duas levam mais que isso |
+| FP4B-2 | INFO | CR-14 | `POST /api/admin/contratantes` com `id` objeto responde 500 genérico e grava em `erros` | **RISK_ACCEPTED** RES-65 — exige Access e sessão de admin; o processo segue de pé |
+| FP4B-3 | INFO | CR-05 | webhook com token válido e `event` objeto responde 503 (inbox indisponível), e a Asaas repetiria | **RISK_ACCEPTED** RES-66 — exige o token; a Asaas nunca manda esse formato |
+| FP4B-4 | INFO | CR-13 | os `.catch((erro) => … erro.message)` dos workers lançariam com uma rejeição nula | **RISK_ACCEPTED** RES-67 — nada alcançável rejeita com `null`; mesma família do FP1B-2 |
+| FP4C-2 | INFO | doc | a regra dos 5 min e da chave canônica não estava na RN-23 | **FIXED** — RN-23 revista |
+| FP4C-3 | INFO | teste | o banco falso devolve o instante no texto em que foi gravado, não no do PostgREST — cego a esta classe | **RISK_ACCEPTED** RES-68 — a regressão do FP4A-1 grava o formato do PostgREST explicitamente; normalizar o banco falso inteiro mexeria em comparações de todas as suítes |
 
 ## 7. Correções
 
@@ -513,7 +522,8 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | Passada final #2 (FP2A-1: a fiação da fila, a fila em si, e a fiação de novo contra a regressão ponta a ponta) | 3 | 3 | a regressão ponta a ponta não pegava a sabotagem sem latência da Asaas no dublê — fechada com `atrasoDaAsaasMs` |
 | Repetição da passada final #2 (FP2RA-1, FP2RA-2) | 2 | 2 | — |
 | Passada final #3 (FP3A-1: o "de novo" só por `aplicada`) | 1 | 1 | — |
-| **Total** | **245** | **244** | **13**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
+| Passada final #4 (FP4A-1: o instante fora da forma canônica na chave) | 1 | 1 | a regressão do FP3A-1 era cega ao formato do PostgREST — fechada gravando `+00:00` |
+| **Total** | **246** | **245** | **14**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
 
 **As 48 sabotagens da 3ª tentativa, por classe** (critério do dono de 25/09/2026 — toda SECURITY_CONTROL e FINANCIAL_INVARIANT relevante tem de ser detectada):
 
@@ -582,6 +592,9 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | #2 | `e489cdc` | 3 (dinheiro com latência injetada no banco e na Asaas — **não limpo**; auth/infra com falha de banco injetada em 24 rotas — **limpo**; migrations aplicadas e reaplicadas com dados num Postgres 17 descartável, e o diff inteiro — **limpo**) | FP2A-1 (MEDIUM: aviso dobrado ao contratante, direito sem pagamento) | corrigido, testado, sabotado; **#2 se repete uma vez** sobre o HEAD estabilizado |
 | #2 (repetição) | `47520b1` | 3 (dinheiro — **não limpo**; auth/infra com 40 eventos simultâneos no mesmo charge contra a fila nova — **limpo**; migrations reaplicadas com dados e o diff inteiro — **limpo**) | FP2RA-1 (MEDIUM: evento financeiro perdido — a reconfirmação que a tela do pagador gravava por fora) | corrigido, testado, sabotado |
 | #3 | `5303359` | 3 (dinheiro, com todo escritor de `cobrancas.status` e todo aviso fora do webhook enumerados — **não limpo**; auth/infra com 40 consultas anônimas simultâneas contra a rota pública que agora dispara o webhook — **limpo**; migrations reaplicadas três vezes com dados e o diff inteiro, com 25 rodadas concorrentes da tela contra o webhook — **limpo**) | FP3A-1 (MEDIUM: a reconfirmação perdida numa falha entre a transição e a outbox — anterior à remediação) | corrigido, testado, sabotado |
+| #4 | `b0ebcc7` | 3 (dinheiro, auth/infra e migrations/diff — os três **não limpos**, e os três pelo MESMO achado: FP4A-1 = FP4B-1 = FP4C-1, introduzido pelo conserto do FP3A-1; nenhum achado de autenticação, tenant ou migration) | FP4A-1 (MEDIUM, FINANCIAL_INVARIANT: aviso dobrado por formato de instante) | corrigido, testado, sabotado |
+
+**Critério revisto pelo dono (25/09/2026, depois da #4):** auth/infra e migrations/diff **congeladas** — voltaram limpas em todas as passadas desde a #1 no domínio delas (o único achado da #4 nas duas é o do dinheiro, em arquivos que não são de autenticação nem de schema). Depois de um MEDIUM corrigido, não se rodam mais três auditores completos: regressão e sabotagem específicas, `npm run check` e **uma** auditoria de dinheiro incremental sobre os arquivos alterados e a família do achado. O fechamento não exige um número de passadas limpas; exige zero Critical/High/bloqueador conhecidos, as regressões verdes, as sabotagens pegas e uma auditoria de dinheiro limpa depois da última correção substantiva.
 
 ## 14. Riscos residuais
 
@@ -665,4 +678,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 192 = FIXED 107 + FALSE_POSITIVE 3 + DUPLICATE 14 + RISK_ACCEPTED 61 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 201 = FIXED 109 + FALSE_POSITIVE 3 + DUPLICATE 16 + RISK_ACCEPTED 66 + EXTERNAL_PENDING 7

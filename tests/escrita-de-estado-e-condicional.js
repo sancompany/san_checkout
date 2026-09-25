@@ -498,6 +498,13 @@ for (const falhar of [false, true]) {
       mexer((e) => { for (const l of e.tabelas.webhook_inbox) if (l.status === 'falhou') l.proxima_tentativa_em = antes(1); });
       const worker = await wc.reprocessarInbox();
       await new Promise((ok) => setTimeout(ok, 200));
+      /* FP4C-1: o banco de verdade devolve o instante no formato do
+         PostgREST (+00:00, não Z). Uma entrega seguinte do MESMO estado (o
+         RECEIVED de outra entrega, a inbox retomando) não pode virar um
+         terceiro aviso só por causa do texto do instante. */
+      mexer((e) => { const c = e.tabelas.cobrancas[0]; c.status_evento_em = new Date(c.status_evento_em).toISOString().slice(0, -1) + '+00:00'; });
+      await receber('evt_4', 'PAYMENT_RECEIVED', antes(5));
+      await new Promise((ok) => setTimeout(ok, 200));
       console.log(JSON.stringify({ worker }));
     `
   });

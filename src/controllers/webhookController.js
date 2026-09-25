@@ -175,7 +175,7 @@ const dependenciasPadrao = {
     const momentoPosteriorAoAviso = momentoDoFato && criadoEm
       && Date.parse(momentoDoFato) > Date.parse(criadoEm) + FOLGA_DE_RELOGIO_DO_DE_NOVO_MS;
     if (!nova && id && (aplicada || momentoPosteriorAoAviso)) {
-      ({ id, nova } = await enfileirar(`${chave}|r${momentoDoFato ?? ocorridoEm ?? new Date().toISOString()}`));
+      ({ id, nova } = await enfileirar(`${chave}|r${instanteCanonico(momentoDoFato) ?? instanteCanonico(ocorridoEm) ?? new Date().toISOString()}`));
     }
     if (nova) tentarAgora(id);
     return { id, nova };
@@ -607,6 +607,13 @@ export function valorDivergenteDaCobranca(cobranca, pagamento) {
    `processarWebhook` de volta, então não há trava aninhada. */
 const FILA_POR_COBRANCA = new Map();
 const FOLGA_DE_RELOGIO_DO_DE_NOVO_MS = 5 * 60_000;
+/* FP4C-1: o mesmo instante chega em dois textos — `…000Z` do JavaScript e
+   `…+00:00` do PostgREST. Na chave de um fato, texto diferente é fato
+   diferente; todo instante que entra numa chave passa por aqui. */
+function instanteCanonico(valor) {
+  const t = Date.parse(valor ?? '');
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
 export function umaPassadaPorCobranca(chave, fazer) {
   if (!chave) return fazer();
   const anterior = FILA_POR_COBRANCA.get(chave) ?? Promise.resolve();
@@ -1264,7 +1271,7 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
 
   /* O momento GRAVADO do estado atual: o que esta passada escreveu, ou o
      que já estava na linha. É ele que identifica a ocorrência (FP3A-1). */
-  const momentoDoFato = aplicada ? carimbo : (cobranca.status_evento_em ?? null);
+  const momentoDoFato = instanteCanonico(aplicada ? carimbo : cobranca.status_evento_em);
   const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada, momentoDoFato };
 
   /* O ACERTO DE UMA TROCA DE PLANO (H-03). Confirmação é anunciada pela
