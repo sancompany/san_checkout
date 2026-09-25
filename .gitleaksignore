@@ -2,3 +2,14 @@
 # Uma chave de MENTIRA num teste (H-08), já trocada por um valor sem cara de segredo;
 # o commit histórico continua no scan e é o que se ignora aqui.
 e6a7aac5f1f94e01ab2520fc56b735dc0d406136:tests/segredo-nao-sai-do-admin.js:generic-api-key:43
+# Remediação da Estação 6 (25/09/2026): as mesmas chaves de MENTIRA dos testes
+# (`segredo-da-loja-0123456789`, sem valor em lugar nenhum), já trocadas por
+# `segredo-da-loja`; e o token `meta` da Cloudflare em src/utils/accessJwt.js,
+# que o Access entrega a qualquer visitante no redirecionamento do login,
+# vencido e sem acesso a nada — é o controle positivo da verificação RS256.
+8be71d301ab65a2ab744ebaddd6bd1cbe307b610:src/utils/accessJwt.js:jwt:140
+8be71d301ab65a2ab744ebaddd6bd1cbe307b610:tests/escrita-de-estado-e-condicional.js:generic-api-key:39
+8be71d301ab65a2ab744ebaddd6bd1cbe307b610:tests/sessao-de-assinatura-nao-vaza-por-cpf.js:generic-api-key:39
+5475d6964e870253aea7e36a7eed664fc25b7876:tests/acerto-de-troca-nunca-fica-orfao.js:generic-api-key:40
+5475d6964e870253aea7e36a7eed664fc25b7876:tests/assinatura-nasce-inteira.js:generic-api-key:39
+5475d6964e870253aea7e36a7eed664fc25b7876:tests/uma-assinatura-viva-por-plano.js:generic-api-key:32

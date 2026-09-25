@@ -45,6 +45,10 @@ import { arquivosJs } from './ajudantes.js';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ORIGEM = join(RAIZ, 'src');
+/* `functions/` também sai para a rede (o proxy do admin no Pages, SEC-015)
+   — varrer só o `src/` deixaria de fora justamente o código novo. */
+const PASTAS = [ORIGEM, join(RAIZ, 'functions')];
+const todos = () => PASTAS.flatMap((p) => arquivosJs(p));
 
 /** Quantas linhas depois do `fetch(` ainda contam como "a mesma chamada". */
 const JANELA_DA_CHAMADA = 14;
@@ -53,7 +57,7 @@ const JANELA_DA_CHAMADA = 14;
 let chamadas = 0;
 const semTeto = [];
 
-for (const caminho of arquivosJs(ORIGEM)) {
+for (const caminho of todos()) {
   const linhas = readFileSync(caminho, 'utf8').split('\n');
 
   linhas.forEach((linha, i) => {
@@ -123,7 +127,7 @@ for (const [arquivo, declaracao, porque] of tetos) {
 ------------------------------------------------------------------ */
 
 let recebemDeFora = 0;
-for (const caminho of arquivosJs(ORIGEM)) {
+for (const caminho of todos()) {
   const fonte = readFileSync(caminho, 'utf8');
   if (!/(?:await |= |return )fetch\(/.test(fonte)) continue;
   if (fonte.includes('new AbortController()')) continue;

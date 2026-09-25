@@ -49,7 +49,7 @@ export async function resolverAssinatura() {
     // Mesmo repasse do modo pedido: o `returnUrl` cru sobe e o backend
     // devolve o destino aprovado em `_checkout.retornoUrl`.
     const plano = await get(
-      `/api/checkout/plano/${ids.contratanteId}/${ids.planoId}${montarRetornoNaQuery()}`
+      `/api/checkout/plano/${encodeURIComponent(ids.contratanteId)}/${encodeURIComponent(ids.planoId)}${montarRetornoNaQuery()}`
     );
 
     /* Plano sem valor utilizável não vira tela de assinar.

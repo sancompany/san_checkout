@@ -209,7 +209,7 @@ let temporizador = null;
 
 async function consultar(ids, { primeiraVez = false } = {}) {
   try {
-    const dados = await get(`/api/checkout/status/${ids.contratanteId}/${ids.pedidoId}`);
+    const dados = await get(`/api/checkout/status/${encodeURIComponent(ids.contratanteId)}/${encodeURIComponent(ids.pedidoId)}`);
     renderizar(dados);
 
     if (AGUARDANDO.includes(dados.status)) {

@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
+import { exigirParametrosCanonicos } from '../middlewares/idsCanonicos.js';
+import { exigirAccess } from '../middlewares/exigirAccess.js';
 import {
   verificarAdminKey,
   abrirSessao,
@@ -22,11 +24,19 @@ import {
   obterResumoFilas
 } from '../controllers/adminController.js';
 
-const router = Router();
+// Todo `:id` de rota passa pelo contrato canônico antes de qualquer handler
+// (SEC-001, `middlewares/idsCanonicos.js`).
+const router = exigirParametrosCanonicos(roteador());
 
-/* ANTES da guarda, de propósito: é a rota que troca senha por token, e
-   por isso é a única que não pode exigir token. Toda rota abaixo do
-   `router.use` exige. */
+/* A PRIMEIRA camada, antes de tudo — inclusive do login (SEC-015,
+   25/09/2026): sem o JWT do Cloudflare Access, nenhuma rota daqui
+   responde, pelo domínio da API ou pela origem da Northflank. A senha
+   continua sendo a segunda camada, logo abaixo. */
+router.use(exigirAccess);
+
+/* ANTES da guarda do token, de propósito: é a rota que troca senha por
+   token, e por isso é a única que não pode exigir token. Toda rota
+   abaixo do `router.use` seguinte exige. */
 router.post('/sessao', abrirSessao);
 
 router.use(verificarAdminKey);

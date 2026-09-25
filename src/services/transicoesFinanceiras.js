@@ -38,12 +38,14 @@ export const STATUS_FINANCEIROS = [
   'cancelado_por_outro_pagamento'
 ];
 
-/** Estados dos quais NADA sai por evento de pagamento. `cancelado` é de
- *  sessão de pop-up abandonada (a cobrança nunca existiu). `expirado`
- *  NÃO está aqui: o prazo local de 65 min pode vencer antes de a
- *  pop-up pagar (a Asaas não nos avisa do `CHECKOUT_EXPIRED` sempre), e
- *  o `PAYMENT_CONFIRMED` que vier depois tem de valer. */
-export const STATUS_TERMINAIS = ['estornado', 'cancelado'];
+/** Estados dos quais NADA sai por evento de pagamento. `expirado` e
+ *  `cancelado` NÃO estão aqui: o prazo local de 65 min pode vencer antes
+ *  de a pop-up pagar, e a cobrança substituída por uma nova (Pix/boleto
+ *  desatualizado, pop-up de outro preço) pode ser liquidada pela Asaas no
+ *  instante em que era excluída (D-3). Desde SEC-007 toda transição de
+ *  pagamento é conferida na Asaas antes de valer — sair de `cancelado`
+ *  para `confirmado` só acontece com o dinheiro lá. */
+export const STATUS_TERMINAIS = ['estornado'];
 
 /**
  * De cada estado, para quais outros um evento da Asaas pode levar.
@@ -55,7 +57,7 @@ const TRANSICOES = {
   confirmado:             ['estorno_solicitado', 'estornado_parcialmente', 'estornado', 'chargeback', 'pendente'],
   recusado:               ['confirmado', 'em_analise', 'cancelado_por_outro_pagamento'], // nova tentativa de captura na mesma cobrança
   vencido:                ['confirmado', 'pendente', 'cancelado_por_outro_pagamento'],   // boleto pago depois do vencimento; prazo estendido
-  cancelado:              [],
+  cancelado:              ['confirmado'],                            // substituída e ainda assim liquidada: pagamento real, vira duplicidade (RN-52) — D-3
   expirado:               ['confirmado'],                            // o prazo LOCAL (65 min) venceu, mas a pop-up ainda pagou
   estorno_solicitado:     ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
   estorno_negado:         ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'], // negado = o pagamento continua válido
@@ -78,6 +80,37 @@ export function transicaoPermitida(de, para) {
   const saidas = TRANSICOES[de];
   if (!saidas) return false; // status desconhecido no banco: não mexe
   return saidas.includes(para);
+}
+
+/**
+ * O caminho MAIS CURTO de `de` até `para` andando só por transições
+ * permitidas — `[]` quando já está lá, `null` quando não há caminho.
+ *
+ * É o que o reconciliador dirigido (JULES-004, `webhookController`) usa
+ * para levar uma cobrança ao estado que a Asaas diz quando os eventos do
+ * meio se perderam: de `pendente` a `estornado` o caminho é
+ * `confirmado → estornado` — a mesma sequência que os eventos teriam
+ * gravado —, nunca um salto que a matriz recusaria.
+ */
+export function caminhoDeTransicoes(de, para) {
+  if (de === para) return [];
+  if (!TRANSICOES[de] || !STATUS_FINANCEIROS.includes(para)) return null;
+  const anterior = new Map([[de, null]]);
+  const fila = [de];
+  while (fila.length) {
+    const atual = fila.shift();
+    for (const proximo of TRANSICOES[atual] ?? []) {
+      if (anterior.has(proximo)) continue;
+      anterior.set(proximo, atual);
+      if (proximo === para) {
+        const caminho = [];
+        for (let passo = para; passo !== de; passo = anterior.get(passo)) caminho.unshift(passo);
+        return caminho;
+      }
+      fila.push(proximo);
+    }
+  }
+  return null;
 }
 
 /**
@@ -133,6 +166,49 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   }
   for (const t of STATUS_TERMINAIS) assert.deepEqual(TRANSICOES[t], [], `terminal ${t} não pode ter saída`);
   assert.deepEqual(TRANSICOES.expirado, ['confirmado'], 'expirado (prazo LOCAL) ainda aceita a confirmação tardia da pop-up — e só ela');
+
+  /* CP3-14: a matriz INTEIRA, fixada. As checagens acima só provam que ela
+     cita status que existem — acrescentar uma saída (um `estorno_negado →
+     pendente`, um `estornado_parcialmente → confirmado`) passava as 82
+     suítes. Cada saída desta tabela é uma decisão sobre dinheiro; mudar
+     uma é mudar esta cópia junto, de propósito, e com o motivo escrito. */
+  const MATRIZ_DECIDIDA = {
+    pendente: ['em_analise', 'confirmado', 'recusado', 'vencido', 'cancelado', 'expirado', 'cancelado_por_outro_pagamento'],
+    em_analise: ['confirmado', 'recusado', 'pendente'],
+    confirmado: ['estorno_solicitado', 'estornado_parcialmente', 'estornado', 'chargeback', 'pendente'],
+    recusado: ['confirmado', 'em_analise', 'cancelado_por_outro_pagamento'],
+    vencido: ['confirmado', 'pendente', 'cancelado_por_outro_pagamento'],
+    cancelado: ['confirmado'],
+    expirado: ['confirmado'],
+    estorno_solicitado: ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
+    estorno_negado: ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'],
+    estornado_parcialmente: ['estornado', 'estorno_solicitado', 'chargeback'],
+    estornado: [],
+    chargeback: ['confirmado', 'estornado'],
+    cancelado_por_outro_pagamento: ['confirmado']
+  };
+  const ordenada = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v].sort()]).sort(([a], [b]) => a.localeCompare(b)));
+  assert.deepEqual(ordenada(TRANSICOES), ordenada(MATRIZ_DECIDIDA), 'CP3-14: a matriz de transições é exatamente a decidida — nenhuma saída a mais, nenhuma a menos');
+
+  // o caminho do reconciliador dirigido (JULES-004): só por transições permitidas, o mais curto
+  assert.deepEqual(caminhoDeTransicoes('pendente', 'estornado'), ['confirmado', 'estornado'], 'pendente → estornado passa por confirmado: foi pago antes de ser devolvido');
+  assert.deepEqual(caminhoDeTransicoes('pendente', 'confirmado'), ['confirmado']);
+  assert.deepEqual(caminhoDeTransicoes('em_analise', 'estornado_parcialmente'), ['confirmado', 'estornado_parcialmente']);
+  assert.deepEqual(caminhoDeTransicoes('confirmado', 'confirmado'), [], 'já está lá: nenhum passo');
+  assert.equal(caminhoDeTransicoes('estornado', 'confirmado'), null, 'terminal não tem caminho de volta — o reconciliador chama um humano');
+  assert.deepEqual(caminhoDeTransicoes('cancelado', 'confirmado'), ['confirmado'], 'D-3: a cobrança substituída que a Asaas liquidou tem caminho');
+  assert.ok(!transicaoPermitida('cancelado', 'estornado'), 'de cancelado só sai o pagamento: estornado só depois dele');
+  assert.deepEqual(caminhoDeTransicoes('cancelado', 'estornado'), ['confirmado', 'estornado'], 'e o reconciliador passa pelo pagamento antes do estorno');
+  assert.equal(caminhoDeTransicoes('pendente', 'inexistente'), null, 'destino fora do vocabulário: sem caminho');
+  for (const de of STATUS_FINANCEIROS) {
+    for (const para of STATUS_FINANCEIROS) {
+      const caminho = caminhoDeTransicoes(de, para);
+      if (!caminho) continue;
+      let atual = de;
+      for (const passo of caminho) { assert.ok(transicaoPermitida(atual, passo), `caminho ${de}→${para}: ${atual}→${passo} tem de ser permitida`); atual = passo; }
+      assert.equal(atual, para);
+    }
+  }
   assert.ok(transicaoPermitida('estorno_negado', 'confirmado'), 'estorno negado devolve a cobrança a confirmado — não é beco sem saída');
 
   // o caminho feliz
@@ -146,7 +222,8 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   assert.ok(!transicaoPermitida('estornado', 'confirmado'), 'CONFIRMED atrasado depois de REFUNDED');
   assert.ok(!transicaoPermitida('chargeback', 'pendente'), 'CASH_UNDONE depois de chargeback');
   assert.ok(!transicaoPermitida('estornado', 'pendente'));
-  assert.ok(!transicaoPermitida('cancelado', 'confirmado'));
+  assert.ok(transicaoPermitida('cancelado', 'confirmado'), 'D-3: pagamento real de cobrança substituída vale');
+  assert.ok(!transicaoPermitida('cancelado', 'pendente') && !transicaoPermitida('cancelado', 'expirado'), 'e CHECKOUT_*/vencimento atrasados não mexem nela');
   assert.ok(!transicaoPermitida('expirado', 'estornado'), 'expirado só sai para confirmado (pop-up que pagou depois do prazo local)');
 
   // reversões legítimas do PSP continuam possíveis

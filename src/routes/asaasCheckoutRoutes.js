@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
+import { exigirParametrosCanonicos } from '../middlewares/idsCanonicos.js';
 import {
   criarCheckoutCartao,
   criarCheckoutAssinatura,
@@ -6,7 +7,9 @@ import {
   consultarStatusCheckout
 } from '../controllers/asaasCheckoutController.js';
 
-const router = Router();
+// Todo `:id` de rota passa pelo contrato canônico antes de qualquer handler
+// (SEC-001, `middlewares/idsCanonicos.js`).
+const router = exigirParametrosCanonicos(roteador());
 router.post('/cartao/:contratanteId/:pedidoId', criarCheckoutCartao);
 // Boleto não usa mais o Asaas Checkout — ver checkoutRoutes.js
 // (cobrança direta, mesmo modelo do Pix).

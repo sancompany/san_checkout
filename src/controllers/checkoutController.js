@@ -35,6 +35,8 @@ import {
   recuperarCobrancaPix,
   recuperarCobrancaBoleto,
   listarPagamentosPorReferenciaExterna,
+  consultarPagamento,
+  excluirCobranca,
   foiRecusaLimpaDaAsaas
 } from '../services/asaasService.js';
 import {
@@ -42,8 +44,11 @@ import {
   completarCobranca,
   liberarReservaCobranca,
   buscarCobrancaPendenteDoPedido,
-  buscarReservaPendenteDoPedido
+  buscarReservaPendenteDoPedido,
+  existeCobrancaDoMetodo,
+  aplicarTransicao
 } from '../services/cobrancaService.js';
+import { emCentavos } from '../utils/dinheiro.js';
 import { completarComOQueAAsaasSabe } from '../services/reconciliacaoService.js';
 import {
   documentoValido, emailValido, nomeValido, telefoneValido, normalizarTelefone,
@@ -82,6 +87,10 @@ const dependenciasPadrao = {
   liberarReservaCobranca,
   buscarCobrancaPendenteDoPedido,
   buscarReservaPendenteDoPedido,
+  existeCobrancaDoMetodo,
+  consultarPagamento,
+  excluirCobranca,
+  aplicarTransicao,
   listarPagamentosPorReferenciaExterna,
   completarReservaOrfa: (reservaId, pagamento) => completarComOQueAAsaasSabe(reservaId, pagamento),
   registrarErro
@@ -100,7 +109,7 @@ const dependenciasPadrao = {
  *
  * @param {Function} recuperar — recuperarCobrancaPix ou recuperarCobrancaBoleto
  */
-async function reaproveitarCobrancaPendente(deps, { contratanteId, pedidoId, metodo, recuperar }) {
+async function reaproveitarCobrancaPendente(deps, { contratanteId, pedidoId, metodo, recuperar, valorCobrado }) {
   let pendente;
   try {
     pendente = await deps.buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodo);
@@ -109,7 +118,66 @@ async function reaproveitarCobrancaPendente(deps, { contratanteId, pedidoId, met
     return null;
   }
   if (!pendente?.charge_id) return null;
+
+  /* SEC-004 — o instrumento só é devolvido se continua sendo O instrumento
+     deste pedido, pelo preço desta tela. Quem chega aqui já passou pela
+     guarda de pedido pago e pela cotação (`cotarParaCobrar` roda ANTES,
+     desde 25/09/2026); faltam duas perguntas que só a linha responde:
+
+       - OBSOLETO (RN-51): outra cobrança do pedido liquidou e esta está
+         na fila do cancelador. Nunca volta a ser entregue — nem enquanto
+         a exclusão na Asaas não acontece.
+       - PREÇO DIFERENTE: o pedido mudou de valor (cupom, frete) depois de
+         este Pix/boleto nascer. Devolvê-lo cobraria o valor antigo com a
+         tela mostrando o novo. O antigo é excluído na Asaas antes de
+         nascer outro — nunca dois pagáveis ao mesmo tempo. */
+  if (pendente.obsoleta_desde) return { obsoleta: true, chargeId: pendente.charge_id };
+  if (valorCobrado != null && emCentavos(pendente.valor_cobrado) !== emCentavos(valorCobrado)) {
+    return substituirInstrumentoDesatualizado(deps, pendente, { metodo, pedidoId });
+  }
   return recuperarPeloChargeId(recuperar, pendente.charge_id, { metodo, pedidoId });
+}
+
+/**
+ * O Pix/boleto pendente foi criado por OUTRO preço. Lê o estado na Asaas
+ * antes de excluir (mesma regra do cancelador de irmãs, RN-51): pago não
+ * se exclui nunca; pagável é excluído e a linha sai de `pendente` por CAS;
+ * qualquer dúvida responde "tente de novo" sem criar nada.
+ *
+ * @returns {Promise<null|{pago:true, chargeId}|{indefinido:true, chargeId}>}
+ *   `null` = substituído, o fluxo segue para criar o novo.
+ */
+async function substituirInstrumentoDesatualizado(deps, pendente, { metodo, pedidoId }) {
+  const chargeId = pendente.charge_id;
+  try {
+    const { status, excluida } = await deps.consultarPagamento(chargeId);
+    if (!excluida && ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(status)) return { pago: true, chargeId };
+    if (!excluida) {
+      if (!['PENDING', 'OVERDUE'].includes(status)) return { indefinido: true, chargeId };
+      const r = await deps.excluirCobranca(chargeId);
+      if (!r?.excluida) return { indefinido: true, chargeId };
+    }
+    await deps.aplicarTransicao(chargeId, { de: 'pendente', para: 'cancelado' });
+    console.log(`[checkout/${metodo}] ${chargeId} do pedido ${pedidoId} tinha outro valor: excluído na Asaas antes de criar o novo`);
+    return null;
+  } catch (erro) {
+    console.error(`[checkout/${metodo}] não foi possível substituir ${chargeId} (valor antigo) do pedido ${pedidoId}:`, erro.message);
+    return { indefinido: true, chargeId };
+  }
+}
+
+const MENSAGEM_INSTRUMENTO_EM_TROCA = 'Estamos atualizando o pagamento anterior deste pedido. Tente de novo em instantes — nada será cobrado duas vezes.';
+
+/** A resposta para os desfechos do reaproveitamento que não são "o
+ *  instrumento vigente" nem "pode criar": pago, obsoleto ou indefinido. */
+function respostaDeInstrumentoIndisponivel(resposta, jaExiste) {
+  if (jaExiste?.pago) {
+    return resposta.status(409).json({ codigo: 'pagamento_em_processamento', chargeId: jaExiste.chargeId, erro: 'O pagamento anterior deste pedido já foi recebido e está sendo confirmado. Não é preciso pagar de novo.' });
+  }
+  if (jaExiste?.obsoleta || jaExiste?.indefinido) {
+    return resposta.status(409).json({ codigo: 'cobranca_em_confirmacao', erro: MENSAGEM_INSTRUMENTO_EM_TROCA });
+  }
+  return null;
 }
 
 /**
@@ -264,14 +332,21 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         ? resposta.status(503).json({ codigo: 'qr_indisponivel', chargeId: cobranca.chargeId, erro: MENSAGEM_PIX_SEM_QR })
         : resposta.json({ chargeId: cobranca.chargeId, qrCodeBase64: cobranca.qrCodeBase64, copiaECola: cobranca.copiaECola, reaproveitada: true }));
 
-      const jaExiste = await reaproveitarCobrancaPendente(deps, {
-        contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
-      });
-      if (jaExiste) return respostaPix(jaExiste);
-
+      /* A guarda de pedido pago (RN-04.1) e a cotação vêm ANTES do
+         reaproveitamento (SEC-004, 25/09/2026). Na ordem antiga, um POST
+         direto recebia de volta o Pix pendente de um pedido já pago no
+         cartão, ou o QR do preço antigo com a tela mostrando o novo. */
       const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'pix' });
       if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
       const { taxaAsaas, taxaPropria, valorCobrado } = total;
+
+      const jaExiste = await reaproveitarCobrancaPendente(deps, {
+        contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix, valorCobrado
+      });
+      const indisponivel = respostaDeInstrumentoIndisponivel(resposta, jaExiste);
+      if (indisponivel) return indisponivel;
+      if (jaExiste) return respostaPix(jaExiste);
+
       const valorBase = Number(cotacao.totais.valorBase);
 
       if (!valorCobradoAceitavel(valorCobrado)) {
@@ -297,10 +372,12 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
 
       if (resultado.tipo === 'corrida') {
         const reaproveitada = await reaproveitarCobrancaPendente(deps, {
-          contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
+          contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix, valorCobrado
         }) ?? await recuperarReservaSemCobranca(deps, {
           contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
         });
+        const indisponivelNaCorrida = respostaDeInstrumentoIndisponivel(resposta, reaproveitada);
+        if (indisponivelNaCorrida) return indisponivelNaCorrida;
         if (reaproveitada) return respostaPix(reaproveitada);
         return resposta.status(409).json({ codigo: 'cobranca_em_confirmacao', erro: MENSAGEM_EM_CONFIRMACAO });
       }
@@ -342,13 +419,29 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     }
   }
 
-  async function statusPix(requisicao, resposta) {
+  /**
+   * GET /pix/status/:chargeId e /boleto/status/:chargeId — PÚBLICAS.
+   * Só consultam a Asaas para uma cobrança que é NOSSA e deste método
+   * (SEC-017): a chamada sai com a chave da conta-mãe, e sem a pergunta
+   * ao banco qualquer id da conta virava consulta autenticada. O 404 é
+   * nosso e genérico — antes, um id inexistente devolvia o texto de erro
+   * da Asaas (INFO-11).
+   */
+  async function statusDaCobranca(requisicao, resposta, metodo) {
     try {
-      const { status } = await deps.consultarStatus(requisicao.params.chargeId);
+      const { chargeId } = requisicao.params;
+      if (!(await deps.existeCobrancaDoMetodo(chargeId, metodo))) {
+        return resposta.status(404).json({ erro: 'Cobrança não encontrada.' });
+      }
+      const { status } = await deps.consultarStatus(chargeId);
       resposta.json({ status });
     } catch (erro) {
-      responderErro(resposta, erro, 'checkout/pix/status');
+      responderErro(resposta, erro, `checkout/${metodo}/status`);
     }
+  }
+
+  async function statusPix(requisicao, resposta) {
+    return statusDaCobranca(requisicao, resposta, 'pix');
   }
 
   /**
@@ -375,11 +468,25 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     if (telefone) telefone = normalizarTelefone(telefone);
 
     try {
-      // Boleto duplicado é pior que Pix duplicado: o antigo segue pagável
-      // por dias. Mesma checagem, mesmo motivo.
+      // Mesma ordem do Pix (SEC-004): guarda e cotação ANTES de devolver
+      // o boleto pendente — e boleto duplicado é pior que Pix duplicado,
+      // porque o antigo segue pagável por dias.
+      const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'boleto' });
+
+      // Reforço de segurança — o front já esconde o Boleto quando o
+      // pedido tem expiraEm (API.md §4.1), mas o backend NUNCA
+      // confia só na validação do front.
+      if (pedido.expiraEm) {
+        return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });
+      }
+      if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
+      const { taxaAsaas, taxaPropria, valorCobrado } = total;
+
       const jaExiste = await reaproveitarCobrancaPendente(deps, {
-        contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
+        contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto, valorCobrado
       });
+      const indisponivel = respostaDeInstrumentoIndisponivel(resposta, jaExiste);
+      if (indisponivel) return indisponivel;
       if (jaExiste?.indisponivel) {
         return resposta.status(503).json({ codigo: 'boleto_indisponivel', chargeId: jaExiste.chargeId, erro: MENSAGEM_BOLETO_INDISPONIVEL });
       }
@@ -394,16 +501,6 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         });
       }
 
-      const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'boleto' });
-
-      // Reforço de segurança — o front já esconde o Boleto quando o
-      // pedido tem expiraEm (API.md §4.1), mas o backend NUNCA
-      // confia só na validação do front.
-      if (pedido.expiraEm) {
-        return resposta.status(400).json({ erro: 'Este pedido tem prazo de expiração e não aceita Boleto.' });
-      }
-      if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
-      const { taxaAsaas, taxaPropria, valorCobrado } = total;
       const valorBase = Number(cotacao.totais.valorBase);
 
       if (!valorCobradoAceitavel(valorCobrado)) {
@@ -429,10 +526,12 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
 
       if (resultado.tipo === 'corrida') {
         const reaproveitada = await reaproveitarCobrancaPendente(deps, {
-          contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
+          contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto, valorCobrado
         }) ?? await recuperarReservaSemCobranca(deps, {
           contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
         });
+        const indisponivelNaCorrida = respostaDeInstrumentoIndisponivel(resposta, reaproveitada);
+        if (indisponivelNaCorrida) return indisponivelNaCorrida;
         if (reaproveitada?.indisponivel) {
           return resposta.status(503).json({ codigo: 'boleto_indisponivel', chargeId: reaproveitada.chargeId, erro: MENSAGEM_BOLETO_INDISPONIVEL });
         }
@@ -478,12 +577,7 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
   }
 
   async function statusBoleto(requisicao, resposta) {
-    try {
-      const { status } = await deps.consultarStatus(requisicao.params.chargeId);
-      resposta.json({ status });
-    } catch (erro) {
-      responderErro(resposta, erro, 'checkout/boleto/status');
-    }
+    return statusDaCobranca(requisicao, resposta, 'boleto');
   }
 
   return { gerarPix, statusPix, gerarBoleto, statusBoleto };
@@ -525,10 +619,13 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
     let proximoId = 1;
 
     const deps = {
-      resolverPedido: async () => ({
-        contratante: { id: 'c1', wallet_id: null },
-        pedido: { ...PEDIDO_BASE, ...ajustes.pedido }
-      }),
+      resolverPedido: async () => {
+        anotar('resolverPedido', []);
+        if (ajustes.pedidoPago) {
+          const e = new Error('Este pedido já foi pago.'); e.status = 409; e.codigo = 'pedido_ja_pago'; throw e;
+        }
+        return { contratante: { id: 'c1', wallet_id: null }, pedido: { ...PEDIDO_BASE, ...ajustes.pedido } };
+      },
       /* A cotação (C-02) no dublê: o portão real está no autoteste de
          `cotacaoService`; aqui ele devolve o retrato do próprio pedido
          (o que a tela teria mostrado) — ou lança o 409 quando o teste
@@ -555,7 +652,11 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
         return { chargeId: 'pay_1', qrCodeBase64: 'QR', copiaECola: 'COPIA' };
       },
       criarCobrancaBoleto: async () => { anotar('criarCobrancaBoleto', []); return {}; },
-      consultarStatus: async () => ({ status: 'PENDING' }),
+      consultarStatus: async (chargeId) => { anotar('consultarStatus', [chargeId]); return { status: 'PENDING' }; },
+      existeCobrancaDoMetodo: async (chargeId, metodo) => {
+        anotar('existeCobrancaDoMetodo', [chargeId, metodo]);
+        return (ajustes.cobrancasNossas ?? []).includes(`${metodo}:${chargeId}`);
+      },
       recuperarCobrancaPix: async (chargeId) => {
         anotar('recuperarCobrancaPix', [chargeId]);
         if (ajustes.qrFalhaAoRecuperar?.()) throw new Error('Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix.');
@@ -572,7 +673,7 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
       },
       completarCobranca: async (id, dados) => {
         anotar('completarCobranca', [id, dados]);
-        for (const linha of linhas.values()) if (linha.id === id) linha.chargeId = dados.chargeId;
+        for (const linha of linhas.values()) if (linha.id === id) { linha.chargeId = dados.chargeId; linha.valorCobrado = dados.valorCobrado; }
       },
       liberarReservaCobranca: async (id) => {
         anotar('liberarReservaCobranca', [id]);
@@ -582,7 +683,8 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
         anotar('buscarCobrancaPendenteDoPedido', [contratanteId, pedidoId, metodoPagamento]);
         const chave = `${contratanteId}:${pedidoId}:${metodoPagamento}`;
         const linha = linhas.get(chave);
-        return linha?.chargeId ? { charge_id: linha.chargeId } : null; // como no banco: `charge_id is not null`
+        // Como no banco: `charge_id is not null`, com o valor e a marca de obsoleta da linha.
+        return linha?.chargeId ? { charge_id: linha.chargeId, valor_cobrado: linha.valorCobrado ?? null, obsoleta_desde: linha.obsoletaDesde ?? null } : null;
       },
       buscarReservaPendenteDoPedido: async (contratanteId, pedidoId, metodoPagamento) => {
         anotar('buscarReservaPendenteDoPedido', [contratanteId, pedidoId, metodoPagamento]);
@@ -595,13 +697,26 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
       },
       completarReservaOrfa: async (id, pagamento) => {
         anotar('completarReservaOrfa', [id, pagamento]);
-        for (const linha of linhas.values()) if (linha.id === id) linha.chargeId = pagamento.id;
+        // O reconciliador real grava o valor que a Asaas diz (`completarComOQueAAsaasSabe`).
+        for (const linha of linhas.values()) if (linha.id === id) { linha.chargeId = pagamento.id; linha.valorCobrado = pagamento.value ?? null; }
+      },
+      consultarPagamento: async (chargeId) => { anotar('consultarPagamento', [chargeId]); return ajustes.estadoNaAsaas?.[chargeId] ?? { status: 'PENDING', excluida: false }; },
+      excluirCobranca: async (chargeId) => {
+        anotar('excluirCobranca', [chargeId]);
+        if (ajustes.exclusaoFalha) throw ajustes.exclusaoFalha;
+        return { excluida: ajustes.exclusaoNaoConfirmada ? false : true };
+      },
+      aplicarTransicao: async (chargeId, { de, para }) => {
+        anotar('aplicarTransicao', [chargeId, de, para]);
+        for (const [chave, linha] of linhas) if (linha.chargeId === chargeId && de === 'pendente') linhas.delete(chave); // sai de `pendente`: o índice único libera
+        return true;
       },
       registrarErro: async (erro, ctx) => { anotar('registrarErro', [erro, ctx]); }
     };
 
     return {
       chamadas,
+      linhas,
       nomes: () => chamadas.map((c) => c.nome),
       chamou: (nome) => chamadas.some((c) => c.nome === nome),
       ...criarCheckoutController(deps)
@@ -781,7 +896,8 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
   {
     const erroT = new Error('A Asaas não respondeu a tempo.');
     erroT.status = 504;
-    let tt = costura({ erroNaCobranca: erroT, naAsaasPorReferencia: { 'reserva-res_1': [{ id: 'pay_perdido', status: 'PENDING' }] } });
+    const valorPix = montarTotaisPedido(PEDIDO_BASE).pix.valorCobrado;
+    let tt = costura({ erroNaCobranca: erroT, naAsaasPorReferencia: { 'reserva-res_1': [{ id: 'pay_perdido', status: 'PENDING', value: valorPix }] } });
     await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t' }, corpoValido), respostaFalsa());
     const rt = respostaFalsa();
     await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t' }, corpoValido), rt);
@@ -808,6 +924,116 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
     /^reserva-res_\d+$/.test(chamadaCriarPix.args[0].referenciaExterna),
     `referenciaExterna precisa ser derivada do id da reserva local (formato "reserva-<id>"), veio "${chamadaCriarPix.args[0].referenciaExterna}"`
   );
+
+  /* --- 11. SEC-004: o instrumento pendente só volta DEPOIS da guarda de
+     pedido pago e da cotação, e só se for o instrumento vigente pelo
+     preço desta tela. ------------------------------------------------- */
+  {
+    // (a) pedido pago no cartão, Pix pendente ainda existe NO MESMO banco: não é devolvido.
+    const ajustesA = {};
+    const a1 = costura(ajustesA);
+    await a1.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_pago' }, corpoValido), respostaFalsa()); // cria o Pix
+    conferir([...a1.linhas.values()].some((l) => l.chargeId === 'pay_1'), 'controle: o Pix pendente existe na linha');
+    const nomesA = a1.nomes();
+    conferir(nomesA.indexOf('resolverPedido') < nomesA.indexOf('buscarCobrancaPendenteDoPedido'), 'a ordem: pull/guarda → cotação → reaproveitamento');
+    ajustesA.pedidoPago = true; // o cartão pagou; o Pix ainda não foi excluído
+    const antes = a1.chamadas.length;
+    const ra = respostaFalsa();
+    await a1.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_pago' }, corpoValido), ra);
+    conferir(ra.codigo === 409 && ra.corpo?.codigo === 'pedido_ja_pago', `pedido pago: 409 pedido_ja_pago, veio ${ra.codigo} ${JSON.stringify(ra.corpo)}`);
+    const depois = a1.chamadas.slice(antes).map((c) => c.nome);
+    conferir(!depois.includes('buscarCobrancaPendenteDoPedido') && !depois.includes('recuperarCobrancaPix'), `pedido pago: o Pix pendente NÃO volta — nem é procurado (chamou ${depois.join(', ')})`);
+
+    // (b) instrumento OBSOLETO (RN-51): nunca volta a ser entregue.
+    const tbo = costura();
+    await tbo.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_obs' }, corpoValido), respostaFalsa());
+    for (const linha of tbo.linhas.values()) linha.obsoletaDesde = '2026-09-25T12:00:00Z';
+    const rb = respostaFalsa();
+    await tbo.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_obs' }, corpoValido), rb);
+    conferir(rb.codigo === 409 && rb.corpo?.codigo === 'cobranca_em_confirmacao', `obsoleto: 409, veio ${rb.codigo}`);
+    conferir(tbo.chamadas.filter((c) => c.nome === 'recuperarCobrancaPix').length === 0, 'obsoleto: o QR antigo não é recuperado');
+    conferir(tbo.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, 'obsoleto: e nenhum Pix novo nasce enquanto o antigo não sai');
+
+    // (c) PREÇO MUDOU: o antigo é excluído na Asaas ANTES de nascer o novo.
+    const ajustesPreco = { pedido: {} };
+    const tc = costura(ajustesPreco);
+    await tc.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_preco' }, corpoValido), respostaFalsa());
+    ajustesPreco.pedido = { valorComDesconto: 80, valorCheio: 80 };
+    const rc = respostaFalsa();
+    await tc.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_preco' }, corpoValido), rc);
+    const nomesC = tc.nomes();
+    conferir(tc.chamou('excluirCobranca'), 'preço mudou: o Pix antigo é excluído na Asaas');
+    conferir(nomesC.indexOf('consultarPagamento') < nomesC.indexOf('excluirCobranca'), 'lê o estado ANTES de excluir');
+    conferir(nomesC.lastIndexOf('excluirCobranca') < nomesC.lastIndexOf('criarCobrancaPix'), 'e só DEPOIS cria o novo — nunca dois pagáveis');
+    const novo = tc.chamadas.filter((c) => c.nome === 'criarCobrancaPix').at(-1).args[0];
+    conferir(novo.valor === montarTotaisPedido({ ...PEDIDO_BASE, valorComDesconto: 80, valorCheio: 80 }).pix.valorCobrado, `o novo Pix cobra o preço NOVO (veio ${novo.valor})`);
+    conferir(rc.corpo?.chargeId === 'pay_1' && !rc.corpo?.reaproveitada, 'e a resposta é o Pix novo, não o reaproveitado');
+
+    // (d) preço mudou mas o antigo JÁ FOI PAGO: não exclui, não cria outro.
+    const ajustesPago2 = { pedido: {}, estadoNaAsaas: { pay_1: { status: 'RECEIVED', excluida: false } } };
+    const td = costura(ajustesPago2);
+    await td.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_pago2' }, corpoValido), respostaFalsa());
+    ajustesPago2.pedido = { valorComDesconto: 80, valorCheio: 80 };
+    const rd = respostaFalsa();
+    await td.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_pago2' }, corpoValido), rd);
+    conferir(rd.codigo === 409 && rd.corpo?.codigo === 'pagamento_em_processamento', `antigo pago: 409 pagamento_em_processamento, veio ${rd.codigo}`);
+    conferir(!td.chamou('excluirCobranca'), 'antigo pago: NUNCA se exclui o que foi pago');
+    conferir(td.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, 'antigo pago: nenhum Pix novo');
+
+    // (e) preço mudou e a exclusão FALHA: nada novo nasce.
+    const ajustesFalha = { pedido: {}, exclusaoFalha: Object.assign(new Error('A Asaas não respondeu a tempo.'), { status: 504 }) };
+    const te = costura(ajustesFalha);
+    await te.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_falha' }, corpoValido), respostaFalsa());
+    ajustesFalha.pedido = { valorComDesconto: 80, valorCheio: 80 };
+    const re = respostaFalsa();
+    await te.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_falha' }, corpoValido), re);
+    conferir(re.codigo === 409 && re.corpo?.codigo === 'cobranca_em_confirmacao', `exclusão falhou: 409 tente de novo, veio ${re.codigo}`);
+    conferir(te.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, 'exclusão falhou: nenhum Pix novo');
+
+    // (e2) a Asaas responde 200 mas NÃO confirma a exclusão (`deleted: false`): nada novo nasce.
+    const ajustesNaoConf = { pedido: {}, exclusaoNaoConfirmada: true };
+    const te2 = costura(ajustesNaoConf);
+    await te2.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_nconf' }, corpoValido), respostaFalsa());
+    ajustesNaoConf.pedido = { valorComDesconto: 80, valorCheio: 80 };
+    const re2 = respostaFalsa();
+    await te2.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_nconf' }, corpoValido), re2);
+    conferir(re2.codigo === 409 && te2.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, `exclusão não confirmada: 409 e nenhum Pix novo, veio ${re2.codigo}`);
+    conferir(!te2.chamou('aplicarTransicao'), 'e a linha antiga continua pendente — ninguém a dá por cancelada');
+
+    // (f) boleto: mesma guarda antes do reaproveitamento.
+    const tf = costura({ pedidoPago: true });
+    const rf = respostaFalsa();
+    await tf.gerarBoleto(pedido({ contratanteId: 'c1', pedidoId: 'ped_bol' }, corpoValido), rf);
+    conferir(rf.codigo === 409 && !tf.chamou('buscarCobrancaPendenteDoPedido'), 'boleto de pedido pago: 409 sem nem procurar o pendente');
+  }
+
+  /* --- 10. SEC-017: a rota PÚBLICA de status só vai à Asaas (com a
+     chave da conta-mãe) para uma cobrança que é NOSSA e do método da
+     rota. Id de outro objeto da conta, ou de outro método, é 404 nosso —
+     sem consulta autenticada e sem o texto de erro da Asaas. ---------- */
+  {
+    const ts = costura({ cobrancasNossas: ['pix:pay_nosso', 'boleto:pay_boleto'] });
+    const rOk = respostaFalsa();
+    await ts.statusPix(pedido({ chargeId: 'pay_nosso' }), rOk);
+    conferir(rOk.codigo === 200 && rOk.corpo?.status === 'PENDING', `cobrança nossa: 200 com o status; veio ${rOk.codigo}`);
+    conferir(ts.chamadas.filter((c) => c.nome === 'consultarStatus').length === 1, 'e só então consulta a Asaas');
+
+    for (const [rota, chargeId, nome] of [
+      ['statusPix', 'pay_de_outro', 'id que não é nosso'],
+      ['statusPix', 'pay_boleto', 'id nosso, mas de BOLETO, na rota do Pix'],
+      ['statusBoleto', 'pay_nosso', 'id nosso, mas de PIX, na rota do boleto']
+    ]) {
+      const tn = costura({ cobrancasNossas: ['pix:pay_nosso', 'boleto:pay_boleto'] });
+      const rn = respostaFalsa();
+      await tn[rota](pedido({ chargeId }), rn);
+      conferir(rn.codigo === 404 && rn.corpo?.erro === 'Cobrança não encontrada.', `${nome}: 404 nosso; veio ${rn.codigo} ${JSON.stringify(rn.corpo)}`);
+      conferir(!tn.chamou('consultarStatus'), `${nome}: a Asaas NUNCA é consultada`);
+    }
+    const tb = costura({ cobrancasNossas: ['boleto:pay_boleto'] });
+    const rb = respostaFalsa();
+    await tb.statusBoleto(pedido({ chargeId: 'pay_boleto' }), rb);
+    conferir(rb.codigo === 200 && rb.corpo?.status === 'PENDING', `boleto nosso: 200; veio ${rb.codigo}`);
+  }
 
   console.log(`checkoutController: ${checagens} checagens OK`);
 }

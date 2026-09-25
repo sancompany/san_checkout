@@ -45,8 +45,9 @@
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
 import { exigirCotacaoParaCobrar, montarTotaisPedido, montarTotaisPlano, marcarCotacaoUsada } from '../services/cotacaoService.js';
 import { resolverCicloDoPlano } from './planoController.js';
-import { foiRecusaLimpaDaAsaas } from '../services/asaasService.js';
-import { reservarCobrancaPopup, completarReservaPopup, liberarReservaCobranca } from '../services/cobrancaService.js';
+import { foiRecusaLimpaDaAsaas, cancelarSessaoDeCheckout } from '../services/asaasService.js';
+import { reservarCobrancaPopup, completarReservaPopup, liberarReservaCobranca, aplicarTransicaoPorCheckoutId } from '../services/cobrancaService.js';
+import { emCentavos } from '../utils/dinheiro.js';
 import { registrarErro } from '../services/erroService.js';
 import {
   criarSessaoAsaasCheckout,
@@ -88,18 +89,108 @@ export const CICLOS_VALIDOS = [
  *
  * @returns {{tipo:'criada', asaasCheckoutId}|{tipo:'reaproveitada', asaasCheckoutId}|{tipo:'em_andamento'}}
  */
-const dependenciasDaReserva = { reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas };
+const dependenciasDaReserva = {
+  reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas,
+  cancelarSessaoDeCheckout, aplicarTransicaoPorCheckoutId
+};
 
-export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }, deps = dependenciasDaReserva) {
-  const r = await deps.reservarCobrancaPopup(reserva);
+/**
+ * A sessão aberta por OUTRO preço (ou outro número de parcelas, ou outro
+ * ciclo) não é reaproveitada: é encerrada na Asaas antes de abrir outra
+ * (SEC-004, 25/09/2026). Até aqui o reaproveitamento devolvia a pop-up
+ * antiga — com a tela mostrando 3x e a pop-up cobrando o valor de 1x, ou
+ * o preço de antes do cupom. Encerrada devolvida como PAID não se
+ * substitui (o pagamento está a caminho); qualquer outra resposta é
+ * "não sei", e nada novo nasce.
+ *
+ * @returns {Promise<'substituida'|'paga'|'indefinido'>}
+ */
+export async function substituirSessaoDesatualizada(existente, deps = dependenciasDaReserva) {
+  try {
+    const { status } = await deps.cancelarSessaoDeCheckout(existente.asaas_checkout_id);
+    if (status === 'PAID') return 'paga';
+    if (status !== 'CANCELED' && status !== 'EXPIRED') return 'indefinido';
+    // Nós gravamos primeiro: o `CHECKOUT_CANCELED` que vier depois encontra
+    // a linha já encerrada e não avisa "cancelada" a ninguém.
+    await deps.aplicarTransicaoPorCheckoutId(existente.asaas_checkout_id, { de: 'pendente', para: status === 'EXPIRED' ? 'expirado' : 'cancelado' });
+    return 'substituida';
+  } catch (erro) {
+    console.error(`[checkout/sessao] não foi possível encerrar a sessão desatualizada ${existente.asaas_checkout_id}:`, erro.message);
+    return 'indefinido';
+  }
+}
+
+/** A sessão aberta de CARTÃO ainda é a desta tela: não obsoleta, mesmo
+ *  valor cobrado (em centavos) e mesmo número de parcelas ofertado. */
+export function sessaoDoCartaoServe(existente, { valorCobrado, parcelas }) {
+  return !existente.obsoleta_desde
+    && emCentavos(existente.valor_cobrado) === emCentavos(valorCobrado)
+    && Number(existente.parcelas ?? 1) === Number(parcelas);
+}
+
+/**
+ * Quem pede agora é quem ABRIU a sessão? (NEW-02, 25/09/2026)
+ *
+ * A reserva de assinatura é chaveada por contratante + plano + documento,
+ * e a rota é pública: o plano é público e o CPF não é segredo. Até aqui
+ * quem esbarrava na reserva recebia a sessão pendente dela — e a página
+ * da Asaas vem PREENCHIDA com o nome, o e-mail, o telefone e o endereço
+ * de quem a abriu. Com o CPF de alguém, levava-se o resto.
+ *
+ * A linha da reserva guarda o e-mail e o telefone de quem a abriu; o
+ * mesmo pagador manda os mesmos dois (o duplo clique, a página
+ * recarregada). E-mail sem distinção de caixa e espaço nas pontas;
+ * telefone na forma única de `normalizarTelefone`. Ausente de um lado não
+ * é "o mesmo".
+ */
+export function mesmoPagador(existente, { email, telefone }) {
+  const emailDe = (v) => (typeof v === 'string' && v.trim() ? v.trim().toLowerCase() : null);
+  const telefoneDe = (v) => (v == null || v === '' ? null : normalizarTelefone(v) || null);
+  const [e1, e2] = [emailDe(existente?.email), emailDe(email)];
+  const [t1, t2] = [telefoneDe(existente?.telefone), telefoneDe(telefone)];
+  return e1 !== null && e1 === e2 && t1 !== null && t1 === t2;
+}
+
+/** A sessão aberta de ASSINATURA ainda é a desta tela: não obsoleta,
+ *  mesmo valor, mesmo ciclo — e de quem está pedindo (NEW-02). A de outra
+ *  pessoa é substituída, nunca entregue. */
+export function sessaoDaAssinaturaServe(existente, { valor, ciclo, email, telefone }) {
+  return !existente.obsoleta_desde
+    && emCentavos(existente.valor_cobrado) === emCentavos(valor)
+    && (existente.ciclo ?? null) === (ciclo ?? null)
+    && mesmoPagador(existente, { email, telefone });
+}
+
+export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto, sessaoServe = null, doMesmoPagador = null }, deps = dependenciasDaReserva) {
+  /* O id de uma sessão que já está em processamento só volta para quem a
+     abriu (`doMesmoPagador`, NEW-02): para outra pessoa, a resposta diz
+     "em processamento" e mais nada. Sem o predicado (cartão avulso, cuja
+     reserva é pelo pedido — o link já é a credencial), volta sempre. */
+  const idParaQuemPede = (existente) => (!doMesmoPagador || doMesmoPagador(existente) ? existente.asaas_checkout_id : null);
+  let r = await deps.reservarCobrancaPopup(reserva);
+  /* A sessão que já existe só é reaproveitada se ainda é A sessão desta
+     tela (`sessaoServe`: mesmo valor, parcelas, ciclo; não obsoleta; e,
+     na assinatura, do mesmo pagador). */
+  if (!r.reservada && sessaoServe && r.existente?.asaas_checkout_id && !r.existente.sessao_concluida_em && !sessaoServe(r.existente)) {
+    const desfecho = await substituirSessaoDesatualizada(r.existente, deps);
+    if (desfecho === 'paga') return { tipo: 'em_processamento', asaasCheckoutId: idParaQuemPede(r.existente) };
+    if (desfecho !== 'substituida') return { tipo: 'em_andamento' };
+    r = await deps.reservarCobrancaPopup(reserva);
+  }
   if (!r.reservada) {
     // A sessão existente já foi concluída pelo pagador: reabrir a pop-up
     // dela não serve (a Asaas mostra "pago"), e abrir outra seria uma
     // segunda cobrança. A tela passa a acompanhar a que já existe.
     if (r.existente?.sessao_concluida_em && r.existente.asaas_checkout_id) {
-      return { tipo: 'em_processamento', asaasCheckoutId: r.existente.asaas_checkout_id };
+      return { tipo: 'em_processamento', asaasCheckoutId: idParaQuemPede(r.existente) };
     }
-    if (r.existente?.asaas_checkout_id) return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
+    if (r.existente?.asaas_checkout_id) {
+      /* Depois de uma substituição, a segunda reserva pode achar a sessão
+         que OUTRA pessoa abriu no intervalo: só volta se ela serve a quem
+         pede, como na primeira passagem (C1-05). */
+      if (sessaoServe && !sessaoServe(r.existente)) return { tipo: 'em_andamento' };
+      return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
+    }
     return { tipo: 'em_andamento' };
   }
 
@@ -138,8 +229,8 @@ export async function abrirSessaoComReserva({ reserva, criarSessao, completar, c
  * e nunca tinham teto: qualquer descrição de produto ou nome de plano
  * um pouco mais longo — nada incomum — quebrava Cartão avulso ou
  * Assinatura por cartão POR INTEIRO, para TODOS os compradores daquele
- * contratante, com um erro de campo que não diz o que houve (o
- * `criador.corpoAsaas` só vai pro `console.error`).
+ * contratante, com um erro de campo que não diz o que houve (o motivo
+ * da Asaas só ia para o log, redigido — `asaasService.chamarAsaas`).
  *
  * Cortar não perde a informação: `items[].description` aceita o texto
  * inteiro sem teto (medido: 100+ caracteres passaram) — é onde o nome
@@ -247,6 +338,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
     const sessao = await abrirSessaoComReserva({
       contexto: 'cartao',
       reserva: { contratanteId, pedidoId, documento, metodoPagamento: 'cartao_credito' },
+      sessaoServe: (existente) => sessaoDoCartaoServe(existente, { valorCobrado, parcelas: parcelasOfertadas }),
       criarSessao: (externalReference) => criarSessaoAsaasCheckout({
         billingTypes: ['CREDIT_CARD'],
         chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
@@ -287,7 +379,6 @@ export async function criarCheckoutCartao(requisicao, resposta) {
       ...(sessao.tipo === 'reaproveitada' ? { reaproveitada: true } : {})
     });
   } catch (erro) {
-    if (erro.corpoAsaas) console.error('[checkout/cartao] corpoAsaas:', erro.corpoAsaas);
     responderErro(resposta, erro, 'checkout/cartao');
   }
 }
@@ -401,6 +492,18 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       ? await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])
       : null;
 
+    /* UMA assinatura viva por plano e documento (SEC-012, 25/09/2026).
+       Sem renovação, nada impedia o assinante de abrir de novo o link do
+       plano e pagar: duas assinaturas cobrando o mesmo cartão, e o
+       `/cancelar-assinatura` cancelava só a mais recente. A troca de
+       cartão tem porta própria — a renovação, com o token do contratante. */
+    if (!assinaturaSubstituida && await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])) {
+      return resposta.status(409).json({
+        codigo: 'assinatura_ja_existe',
+        erro: 'Já existe uma assinatura deste plano para este CPF/CNPJ. Para trocar o cartão, peça ao vendedor o link de renovação.'
+      });
+    }
+
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
     // decisão pendente, ainda não tomada (ver API.md §8).
@@ -429,6 +532,8 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     const sessao = await abrirSessaoComReserva({
       contexto: 'assinatura',
       reserva: { contratanteId, planoId, documento, metodoPagamento: 'assinatura' },
+      sessaoServe: (existente) => sessaoDaAssinaturaServe(existente, { valor, ciclo, email, telefone }),
+      doMesmoPagador: (existente) => mesmoPagador(existente, { email, telefone }),
       criarSessao: (externalReference) => criarSessaoAsaasCheckout({
         billingTypes: ['CREDIT_CARD'],
         chargeTypes: ['RECURRENT'],
@@ -472,7 +577,6 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       ...(sessao.tipo === 'reaproveitada' ? { reaproveitada: true } : {})
     });
   } catch (erro) {
-    if (erro.corpoAsaas) console.error('[checkout/assinatura] corpoAsaas:', erro.corpoAsaas);
     responderErro(resposta, erro, 'checkout/assinatura');
   }
 }

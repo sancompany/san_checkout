@@ -78,7 +78,7 @@ export function criarTrocaContexto(deps = dependenciasPadrao) {
     try {
       const { token } = requisicao.body ?? {};
       if (!token) return resposta.status(400).json({ erro: 'token é obrigatório.' });
-      if (!FORMATO_UUID.test(token)) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' });
+      if (typeof token !== 'string' || !FORMATO_UUID.test(token)) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' }); // só texto: um objeto com toString forjado lançava (CP2-11)
 
       let intencao = await deps.buscarIntencao(token);
       if (!intencao) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' });
@@ -119,7 +119,7 @@ export function criarTrocaAprovar(deps = dependenciasPadrao) {
     try {
       const { token } = requisicao.body ?? {};
       if (!token) return resposta.status(400).json({ erro: 'token é obrigatório.' });
-      if (!FORMATO_UUID.test(token)) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' });
+      if (typeof token !== 'string' || !FORMATO_UUID.test(token)) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' }); // só texto: um objeto com toString forjado lançava (CP2-11)
 
       const existente = await deps.buscarIntencao(token);
       if (!existente) return resposta.status(404).json({ erro: 'Link inválido ou já usado.' });
@@ -262,6 +262,14 @@ if (process.argv[1]?.endsWith('trocaAprovacaoController.js')) {
   await t.aprovar(pedido({ token: 'nao-existe' }), r);
   conferir(r.codigo === 404, `aprovar token inexistente é 404, veio ${r.codigo}`);
   conferir(!t.chamou('buscarIntencao'), 'idem: token mal formado não chega ao banco em /troca/aprovar');
+
+  // CP2-11: token que não é texto (um objeto com `toString` forjado lançava no `.test`) é 404, nas duas rotas
+  for (const rota of ['contexto', 'aprovar']) {
+    t = costura();
+    r = respostaFalsa();
+    await t[rota](pedido({ token: { toString: 'x' } }), r);
+    conferir(r.codigo === 404 && !t.chamou('buscarIntencao'), `CP2-11: /troca/${rota} com token objeto é 404 sem ir ao banco, veio ${r.codigo}`);
+  }
 
   t = costura({ avancarPara: 'COMPLETED' });
   r = respostaFalsa();

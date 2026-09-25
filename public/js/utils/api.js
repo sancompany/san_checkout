@@ -13,9 +13,17 @@ const URL_BASE = window.location.origin.includes('localhost') || window.location
   ? 'http://localhost:3001'
   : 'https://api.sancocore.com.br';
 
+/* A API administrativa vai pelo MESMO domínio do painel (SEC-015,
+   25/09/2026): `/api/admin/*` ali é uma função do Pages atrás do
+   Cloudflare Access, que repassa à API com o JWT de quem entrou. Pelo
+   domínio da API, a origem recusa. Fora de produção (localhost), segue
+   direto para o backend local. */
+const EM_PRODUCAO = !(window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1'));
+const baseDe = (caminho) => (EM_PRODUCAO && caminho.startsWith('/api/admin/') ? '' : URL_BASE);
+
 export async function chamarApi(caminho, opcoes = {}) {
   const { headers, ...resto } = opcoes;
-  const resposta = await fetch(`${URL_BASE}${caminho}`, {
+  const resposta = await fetch(`${baseDe(caminho)}${caminho}`, {
     ...resto,
     headers: { 'Content-Type': 'application/json', ...(headers ?? {}) }
   });

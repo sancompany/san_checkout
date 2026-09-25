@@ -18,11 +18,13 @@
 
 import 'dotenv/config';
 import express from 'express';
+import { comRejeicaoTratada } from './utils/rotaSegura.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { criarLimitadorCriacao, criarLimitadorConsulta } from './middlewares/limitadores.js';
+import { exigirAccess } from './middlewares/exigirAccess.js';
 import { supabase } from './config/supabase.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
 import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
@@ -39,14 +41,20 @@ import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
 import { expurgarDadoPessoal } from './services/expurgoService.js';
 import { varrerUmaVez as varrerIntencoesDeTroca } from './services/trocaSweeperService.js';
-import { reprocessarInbox } from './controllers/webhookController.js';
+import { reprocessarInbox, reconciliarDivergenciasUmaVez } from './controllers/webhookController.js';
 import { expurgarInbox, resumoInbox } from './services/webhookInboxService.js';
 import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from './services/outboxService.js';
 import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
 import { cancelarIrmasUmaVez } from './services/irmasObsoletasService.js';
+import { reconciliarEstornosUmaVez } from './services/estornoService.js';
+import { umaPassadaPorVez, workersAtrasados } from './utils/passadas.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
-const app = express();
+/* Todo handler registrado no `app` (e em todo roteador, por `roteador()`)
+   manda o que lançar para o tratador de erro do fim da pilha — o Express 4
+   não observa a promessa de um handler `async`, e a rejeição sem dono
+   derrubaria o processo (C1-01, `src/utils/rotaSegura.js`). */
+const app = comRejeicaoTratada(express());
 const PORTA = process.env.PORT || 3001;
 
 // Atrás do proxy da hospedagem — precisa disso pra x-forwarded-proto (força
@@ -147,7 +155,19 @@ app.use('/api/checkout/trocar-plano', criarLimitadorCriacao());
    tentativa continua vindo `429` com `RateLimit-Limit: 5`.
 
    A ordem daqui é a natural de ler (do específico para o geral) e não
-   depende de nada — quem vier depois não precisa preservá-la por medo. */
+   depende de nada — quem vier depois não precisa preservá-la por medo.
+
+   A GUARDA DO ACCESS VEM ANTES DOS DOIS, e essa ordem sim importa
+   (SEC-015, 25/09/2026). Desde que o painel fala com a API pela função do
+   Pages, as chamadas do operador chegam aqui do IP de SAÍDA da
+   Cloudflare — o mesmo de qualquer outro Worker de qualquer outra conta
+   no mesmo datacenter. Com o limitador na frente, cinco tentativas sem
+   Access de um Worker alheio esgotariam o teto do operador por um minuto,
+   a cada minuto. Com a guarda na frente, quem não tem o JWT recebe 401
+   sem tocar em limitador, banco ou scrypt, e o teto só conta quem passou
+   pelo Access. O `adminRoutes.js` repete a guarda, para o roteador não
+   depender desta linha. */
+app.use('/api/admin', exigirAccess);
 app.use('/api/admin/sessao', rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -260,7 +280,15 @@ app.get('/api/saude', async (_req, resposta) => {
   // cliente" (Lei 8). A outra metade é ligar o alerta no painel do
   // monitor — RUNBOOK §2. Expiração de chave da Asaas é aviso, não
   // queda: fica no corpo (`alertasChaveAsaas`), sem derrubar o HTTP.
-  const saudavel = supabaseAtivo;
+  /* WORKER PARADO É QUEDA (SEC-031, 25/09/2026). Até aqui a última rodada
+     de cada um ia no corpo e o HTTP era `200` de qualquer jeito — e um
+     monitor de uptime lê o CÓDIGO, não o corpo. Um worker parado (a
+     passada pendurada numa chamada que não volta, ou falhando a cada
+     rodada) é queda silenciosa do caminho do dinheiro: confirmação que
+     não é reprocessada, aviso que não sai, estorno que ninguém
+     reconcilia. A regra do atraso mora em `utils/passadas.js`. */
+  const atrasados = workersAtrasados({ intervalos: INTERVALO_DOS_WORKERS_MS, ultimaRodada: ultimaRodadaDosWorkers, ligadosEm: workersLigadosEm });
+  const saudavel = supabaseAtivo && atrasados.length === 0;
   resposta.status(saudavel ? 200 : 503).json({
     status: saudavel ? 'ok' : 'degradado',
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
@@ -268,12 +296,24 @@ app.get('/api/saude', async (_req, resposta) => {
     supabaseRespondendo: supabaseAtivo,
     alertasChaveAsaas,
     filas,
-    workers
+    workers,
+    workersAtrasados: atrasados
   });
 });
 
 /** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
-const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null };
+const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null, estornos: null, divergencias: null };
+
+/** O intervalo de cada worker — o MESMO número que o `setInterval` dele
+ *  usa lá embaixo, e é daqui que ele o tira. */
+const INTERVALO_DOS_WORKERS_MS = {
+  inbox: 60_000, outbox: 30_000, reconciliador: 5 * 60_000, trocaDePlano: 60_000,
+  canceladorDeIrmas: 60_000, estornos: 2 * 60_000, divergencias: 15 * 60_000
+};
+/** Quando os workers foram ligados (`null` no modo de teste, que não os liga). */
+let workersLigadosEm = null;
+
+
 
 // ---------------------------------------------------------------------
 // FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
@@ -303,11 +343,6 @@ app.use((requisicao, resposta) => {
 // transforma o tratador em middleware comum e o erro volta a cair no
 // embutido, calado.
 app.use((erro, requisicao, resposta, proximo) => {
-  // O detalhe vai para o log do servidor, nunca para a resposta: aqui
-  // dentro cabe nome de tabela, caminho de arquivo e versão de
-  // biblioteca — informação de graça para quem está sondando.
-  console.error('[checkout] erro não tratado:', requisicao.method, requisicao.originalUrl, erro);
-
   // Corpo JSON malformado chega aqui com status 400 já definido pelo
   // express.json(). É erro do cliente, não do servidor, e merece o
   // código certo — 500 aqui faria monitoramento futuro contar sondagem
@@ -315,6 +350,22 @@ app.use((erro, requisicao, resposta, proximo) => {
   const status = Number.isInteger(erro?.status) && erro.status >= 400 && erro.status < 500
     ? erro.status
     : 500;
+
+  /* O detalhe vai para o log do servidor, nunca para a resposta: aqui
+     dentro cabe nome de tabela, caminho de arquivo e versão de
+     biblioteca — informação de graça para quem está sondando.
+
+     Mas o log também tem regra (SEC-028): num 4xx o objeto de erro é o
+     do CLIENTE — o `JSON.parse` do Node 22 põe um trecho do corpo na
+     mensagem, e `express.json()` pendura o corpo inteiro em `erro.body`,
+     que é onde viaja CPF, e-mail e telefone. Recusa de cliente loga só o
+     tipo; a pilha completa fica para o 5xx, que é defeito nosso. E o
+     caminho vai sem a query (`requisicao.path`). */
+  if (status >= 500) {
+    console.error('[checkout] erro não tratado:', requisicao.method, requisicao.path, erro);
+  } else {
+    console.warn('[checkout] requisição recusada:', requisicao.method, requisicao.path, status, erro?.type ?? erro?.name ?? 'erro');
+  }
 
   /* O que escapou de todo tratador vira linha em `erros` (Lei 8). Só
      5xx: corpo JSON malformado é sondagem, não defeito nosso, e contar
@@ -348,9 +399,13 @@ const UM_DIA_MS = 24 * 60 * 60 * 1000;
 
      - **promessa rejeitada sem `catch`** (`unhandledRejection`), e o
        projeto tem fire-and-forget deliberado no caminho do dinheiro —
-       aviso ao contratante, auditoria do webhook, expurgo, retentativa
-       de notificação agendada por `setTimeout`. Todos têm `catch` hoje;
-       o próximo que alguém escrever pode não ter.
+       aviso ao contratante, auditoria do webhook, expurgo, a primeira
+       tentativa da outbox. ⚠️ Esta linha dizia "todos têm `catch` hoje",
+       e três não tinham (SEC-013, achado na Estação 6 em 25/09/2026): os
+       avisos de cancelamento e de troca de plano eram chamados sem
+       `await` nem `catch`. Corrigidos, e desde então a regra é conferida
+       por teste (`tests/nenhuma-promessa-sem-dono.js`) em vez de
+       afirmada aqui.
      - **exceção fora de requisição** (`uncaughtException`): um callback
        de `setInterval`, um `setTimeout`, o topo de um módulo.
 
@@ -429,21 +484,32 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
   // derruba nada: o taxaService mantém a tabela padrão como fallback.
   // ponytail: setInterval simples em vez de agendador — o processo do
   // serviço reinicia sozinho de vez em quando e o boot já ressincroniza.
-  sincronizarTaxasAsaas();
-  setInterval(sincronizarTaxasAsaas, UM_DIA_MS).unref();
+  //
+  // Toda tarefa de fundo tem DONO (SEC-013, 25/09/2026): a promessa dela
+  // termina num `catch`, nunca solta — uma rejeição sem dono cai no
+  // `unhandledRejection` acima e derruba o processo. Conferido por teste
+  // (`tests/nenhuma-promessa-sem-dono.js`).
+  const emSegundoPlano = (rotulo, tarefa) => () => Promise.resolve()
+    .then(tarefa)
+    .catch((erro) => console.error(`[${rotulo}] falhou:`, erro?.message ?? erro));
+  const rodarSincronizacaoDeTaxas = emSegundoPlano('taxas', sincronizarTaxasAsaas);
+  rodarSincronizacaoDeTaxas();
+  setInterval(rodarSincronizacaoDeTaxas, UM_DIA_MS).unref();
 
   // O log de auditoria do webhook é diagnóstico, não dado fiscal: não
   // herda os 5 anos de retenção das cobranças. Pega carona no mesmo
   // ciclo de 24h em vez de ganhar agendador próprio, e roda no boot
   // porque o processo da hospedagem reinicia sozinho — não dá para contar
   // com um intervalo de 24h ser alcançado.
-  expurgarAuditoria();
-  setInterval(expurgarAuditoria, UM_DIA_MS).unref();
+  const rodarExpurgoDaAuditoria = emSegundoPlano('expurgo-auditoria', expurgarAuditoria);
+  rodarExpurgoDaAuditoria();
+  setInterval(rodarExpurgoDaAuditoria, UM_DIA_MS).unref();
 
   // Captura de erro tem retenção própria, mais curta (30 dias): é
   // diagnóstico, não rastro de cobrança.
-  expurgarErros();
-  setInterval(expurgarErros, UM_DIA_MS).unref();
+  const rodarExpurgoDeErros = emSegundoPlano('expurgo-erros', expurgarErros);
+  rodarExpurgoDeErros();
+  setInterval(rodarExpurgoDeErros, UM_DIA_MS).unref();
 
   /* DADO PESSOAL DO COMPRADOR — cinco anos (Lei 10,
      `docs/inventario-de-dados.md` §6). Até 17/09/2026 o prazo estava
@@ -488,17 +554,18 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      intenção em `PAYMENT_UNKNOWN` ficaria presa até alguém olhar.
      Nunca cria cobrança nova; só reconsulta e avança por CAS. */
   const UM_MINUTO_MS = 60 * 1000;
-  const rodarVarreduraDeTroca = () => varrerIntencoesDeTroca()
+  const rodarVarreduraDeTroca = umaPassadaPorVez(() => varrerIntencoesDeTroca()
     .then((relatorio) => {
       ultimaRodadaDosWorkers.trocaDePlano = Date.now();
       if (relatorio.avancadas > 0 || relatorio.escaladas > 0) {
         console.log(`[troca-de-plano] varredura: ${relatorio.avancadas} avançada(s), ${relatorio.escaladas} escalonada(s) para reconciliação.`);
       }
     })
-    .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message));
+    .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message)));
 
+  workersLigadosEm = Date.now();
   rodarVarreduraDeTroca();
-  setInterval(rodarVarreduraDeTroca, UM_MINUTO_MS).unref();
+  setInterval(rodarVarreduraDeTroca, INTERVALO_DOS_WORKERS_MS.trocaDePlano).unref();
 
   /* OS TRÊS WORKERS DA CONSOLIDAÇÃO (24/09/2026). Uma instância só
      (medido no Northflank: `instances: 1`), então `setInterval` basta —
@@ -511,23 +578,23 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
        (H-01) — sobrevive a reinício porque lê do banco;
      - reconciliador (5 min): completa reserva órfã que virou cobrança na
        Asaas e libera a que nunca virou nada (H-06). */
-  const rodarInbox = () => reprocessarInbox()
+  const rodarInbox = umaPassadaPorVez(() => reprocessarInbox()
     .then((r) => { ultimaRodadaDosWorkers.inbox = Date.now(); if (r.examinadas > 0) console.log(`[inbox] reprocessamento: ${r.processadas} ok, ${r.falhas} falha(s).`); })
-    .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message));
+    .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message)));
   rodarInbox();
-  setInterval(rodarInbox, UM_MINUTO_MS).unref();
+  setInterval(rodarInbox, INTERVALO_DOS_WORKERS_MS.inbox).unref();
 
-  const rodarOutbox = () => enviarOutbox()
+  const rodarOutbox = umaPassadaPorVez(() => enviarOutbox()
     .then((r) => { ultimaRodadaDosWorkers.outbox = Date.now(); if (r.examinadas > 0) console.log(`[outbox] ${r.enviadas} enviada(s), ${r.falhas} falha(s), ${r.abandonadas} abandonada(s).`); })
-    .catch((erro) => console.error('[outbox] envio falhou:', erro.message));
+    .catch((erro) => console.error('[outbox] envio falhou:', erro.message)));
   rodarOutbox();
-  setInterval(rodarOutbox, 30 * 1000).unref();
+  setInterval(rodarOutbox, INTERVALO_DOS_WORKERS_MS.outbox).unref();
 
-  const rodarReconciliador = () => reconciliarReservas()
+  const rodarReconciliador = umaPassadaPorVez(() => reconciliarReservas()
     .then((r) => { ultimaRodadaDosWorkers.reconciliador = Date.now(); if (r.examinadas > 0) console.log(`[reconciliador] ${r.completadas} completada(s), ${r.liberadas} liberada(s), ${r.aguardando} aguardando.`); })
-    .catch((erro) => console.error('[reconciliador] falhou:', erro.message));
+    .catch((erro) => console.error('[reconciliador] falhou:', erro.message)));
   rodarReconciliador();
-  setInterval(rodarReconciliador, 5 * UM_MINUTO_MS).unref();
+  setInterval(rodarReconciliador, INTERVALO_DOS_WORKERS_MS.reconciliador).unref();
 
   /* O CANCELADOR DE IRMÃS (RN-51, 25/09/2026, 60 s): o Pix/boleto/pop-up
      de um pedido que outra cobrança já pagou é invalidado na Asaas. O
@@ -535,14 +602,46 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      ESTADO (a liquidação pode ter vindo da consulta de status ou do
      reconciliador, não do webhook) e refaz o que falhou, com recuo e
      teto gravados na linha. */
-  const rodarCanceladorDeIrmas = () => cancelarIrmasUmaVez()
+  const rodarCanceladorDeIrmas = umaPassadaPorVez(() => cancelarIrmasUmaVez()
     .then((r) => {
       ultimaRodadaDosWorkers.canceladorDeIrmas = Date.now();
       if (r.marcadas > 0 || r.tentadas > 0) console.log(`[irmas] ${r.marcadas} marcada(s), ${r.canceladas} cancelada(s), ${r.aguardando} aguardando, ${r.falhas} falha(s), ${r.esgotadas} esgotada(s).`);
     })
-    .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message));
+    .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message)));
   rodarCanceladorDeIrmas();
-  setInterval(rodarCanceladorDeIrmas, UM_MINUTO_MS).unref();
+  setInterval(rodarCanceladorDeIrmas, INTERVALO_DOS_WORKERS_MS.canceladorDeIrmas).unref();
+
+  /* O RECONCILIADOR DE ESTORNOS (SEC-002, 25/09/2026, 2 min): decide as
+     operações de estorno cuja resposta da Asaas se perdeu (timeout, 5xx,
+     processo que morreu no meio) pelo marcador em
+     `GET /v3/payments/{id}/refunds` — NUNCA chamando o estorno de novo.
+     Sem ele, uma operação em CALLING_PROVIDER de um processo morto só se
+     resolveria quando o contratante repetisse a chamada. */
+  const rodarReconciliadorDeEstornos = umaPassadaPorVez(() => reconciliarEstornosUmaVez()
+    .then((r) => {
+      ultimaRodadaDosWorkers.estornos = Date.now();
+      if (r.examinadas > 0) console.log(`[estornos] ${r.confirmadas} confirmada(s), ${r.liberadas} provada(s) sem estorno, ${r.aguardando} aguardando, ${r.falhas} falha(s).`);
+    })
+    .catch((erro) => console.error('[estornos] reconciliador falhou:', erro.message)));
+  rodarReconciliadorDeEstornos();
+  setInterval(rodarReconciliadorDeEstornos, INTERVALO_DOS_WORKERS_MS.estornos).unref();
+
+  /* O RECONCILIADOR DIRIGIDO (JULES-004, 25/09/2026, 15 min): a cobrança
+     que EXISTE e divergiu da Asaas porque um evento se perdeu — o
+     `PAYMENT_CONFIRMED` que esgotou a inbox, o `PAYMENT_REFUNDED` de
+     boleto que nunca veio. Só olha as que têm sinal (evento de pagamento
+     esgotado; estado de passagem parado muito além do normal), no máximo
+     20 por passada, e leva cada uma ao estado da Asaas pelos passos que a
+     máquina de estados permite, cada passo pelo mesmo processamento de um
+     webhook de verdade. Nunca varre a base. */
+  const rodarReconciliadorDeDivergencias = umaPassadaPorVez(() => reconciliarDivergenciasUmaVez()
+    .then((r) => {
+      ultimaRodadaDosWorkers.divergencias = Date.now();
+      if (r.corrigidas > 0 || r.semCaminho > 0 || r.falhas > 0) console.log(`[divergencias] ${r.examinadas} examinada(s), ${r.corrigidas} corrigida(s), ${r.iguais} igual(is), ${r.semCaminho} sem caminho, ${r.falhas} falha(s).`);
+    })
+    .catch((erro) => console.error('[divergencias] reconciliador falhou:', erro.message)));
+  rodarReconciliadorDeDivergencias();
+  setInterval(rodarReconciliadorDeDivergencias, INTERVALO_DOS_WORKERS_MS.divergencias).unref();
 
   /* Expurgos diários das tabelas novas: inbox/outbox já processadas
      (90 dias — o payload da outbox leva o documento do pagador, Lei 10)

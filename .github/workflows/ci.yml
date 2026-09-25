@@ -14,6 +14,12 @@ on:
   push:
   pull_request:
 
+# O token do CI só LÊ (SEC-034, 25/09/2026). Sem esta linha, as permissões
+# são as padrão do repositório — que podem ser de escrita — num job que
+# roda `npm ci`, isto é, código de terceiros.
+permissions:
+  contents: read
+
 jobs:
   testes:
     runs-on: ubuntu-latest

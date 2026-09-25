@@ -51,6 +51,13 @@ COMO_PG=(su postgres -s /bin/bash -c)
 "${COMO_PG[@]}" "'$PGBIN/initdb' -D '$TRAB/pg' -U ensaio --auth=trust --encoding=UTF8 >/dev/null"
 "${COMO_PG[@]}" "'$PGBIN/pg_ctl' -D '$TRAB/pg' -o '-p $PORTA -c listen_addresses=127.0.0.1 -c unix_socket_directories=$TRAB/sock' -l '$TRAB/pg.log' -w start >/dev/null"
 
+# Os papéis que o Supabase cria em todo projeto, e que as migrations citam
+# (0018 e 0020 revogam do `anon`/`authenticated`; a 0020 mexe nos padrões
+# do `postgres`). Num Postgres puro eles não existem, e `revoke … from
+# anon` seria erro — o ensaio pararia numa migration que em produção
+# aplica limpa. Criados sem login: só para existir.
+psql -v ON_ERROR_STOP=1 -q -c "create role postgres nologin; create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;"
+
 # ON_ERROR_STOP em tudo: o padrão do psql é seguir em erro, em silêncio —
 # que é exatamente como um restore "bem-sucedido" chega quebrado.
 for m in "$RAIZ"/supabase/migrations/*.sql; do

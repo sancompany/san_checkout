@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
 import {
   cancelarAssinatura,
   pausarAssinatura,
@@ -7,7 +7,7 @@ import {
 import { consultarAssinatura } from '../controllers/cobrancaConsultaController.js';
 import { trocarPlano } from '../controllers/trocaPlanoController.js';
 
-const router = Router();
+const router = roteador();
 router.post('/cancelar-assinatura', cancelarAssinatura);
 
 // Pausar não é cancelar: cancelar é definitivo e obriga o assinante a

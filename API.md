@@ -209,7 +209,7 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={t
 | `c` | sim | Seu `contratante_id` |
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
-| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra |
+| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra — **e é recusado se o comprador já tem uma assinatura ativa ou pausada DESTE plano** (`409 assinatura_ja_existe`, desde 25/09/2026): duas assinaturas cobrando o mesmo cartão pelo mesmo plano não existem mais. Para trocar o cartão, o link leva o token. ⚠️ "Ativa" é o que o **nosso** registro diz: a assinatura encerrada do lado da Asaas (cartão vencido, cancelada no painel) continua `ativa` aqui até a conciliação (`POST /consultar-assinatura`, §5.3) — os eventos `SUBSCRIPTION_*` ainda não são tratados em código. Antes de mandar o comprador ao link comum para assinar de novo, concilie |
 | `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
@@ -291,6 +291,17 @@ pedidos do seu projeto**. Com id imprevisível, não há o que varrer.
 
 O checkout **recusa** (HTTP 400) um `pedido` ou `assinatura` formado só
 por dígitos com **menos de 8 caracteres**.
+
+**E todo id tem uma grafia só** (desde 25/09/2026, SEC-001): `pedidoId`,
+`planoId`, `contratanteId`, `chargeId` e os demais ids de fronteira são
+**texto** de 1 a 128 caracteres entre `A–Z`, `a–z`, `0–9`, `_` e `-`.
+Ponto, dois-pontos, barra, espaço, acento e `%` são recusados com `400`,
+na URL e no corpo; e um id mandado como **número JSON** (`"pedidoId":
+123`) também — mande `"123…"` como texto. O motivo: a mesma chave com
+duas grafias (`PED.01` × `PED%2E01`, `123` × `"123"`) virava dois
+pedidos para o mesmo pagamento, e um `/` decodificado no id mudava o
+caminho da chamada à sua API (`GET {apiBaseUrl}/pedidos/{id}`). Os ids
+das integrações em produção foram conferidos e cabem.
 
 ```
 ✅  550e8400-e29b-41d4-a716-446655440000
@@ -673,7 +684,7 @@ teste que separa os dois; não teste "tem `tipo`".
 | `versao` | Versão do contrato. Hoje `2` (seção 10) |
 | `tipo` | `"pedido"` (v2). Ausente na v1 |
 | `eventoId` | Id ÚNICO desta notificação. Deduplique por ele (seção 4.3.6). Também vai no header `X-Checkout-Event-Id` |
-| `ocorridoEm` | Quando o fato aconteceu do lado da Asaas (ISO 8601, UTC). Dois eventos do mesmo `chargeId` se ordenam por ele |
+| `ocorridoEm` | Quando o fato aconteceu do lado da Asaas (ISO 8601, UTC). Dois eventos do mesmo `chargeId` se ordenam por ele. Quando o fato é **descoberto por conciliação** — uma consulta de status (§5.2, §5.3, §5.7) ou o reconciliador, que acharam na Asaas um pagamento que o webhook ainda não tinha trazido —, é o momento da descoberta, não o do pagamento. A consulta que descobre a confirmação também é quem dispara este aviso: ele pode chegar na mesma hora em que a sua consulta responde `confirmado` |
 | `pedidoId` | O mesmo id que você mandou no link |
 | `chargeId` | Id da cobrança na Asaas. **Nunca `null` desde o v2**: o aviso de pedido só sai no evento que traz o id |
 | `status` | Ver a tabela abaixo |
@@ -740,7 +751,7 @@ teste que separa os dois; não teste "tem `tipo`".
 | `evento` | Quando chega |
 |---|---|
 | `criada` | Assinatura criada e **primeira cobrança paga**. Desde 24/09/2026 sai no evento de PAGAMENTO, com `chargeId` e `assinaturaId` preenchidos (antes saía no evento de sessão, sem os dois) |
-| `cobranca_confirmada` | Um ciclo foi cobrado com sucesso |
+| `cobranca_confirmada` | Um ciclo foi cobrado com sucesso. **Credite o ciclo uma vez por `chargeId`**, não por `eventoId`: se uma baixa manual em dinheiro de um ciclo for desfeita no painel da Asaas e o ciclo for pago de novo, chega um segundo `cobranca_confirmada` do MESMO `chargeId` (com `eventoId` novo, porque é um fato novo) — e é o mesmo período |
 | `cobranca_falhou` | Um ciclo não entrou — cartão recusado ou cobrança vencida. **Mande o link de renovação** (seção 7.3) |
 | `cobranca_estornada` | Um ciclo foi estornado (total ou parcial — olhe `statusFinanceiro`/`estornoParcial`) |
 | `cobranca_contestada` | Chargeback num ciclo — **suspenda o acesso** |
@@ -842,6 +853,27 @@ o checkout tenta de novo com recuo crescente: **1 min, 5 min, 15 min,
 no painel do checkout, de onde o operador pode reenviá-la — **com o
 mesmo `eventoId`**.
 
+**O checkout não segue redirecionamento** (desde 25/09/2026, SEC-006).
+Um `3xx` do seu endpoint é falha de entrega, como um `5xx`: entra no
+recuo acima, e o corpo, a assinatura e os cabeçalhos **nunca** são
+reenviados ao endereço do `Location`. Se o seu webhook mudou de lugar,
+peça ao operador para cadastrar o endereço novo. O destino também é
+reconferido a cada envio (https, host público), não só no cadastro.
+
+**Todo fato de pagamento foi conferido na Asaas antes de chegar a você**
+(desde 25/09/2026, SEC-007): o checkout só anuncia `confirmado`,
+estorno ou contestação que a Asaas mostra na própria cobrança — o evento
+dela, sozinho, não basta. Duas consequências que você pode notar:
+
+- um aviso pode chegar **alguns minutos depois** do evento da Asaas
+  quando ele chegou fora de ordem (um estorno antes da confirmação) — o
+  checkout espera o estado anterior e anuncia os dois, na ordem em que
+  aconteceram;
+- quando um evento da Asaas se perdeu, o checkout reconcilia a cobrança
+  pelo estado dela e anuncia **a história inteira** (por exemplo
+  `confirmado` e depois `estornado`), com os mesmos `eventoId` que os
+  eventos teriam gerado — deduplicar pelo `eventoId` continua bastando.
+
 Consequências práticas:
 
 - **Reiniciar o checkout não perde aviso.** O que está na fila
@@ -917,7 +949,7 @@ domínio; o endereço interno do provedor muda sem aviso.
 | `404` | Não existe |
 | `409` | Conflito de estado (pedido já pago, cancelado ou expirado) |
 | `429` | Limite de requisições — ver abaixo |
-| `502` / `504` | Falha ao falar com a Asaas ou com a **sua** API (504 = timeout) |
+| `502` / `504` | Falha ao falar com a Asaas ou com a **sua** API (504 = timeout). Inclui a Asaas **recusando a credencial do checkout** e a Asaas fora do ar: desde 25/09/2026 isso é sempre `502`, com mensagem genérica — antes o `401` dela chegava a você como `401`, que aqui significa só **a sua** `X-Checkout-Key` |
 
 **Limite de requisições** (por IP, janela de 60 segundos):
 
@@ -1135,23 +1167,60 @@ POST {BASE}/api/checkout/estornar
 X-Checkout-Key: {sua chave}
 Content-Type: application/json
 
-{ "pedidoId": "550e8400-...", "valor": 30.00 }
+{ "pedidoId": "550e8400-...", "valor": 30.00, "chaveIdempotencia": "estorno-7f3a9c" }
 ```
 
-`valor` é **opcional**: sem ele, estorna tudo (o que ainda não foi
-devolvido); com ele, devolve só aquela parte — **estorno parcial**,
-desde 24/09/2026. O `valor` é em reais, tem de ser maior que zero e
-não pode passar do que ainda falta estornar.
+| Campo | Obrigatório | O que é |
+|---|---|---|
+| `pedidoId` | sim | O pedido cujo pagamento se devolve |
+| `valor` | não | Em reais. Sem ele, estorna **tudo** o que ainda não foi devolvido; com ele, só aquela parte — **estorno parcial** (desde 24/09/2026). Maior que zero e até o que ainda falta estornar |
+| `chaveIdempotencia` | **sim no parcial**; não no total | Um valor seu, **único por estorno** (só letras sem acento, números, `-` e `_`, até 128). Se precisar tentar de novo, repita a **mesma** chave |
+| `chargeId` | só quando o pedido tem **duas cobranças pagas** | Qual delas devolver (ver o `409 mais_de_uma_cobranca_paga` abaixo) |
+
+**A chave de idempotência — por que ela existe (desde 25/09/2026).**
+Dois estornos parciais de R$ 30 podem ser legítimos, e a repetição de um
+estorno cuja resposta se perdeu também é "R$ 30 de novo". Só quem pede
+sabe qual das duas é, e por isso a chave é sua:
+
+- **a mesma chave é o mesmo estorno.** Repetir devolve o resultado
+  gravado da primeira vez (`"repetido": true`) e **não** devolve dinheiro
+  de novo — mesmo que a primeira resposta tenha se perdido no caminho;
+- **chave nova é estorno novo.** Para um segundo parcial legítimo, gere
+  outra chave;
+- a mesma chave com **outro pedido** (outro `pedidoId`/`chargeId` ou outro
+  `valor`) é recusada com `409 chave_idempotencia_reutilizada` — nunca
+  reinterpretada.
+
+No estorno **total** a chave é opcional: sem ela, o Checkout usa uma
+derivada da cobrança (um total só acontece uma vez), e repetir devolve o
+resultado gravado.
+
+**A exceção, e a única:** estorno de **boleto** que a Asaas **negou**
+(`PAYMENT_REFUND_DENIED`, cobrança em `estorno_negado`). O pedido negado
+não devolveu nada, então a mesma chave — inclusive a derivada do total —
+volta a pedir à Asaas e responde `200` **sem** `"repetido"`. Dinheiro
+nenhum sai duas vezes: o primeiro pedido foi recusado. A negativa só é
+aplicada quando a Asaas mostra o boleto pago de novo (RN-71).
+
+**Numa falha de rede sua, repita a MESMA chamada, com a mesma chave.**
+Até 25/09/2026 este parágrafo mandava "tentar de novo depois de alguns
+segundos" sem chave nenhuma — e era exatamente isso que devolvia o
+dinheiro duas vezes (achado SEC-002 da Estação 6). Se a Asaas não tiver
+respondido ao Checkout, a repetição **não** chama o estorno de novo: o
+Checkout confere na própria Asaas se aquele estorno aconteceu e só então
+responde. Enquanto isso não se decide, a resposta é `409
+estorno_em_reconciliacao` — repita mais tarde, com a mesma chave.
 
 **Resposta 200:**
 
 ```json
-{ "chargeId": "pay_8392017465", "status": "estornado_parcialmente", "valorEstornado": 30.00, "estornoParcial": true }
+{ "chargeId": "pay_8392017465", "status": "estornado_parcialmente", "valorEstornado": 30.00, "estornoParcial": true, "operacaoId": "4f0c…" }
 ```
 
 - Estorno parcial deixa a cobrança em `estornado_parcialmente`, com
   `valorEstornado` acumulando; pode ser chamado de novo até completar —
   quando completa, o status vira `estornado`. A conta é em centavos.
+- Uma repetição com a mesma chave traz também `"repetido": true`.
 - **Boleto continua tudo-ou-nada**: `valor` num boleto responde `400`
   (o estorno de boleto na Asaas é assíncrono e não documenta valor
   parcial; não foi medido).
@@ -1166,24 +1235,40 @@ caso a resposta vem com `"status": "estorno_solicitado"`, e o
 `"estornado"` chega por webhook depois, quando ele concluir. É um estado
 intermediário real, não erro.
 
+**Qual cobrança é estornada.** A que **pagou** o pedido — não a mais
+recente. Um pedido pode ter uma pop-up de cartão abandonada depois de um
+Pix pago, e até 25/09/2026 o `/estornar` escolhia a linha mais recente e
+respondia `409` sobre um pedido pago (SEC-005). Se o pedido tem **duas**
+cobranças pagas (a duplicidade do RN-52, avisada com
+`pagamentoDuplicado: true`), o Checkout não escolhe por você: responde
+`409 mais_de_uma_cobranca_paga` com os `chargeIds`, e você repete com o
+`chargeId` da que quer devolver.
+
 | Código | Significa |
 |---|---|
-| `200` | Estorno executado ou solicitado |
-| `400` | `pedidoId` ausente; `valor` inválido, maior que o restante estornável, ou em boleto |
+| `200` | Estorno executado ou solicitado — ou a repetição de um que já foi (`"repetido": true`) |
+| `400` | `pedidoId` ausente; `valor` inválido, maior que o restante estornável, ou em boleto; `chaveIdempotencia` ausente num parcial (`codigo: "chave_idempotencia_obrigatoria"`) ou fora do formato; `chargeId` fora do formato |
 | `401` | Chave ausente ou inválida |
-| `404` | Nenhuma cobrança encontrada para esse pedido |
+| `404` | Nenhuma cobrança encontrada para esse pedido (ou o `chargeId` não é deste pedido) |
 | `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada por inteiro, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha). `estorno_negado` volta a ser estornável |
-| `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
+| `409 chave_idempotencia_reutilizada` | A chave já foi usada num estorno diferente |
+| `409 estorno_em_reconciliacao` | Um estorno com esta chave está em curso ou sem confirmação da Asaas — repita mais tarde, com a mesma chave; ele **não** será repetido às cegas. Quando a Asaas tem estorno que PODE ser este e não dá para provar (sem o marcador na lista dela), a operação fica em aberto e um humano é chamado, em vez de liberar a repetição — travado é melhor que devolvido em dobro (desde 25/09/2026) |
+| `409 estorno_anterior_em_reconciliacao` | Um estorno anterior desta cobrança ainda não tem confirmação da Asaas, e o valor pedido só caberia se ele não tivesse acontecido — o restante só é conhecido depois dele |
+| `409 estorno_impossivel` | A **mesma** `chaveIdempotencia` de um estorno que já foi dado como impossível: a primeira tentativa comprovadamente não devolveu nada, e desde então outro estorno consumiu o restante da cobrança — o valor desta chave não cabe mais. A primeira repetição depois disso responde `400` com o motivo e fecha a operação; toda repetição seguinte responde este `409`, com o mesmo motivo em `erro`. Nada é devolvido. Para estornar outro valor, use uma chave nova |
+| `409 mais_de_uma_cobranca_paga` | Duas cobranças pagas no pedido: informe o `chargeId` |
+| `409 estorno_de_parcelamento` | A cobrança é uma **compra parcelada no cartão** (desde 25/09/2026). O estorno de parcelamento não é feito por esta API: o `chargeId` dela é a primeira parcela, e a Asaas estorna parcelamento por outro endpoint, cujo efeito sobre as demais parcelas ainda não foi medido — estornar daqui arriscaria devolver uma parcela e registrar o total. Estorne pelo painel da Asaas; o `PAYMENT_REFUNDED` chega pela notificação de sempre |
+| `502`/`504` | A Asaas recusou (a mensagem traz o motivo dela) ou não respondeu a tempo — repita com a **mesma** chave |
 
 > **Desde 22/09/2026, só uma cobrança `confirmado` (ou, desde 24/09,
-> `estornado_parcialmente`/`estorno_negado`) pode ser estornada — e cada
-> pedido de estorno, uma vez só.** Antes disso a rota não checava o estado da cobrança
-> nenhum antes de chamar a Asaas — duas chamadas simultâneas para o
-> mesmo pedido podiam as duas tentar estornar (achado de auditoria
-> externa, `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
-> Repetir a chamada depois de um `409` sem que nada tenha mudado do
-> lado da cobrança não adianta — espere o estado dela mudar (ou, numa
-> falha de rede sua, tente de novo depois de alguns segundos).
+> `estornado_parcialmente`/`estorno_negado`) pode ser estornada.** Antes
+> disso a rota não checava o estado da cobrança nenhum antes de chamar a
+> Asaas — duas chamadas simultâneas para o mesmo pedido podiam as duas
+> tentar estornar (achado de auditoria externa,
+> `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
+> **Desde 25/09/2026, cada pedido de estorno é uma operação durável**,
+> gravada antes de chamar a Asaas e identificada pela chave de
+> idempotência — o que fecha o caso que a guarda de 22/09 não fechava: a
+> repetição SEQUENCIAL depois de uma resposta perdida.
 
 ---
 
@@ -1397,6 +1482,7 @@ Os `409` são as recusas deliberadas, e cada uma tem motivo:
 | **A assinatura não tem cartão salvo** | É o caso do Pix Automático: sem cartão não há como cobrar o acerto sem interação do assinante — recusado ANTES de criar a intenção |
 | **A assinatura está encerrada na Asaas** | Não há plano a trocar. O caminho é assinar de novo |
 | **Não foi possível calcular o acerto** | Vem com `motivo`. Significa dado incoerente (ciclo desconhecido, vencimento mais longe que o ciclo inteiro) — e aqui o checkout **recusa em vez de dar a troca de graça** |
+| **`troca_em_andamento`** (desde 25/09/2026) | Uma troca anterior desta assinatura tem o acerto **com dinheiro em trânsito** — cobrando, esperando o veredito do cartão, aplicando, ou parada para conferência humana. Uma troca nova por cima dela cobraria um segundo acerto ou mudaria o plano debaixo do primeiro. Espere a anterior concluir (o evento `plano_trocado` avisa). Um link de aprovação ainda **não aprovado** não bloqueia nada — você pode gerar outro |
 
 > **Só o seu projeto aciona `POST /trocar-plano`**, como em cancelar/
 > pausar/retomar — o assinante não escolhe o PRÓPRIO PLANO pelo
@@ -1497,7 +1583,11 @@ GET {BASE}/api/saude
 
 Sem autenticação. Útil para um monitor externo. **Código HTTP:** `200`
 quando saudável; `503` com `"status": "degradado"` quando o banco não
-responde (o serviço está no ar mas não cobra nem concilia) — aponte o
+responde (o serviço está no ar mas não cobra nem concilia) **ou quando um
+worker parou** — desde 25/09/2026, a lista `workersAtrasados` no corpo diz
+quais (inbox, outbox, reconciliadores…) estão sem uma passada bem-sucedida
+há mais de três intervalos: confirmação sem reprocessar e aviso sem sair
+são queda do caminho do dinheiro, não detalhe. Aponte o
 monitor de uptime para alertar no HTTP não-2xx. `alertasChaveAsaas` não
 vazio significa que a chave de API da Asaas está para expirar ou já
 expirou (cobranças param de funcionar) — é aviso no corpo, não derruba o
@@ -1537,6 +1627,34 @@ mesmo Pix** — o checkout reaproveita a cobrança pendente daquele pedido
 em vez de criar uma segunda igualmente pagável. Vale para boleto também,
 onde o estrago seria maior (o antigo segue pagável por dias). A resposta
 traz `"reaproveitada": true` nesse caso.
+
+**Desde 25/09/2026, reaproveitar exige que a cobrança antiga ainda seja
+a certa** (SEC-004). Antes o reaproveitamento rodava antes de tudo, e um
+`POST` direto recebia o Pix pendente de um pedido já pago no cartão, ou o
+QR do preço antigo com a tela mostrando o novo. Agora:
+
+- a guarda de pedido pago e a cotação (9.3) vêm **antes**: pedido pago
+  responde `409 pedido_ja_pago`, sem devolver QR nenhum;
+- a cobrança que outro pagamento do mesmo pedido tornou obsoleta (RN-51)
+  **nunca** volta a ser entregue;
+- se o valor do pedido **mudou** desde o Pix/boleto antigo, o antigo é
+  excluído na Asaas antes de nascer outro — nunca dois pagáveis. Se o
+  antigo já tinha sido pago, a resposta é `409 pagamento_em_processamento`
+  (o webhook confirma); se a exclusão não se confirma, `409
+  cobranca_em_confirmacao` — tente de novo em instantes, nada é criado;
+- na pop-up (cartão e assinatura), a sessão aberta por outro valor, outro
+  número de parcelas ou outro ciclo é encerrada antes de abrir outra.
+
+**Na assinatura, a sessão pendente só é reaproveitada para quem a abriu**
+(desde 25/09/2026, NEW-02). A reserva da assinatura é pelo plano + CPF/CNPJ,
+e o link do plano é público: até aqui, quem mandasse o CPF de outra pessoa
+recebia a janela de pagamento dela — que a Asaas mostra **preenchida** com
+nome, e-mail, telefone e endereço. Agora a janela só é reaproveitada quando
+o **e-mail** e o **telefone** também são os de quem a abriu (sem diferença
+de maiúsculas, espaço ou `+55`). Diferentes, a antiga é encerrada na Asaas
+e abre-se uma nova com os dados de quem pediu. E o `409
+pagamento_em_processamento` de uma sessão já concluída só traz o
+`asaasCheckoutId` para o mesmo pagador; para outra pessoa, vem sem ele.
 
 ### 6.4 Métodos habilitados por contratante
 
@@ -2026,7 +2144,7 @@ direto não contorna nada.
 | CNPJ | 14 dígitos, com dígito verificador conferido | `400` idem |
 | Telefone | 10 ou 11 dígitos, DDD ≥ 11, celular começando em 9 | `400` "Telefone inválido" |
 | CEP | 8 dígitos | `400` "CEP inválido" |
-| `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
+| `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres; só `[A-Za-z0-9_-]`, 1–128, como texto (nunca número JSON) | `400`, com explicação |
 | Timeout da sua API | 45 segundos | `504` |
 | Requisições | 10/min (dinheiro) · 60/min (consulta) | `429` |
 | `GET /api/saude` | 30/min | `429` |

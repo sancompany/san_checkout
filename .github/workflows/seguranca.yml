@@ -36,6 +36,9 @@ jobs:
   # em moderate quebraria a CI hoje, no primeiro push, por algo que não
   # é exploração remota — e CI que quebra por ruído é CI que o time
   # aprende a ignorar. As moderadas continuam visíveis na saída.
+  # As três do `qs` foram resolvidas em 25/09/2026 (SEC-034/SEC-033, com
+  # `npm audit fix` SEM `--force`: express 4.22.3, body-parser 1.20.8,
+  # qs 6.16.0) — `npm audit` saiu com zero. O portão continua em `high`.
   # -------------------------------------------------------------------
   dependencias:
     runs-on: ubuntu-latest
@@ -73,11 +76,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
         with:
           fetch-depth: 0
+      # O binário é conferido pelo SHA-256 antes de rodar (SEC-034,
+      # 25/09/2026): baixado e executado sem conferência, ele era a mesma
+      # referência móvel que a fixação das ações por SHA existe para
+      # evitar. O valor é o do `gitleaks_8.28.0_checksums.txt` da própria
+      # release, e bateu com o SHA-256 do pacote baixado em 25/09/2026.
+      # Versão nova: trocar os DOIS, conferindo contra o checksums dela.
       - name: Instalar gitleaks
         run: |
           VERSAO=8.28.0
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/gitleaks_${VERSAO}_linux_x64.tar.gz" \
-            | tar -xz gitleaks
+          SHA256=a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+          curl -sSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VERSAO}/gitleaks_${VERSAO}_linux_x64.tar.gz"
+          echo "${SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
       - run: ./gitleaks detect --source . --redact --exit-code 1
 
   # -------------------------------------------------------------------
@@ -85,7 +96,11 @@ jobs:
   # -------------------------------------------------------------------
   estatica:
     runs-on: ubuntu-latest
-    container: semgrep/semgrep
+    # Imagem fixada por DIGEST (SEC-034, 25/09/2026): `semgrep/semgrep` sem
+    # nada é a `latest`, outra referência móvel — e ela roda com o código
+    # do repositório montado. O digest é o da `1.177.0`, que era a
+    # `latest` no Docker Hub em 25/09/2026.
+    container: semgrep/semgrep:1.177.0@sha256:acaac22ffc7b7cc5926de0751b223bce0b2491c33d18422fa72f632c78d81198
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
       - run: semgrep scan --config p/owasp-top-ten --config p/secrets --error

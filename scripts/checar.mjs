@@ -21,7 +21,7 @@ import { dirname, join, extname } from 'node:path';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const PASTAS_JS = ['src', 'public/js', 'scripts', 'tests'];
+const PASTAS_JS = ['src', 'public/js', 'functions', 'scripts', 'tests']; // functions/: as Pages Functions (o proxy do admin atrás do Access, SEC-015)
 const JSON_SOLTOS = ['package.json', 'public/site.webmanifest'];
 
 function arquivos(pasta, extensoes) {

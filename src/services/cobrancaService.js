@@ -15,7 +15,7 @@
 import { supabase } from '../config/supabase.js';
 import { ambienteAsaas } from '../config/asaas.js';
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
-import { exigirIdNoTeto } from '../utils/validadores.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 import { registrarErro } from './erroService.js';
 
 /**
@@ -136,7 +136,23 @@ export async function completarCobranca(id, dados) {
  * de sucesso — não há resposta boa a atrasar).
  */
 export async function liberarReservaCobranca(id) {
-  const { error } = await supabase.from('cobrancas').delete().eq('id', id);
+  /* CONDICIONAL desde 25/09/2026 (SEC-025): só apaga a reserva que
+     continua reserva — `pendente`, sem pagamento e sem sessão. Entre a
+     decisão de liberar e o `delete` a linha pode ter sido completada
+     (pelo reconciliador, ou por um evento que chegou) — e apagar uma
+     linha com `charge_id` é perder de vista um pagamento da Asaas. */
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .delete()
+    .eq('id', id)
+    .eq('status', 'pendente')
+    .is('charge_id', null)
+    .is('asaas_checkout_id', null)
+    .select('id');
+  if (!error && !(Array.isArray(data) && data.length === 1)) {
+    console.warn(`[cobrancaService.liberarReservaCobranca] a reserva ${id} não foi apagada: deixou de ser reserva (ganhou pagamento ou sessão) — fica para o reconciliador`);
+    return false;
+  }
   if (error) {
     console.error('[cobrancaService.liberarReservaCobranca]', error.message);
     await registrarErro(
@@ -147,7 +163,9 @@ export async function liberarReservaCobranca(id) {
       ),
       { contexto: 'cobrancaService.liberarReservaCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
     );
+    return false;
   }
+  return true;
 }
 
 /** Folga sobre `MINUTOS_DE_SESSAO_DE_CHECKOUT` (asaasService) para
@@ -404,7 +422,7 @@ export async function registrarCobrancaPendentePopup(dados) {
  */
 /**
  * Devolve `{ duplicado: true }` quando o `charge_id` já existe (código
- * Postgres `23505`, violação do `unique` da migration 0001) — a Asaas
+ * Postgres `23505` E a linha deste charge relida — FP1A-1) — a Asaas
  * reenvia webhook (API.md §4.3.6, "pode chegar mais de uma vez"), e sem
  * distinguir esse caso, duas entregas quase simultâneas do MESMO
  * `PAYMENT_CONFIRMED` de um ciclo novo liam a linha como inexistente
@@ -450,7 +468,23 @@ export async function registrarCicloAssinatura(dados) {
     status: 'pendente'
   });
 
-  if (error?.code === '23505') return { duplicado: true };
+  if (error?.code === '23505') {
+    /* FP1A-1: `23505` NÃO quer dizer "este charge_id já existe". A linha
+       do ciclo (`assinatura`, `pendente`, com `plano_id`, sem `pedido_id`)
+       também cai no índice único da RESERVA de pop-up
+       (`idx_cobrancas_assinatura_pendente_unica`, 0015). Com a reserva de
+       uma renovação aberta para o mesmo plano e documento, o ciclo pago
+       era lido como reentrega: nenhuma linha, nenhum aviso, a inbox
+       marcava `processado`, e o reconciliador nunca o via. Só é
+       duplicado se a linha deste charge EXISTE; senão LANÇA — a inbox
+       refaz com recuo (a reserva se resolve em minutos) e, esgotada,
+       escala para `erros`. */
+    const { data: existente, error: erroLeitura } = await supabase
+      .from('cobrancas').select('id').eq('charge_id', dados.chargeId).maybeSingle();
+    if (erroLeitura) throw erroLeitura;
+    if (existente) return { duplicado: true };
+    throw new Error(`o ciclo ${dados.chargeId} da assinatura ${dados.asaasSubscriptionId} esbarrou no índice único de uma reserva pendente do mesmo plano e documento, não num charge repetido — reprocessar quando ela se resolver`);
+  }
   if (error) {
     // Qualquer outro erro LANÇA: engolir aqui deixava o ciclo sem linha e
     // sem aviso, e a inbox marcava o evento como processado (revisão de
@@ -536,15 +570,22 @@ export async function buscarCobrancaPorCheckoutId(asaasCheckoutId) {
  * depois, com o pagamento feito).
  */
 export async function vincularSessaoAReserva(reservaId, { asaasCheckoutId = null, chargeId = null } = {}) {
-  const { data, error } = await supabase
+  let consulta = supabase
     .from('cobrancas')
     .update({
       ...(asaasCheckoutId ? { asaas_checkout_id: asaasCheckoutId } : {}),
       ...(chargeId ? { charge_id: chargeId } : {}),
       atualizado_em: new Date().toISOString()
     })
-    .eq('id', reservaId)
-    .select('id');
+    .eq('id', reservaId);
+  /* CAS (25/09/2026): só amarra o que ainda está VAZIO. O chamador leu a
+     linha sem vínculo, mas entre a leitura e esta escrita o reconciliador
+     de reservas (ou outra entrega do mesmo evento) pode ter amarrado —
+     e um update incondicional trocava o `charge_id` de uma linha já
+     vinculada. `false` aqui é "outro chegou antes": o chamador relê. */
+  if (chargeId) consulta = consulta.is('charge_id', null);
+  if (asaasCheckoutId) consulta = consulta.is('asaas_checkout_id', null);
+  const { data, error } = await consulta.select('id');
   if (error) throw error;
   return Array.isArray(data) && data.length === 1;
 }
@@ -552,12 +593,20 @@ export async function vincularSessaoAReserva(reservaId, { asaasCheckoutId = null
 /** Preenche o charge_id de verdade quando o webhook CHECKOUT_PAID
  *  chegar — até então a cobrança só tinha asaas_checkout_id. */
 export async function vincularChargeIdAoCheckout(asaasCheckoutId, chargeId) {
-  const { error } = await supabase
+  /* CAS e LANÇA (SEC-014, 25/09/2026). Antes: `update` incondicional e o
+     erro só no log — um ciclo seguinte com `checkoutSession` podia
+     sobrescrever o `charge_id` da primeira cobrança, e uma falha de banco
+     deixava a linha sem vínculo com a inbox marcando o evento como
+     processado. `false` é "outro já vinculou": quem chama relê. */
+  const { data, error } = await supabase
     .from('cobrancas')
     .update({ charge_id: chargeId, atualizado_em: new Date().toISOString() })
-    .eq('asaas_checkout_id', asaasCheckoutId);
+    .eq('asaas_checkout_id', asaasCheckoutId)
+    .is('charge_id', null)
+    .select('id');
 
-  if (error) console.error('[cobrancaService.vincularChargeIdAoCheckout]', error.message);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Atualiza status por asaas_checkout_id — usado pelos eventos
@@ -581,15 +630,6 @@ function camposDeStatus(status) {
     atualizado_em: new Date().toISOString(),
     ...(status === 'confirmado' ? { confirmado_em: new Date().toISOString() } : {})
   };
-}
-
-export async function atualizarStatusPorCheckoutId(asaasCheckoutId, status) {
-  const { error } = await supabase
-    .from('cobrancas')
-    .update(camposDeStatus(status))
-    .eq('asaas_checkout_id', asaasCheckoutId);
-
-  if (error) console.error('[cobrancaService.atualizarStatusPorCheckoutId]', error.message);
 }
 
 /** A mesma transição condicional de `aplicarTransicao`, endereçada pela
@@ -634,7 +674,8 @@ export async function atualizarSubscriptionIdDaCobranca(chargeId, subscriptionId
     .update({ asaas_subscription_id: subscriptionId, atualizado_em: new Date().toISOString() })
     .eq('charge_id', chargeId);
 
-  if (error) console.error('[cobrancaService.atualizarSubscriptionIdDaCobranca]', error.message);
+  // Lança (SEC-014): o vínculo pela metade é o que deixava a assinatura órfã.
+  if (error) throw error;
 }
 
 /** Busca a cobrança mais recente de uma assinatura — serve de "molde"
@@ -740,8 +781,29 @@ export async function buscarCobranca(chargeId) {
   return data;
 }
 
-/** Busca a cobrança mais recente de um pedido — usado no /estornar,
- *  que recebe pedidoId (não chargeId) do contratante. */
+/**
+ * A cobrança deste `chargeId` e deste método existe no NOSSO banco?
+ *
+ * É a porta das rotas PÚBLICAS de status (`/pix/status/:chargeId`,
+ * `/boleto/status/:chargeId`): elas consultam a Asaas com a chave da
+ * conta-mãe, e sem esta pergunta qualquer id da conta — de outro
+ * contratante, de outro produto, de nada nosso — virava consulta
+ * autenticada e um oráculo de existência/status (SEC-017). Só o id e o
+ * método saem do banco: a rota não precisa de mais nada, e a linha
+ * inteira traz dado do pagador.
+ */
+export async function existeCobrancaDoMetodo(chargeId, metodoPagamento) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('id')
+    .eq('charge_id', chargeId)
+    .eq('metodo_pagamento', metodoPagamento)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
 /**
  * Grava a situação cadastral de uma subconta, vinda do webhook
  * ACCOUNT_STATUS_* da Asaas. Antes disso, o operador conferia na mão se
@@ -780,7 +842,7 @@ export async function atualizarSituacaoSubconta(asaasAccountId, situacao) {
 export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
   // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
   // rota autenticada de contratante, mas id sem teto é carga sem teto.
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+  exigirIdCanonico(pedidoId, 'pedidoId');
 
   const { data, error } = await supabase
     .from('cobrancas')
@@ -804,7 +866,7 @@ export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, me
  *  de responder "já existe uma cobrança sendo criada" até o reconciliador
  *  passar. */
 export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+  exigirIdCanonico(pedidoId, 'pedidoId');
   const { data, error } = await supabase
     .from('cobrancas')
     .select('id, criado_em')
@@ -820,36 +882,98 @@ export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, met
   return data;
 }
 
-export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
-  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
-  // rota autenticada de contratante, mas id sem teto é carga sem teto.
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+/**
+ * "A cobrança do pedido" para a TELA DE STATUS e a consulta do
+ * contratante — a que diz a verdade financeira, não a mais recente
+ * (SEC-005, 25/09/2026). Pix gerado, depois uma pop-up de cartão aberta e
+ * abandonada, depois o Pix pago: por data, a escolhida era a pop-up
+ * `cancelado`, e o pedido pago aparecia como cancelado; uma irmã boleto
+ * cuja exclusão falhou era "a mais recente pendente" e a tela oferecia as
+ * credenciais dela.
+ *
+ * A ordem, pura para o autoteste:
+ *   1. a que SEGURA dinheiro (confirmado, em análise, estorno em curso,
+ *      parcial, negado, contestação) — a mais recente delas;
+ *   2. senão, a pendente VIGENTE (não obsoleta) — a mais recente;
+ *   3. senão, a mais recente de todas.
+ * A irmã cancelada por outro pagamento (RN-51) nunca é escolhida. Estorno
+ * TOTAL não segura dinheiro: quem compra de novo o mesmo pedido vê a
+ * tentativa nova, não o estorno antigo.
+ */
+const STATUS_QUE_SEGURAM_DINHEIRO = ['confirmado', 'em_analise', 'estorno_solicitado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'];
 
-  /* A irmã cancelada por outro pagamento (RN-51) nunca é "a cobrança do
-     pedido": por definição existe uma irmã que o PAGOU, e é ela que a
-     tela de status, a consulta do contratante e o `/estornar` precisam
-     achar — a mais recente pode ser justamente a cancelada. */
+export function escolherCobrancaRepresentativa(linhas) {
+  const candidatas = (linhas ?? []).filter((l) => l && l.status !== 'cancelado_por_outro_pagamento')
+    .sort((a, b) => (String(a.criado_em) < String(b.criado_em) ? 1 : -1));
+  return candidatas.find((l) => STATUS_QUE_SEGURAM_DINHEIRO.includes(l.status))
+    ?? candidatas.find((l) => l.status === 'pendente' && !l.obsoleta_desde)
+    ?? candidatas[0]
+    ?? null;
+}
+
+export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
+  // O contrato canônico do id, na raiz (`utils/validadores.js`).
+  exigirIdCanonico(pedidoId, 'pedidoId');
+
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
     .eq('contratante_id', contratanteId)
     .eq('pedido_id', pedidoId)
-    .neq('status', 'cancelado_por_outro_pagamento')
     .order('criado_em', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(50);
 
   if (error) throw error;
-  return data;
+  return escolherCobrancaRepresentativa(data);
 }
 
-export async function atualizarStatusCobranca(chargeId, status) {
-  const { error } = await supabase
+/**
+ * TODAS as cobranças de um pedido (com `charge_id`), mais recente primeiro.
+ * É de onde o `/estornar` escolhe a que PAGOU — não a mais recente, que
+ * pode ser uma pop-up abandonada ou uma irmã cancelada (SEC-005).
+ */
+export async function buscarCobrancasDoPedido(contratanteId, pedidoId) {
+  exigirIdCanonico(pedidoId, 'pedidoId');
+  const { data, error } = await supabase
     .from('cobrancas')
-    .update(camposDeStatus(status))
-    .eq('charge_id', chargeId);
+    .select('*')
+    .eq('contratante_id', contratanteId)
+    .eq('pedido_id', pedidoId)
+    .not('charge_id', 'is', null)
+    .order('criado_em', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return data ?? [];
+}
 
-  if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);
+/**
+ * As cobranças PARADAS num estado que só a Asaas tira delas — o sinal
+ * de que o evento que devia tirá-las se perdeu (JULES-004). Não é
+ * varredura: só três formas, cada uma com prazo muito além do normal.
+ *
+ *   - `em_analise` há mais de 1 dia (a análise de risco da Asaas decide em
+ *     horas; parada, o `PAYMENT_CONFIRMED`/`REPROVED` não chegou);
+ *   - `estorno_solicitado` há mais de 3 dias (o estorno de boleto espera
+ *     o pagador informar a conta; o `PAYMENT_REFUNDED` pode não ter vindo);
+ *   - `pendente` com a sessão da pop-up CONCLUÍDA há mais de 1 dia (o
+ *     cartão foi digitado; o dinheiro confirmou ou recusou, e não soubemos).
+ *
+ * Só linha com `charge_id` — o reconciliador pergunta pela cobrança. As
+ * mais antigas primeiro, com teto: cada uma custa um `GET` na Asaas.
+ */
+export async function listarCobrancasParadas({ limite = 20 } = {}) {
+  const agora = Date.now();
+  const haUmDia = new Date(agora - 24 * 3600 * 1000).toISOString();
+  const haTresDias = new Date(agora - 3 * 24 * 3600 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('charge_id, status, atualizado_em')
+    .not('charge_id', 'is', null)
+    .or(`and(status.eq.em_analise,atualizado_em.lt.${haUmDia}),and(status.eq.estorno_solicitado,atualizado_em.lt.${haTresDias}),and(status.eq.pendente,sessao_concluida_em.lt.${haUmDia})`)
+    .order('atualizado_em', { ascending: true })
+    .limit(limite);
+  if (error) throw error;
+  return data ?? [];
 }
 
 /**
@@ -928,25 +1052,44 @@ export async function reivindicarEstorno(chargeId) {
 export const STATUS_ESTORNAVEIS = ['confirmado', 'estornado_parcialmente', 'estorno_negado'];
 
 /**
- * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`):
- * status novo + `valor_estornado` acumulado. O arrendamento é liberado
- * junto, porque num estorno PARCIAL a linha continua estornável e o
- * próximo pedido precisa poder reivindicar sem esperar os 5 minutos.
+ * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`, ou a
+ * reconciliação dele): status novo + `valor_estornado` acumulado. O
+ * arrendamento é liberado junto (por padrão), porque num estorno PARCIAL
+ * a linha continua estornável e o próximo pedido precisa poder
+ * reivindicar sem esperar os 5 minutos.
+ *
+ * CAS desde 25/09/2026 (SEC-022): só grava por cima de um estado de onde
+ * o NOSSO estorno podia estar em curso, e só AUMENTA o valor estornado.
+ * Antes o `update` era incondicional — um `chargeback` (ou o estorno
+ * total da própria Asaas) que chegasse pelo webhook no meio da chamada
+ * era apagado pela resposta atrasada. Quem chegou antes vence; aqui só o
+ * arrendamento volta.
+ *
+ * @returns {Promise<boolean>} `true` quando gravou
  */
-export async function registrarEstorno(chargeId, { status, valorEstornado }) {
-  const { error } = await supabase
+export async function registrarEstorno(chargeId, { status, valorEstornado }, { liberarArrendamento = true } = {}) {
+  let consulta = supabase
     .from('cobrancas')
     .update({
       ...camposDeStatus(status),
       ...(valorEstornado != null ? { valor_estornado: valorEstornado } : {}),
-      estornando_em: null
+      ...(liberarArrendamento ? { estornando_em: null } : {})
     })
-    .eq('charge_id', chargeId);
+    .eq('charge_id', chargeId)
+    .in('status', [...STATUS_ESTORNAVEIS, 'estorno_solicitado']);
+  if (valorEstornado != null) {
+    // Número calculado aqui dentro (`dinheiro.js`), nunca texto de fora.
+    consulta = consulta.or(`valor_estornado.is.null,valor_estornado.lt.${Number(valorEstornado)}`);
+  }
+  const { data, error } = await consulta.select('id');
 
   if (error) {
     console.error('[cobrancaService.registrarEstorno]', error.message);
     throw error;
   }
+  const gravou = Array.isArray(data) && data.length === 1;
+  if (!gravou && liberarArrendamento) await liberarEstorno(chargeId);
+  return gravou;
 }
 
 /** Devolve o arrendamento sem estornar nada — usada quando a Asaas

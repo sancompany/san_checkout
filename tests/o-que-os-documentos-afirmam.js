@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
@@ -73,7 +74,12 @@ const HISTORICOS = [
   'docs/lacunas-san-checkout-10-09-2026.md',
   'docs/relatorio-seguranca-09-09-2026.md',
   'docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md', // relatório externo de uma data, gravado verbatim — descreve o mundo daquele commit
-  'docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md' // relatório de entrega de 24/09: as contagens são as daquele dia
+  'docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md', // relatório de entrega de 24/09: as contagens são as daquele dia
+  // Estação 6: a baseline e o relatório do Jules descrevem o commit 43635c4
+  // e são CONGELADOS por decisão do dono ("NÃO alterar baseline histórica") —
+  // corrigir a contagem deles seria reescrever o que foi observado.
+  'docs/SECURITY_STATION_6_BASELINE_2026-09-25.md',
+  'docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md'
 ];
 
 const AFIRMAM = [
@@ -274,4 +280,54 @@ for (const rel of vivos) {
 }
 igual(quebrados, [], 'documento vivo aponta para arquivo que não existe');
 
-console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills)`);
+/* ---- As duas evidências da Estação 6 são IMUTÁVEIS ----
+   A baseline de segurança (Claude, antes de qualquer correção, `5ff3e93`)
+   e a revisão independente (Jules, `591f5d7`, PR #49) são o que a
+   remediação tem de responder. Reescrever uma delas depois apagaria o
+   ponto de partida — o hash é o do commit original, conferido em
+   25/09/2026. O resultado pós-correção mora em outro arquivo, o
+   `SECURITY_STATION_6_REMEDIATION_2026-09-25.md`. */
+const IMUTAVEIS = {
+  'docs/SECURITY_STATION_6_BASELINE_2026-09-25.md': '23c8e6d472daced104e85157d9ee2028743401daf3bb9975ab14458c86795112',
+  'docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md': 'e72670cf11c5c82c7c42570acadfaaf7138c20a45c64e8f665d3c23be6920af1'
+};
+for (const [arquivo, hash] of Object.entries(IMUTAVEIS)) {
+  const caminho = join(RAIZ, arquivo);
+  ok(existsSync(caminho), `${arquivo} existe`);
+  ok(createHash('sha256').update(readFileSync(caminho)).digest('hex') === hash, `${arquivo} é o do commit original — evidência não se reescreve`);
+}
+ok(existsSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md')), 'e o resultado pós-correção existe à parte');
+
+/* ---- O ledger da remediação se conta sozinho ----
+   Toda linha de achado (SEC, INFO, JULES, JX, NEW, C<n>-…) tem de terminar
+   com UM estado final, e o total que a §15 afirma tem de ser o que as
+   linhas somam. Contar à mão foi o que errou "28 FIXED" em 25/09/2026. */
+const ESTADOS = ['FIXED', 'FALSE_POSITIVE', 'DUPLICATE', 'RISK_ACCEPTED', 'EXTERNAL_PENDING'];
+const relatorio = readFileSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md'), 'utf8');
+const contagem = Object.fromEntries(ESTADOS.map((e) => [e, 0]));
+const vistos = new Set();
+const ESTADO_EM_NEGRITO = new RegExp(`\\*\\*(${ESTADOS.join('|')})\\*\\*`);
+for (const linha of relatorio.split('\n')) {
+  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|FP\d+[A-Z]+-\d+|C\d+-[A-Za-z0-9]+) \|/);
+  /* Uma linha de tabela com estado final na última coluna e um id que o
+     padrão não conhece ficava FORA da conta, calada — foi assim que as
+     linhas FP1*-n nasceram sem entrar no total (25/09/2026). */
+  if (!m) {
+    const ultima = linha.startsWith('| ') ? linha.split('|').map((c) => c.trim()).filter(Boolean).at(-1) ?? '' : '';
+    ok(!ESTADO_EM_NEGRITO.test(ultima) || !/^\| [A-Z][A-Za-z0-9]*-[A-Za-z0-9]+ \|/.test(linha), `ledger: linha com estado final e id fora do padrão contado — ${linha.slice(0, 40)}`);
+    continue;
+  }
+  ok(!vistos.has(m[1]), `ledger: ${m[1]} aparece uma vez só`);
+  vistos.add(m[1]);
+  const celulas = linha.split('|').map((c) => c.trim()).filter(Boolean);
+  const achados = ESTADOS.filter((e) => new RegExp(`\\*\\*${e}\\*\\*`).test(celulas.at(-1)));
+  ok(achados.length === 1, `ledger: ${m[1]} tem exatamente um estado final na última coluna (tem ${achados.length})`);
+  contagem[achados[0]] += 1;
+}
+const total = vistos.size;
+const afirmado = relatorio.match(/TOTAL_LEDGER = (\d+) = FIXED (\d+) \+ FALSE_POSITIVE (\d+) \+ DUPLICATE (\d+) \+ RISK_ACCEPTED (\d+) \+ EXTERNAL_PENDING (\d+)/);
+const calculado = `TOTAL_LEDGER = ${total} = FIXED ${contagem.FIXED} + FALSE_POSITIVE ${contagem.FALSE_POSITIVE} + DUPLICATE ${contagem.DUPLICATE} + RISK_ACCEPTED ${contagem.RISK_ACCEPTED} + EXTERNAL_PENDING ${contagem.EXTERNAL_PENDING}`;
+ok(ESTADOS.reduce((soma, e) => soma + contagem[e], 0) === total, 'ledger: a soma dos cinco estados é o total');
+ok(afirmado && afirmado[0] === calculado, `ledger: a §15 afirma o que as linhas somam — calculado: ${calculado}`);
+
+console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills; ${calculado})`);

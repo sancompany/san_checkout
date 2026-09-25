@@ -41,7 +41,7 @@ export async function assinarComPix({ contratanteId, planoId, dadosPagador, most
 
   try {
     const { autorizacaoId, qrCodeBase64, copiaECola } = await post(
-      `/api/checkout/assinatura-pix/${contratanteId}/${planoId}`,
+      `/api/checkout/assinatura-pix/${encodeURIComponent(contratanteId)}/${encodeURIComponent(planoId)}`,
       dadosPagador
     );
 
@@ -57,7 +57,7 @@ export async function assinarComPix({ contratanteId, planoId, dadosPagador, most
     pararPollingAssinaturaPix();
     idIntervalo = setInterval(async () => {
       try {
-        const { status } = await get(`/api/checkout/asaas-checkout/status/${autorizacaoId}`);
+        const { status } = await get(`/api/checkout/asaas-checkout/status/${encodeURIComponent(autorizacaoId)}`);
         if (status === 'CHECKOUT_PAID') {
           pararPollingAssinaturaPix();
           mostrarToast('Assinatura autorizada! A primeira cobrança foi paga.', 'sucesso');

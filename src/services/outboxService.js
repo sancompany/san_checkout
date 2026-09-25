@@ -28,6 +28,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
+import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
 
 /** Recuo por tentativa, em segundos. A soma dá ~2 dias; depois disso o
  *  endpoint do contratante está fora do ar há tempo demais para ser
@@ -45,7 +46,10 @@ const MINUTOS_DE_ARRENDAMENTO = 2;
 
 const dependenciasPadrao = {
   fetch: (...args) => globalThis.fetch(...args),
-  agora: () => new Date()
+  agora: () => new Date(),
+  // Só o teste de rede de verdade troca isto (servidor em 127.0.0.1);
+  // nenhum chamador de produção passa outro — mesmo padrão do pull.
+  aceitarAlvo: alvoDeRedeSeguro
 };
 
 /**
@@ -59,10 +63,10 @@ export async function enfileirarNotificacao({ contratanteId, url, tipo, evento, 
 
   const { data: existente } = await supabase
     .from('outbox_notificacoes')
-    .select('id')
+    .select('id, criado_em')
     .eq('chave_idempotencia', chaveIdempotencia)
     .maybeSingle();
-  if (existente) return { id: existente.id, nova: false };
+  if (existente) return { id: existente.id, nova: false, criadoEm: existente.criado_em ?? null };
 
   const id = crypto.randomUUID();
   const corpo = {
@@ -82,27 +86,35 @@ export async function enfileirarNotificacao({ contratanteId, url, tipo, evento, 
       chave_idempotencia: chaveIdempotencia,
       payload: corpo,
       status: 'pendente',
-      proxima_tentativa_em: new Date().toISOString()
+      proxima_tentativa_em: new Date().toISOString(),
+      criado_em: new Date().toISOString()
     });
 
   if (error?.code === '23505') {
     const { data: vencedora } = await supabase
-      .from('outbox_notificacoes').select('id').eq('chave_idempotencia', chaveIdempotencia).maybeSingle();
-    return { id: vencedora?.id ?? null, nova: false };
+      .from('outbox_notificacoes').select('id, criado_em').eq('chave_idempotencia', chaveIdempotencia).maybeSingle();
+    return { id: vencedora?.id ?? null, nova: false, criadoEm: vencedora?.criado_em ?? null };
   }
   if (error) throw error;
   return { id, nova: true };
 }
 
 /** Reivindica uma linha para envio (CAS). `null` quando outra instância
- *  pegou, ou a linha não está mais pendente. */
+ *  pegou, ou a linha não está mais pendente.
+ *
+ *  `pendente`/`falhou` só com o recuo VENCIDO (SEC-023): a condição de
+ *  tempo estava só na listagem do worker, e uma passada que listou a linha
+ *  antes de outra falhar e agendar o recuo reivindicava assim mesmo —
+ *  segunda tentativa na hora, contador queimado, contratante martelado.
+ *  Quem precisa enviar já (enfileirar, reenvio do painel) grava
+ *  `proxima_tentativa_em = agora` antes de chamar, então passa. */
 export async function reivindicarEnvio(id, agora = new Date()) {
   const limite = new Date(agora.getTime() - MINUTOS_DE_ARRENDAMENTO * 60_000).toISOString();
   const { data, error } = await supabase
     .from('outbox_notificacoes')
     .update({ status: 'enviando', enviando_em: agora.toISOString() })
     .eq('id', id)
-    .or(`status.in.(pendente,falhou),and(status.eq.enviando,enviando_em.lt.${limite})`)
+    .or(`and(status.eq.pendente,proxima_tentativa_em.lte.${agora.toISOString()}),and(status.eq.falhou,proxima_tentativa_em.lte.${agora.toISOString()}),and(status.eq.enviando,enviando_em.lt.${limite})`)
     .select('*');
   if (error) throw error;
   return Array.isArray(data) && data.length === 1 ? data[0] : null;
@@ -143,14 +155,31 @@ async function marcarFalha(id, tentativasAtuais, mensagem, statusHttp) {
 export async function entregar(linha, segredo, deps = dependenciasPadrao) {
   if (!segredo) return { ok: false, erro: 'contratante sem api_key — não dá para assinar', status: null };
 
+  /* O destino é conferido A CADA ENVIO, não só no cadastro (SEC-006).
+     A URL da linha foi congelada no enfileiramento, e a regra do que é
+     um destino seguro pode ter endurecido depois (SEC-021) — uma linha
+     velha não pode escapar dela. */
+  if (!(deps.aceitarAlvo ?? alvoDeRedeSeguro)(linha.url)) {
+    return { ok: false, erro: 'destino recusado: não é https com host público', status: null };
+  }
+
   const corpoCru = JSON.stringify(linha.payload);
   const timestamp = Math.floor(deps.agora().getTime() / 1000);
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_NOTIFICACAO_MS);
 
   try {
+    /* `redirect: 'manual'` (SEC-006, 25/09/2026). O `fetch` padrão SEGUE
+       redirecionamento: um endpoint de contratante que respondesse 307
+       para a rede interna levava este POST — com a assinatura HMAC e o
+       documento do pagador no corpo — até lá, e a entrega voltava `ok`.
+       Aqui nenhum 3xx é seguido: é falha de entrega como outra qualquer,
+       com recuo, e o corpo, a assinatura e os headers nunca vão para um
+       segundo destino. O webhook do contratante é um endpoint de API: ele
+       responde 2xx, não redireciona. */
     const resposta = await deps.fetch(linha.url, {
       method: 'POST',
+      redirect: 'manual',
       headers: {
         'Content-Type': 'application/json',
         'X-Checkout-Signature': assinarPayload(corpoCru, segredo, timestamp),
@@ -161,6 +190,11 @@ export async function entregar(linha, segredo, deps = dependenciasPadrao) {
       body: corpoCru,
       signal: controlador.signal
     });
+    // O corpo da resposta não interessa: descartado, para o socket voltar ao pool.
+    resposta.body?.cancel?.().catch?.(() => {});
+    if (resposta.status >= 300 && resposta.status < 400) {
+      return { ok: false, erro: `contratante respondeu ${resposta.status} (redirecionamento não é seguido)`, status: resposta.status };
+    }
     if (!resposta.ok) return { ok: false, erro: `contratante respondeu ${resposta.status}`, status: resposta.status };
     return { ok: true, status: resposta.status };
   } catch (erro) {
@@ -176,8 +210,16 @@ export async function entregar(linha, segredo, deps = dependenciasPadrao) {
  * e, logo depois de enfileirar, por `tentarAgora` — para a primeira
  * tentativa não esperar o próximo tique.
  */
-export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoContratante, deps = dependenciasPadrao } = {}) {
+/** Quanto uma passada da outbox pode durar antes de deixar o resto para
+ *  o próximo tique (C1-07). Com endpoints pendurados (10 s cada), 50
+ *  linhas passariam de 8 minutos: o `/api/saude` acusaria a outbox (3 ×
+ *  30 s + 2 min) por culpa do contratante, e todo outro contratante
+ *  esperaria atrás dela. */
+export const ORCAMENTO_DA_PASSADA_DA_OUTBOX_MS = 60_000;
+
+export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoContratante, deps = dependenciasPadrao, orcamentoMs = ORCAMENTO_DA_PASSADA_DA_OUTBOX_MS, relogio = () => Date.now() } = {}) {
   const relatorio = { examinadas: 0, enviadas: 0, falhas: 0, abandonadas: 0 };
+  const inicio = relogio();
   const agora = deps.agora();
 
   const { data, error } = await supabase
@@ -189,7 +231,9 @@ export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoCo
     .limit(limite);
   if (error) throw error;
 
-  for (const { id, contratante_id: contratanteId } of data ?? []) {
+  const candidatas = data ?? [];
+  for (const [posicao, { id, contratante_id: contratanteId }] of candidatas.entries()) {
+    if (relogio() - inicio >= orcamentoMs) { relatorio.adiadas = candidatas.length - posicao; break; }
     const linha = await reivindicarEnvio(id, agora);
     if (!linha) continue;
     relatorio.examinadas += 1;

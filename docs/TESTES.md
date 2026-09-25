@@ -61,6 +61,37 @@ confere se cada passo abaixo funcionou.
 
 ## 2. Cadastrar um contratante de teste
 
+> **Desde 25/09/2026 (SEC-015), toda rota de `/api/admin` exige o JWT do
+> Cloudflare Access — também em `localhost`, porque não existe
+> desligamento** (um interruptor seria a porta que alguém esquece
+> aberta). O painel no navegador local não tem como mandar esse JWT, então
+> o cadastro local é por `curl.exe`, com um Access de mentira:
+>
+> ```powershell
+> # Janela C — o Access de teste (fica no ar; imprime a linha do .env e o JWT)
+> node tests/access-de-teste.js
+> ```
+>
+> Ponha no `.env` a linha `CF_ACCESS_CERTS_URL=…` que ele imprimiu,
+> reinicie a Janela B, e troque `<JWT>` abaixo pelo token impresso:
+>
+> ```powershell
+> curl.exe -X POST http://localhost:3001/api/admin/sessao -H "Content-Type: application/json" -H "Cf-Access-Jwt-Assertion: <JWT>" -d '{"usuario":"<CHECKOUT_ADMIN_USER>","senha":"<SENHA>"}'
+> curl.exe -X POST http://localhost:3001/api/admin/contratantes -H "Content-Type: application/json" -H "Cf-Access-Jwt-Assertion: <JWT>" -H "X-Admin-Token: <TOKEN_DA_SESSAO>" -d '{"id":"teste1","nome":"Contratante de Teste","apiBaseUrl":"https://contratante-teste.brunosanches-bhs.workers.dev","webhookUrl":"https://contratante-teste.brunosanches-bhs.workers.dev/webhook"}'
+> ```
+>
+> Rodado em 25/09/2026 contra o servidor local: sem o cabeçalho, `401`
+> com `acessoRestrito: true`; com ele, a sessão abre e o cadastro volta
+> com a `api_key`. O `CF_ACCESS_CERTS_URL` só é aceito apontando para o
+> loopback: no `.env` de produção ele não abre nada (não há servidor
+> ali), só derruba o painel com 503.
+>
+> ⚠️ **A tabela abaixo manda `http://localhost:4000`, e isso é recusado
+> desde 14/09/2026** (`apiBaseUrl precisa ser https e de host público` —
+> `alvoDeRede`, anti-SSRF): conferido na mesma rodada. O mock da Janela A
+> não serve mais de contratante; o comando acima usa o worker público de
+> teste, o mesmo do passo 8. O texto abaixo fica como era, pelo registro.
+
 Abra `http://localhost:3001/admin.html` no navegador. Entre com o
 `CHECKOUT_ADMIN_USER`/`CHECKOUT_ADMIN_PASS` do `.env`. Cadastre:
 

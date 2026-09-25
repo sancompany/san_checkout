@@ -13,6 +13,7 @@ import crypto, { createHash } from 'node:crypto';
 import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
 import { supabase } from '../config/supabase.js';
 import { hojeCivil, diaCivilAntes } from '../utils/diaCivil.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 
 /**
  * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
@@ -28,11 +29,17 @@ import { hojeCivil, diaCivilAntes } from '../utils/diaCivil.js';
  * (documento, e-mail, telefone). Sequência de 8+ dígitos e endereço de
  * e-mail saem; texto longo é cortado.
  */
-function resumirRespostaAsaas(corpo) {
-  const limpar = (texto) => String(texto)
+/** E-mail e sequência longa de dígitos (CPF, CNPJ, telefone, cartão)
+ *  saem de todo texto da Asaas antes de ir a log OU a quem chamou. */
+export function redigirTextoDaAsaas(texto) {
+  return String(texto)
     .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]')
     .replace(/\d[\d.\-/\s]{7,}\d/g, '[numero]')
     .slice(0, 300);
+}
+
+function resumirRespostaAsaas(corpo) {
+  const limpar = redigirTextoDaAsaas;
 
   const erros = Array.isArray(corpo?.errors) ? corpo.errors : null;
   if (erros?.length) {
@@ -63,6 +70,37 @@ function resumirRespostaAsaas(corpo) {
  */
 const TIMEOUT_ASAAS_MS = 20_000;
 
+/**
+ * Um id vira UM segmento de caminho da Asaas — nunca dois, nunca um
+ * caminho novo (SEC-017, baseline da Estação 6).
+ *
+ * A requisição sai com o `access_token` da CONTA-MÃE, e alguns destes ids
+ * chegam de fora: `GET /pix/status/:chargeId` é pública. O Express
+ * decodifica `%2F` no parâmetro, então um `chargeId` com `../` apontava
+ * a chamada autenticada para outro recurso da conta. A rota pública hoje
+ * passa pelo guarda canônico antes (`middlewares/idsCanonicos.js`), e é
+ * justamente por isso que a montagem do caminho não pode depender dele:
+ * quem chama amanhã pode vir de outro lugar.
+ *
+ * Recusa (400) em vez de codificar sozinho o que não é canônico: um id da
+ * Asaas legítimo nunca tem outro caractere (`pay_…`, `sub_…`, `cus_…` e o
+ * UUID da sessão — conferido em todas as linhas de produção em
+ * 25/09/2026), e codificar em silêncio um id estranho só adiaria o erro
+ * para uma resposta confusa da Asaas.
+ */
+export function segmentoAsaas(id, rotulo = 'identificador da Asaas') {
+  exigirIdCanonico(id, rotulo);
+  return encodeURIComponent(id);
+}
+
+/** O caminho vai para o log sem a query: é ali que viaja o CPF/CNPJ da
+ *  busca de cliente (`/v3/customers?cpfCnpj=…`, SEC-028). A rota e o
+ *  status bastam para diagnosticar. */
+function caminhoParaLog(caminho) {
+  const i = String(caminho).indexOf('?');
+  return i === -1 ? caminho : `${caminho.slice(0, i)}?[consulta omitida]`;
+}
+
 async function chamarAsaas(caminho, opcoes = {}) {
   const { baseUrl, headers } = getConfigAsaas();
 
@@ -74,7 +112,14 @@ async function chamarAsaas(caminho, opcoes = {}) {
     resposta = await fetch(`${baseUrl}${caminho}`, {
       ...opcoes,
       headers: { ...headers, ...(opcoes.headers ?? {}) },
-      signal: controlador.signal
+      signal: controlador.signal,
+      /* `error`, nunca seguir (SEC-006, busca transversal de 25/09/2026):
+         num redirecionamento para outra origem o `fetch` só descarta
+         `Authorization` — o `access_token` da CONTA-MÃE, que é cabeçalho
+         próprio da Asaas, seria reenviado ao destino novo. A API da Asaas
+         não redireciona nenhuma rota que usamos; um 3xx aqui é anomalia,
+         e vira erro de rede (ambíguo), nunca uma segunda chamada. */
+      redirect: 'error'
     });
   } catch (erroRede) {
     // `AbortError` vira mensagem de gente, não rastro de biblioteca.
@@ -96,9 +141,12 @@ async function chamarAsaas(caminho, opcoes = {}) {
 
     // No log SEMPRE, mesmo quando a descrição chega bonita na tela: é o
     // único lugar que guarda a rota e o status juntos.
-    console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminho} → ${resposta.status}: ${resumo}`);
+    console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminhoParaLog(caminho)} → ${resposta.status}: ${resumo}`);
 
-    const erro = new Error(descricao);
+    /* A descrição vai à tela e ao log de `responderErro` — redigida
+       aqui, na origem, pela mesma regra do resumo acima (SEC-028,
+       25/09/2026: o resumo era redigido e a mensagem, crua). */
+    const erro = new Error(redigirTextoDaAsaas(descricao));
     erro.status = resposta.status;
     erro.corpoAsaas = corpo;
     erro.resumoAsaas = resumo;
@@ -321,7 +369,7 @@ export function criarBuscadorDeCliente(deps = dependenciasDeCliente) {
 export const buscarOuCriarCliente = criarBuscadorDeCliente();
 
 async function buscarOuCriarClienteNaAsaas({ nome, email, documento }) {
-  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });
+  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${encodeURIComponent(documento)}`, { method: 'GET' });
   if (busca.data?.length) return busca.data[0].id;
 
   // `notificationDisabled: true` é obrigatório aqui: sem isso a Asaas
@@ -410,7 +458,7 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
 
   let qr;
   try {
-    qr = await chamarAsaas(`/v3/payments/${cobranca.id}/pixQrCode`, { method: 'GET' });
+    qr = await chamarAsaas(`/v3/payments/${segmentoAsaas(cobranca.id)}/pixQrCode`, { method: 'GET' });
   } catch (erroQr) {
     const erro = new Error(
       `Pix ${cobranca.id} foi criado na Asaas, mas a busca do QR Code falhou: ${erroQr.message}`
@@ -464,7 +512,7 @@ export async function criarCobrancaBoleto({ clienteId, valor, descricao, referen
   let linhaDigitavel = null;
   let codigoBarras = null;
   try {
-    const identificacao = await chamarAsaas(`/v3/payments/${cobranca.id}/identificationField`, { method: 'GET' });
+    const identificacao = await chamarAsaas(`/v3/payments/${segmentoAsaas(cobranca.id)}/identificationField`, { method: 'GET' });
     linhaDigitavel = identificacao?.identificationField ?? null;
     codigoBarras = identificacao?.barCode ?? null;
   } catch (erroIdentificacao) {
@@ -555,8 +603,9 @@ export async function listarPagamentosPorReferenciaExterna(referenciaExterna) {
 
 /** Status atual de uma cobrança. */
 export async function consultarStatus(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
-  return { status: cobranca.status };
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
+  // `valor` e `installment` para quem confirma pelo status conferir o valor também (C1-10).
+  return { status: cobranca.status, valor: cobranca.value ?? null, installment: cobranca.installment ?? null };
 }
 
 /**
@@ -568,8 +617,39 @@ export async function consultarStatus(chargeId) {
  * de produção, 25/09/2026 — por isso quem usa isto lê `deleted` E status.
  */
 export async function consultarPagamento(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   return { status: cobranca?.status ?? null, excluida: cobranca?.deleted === true };
+}
+
+/**
+ * A cobrança como a ASAAS a vê agora — `GET /v3/payments/{id}` —, para o
+ * webhook conferir o evento contra o provedor antes de aplicar uma
+ * transição financeira (SEC-007, 25/09/2026). `null` quando a cobrança
+ * não existe nesta conta (404): um evento sobre ela não é nosso, ou é
+ * forjado. Qualquer outra falha LANÇA — a inbox tenta de novo; "não
+ * consegui perguntar" nunca vira "a Asaas confirmou".
+ *
+ * Só os campos que a conferência lê: nada do pagador.
+ */
+export async function lerPagamentoNaAsaas(chargeId) {
+  let p;
+  try {
+    p = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+  return {
+    id: p?.id ?? null,
+    status: p?.status ?? null,
+    value: p?.value ?? null,
+    deleted: p?.deleted === true,
+    externalReference: p?.externalReference ?? null,
+    checkoutSession: p?.checkoutSession ?? null,
+    subscription: p?.subscription ?? null,
+    installment: p?.installment ?? null,
+    refunds: Array.isArray(p?.refunds) ? p.refunds.map((r) => ({ status: r?.status ?? null, value: r?.value ?? null })) : null
+  };
 }
 
 /**
@@ -582,7 +662,7 @@ export async function consultarPagamento(chargeId) {
  * cobrança paga.
  */
 export async function excluirCobranca(chargeId) {
-  const resposta = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'DELETE' });
+  const resposta = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'DELETE' });
   return { excluida: resposta?.deleted === true };
 }
 
@@ -596,7 +676,7 @@ export async function excluirCobranca(chargeId) {
  * "não sei", nunca como "cancelou".
  */
 export async function cancelarSessaoDeCheckout(asaasCheckoutId) {
-  const resposta = await chamarAsaas(`/v3/checkouts/${asaasCheckoutId}/cancel`, { method: 'POST' });
+  const resposta = await chamarAsaas(`/v3/checkouts/${segmentoAsaas(asaasCheckoutId)}/cancel`, { method: 'POST' });
   return { status: resposta?.status ?? null };
 }
 
@@ -609,10 +689,10 @@ export async function cancelarSessaoDeCheckout(asaasCheckoutId) {
  * estornada, vencida, removida) — aí o chamador cria uma nova.
  */
 export async function recuperarCobrancaPix(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   if (!STATUS_AINDA_PAGAVEL.includes(cobranca.status)) return null;
 
-  const qr = await chamarAsaas(`/v3/payments/${chargeId}/pixQrCode`, { method: 'GET' });
+  const qr = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/pixQrCode`, { method: 'GET' });
   return {
     chargeId: cobranca.id,
     status: cobranca.status,
@@ -626,13 +706,13 @@ export async function recuperarCobrancaPix(chargeId) {
  * cobrança; a linha digitável é buscada como na criação.
  */
 export async function recuperarCobrancaBoleto(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   if (!STATUS_AINDA_PAGAVEL.includes(cobranca.status)) return null;
 
   let linhaDigitavel = null;
   let codigoBarras = null;
   try {
-    const identificacao = await chamarAsaas(`/v3/payments/${chargeId}/identificationField`, { method: 'GET' });
+    const identificacao = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/identificationField`, { method: 'GET' });
     linhaDigitavel = identificacao?.identificationField ?? null;
     codigoBarras = identificacao?.barCode ?? null;
   } catch (erroIdentificacao) {
@@ -669,18 +749,44 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * @param {string} chargeId
  * @param {{ metodoPagamento?: string, valor?: number|null }} [opcoes]
  */
-export async function estornarCobranca(chargeId, { metodoPagamento, valor = null } = {}) {
+export async function estornarCobranca(chargeId, { metodoPagamento, valor = null, descricao = null } = {}) {
   const assincrono = metodoPagamento === 'boleto';
   const caminho = assincrono
-    ? `/v3/payments/${chargeId}/bankSlip/refund`
-    : `/v3/payments/${chargeId}/refund`;
+    ? `/v3/payments/${segmentoAsaas(chargeId)}/bankSlip/refund`
+    : `/v3/payments/${segmentoAsaas(chargeId)}/refund`;
 
+  /* `description` leva o MARCADOR da operação (`estornoService`): é o que
+     volta em `GET /v3/payments/{id}/refunds` e permite decidir, depois de
+     uma resposta perdida, se ESTE estorno aconteceu — sem chamar de novo
+     (SEC-002). A Asaas documenta o campo no pedido e na listagem. */
   const resultado = await chamarAsaas(caminho, {
     method: 'POST',
-    body: JSON.stringify(valor != null ? { value: valor } : {})
+    body: JSON.stringify({
+      ...(valor != null ? { value: valor } : {}),
+      ...(descricao ? { description: descricao } : {})
+    })
   });
 
   return { status: resultado.status, assincrono };
+}
+
+/**
+ * `GET /v3/payments/{id}/refunds` — os estornos de uma cobrança, com
+ * `value`, `status` e `description` de cada um (doc oficial "Listar
+ * estornos de uma cobrança", lida em 25/09/2026; nenhum `id` por item).
+ * É a fonte da reconciliação de um estorno cuja resposta se perdeu
+ * (`estornoService.reconciliarOperacao`). Lê até 100 — uma cobrança com
+ * mais estornos que isso não existe neste modelo (o parcial exige valor
+ * mínimo), e a função pagina se `hasMore` vier verdadeiro.
+ */
+export async function listarEstornosDaCobranca(chargeId) {
+  const itens = [];
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const pagina = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/refunds?limit=100&offset=${encodeURIComponent(offset)}`, { method: 'GET' });
+    itens.push(...(Array.isArray(pagina?.data) ? pagina.data : []));
+    if (!pagina?.hasMore) break;
+  }
+  return itens;
 }
 
 /**
@@ -689,7 +795,7 @@ export async function estornarCobranca(chargeId, { metodoPagamento, valor = null
  * `DELETE /v3/subscriptions/{id}` — confirmado na doc da Asaas.
  */
 export async function cancelarAssinatura(subscriptionId) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'DELETE' });
 }
 
 /**
@@ -727,7 +833,7 @@ export async function cancelarAssinatura(subscriptionId) {
 export async function consultarAssinaturaNaAsaas(subscriptionId) {
   let corpo;
   try {
-    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+    corpo = await chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'GET' });
   } catch (erro) {
     if (erro.status === 404) return null;
     throw erro;
@@ -771,7 +877,7 @@ export async function consultarAssinaturaNaAsaas(subscriptionId) {
  * @param {'INACTIVE'|'ACTIVE'} status
  */
 export async function alterarStatusAssinatura(subscriptionId, status) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, {
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, {
     method: 'PUT',
     body: JSON.stringify({ status })
   });
@@ -814,7 +920,7 @@ export async function alterarStatusAssinatura(subscriptionId, status) {
  * @param {{valor: number, ciclo: string}} plano
  */
 export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, {
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, {
     method: 'PUT',
     body: JSON.stringify({
       value: valor,
@@ -859,7 +965,7 @@ export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
 export async function dadosDeCobrancaDaAssinatura(subscriptionId) {
   let corpo;
   try {
-    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+    corpo = await chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'GET' });
   } catch (erro) {
     if (erro.status === 404) return null;
     throw erro;

@@ -4,7 +4,7 @@
  * que não dá pra pular chamando a API direto.
  */
 
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 
 /**
  * TETO DE TAMANHO POR CAMPO.
@@ -54,18 +54,36 @@ const TETOS = {
   id: 128
 };
 
+/**
+ * O que entra por JSON como TEXTO: string — ou número, para os campos de
+ * dígitos (documento, telefone, CEP) que um integrador manda sem aspas.
+ * Objeto, lista e booleano não são texto (SEC-027, 25/09/2026): até aqui
+ * cada validador fazia `String(valor)`, e `["Fulano", "x"]` virava
+ * `"Fulano,x"`, `{}` virava `"[object Object]"` — o validador aprovava o
+ * que ninguém digitou, e quem gravava gravava o valor CRU do corpo.
+ * Devolve `null` para o que não é texto.
+ */
+function comoTexto(valor) {
+  if (typeof valor === 'string') return valor;
+  if (typeof valor === 'number' && Number.isFinite(valor)) return String(valor);
+  return null;
+}
+
 /** Longo demais é recusa, não truncamento: truncar aceitaria um dado
- *  que o comprador não digitou e mandaria isso para a Asaas. */
+ *  que o comprador não digitou e mandaria isso para a Asaas. Ausente
+ *  passa (quem exige presença é o controlador); o que não é texto, não. */
 function passaNoTeto(valor, teto) {
-  return String(valor ?? '').length <= teto;
+  if (valor === undefined || valor === null) return true;
+  const texto = comoTexto(valor);
+  return texto !== null && texto.length <= teto;
 }
 
 /** Compara duas strings em tempo constante — usado em toda comparação
  *  de credencial/token vindo de fora (admin, webhook), pra não vazar
  *  por timing quantos caracteres bateram antes de falhar. */
 export function compararSeguro(a, b) {
-  const bufA = Buffer.from(String(a ?? ''));
-  const bufB = Buffer.from(String(b ?? ''));
+  const bufA = Buffer.from(typeof a === 'string' ? a : '');
+  const bufB = Buffer.from(typeof b === 'string' ? b : '');
 
   /* VAZIO NUNCA BATE COM VAZIO.
      Sem esta linha, `compararSeguro(undefined, undefined)` devolve
@@ -91,12 +109,20 @@ export function compararSeguro(a, b) {
      precisa ser constante é a comparação entre dois valores reais. */
   if (bufA.length === 0 || bufB.length === 0) return false;
 
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
+  /* O TAMANHO TAMBÉM NÃO VAZA (INFO-05, 25/09/2026). Até aqui a recusa
+     por tamanho diferente saía antes da comparação — mais rápida que a
+     comparação de dois valores do mesmo tamanho, e o tempo dizia a quem
+     sondava quantos caracteres a credencial tem. Comparar os resumos
+     SHA-256 põe os dois lados no mesmo tamanho (32 bytes) sempre; o
+     resumo é determinístico, então iguais continuam iguais. */
+  return timingSafeEqual(
+    createHash('sha256').update(bufA).digest(),
+    createHash('sha256').update(bufB).digest()
+  );
 }
 
 export function cpfValido(valor) {
-  const cpf = String(valor ?? '').replace(/\D/g, '');
+  const cpf = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (cpf.length !== 11) return false;
   if (/^(\d)\1{10}$/.test(cpf)) return false;
 
@@ -113,7 +139,7 @@ export function cpfValido(valor) {
 }
 
 export function cnpjValido(valor) {
-  const cnpj = String(valor ?? '').replace(/\D/g, '');
+  const cnpj = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (cnpj.length !== 14) return false;
   if (/^(\d)\1{13}$/.test(cnpj)) return false;
 
@@ -139,7 +165,7 @@ export function cnpjValido(valor) {
  *  (Pix, Boleto, Cartão, Assinatura, cancelamento). */
 export function documentoValido(valor) {
   if (!passaNoTeto(valor, TETOS.documento)) return false;
-  const digitos = String(valor ?? '').replace(/\D/g, '');
+  const digitos = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (digitos.length === 11) return cpfValido(digitos);
   if (digitos.length === 14) return cnpjValido(digitos);
   return false;
@@ -173,12 +199,12 @@ export function documentoValido(valor) {
  * `cpfCnpj`.
  */
 export function normalizarDocumento(valor) {
-  return String(valor ?? '').replace(/\D/g, '');
+  return (comoTexto(valor) ?? '').replace(/\D/g, '');
 }
 
 export function emailValido(valor) {
-  if (!passaNoTeto(valor, TETOS.email)) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor ?? '').trim());
+  if (typeof valor !== 'string' || !passaNoTeto(valor, TETOS.email)) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor.trim());
 }
 
 export function valorValido(valor) {
@@ -334,7 +360,7 @@ export const MENSAGEM_PISO_ASAAS =
  *   → todos `16987654321`
  */
 export function normalizarTelefone(valor) {
-  const digitos = String(valor ?? '').replace(/\D/g, '');
+  const digitos = (comoTexto(valor) ?? '').replace(/\D/g, '');
   return /^55\d{10,11}$/.test(digitos) ? digitos.slice(2) : digitos;
 }
 
@@ -354,7 +380,7 @@ export function telefoneValido(valor) {
 
 export function cepValido(valor) {
   if (!passaNoTeto(valor, TETOS.cep)) return false;
-  const cep = String(valor ?? '').replace(/\D/g, '');
+  const cep = (comoTexto(valor) ?? '').replace(/\D/g, '');
   return cep.length === 8;
 }
 
@@ -368,7 +394,7 @@ export function cepValido(valor) {
  */
 export function camposDeEnderecoDentroDoTeto(campos) {
   return Object.entries(campos).every(
-    ([campo, valor]) => valor === undefined || passaNoTeto(valor, TETOS[campo])
+    ([campo, valor]) => valor === undefined || valor === null || (typeof valor === 'string' && passaNoTeto(valor, TETOS[campo]))
   );
 }
 
@@ -383,29 +409,71 @@ export function camposDeEnderecoDentroDoTeto(campos) {
  * caminho do dinheiro é pior que aceitar um nome esquisito.
  */
 export function nomeValido(valor) {
-  const nome = String(valor ?? '').trim();
+  if (typeof valor !== 'string') return false;
+  const nome = valor.trim();
   return nome.length >= 2 && nome.length <= TETOS.nome;
 }
 
 /**
- * Recusa id fora do teto — usado nas TRÊS portas por onde um id de
- * pedido ou de plano entra no sistema: os resolvedores que chamam a API
- * do contratante (`pedidoService`), a busca de assinatura
- * (`assinaturaService`) e a busca de cobrança por pedido
- * (`cobrancaService`).
+ * IDENTIFICADOR CANÔNICO — o contrato de todo id que atravessa fronteira:
+ * pedido, plano, contratante, e os ids da Asaas (cobrança, sessão,
+ * assinatura) quando entram por URL ou corpo.
  *
- * Mora aqui, e a guarda fica nas funções compartilhadas em vez de em
- * cada controlador, por duas razões: a skill `construir` manda corrigir
- * na raiz ("uma guarda na função compartilhada é um diff menor que uma
- * guarda em cada chamador, e não deixa os chamadores irmãos quebrados"),
- * e chamador novo nasce coberto.
+ * Até 25/09/2026 esta função só conferia o TAMANHO, e o id seguia cru
+ * para dois lugares: o caminho de uma requisição HTTP à API do
+ * contratante e a chave de busca no banco. As duas coisas quebravam
+ * juntas (SEC-001/SEC-003, baseline da Estação 6):
+ *
+ *   - O Express decodifica `%2F` e `%3F` num parâmetro de rota, e
+ *     `new URL()` resolve `..` — um `pedidoId` com subida de diretório e
+ *     `?` codificados saía de `/pedido/` para OUTRO caminho da API do
+ *     contratante, levando a `X-Checkout-Key` dele, e o corpo voltava a
+ *     quem não tem credencial nenhuma. O Checkout virava proxy
+ *     autenticado.
+ *   - `./ped_1` vira `/pedido/ped_1` no contratante (o MESMO pedido), mas
+ *     é outra chave no nosso banco — RN-04, RN-04.1 e RN-51 procuram por
+ *     `pedido_id` exato e nenhuma via o pagamento já feito sob a grafia
+ *     canônica. Pagamento duplicado sem detecção.
+ *
+ * A correção é RECUSAR, não normalizar. Normalizar exigiria decidir qual
+ * das grafias é "a" verdadeira — e cada decodificador (Express, `URL`, a
+ * API do contratante, o Postgres) decide de um jeito. Com um alfabeto que
+ * nenhum deles reinterpreta, as grafias alternativas deixam de existir:
+ * letras ASCII, dígitos, `-` e `_`. Fica de fora tudo que muda de sentido
+ * em algum decodificador — `.` (segmento `.`/`..`), `/` e `\`, `?` e `#`,
+ * `%` (o que sobra de uma dupla codificação), espaço, caractere de
+ * controle e qualquer não-ASCII (as barras "parecidas" do Unicode).
+ *
+ * Conferido antes de valer (25/09/2026): todos os ids reais do banco de
+ * produção (`cobrancas`, `assinaturas`, `contratantes`) e os exemplos do
+ * `API.md` cabem nele. O que já era texto só de dígitos curto continua
+ * recusado por `pedidoService` (enumerável) — são regras diferentes.
+ *
+ * Tipo primeiro: um id que chega como número, array ou objeto no corpo
+ * JSON não é "convertido" — `String(['a','b'])` é `a,b`, e converter é
+ * exatamente a normalização ambígua que esta função existe para não fazer.
+ *
+ * Mora aqui, e a guarda fica nas funções compartilhadas (e no guarda de
+ * parâmetro de rota, `middlewares/idsCanonicos.js`) em vez de em cada
+ * controlador: chamador novo nasce coberto (lição nº 24).
  *
  * Lança com `.status` para `utils/erros.js` devolver 400 e a mensagem —
  * ela é segura de mostrar, e ajuda quem integra a entender a recusa.
  */
-export function exigirIdNoTeto(id, rotulo) {
-  if (passaNoTeto(id, TETOS.id)) return;
-  const erro = new Error(`O ${rotulo} excede o tamanho máximo de ${TETOS.id} caracteres.`);
+export const ID_CANONICO = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function idCanonico(id) {
+  return typeof id === 'string' && ID_CANONICO.test(id);
+}
+
+export function exigirIdCanonico(id, rotulo) {
+  if (idCanonico(id)) return;
+  const tamanho = typeof id === 'string' ? id.length : 0;
+  const erro = new Error(
+    tamanho > TETOS.id
+      ? `O ${rotulo} excede o tamanho máximo de ${TETOS.id} caracteres.`
+      : `O ${rotulo} é inválido: use só letras sem acento, números, "-" e "_" (até ${TETOS.id} caracteres).`
+  );
   erro.status = 400;
   throw erro;
 }
@@ -654,6 +722,71 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   assert.ok(!compararSeguro(undefined, undefined), 'nulo NÃO bate com nulo');
   assert.ok(!compararSeguro(undefined, 'segredo'), 'header ausente não bate com segredo');
   assert.ok(!compararSeguro('segredo', ''), 'segredo não bate com vazio');
+
+  /* --- IDENTIFICADOR CANÔNICO (SEC-001/SEC-003, 25/09/2026) ---
+     Os aceitos são os ids que existem de verdade (produção e `API.md`);
+     os recusados são as grafias que algum decodificador reinterpreta.
+     Os recusados vêm já DECODIFICADOS, como o Express entrega em
+     `req.params`: `%2e%2e%2f` chega aqui como `../`. */
+  for (const id of ['ped_1', 'ped_isento', 'ped_dez_boleto', 'plano_anual', 'testemaster', 'mostrai',
+    '550e8400-e29b-41d4-a716-446655440000', 'pay_4b4o86s675b7sw5n', 'sub_39mjscz7vl2jwx7g', 'PED-0001', 'a', 'x'.repeat(128)]) {
+    assert.ok(idCanonico(id), `"${id.slice(0, 40)}" é canônico`);
+    assert.doesNotThrow(() => exigirIdCanonico(id, 'pedidoId'), `"${id.slice(0, 40)}" passa na guarda`);
+  }
+  const GRAFIAS_RECUSADAS = {
+    'ponto': '.', 'dois pontos': '..', 'segmento ponto': './ped_1', 'subida': '../ped_1',
+    'subida no meio': 'a/../ped_1', 'barra dupla': '//ped_1', 'barra final': 'ped_1/',
+    'barra': 'ped/1', 'contrabarra': 'ped_1\\..\\x', 'contrabarra só': '\\',
+    '%2e literal': '%2e', '%2f literal': '%2f', 'dupla codificação %252e': '%252e',
+    'dupla codificação %255c': '%255c', 'porcento': 'ped%', 'barra unicode ∕ (U+2215)': 'ped∕1',
+    'barra fullwidth ／ (U+FF0F)': 'ped／1', 'barra de fração ⁄ (U+2044)': 'ped⁄1',
+    'contrabarra fullwidth ＼': 'ped＼1', 'query': 'ped_1?x=1', 'fragmento': 'ped_1#x',
+    'NUL': 'ped\u0000', 'quebra de linha': 'ped\n1', 'tab': 'ped\t1', 'DEL': 'ped\u007f',
+    'espaço': 'ped 1', 'espaço nas pontas': ' ped_1', 'acento': 'pédido', 'pipe': 'ped|1',
+    'vírgula': 'ped,1', 'dois-pontos': 'ped:1', 'ponto e vírgula': 'ped;1', 'arroba': 'ped@x',
+    'vazio': '', '129 caracteres': 'x'.repeat(129)
+  };
+  for (const [nome, id] of Object.entries(GRAFIAS_RECUSADAS)) {
+    assert.ok(!idCanonico(id), `recusa ${nome}`);
+    assert.throws(() => exigirIdCanonico(id, 'pedidoId'), (e) => e.status === 400, `${nome} vira 400`);
+  }
+  for (const [nome, valor] of Object.entries({ 'número': 12345678, 'array': ['ped_1'], 'objeto': { id: 'ped_1' }, 'nulo': null, 'ausente': undefined, 'booleano': true })) {
+    assert.ok(!idCanonico(valor), `recusa id do tipo ${nome} — não converte`);
+    assert.throws(() => exigirIdCanonico(valor, 'planoId'), (e) => e.status === 400, `${nome} vira 400`);
+  }
+  assert.throws(() => exigirIdCanonico('x'.repeat(129), 'pedidoId'), /excede o tamanho máximo de 128/, 'acima do teto diz qual é o teto');
+  assert.throws(() => exigirIdCanonico('../x', 'planoId'), /planoId é inválido/, 'a mensagem cita o rótulo');
+
+  /* --- SEC-027: o que não é texto não é aprovado por virar texto --- */
+  const NAO_SAO_TEXTO = { 'lista': ['Fulano de Tal', 'x'], 'objeto': { nome: 'Fulano de Tal' }, 'booleano': true };
+  for (const [tipo, valor] of Object.entries(NAO_SAO_TEXTO)) {
+    assert.ok(!nomeValido(valor), `nome do tipo ${tipo} é recusado (String() o aprovava)`);
+    assert.ok(!emailValido(valor), `e-mail do tipo ${tipo} é recusado`);
+    assert.ok(!documentoValido(valor), `documento do tipo ${tipo} é recusado`);
+    assert.ok(!telefoneValido(valor), `telefone do tipo ${tipo} é recusado`);
+    assert.ok(!cepValido(valor), `CEP do tipo ${tipo} é recusado`);
+    assert.equal(normalizarDocumento(valor), '', `normalizar um documento do tipo ${tipo} dá vazio, não "[object Object]"`);
+    assert.ok(!camposDeEnderecoDentroDoTeto({ endereco: valor }), `endereço do tipo ${tipo} é recusado`);
+  }
+  assert.ok(!documentoValido(['111.444.777-35']), 'a lista com UM CPF válido — que String() deixava idêntica ao CPF — é recusada');
+  assert.ok(!nomeValido(['Fulano de Tal']), 'idem para o nome');
+  /* controle positivo: número continua valendo nos campos de dígitos */
+  assert.ok(documentoValido(11144477735), 'CPF como número (integrador sem aspas) continua válido');
+  assert.ok(telefoneValido(16987654321), 'telefone como número continua válido');
+  assert.ok(cepValido(14020260), 'CEP como número continua válido');
+  assert.ok(camposDeEnderecoDentroDoTeto({ endereco: 'Rua A', complemento: undefined, bairro: null }), 'ausente e nulo passam no teto (presença é do controlador)');
+
+  /* --- INFO-05: tamanho diferente passa pela MESMA comparação --- */
+  assert.ok(compararSeguro('segredo-de-teste', 'segredo-de-teste'), 'controle: iguais batem');
+  assert.ok(!compararSeguro('segredo-de-teste', 'segredo-de-tesTe'), 'mesmo tamanho, diferente: não bate');
+  assert.ok(!compararSeguro('segredo-de-teste', 'segredo'), 'tamanho diferente: não bate');
+  assert.ok(!compararSeguro(['segredo-de-teste'], 'segredo-de-teste'), 'lista com a credencial não vira a credencial');
+  {
+    const fonte = (await import('node:fs')).readFileSync(new URL(import.meta.url), 'utf8');
+    const corpo = fonte.slice(fonte.indexOf('export function compararSeguro'), fonte.indexOf('export function cpfValido'));
+    assert.ok(!/bufA\.length !== bufB\.length/.test(corpo), 'a recusa antecipada por tamanho não voltou');
+    assert.ok(/createHash\('sha256'\)/.test(corpo), 'os dois lados vão ao mesmo tamanho pelo resumo');
+  }
 
   console.log(`validadores: ${checagens} checagens OK`);
 }

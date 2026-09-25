@@ -274,7 +274,8 @@ Duas telas: **login** e **painel**.
 | Sucesso | a seção pedida, com os dados |
 | Vazio | texto próprio por seção: "Nenhum contratante cadastrado" (com "Cadastre o primeiro projeto que vai usar o checkout."), "Nenhuma subconta criada", "Nenhuma cobrança no período", "Nada arquivado", "Nenhum webhook recebido ainda", e na aba **Filas** (desde 24/09/2026) "Nenhum evento na inbox" / "Nenhuma notificação na outbox" |
 | Erro | mensagem do backend em toast, sem detalhe interno |
-| **Sem permissão** | Cloudflare Access barra antes da página; sem token válido, `401`; **backend sem as variáveis de admin devolve `503`, não `401`** — "admin desativado" é diferente de "senha errada"; mais de 5 tentativas de login por minuto, `429` |
+| **Sem permissão** | Cloudflare Access barra antes da página **e antes da API** (desde 25/09/2026 o painel chama `/api/admin/*` pelo próprio domínio, atrás do Access — RN-61); chamada que chega à API sem o JWT do Access, `401` com "O painel administrativo só abre pelo endereço protegido", antes até do login; sem token válido, `401`; **backend sem as variáveis de admin devolve `503`, não `401`** — "admin desativado" é diferente de "senha errada"; chaves do Access ilegíveis, `503`; mais de 5 tentativas de login por minuto, `429` |
+| Sessão do Access vencida no meio do uso | a chamada seguinte é redirecionada para o login da Cloudflare, e o navegador a recusa: o toast mostra um erro de rede. Recarregar `/admin` pede o login do Access de novo (`RUNBOOK.md`, "Perdi o acesso ao `/admin`") |
 | Lista longa demais | a aba Webhook pede os **100** eventos mais recentes e o backend limita a **200** (padrão 50); as demais listas são pequenas por natureza — um operador, poucos contratantes |
 
 Sem sessão guardada em cookie: o token fica no `sessionStorage` da aba e
@@ -395,10 +396,61 @@ ficam como estão — `confirmado`, dinheiro real —, as duas linhas ganham
 contratante leva `pagamentoDuplicado: true` e `duplicadoCom`, e o
 operador recebe uma linha em `erros` ("PAGAMENTO DUPLICADO"). Nada é
 estornado sozinho: um dos dois é devolvido pelo fluxo de estorno de
-sempre (`POST /api/checkout/estornar`, que estorna a mais recente, ou o
-painel da Asaas). *Violada:* um segundo pagamento sumiria da conta ou
+sempre (`POST /api/checkout/estornar` com o `chargeId` da que deve
+voltar — sem ele, a rota responde `409 mais_de_uma_cobranca_paga` e
+lista os dois — ou o painel da Asaas). *Violada:* um segundo pagamento sumiria da conta ou
 seria gravado como cancelado. *Quem vê:* o contratante, que precisa
 devolver um; o operador, no painel de erros.
+
+**RN-53 · Cada estorno é uma operação durável, e a mesma chave é o
+mesmo estorno.** Desde 25/09/2026 (SEC-002, Estação 6): `POST /estornar`
+grava a operação em `estornos` (migration 0018) ANTES de chamar a Asaas,
+identificada pela `chaveIdempotencia` do contratante — obrigatória no
+parcial, derivada da cobrança no total. Repetir a mesma chave devolve o
+resultado gravado e nunca estorna de novo; a mesma chave com outro valor
+ou outra cobrança é recusada. Resposta perdida (timeout, 5xx, queda do
+processo) deixa a operação em `UNKNOWN_PROVIDER_RESULT`, e só a
+reconciliação decide — pelo marcador que viaja na `description` do
+estorno e volta em `GET /v3/payments/{id}/refunds` (ou pelo delta exato
+do valor, com uma operação em aberto só); ausência só vale como prova
+depois de 15 minutos, e o worker de 2 minutos nunca chama o estorno. O
+que está em voo conta como estornado na conta do restante, então o
+acumulado nunca passa do cobrado. E a cobrança estornada é a que PAGOU,
+não a mais recente (SEC-005). *Violada:* cobrança de R$ 100, parcial de
+R$ 30 com a resposta perdida, o contratante repete e a Asaas devolve
+R$ 60. *Quem vê:* o contratante, que perde o dinheiro; o pagador, que
+recebe a mais.
+
+**RN-55 · Instrumento de pagamento só volta se ainda é o instrumento
+deste pedido, por este preço.** Desde 25/09/2026 (SEC-004/SEC-005,
+Estação 6): `POST /pix` e `/boleto` passam pela guarda de pedido pago
+(RN-04.1) e pela cotação ANTES de reaproveitar a cobrança pendente; a
+cobrança obsoleta (RN-51) nunca volta; valor diferente do da cotação
+exclui o Pix/boleto antigo na Asaas — lendo o estado antes, nunca sobre
+o que foi pago — antes de criar o novo. Na pop-up, sessão de outro
+valor, parcelas ou ciclo é encerrada antes de abrir outra (PAID não se
+substitui; qualquer dúvida é "tente de novo" sem nada novo). E "a
+cobrança do pedido" da tela de status e da consulta do contratante é a
+que segura dinheiro, depois a pendente vigente, depois a mais recente —
+nunca a irmã cancelada. *Violada:* o QR de um pedido já pago no cartão
+era devolvido de novo; o pagador via R$ 80 e pagava R$ 100; um pedido
+pago aparecia como cancelado. *Quem vê:* o pagador; o contratante na
+conciliação.
+
+**RN-54 · Identificador que atravessa fronteira tem uma grafia só.**
+Desde 25/09/2026 (SEC-001/SEC-003, Estação 6): `pedidoId`, `planoId`,
+`contratanteId` e os ids da Asaas que chegam por URL ou corpo só aceitam
+letras sem acento, números, `-` e `_` (até 128) — o resto é `400`, nunca
+normalizado. Antes, `%2F`/`%3F` decodificados pelo Express e `..`
+resolvido pela `URL` faziam um `pedidoId` adulterado virar outro caminho
+de uma requisição autenticada com a chave do contratante (o Checkout
+virava proxy de leitura da API dele), e `./ped_1` era o mesmo pedido no
+contratante e outra chave no nosso banco — escapando das guardas de
+pagamento duplicado (RN-04, RN-04.1, RN-51). As rotas públicas de status
+de Pix/boleto só consultam a Asaas para uma cobrança que é nossa e do
+método da rota. *Violada:* anônimo lia outros recursos da API do
+contratante; o mesmo pedido era pago duas vezes sem detecção. *Quem
+vê:* o contratante; o pagador que pagou duas vezes.
 
 **RN-05 · Método não habilitado não cobra.** O contratante declara quais
 métodos aceita; o backend recusa os demais mesmo que a requisição peça.
@@ -569,6 +621,33 @@ o ciclo duas vezes. *Quem vê:* o contratante, em silêncio. Corrigido:
 Postgres `23505`) e sinaliza `duplicado`; a entrega perdedora não
 notifica nada, confiando que a vencedora já cuidou disso. Achado e
 corrigido em 16/09/2026, verificado por sabotagem.
+*Revisto em 25/09/2026 (FP1A-1):* `23505` sozinho não prova que o
+charge repetiu — a linha do ciclo também cai no índice único da reserva
+de pop-up do mesmo plano e documento (`0015`), e com uma renovação
+aberta o ciclo pago sumia calado. Agora só é `duplicado` se a linha
+daquele `charge_id` existe; se não, o evento lança e a inbox refaz com
+recuo até a reserva se resolver (esgotado, vira `erros`).
+E `duplicado` já não faz a entrega parar (FP1R-A-1): quem venceu a
+inserção pode ser OUTRO evento do mesmo ciclo (a recusa ou o vencimento
+chegando junto com a confirmação), e parar descartava a confirmação. A
+perdedora segue com a linha que existe; a máquina de estados decide, e o
+aviso ao contratante tem chave do fato — a MESMA confirmação continua
+saindo uma vez só, que é a garantia original desta regra.
+*E a chave do fato não bastava sozinha (FP2A-1):* com duas passadas do
+mesmo charge em paralelo, a que aplicou a transição e achou a chave já
+gravada pela outra lia "o fato aconteceu de novo" e enfileirava um
+segundo aviso com `eventoId` novo. Agora o webhook processa um charge de
+cada vez (fila em memória; `CONSTRAINTS.md` §2 explica por que isso
+depende de haver uma instância só).
+*E o "aconteceu de novo" é reconhecido pelo que está gravado (FP3A-1,
+FP4A-1):* além da passada que aplicou a transição, vale quando o momento
+gravado do estado atual (`status_evento_em`) é mais de 5 minutos
+posterior ao aviso que já existe — assim a retentativa depois de uma
+queda ainda envia a reconfirmação. A chave desse segundo aviso leva o
+instante em forma canônica (o PostgREST devolve `+00:00`, o JavaScript
+escreve `Z`: o mesmo instante em dois textos virava dois fatos). Resíduo
+aceito: uma reconfirmação a menos de 5 minutos do aviso anterior, somada
+a uma queda naquele instante, ainda se perde (RES-64).
 
 **RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
 avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com
@@ -962,6 +1041,234 @@ relê. Vale para `PAYMENT_*` e `CHECKOUT_*`. *Violada:* um
 cobrança a `confirmado`; um `CHECKOUT_PAID` reprocessado no painel
 fazia o mesmo. *Quem vê:* o contratante, que libera de novo o que foi
 devolvido. C-03.
+
+**RN-56 · O evento de pagamento diz "olhe"; quem diz o que aconteceu é
+a Asaas.** Todo `PAYMENT_*` tratado pergunta `GET /v3/payments/{id}`
+antes de mexer em dinheiro. A cobrança tem de existir nesta conta (404 →
+nada aplicado, linha em `erros`); o vínculo (`externalReference`,
+`checkoutSession`, assinatura, parcelamento) e o valor vêm da resposta
+DELA, nunca do corpo; e a linha achada pelo `charge_id` tem de ser a que
+a Asaas reconhece (referência ou sessão diferente → nada aplicado).
+Transição que move dinheiro exige respaldo: `confirmado` só com a
+cobrança paga lá (ou num estado que implica que foi paga), estorno só
+com o estorno lá, contestação só com a contestação lá, e a **negativa
+de estorno** só com o pagamento de volta a pago lá (desde 25/09/2026,
+CP1-01 — a negativa reabre o pedido, RN-71); sem respaldo o
+evento é tentado de novo pela inbox e, esgotado, vira `erros`. Não
+conseguir perguntar também é tentar de novo — nunca "confirmado".
+Confirmação de valor diferente do cobrado (pedido avulso sem parcela)
+não confirma sozinha. A ordem: um evento que aponta para trás de um
+estado que a Asaas confirma é histórico e se ignora (a liquidação D+30
+de um cartão em disputa não tira a cobrança de `chargeback`); um evento
+cuja transição ainda não se aplica, com a Asaas À FRENTE do estado
+local, é estado anterior faltando — lança, e a inbox o reaplica depois
+do que falta, em vez de descartá-lo como obsoleto. Com a Asaas já no
+estado que o evento aponta, o carimbo não o descarta; carimbo no futuro
+vale "agora", e o gravado nunca anda para trás. Um segundo pagamento
+na Asaas com a referência de uma reserva já paga é denunciado em
+`erros` (RN-52), nunca ignorado. A origem é conferida contra a lista
+oficial de IPs da Asaas: fora dela, com token válido, vira `erros`; a
+recusa (`403`) só com `ASAAS_WEBHOOK_IP_ESTRITO=1`, porque a origem real
+das entregas atrás do proxy ainda não foi medida. *Violada:* com o token
+do webhook vazado, um `PAYMENT_CONFIRMED` com um `payment.id` real
+confirmava a cobrança sem pagamento e avisava o contratante; um
+`PAYMENT_REFUNDED` chegando antes da confirmação era descartado e a
+cobrança ficava paga com o dinheiro devolvido. *Quem vê:* o contratante
+(libera o que não foi pago; mantém o acesso de quem foi reembolsado) e o
+dono (a métrica conta dinheiro que não existe). SEC-007, SEC-008,
+SEC-019 da Estação 6.
+
+**RN-57 · Divergência com a Asaas tem dono, e ele é dirigido.** O
+reconciliador de divergências (a cada 15 min) olha só as cobranças com
+SINAL — evento de pagamento que esgotou a inbox nos últimos 14 dias,
+`em_analise` parada há mais de 1 dia, `estorno_solicitado` há mais de 3,
+`pendente` com a sessão da pop-up concluída há mais de 1 —, no máximo 20
+por passada, e nunca varre a base. Para cada uma, leva a cobrança ao
+estado da Asaas pelos passos que a máquina permite, cada passo pelo
+mesmo processamento de um evento de verdade (os avisos ao contratante
+contam a história inteira: pago, depois estornado); o segundo estorno
+parcial perdido entra pelo acumulado. Sem caminho permitido, nada é
+forçado e um humano é chamado em `erros`. A reentrega, pela Asaas, de um
+evento que FALHOU reabre a linha com as tentativas zeradas e a processa
+na hora — é o gesto de quem reenviou pelo painel dela; o reenvio pelo
+nosso painel também zera as tentativas; e nenhuma linha em recuo é
+reivindicada antes da hora (a passada seguinte do worker não queima a
+tentativa). *Violada:* um `PAYMENT_CONFIRMED` que esgotasse as oito
+tentativas deixava a cobrança `pendente` para sempre, com o dinheiro na
+conta; um estorno de boleto cujo evento não veio ficava
+`estorno_solicitado` para sempre. *Quem vê:* o comprador, o contratante
+e o dono, sem sintoma nenhum. JULES-004, SEC-023, SEC-024.
+
+**RN-58 · O acerto de uma troca nunca fica órfão, e nunca é cobrado duas
+vezes.** A aprovação reivindica a intenção, cobra o acerto com a
+referência `troca:<id da intenção>` e grava o `charge_id`. Se o processo
+morre entre cobrar e gravar, ou a cobrança fica ambígua (timeout, 5xx),
+a intenção fica em processamento e o arrendamento da assinatura FICA com
+ela: o sweeper, depois de 3 minutos, procura a cobrança na Asaas pela
+referência — achou uma, vincula e segue a classificação de sempre; achou
+duas, chama um humano; não achou nada depois de 15 minutos, está provado
+que nada foi cobrado e o link fecha (`STALE`). O `PAYMENT_CONFIRMED` do
+acerto acha a intenção pela mesma referência, dita pela Asaas. Uma
+recusa LIMPA da Asaas (4xx com corpo) fecha o link na hora. No máximo UMA
+intenção por assinatura com dinheiro em trânsito (índice da migration
+0019): a aprovação de outra vira `STALE`, e `POST /trocar-plano` responde
+`409 troca_em_andamento`. Nenhum destes caminhos cobra de novo.
+*Violada:* um deploy no meio da aprovação deixava a intenção em
+processamento para sempre e o evento do acerto era descartado — o
+assinante pagava e o plano não mudava; e um acerto ambíguo devolvia o
+arrendamento, abrindo a porta para um segundo acerto. *Quem vê:* o
+assinante, cobrado sem receber. SEC-009, SEC-010.
+
+**RN-59 · Uma assinatura viva por plano e documento.** Sem o token de
+renovação, `POST /assinatura` recusa (`409 assinatura_ja_existe`) quando
+o comprador já tem uma assinatura `ativa` ou `pausada` daquele plano; a
+troca de cartão tem porta própria, a renovação. *Violada:* reabrir o
+link do plano e pagar abria uma segunda assinatura no mesmo cartão, e
+cancelar desfazia só a mais recente. *Quem vê:* o assinante, cobrado em
+dobro todo ciclo. SEC-012.
+
+**RN-60 · A assinatura nasce inteira, e o que não nasce é visto.** O id
+da assinatura na Asaas é gravado na cobrança já no primeiro evento de
+pagamento, qualquer que seja o status; a assinatura NASCE (linha em
+`assinaturas`, evento `criada`) com o primeiro dinheiro, decidido pela
+ausência da linha — nunca por um vínculo já gravado. Toda escrita dessa
+amarração relança o erro, e a inbox refaz; refazer não cancela de novo a
+assinatura antiga de uma renovação. Primeiro ciclo recusado ou vencido
+chama um humano (a assinatura segue viva na Asaas); pagamento de
+assinatura sem cobrança nossa apontando para ela vira `erros`. O
+`CHECKOUT_PAID` não vincula pagamento nenhum (o real não traz; um id
+tirado do corpo só viria de um evento forjado). Depois que a Asaas
+cancelou, pausou ou retomou, falha do registro local ou do aviso vira
+`erros`, nunca um erro para quem chamou (repetir repetiria na Asaas), e
+o arrendamento da assinatura volta também no sucesso. *Violada:* uma
+falha de banco na primeira confirmação deixava a assinatura cobrando na
+Asaas e 404 aqui; o ciclo seguinte a um primeiro ciclo recusado era
+descartado com uma linha de log; e pausar travava cancelar por 5
+minutos. *Quem vê:* o assinante e o contratante. SEC-011, SEC-013,
+SEC-014, SEC-029.
+
+**RN-61 · A área administrativa só responde a quem passou pelo Access —
+na origem, não só na página.** Toda rota de `/api/admin`, inclusive a
+de login, exige o JWT do Cloudflare Access do aplicativo do painel
+(assinatura da equipe, `aud` do painel, `type: app`, dentro da
+validade); sem ele, `401` antes da senha, pelo domínio da API ou pela
+origem da Northflank. O painel chega à API por uma função do Pages no
+próprio domínio, atrás do Access, que repassa só o JWT, o token de
+sessão e o `content-type`. A senha continua sendo a segunda camada.
+Não há desligamento; chaves do Access ilegíveis dão `503`. Tentativa
+sem o Access não gasta o teto de login do operador. *Violada:* a API
+do admin respondia a qualquer um pela origem, e o login inteiro ficava
+ao alcance de quem soubesse o endereço; e as prévias do Pages serviam
+`/admin` sem Access nenhum. *Quem vê:* o operador. SEC-015, NEW-01.
+
+**RN-62 · A janela de pagamento de uma assinatura só volta para quem a
+abriu.** A reserva da assinatura é pelo plano + CPF/CNPJ, e a sessão
+pendente só é reaproveitada quando o e-mail e o telefone de quem pede são
+os mesmos de quem a abriu (sem diferença de maiúsculas, espaço ou `+55`).
+Diferentes, a antiga é encerrada na Asaas e nasce outra com os dados de
+quem pediu; a sessão já concluída nunca é substituída, e o id dela só volta
+para o mesmo pagador. *Violada:* com o CPF de alguém — que não é segredo —
+e o link público do plano, recebia-se a janela de pagamento dela,
+preenchida pela Asaas com nome, e-mail, telefone e endereço. *Quem vê:* o
+assinante. NEW-02.
+
+**RN-63 · Compra parcelada no cartão não se estorna pela API.** O estorno
+pede à Asaas o estado da cobrança antes; se ela é parte de um parcelamento,
+a resposta é `409 estorno_de_parcelamento` e nada é chamado — o estorno sai
+pelo painel da Asaas, e o resultado chega pelo webhook. Sem conseguir
+conferir, `502` e nada estornado. *Violada:* o `chargeId` da compra
+parcelada é a primeira parcela; estorná-lo pelo endpoint de cobrança
+arriscava devolver uma parcela e registrar o total como estornado. *Quem
+vê:* o comprador e o contratante. SEC-018 (a medição no sandbox do estorno
+de parcelamento fica em `docs/pendencias.md`).
+
+**RN-64 · Escrita de estado confere o estado que leu.** A conciliação do
+contratante só grava `confirmado` sobre o status que ela leu; a reserva só
+é apagada enquanto é reserva (pendente, sem pagamento e sem sessão); e a
+autorização do Pix Automático só ativa o que está pendente e só encerra o
+que está pendente ou confirmado. Quem perde a corrida não escreve. *Violada:*
+um estorno gravado pelo webhook no meio da conciliação voltava a
+`confirmado`; uma reserva que ganhou pagamento podia ser apagada; e a
+reentrega da autorização repetia o aviso ao contratante. *Quem vê:* o
+contratante e o operador. SEC-020, SEC-022, SEC-025.
+
+**RN-65 · Worker parado derruba a saúde.** `/api/saude` responde `503` quando
+um worker (inbox, outbox, reconciliadores, cancelador de irmãs, varredura
+da troca) fica sem uma passada bem-sucedida por mais de três intervalos
+dele e mais dois minutos, e lista quais em `workersAtrasados`. *Violada:* o
+HTTP era `200` com o worker parado — e o monitor de uptime lê o código, não
+o corpo. *Quem vê:* o operador. SEC-031.
+
+**RN-66 · Nenhuma rota derruba o processo.** Todo handler do Express — do
+`app` e de todo roteador (`src/utils/rotaSegura.js`) — manda o que lançar,
+síncrono ou assíncrono, para o tratador de erro do fim da pilha: `500`
+genérico e linha em `erros`. A guarda do Access recusa (`401`) qualquer
+token que ela não consiga julgar. *Violada:* um JWT com `alg` objeto, sem
+login e antes de todo limitador, lançava dentro de um handler `async`, e o
+tratador de `unhandledRejection` encerrava a única instância — checkout,
+webhook e workers juntos. *Quem vê:* todos. C1-01.
+
+**RN-67 · O webhook responde à Asaas no teto, não quando ela responde.** O
+processamento continua inline (a ordem de `SEQUENTIALLY`), mas passado
+`TETO_DE_RESPOSTA_DO_WEBHOOK_MS` (8 s) o `200` sai e o processamento
+termina em segundo plano, com a linha já na inbox. As passadas da inbox
+(120 s) e da outbox (60 s) têm orçamento: o que sobra fica para o próximo
+tique, na mesma ordem. *Violada:* com a Asaas lenta, a conferência de
+SEC-007 segurava o `200` por dezenas de segundos — 15 seguidas pausam a
+fila da conta inteira; e um contratante pendurado deixava o `/api/saude`
+em `503` por culpa dele. *Quem vê:* todos os contratantes. C1-06, C1-07.
+
+**RN-68 · Ciclo de assinatura é identificado pela assinatura.** Todo ciclo
+leva a referência da 1ª reserva; a conferência de vínculo de um ciclo já
+amarrado compara `payment.subscription` com a linha, não a referência. E a
+renovação refeita depois de a nova já estar gravada ainda encerra a antiga
+(idempotente). *Violada:* do 2º ciclo em diante, todo evento lançava
+"vínculo inconsistente" para sempre — o ciclo recusado e depois pago ficava
+`vencido`; e o crash entre gravar a nova e cancelar a antiga deixava as
+duas cobrando. *Quem vê:* o assinante e o contratante. C1-02, C1-03.
+
+**RN-69 · A tela do comprador não confirma o que o webhook não confirmaria.**
+A conciliação pela consulta de status tem o mesmo binding de valor do
+webhook: pago na Asaas com valor diferente do cobrado não vira
+`confirmado` sozinho. *Violada:* o webhook recusava, e a próxima consulta
+da tela confirmava por cima. *Quem vê:* o comprador e o contratante. C1-10.
+E a confirmação que a tela descobre **entra pelo webhook** (FP2RA-1,
+25/09/2026): a consulta dispara o mesmo processamento de um
+`PAYMENT_CONFIRMED` (fila do charge, respaldo na Asaas, UPDATE
+condicional, aviso ao contratante), em vez de gravar a transição sozinha.
+*Violada:* numa reconfirmação (baixa desfeita e paga de novo), a tela
+gravava `confirmado` sem aviso, e o webhook seguinte achava tudo já feito
+— o contratante, que tinha ouvido "trate como não pago", nunca ouvia o
+pago de novo.
+
+**RN-70 · Cobrança substituída que a Asaas liquidou vale.** Substituir um
+Pix/boleto ou uma pop-up desatualizada grava a antiga como `cancelado`; se
+a Asaas a liquidar mesmo assim (o pagador pagou no instante da exclusão),
+o pagamento é aplicado (`cancelado → confirmado`, só com o respaldo da
+Asaas, SEC-007) e vira duplicidade (RN-52) se o pedido já estava pago.
+*Violada:* `cancelado` não tinha saída; o evento esbarrava oito vezes e o
+reconciliador não achava caminho — dinheiro recebido, contratante nunca
+avisado. Sessão de **assinatura** substituída (`cancelado`, ou `expirado`
+por ter travado 65 min) que a Asaas liquida não tem pedido para acusar a
+duplicidade: vira assinatura ativa **e** chama um humano (`erros`,
+`assinaturaSubstituidaPaga`, RUNBOOK §6.3), porque se a substituta também
+pagou são duas cobrando o mesmo cartão. *Quem vê:* o contratante e o
+operador. D-3, CP1-02, CP2-01.
+
+**RN-71 · Estorno negado pode ser pedido de novo.** O estorno de boleto
+confirmado como pedido e depois negado pela Asaas (`PAYMENT_REFUND_DENIED`)
+reabre a operação: a mesma chave pede de novo, e o valor dela não conta
+como devolvido. **A negativa só vale com o pagamento de volta a pago na
+Asaas** (RN-56): com ela ainda mostrando o pedido de estorno em curso, o
+evento é tentado de novo pela inbox; esgotado, vai para `erros`, e o
+reconciliador dirigido (sinal: `estorno_solicitado` parado há mais de 3
+dias) aplica a negativa quando a Asaas refletir — uma negativa VELHA,
+reprocessada depois de um novo pedido aceito, nunca reabre o pedido vivo
+(CP1-01). O comportamento da Asaas depois da negativa (voltar a
+`RECEIVED`) é suposição não medida — `docs/pendencias.md`. E o "não cabe" provisório — outro estorno ainda sem
+resposta — nunca fecha a chave de vez. *Violada:* a repetição devolvia o
+`200` antigo sem chamar a Asaas; uma chave nova recebia "não há valor
+restante". *Quem vê:* o contratante e o comprador. D-1, D-4.
 
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
