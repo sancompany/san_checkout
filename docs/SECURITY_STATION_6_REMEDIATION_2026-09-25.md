@@ -278,6 +278,15 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP1C-3 | INFO | ops | `scripts/limpar-registros-de-teste.mjs` não conhece a tabela `estornos`, e por isso a primeira trava dele recusa rodar | **RISK_ACCEPTED** RES-42 — recusa é o modo seguro; classificar `estornos` (antes de `cobrancas`, pela FK) é decisão para quando o script voltar a ser usado, e nesta rodada nenhum registro se apaga |
 | FP1C-4 | INFO | CR-05 | `checkoutSession`/`externalReference` agora só vêm do `GET` da Asaas; amarrar a primeira cobrança da pop-up depende de um dos dois estar lá | **EXTERNAL_PENDING** EP-11 — conferir no próximo pagamento real de cartão (§11) |
 | FP1C-5 | INFO | ops | com o backend no ar antes do front, o painel velho chama a API direto e recebe `401` até o deploy do Pages | **RISK_ACCEPTED** RES-43 — só o operador; os dois saem da `main` juntos |
+| FP1RA-1 | MEDIUM | CR-06 | o conserto do FP1A-1 ainda lia "a linha deste charge existe" como "este MESMO evento já foi tratado": com dois eventos DIFERENTES do mesmo ciclo novo juntos (vencimento ou recusa com a confirmação — o teto de 8 s e o worker da inbox permitem), a confirmação perdia a inserção e era descartada; ciclo `vencido`/`recusado` com a Asaas dizendo pago, inbox `processado`, sem aviso e fora do reconciliador. Reproduzido contra o código real | **FIXED** — a perdedora segue com a linha que existe; perde o UPDATE condicional, lança, e a inbox a refaz (`vencido → confirmado` e `recusado → confirmado` estão na matriz). O aviso tem chave do fato, então a mesma confirmação sai uma vez (RN-23, autoteste reescrito). Regressão com os dois pares concorrentes; sabotagem pega |
+| FP1RA-2 | LOW | CR-04 | o alerta novo `reservaSemLinha` (FP1A-4) disparava para as parcelas 2..N de cartão parcelado, que levam a mesma referência com a reserva viva — e a ação do RUNBOOK mandaria estornar | **FIXED** — só alerta se a reserva não existe; teste da parcela 2, sabotagem pega |
+| FP1RA-3 | INFO | CR-04 | `reservarCobrancaPopup` trata como travada qualquer linha `assinatura` pendente com mais de 65 min, inclusive uma linha de ciclo presa em `pendente` (depois de `RECEIVED_IN_CASH_UNDONE`); a marcaria `expirado` e a confirmação posterior dispararia um `assinaturaSubstituidaPaga` falso | **RISK_ACCEPTED** RES-44 — nenhum dinheiro se move; alarme a mais |
+| FP1RA-4 | INFO | CR-06 | `registrarAcertoDeTroca` trata qualquer erro, inclusive `23505` de uma refeitura depois de queda, como "não registrado" — alerta `acertoNaoRegistrado` falso | **RISK_ACCEPTED** RES-45 — alarme a mais, nunca a menos |
+| FP1RA-5 | INFO | CR-05 | a releitura da inbox depois de `23505` ignora o próprio erro (id nulo vira "duplicado", 200) | **RISK_ACCEPTED** RES-46 — a Asaas reenvia; o evento não se perde enquanto houver reenvio |
+| FP1RB-1 | INFO | CR-13 | o conserto do FP1B-1 chamava `String(erro)`, que LANÇA para `Object.create(null)`: dentro do invólucro, rejeição sem dono e o processo caía | **FIXED** — conversão em `try` com texto fixo; teste, sabotagem pega (o processo morria) |
+| FP1RB-2 | INFO | CR-13 | o erro do PostgREST (objeto puro) virava `Error("[object Object]")`, perdendo `code` e `message` e colapsando toda falha de banco numa impressão digital só em `erros` | **FIXED** — a mensagem e o `code` passam para o Error, o original vai em `cause`; teste |
+| FP1RC-1 | LOW | CR-04 | o mesmo alarme falso das parcelas 2..N | **DUPLICATE** de FP1RA-2 |
+| FP1RC-2 | INFO | CR-13 | o mesmo `[object Object]` | **DUPLICATE** de FP1RB-2 |
 
 ## 7. Correções
 
@@ -470,7 +479,8 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | Passadas limpas (CP1-01, CP1-02, CP2-01, CP2-10, CP2-11, CP3-05 ×2) | 7 | 7 | CP2-10 era, ela mesma, uma lacuna (achada pelo auditor) |
 | Lacunas da 3ª tentativa (CP3-09…18), refeitas contra o HEAD com os testes novos e as 82 suítes inteiras | 48 | 47 | a sobrevivente é `rest-exceto-off`, sem efeito observável (CP3-18, RES-38) |
 | Passada final #1 (FP1A-1 ×2, FP1A-4, FP1B-1) | 4 | 4 | — |
-| **Total** | **236** | **235** | **12**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
+| Repetição da passada final #1 (FP1RA-1, FP1RA-2, FP1RB-1) | 3 | 3 | — |
+| **Total** | **239** | **238** | **12**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
 
 **As 48 sabotagens da 3ª tentativa, por classe** (critério do dono de 25/09/2026 — toda SECURITY_CONTROL e FINANCIAL_INVARIANT relevante tem de ser detectada):
 
@@ -535,6 +545,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | Passada final | Sobre | Revisores | Achados que reiniciam (critério revisto) | Resultado |
 |---|---|---|---|---|
 | #1 | `f30191f` (congelado) | 3 (dinheiro — **não limpo**; auth/infra com o `server.js` real e 200 requisições hostis — **limpo**; migrations aplicadas num Postgres 17 descartável e o diff inteiro — **limpo**) | FP1A-1 (MEDIUM estrutural: idempotência e perda permanente de evento financeiro) | corrigido, testado, sabotado; **#1 se repete uma vez** sobre `ba97202` |
+| #1 (repetição, a única que o critério permite) | `2c959f0` | 3 (dinheiro — **não limpo**, e todo `23505` do `src/` conferido um a um; auth/infra com o `server.js` real, 30 alvos de SSRF e o invólucro contra Express 4.22.3 — **limpo**; migrations aplicadas três vezes num Postgres 17 descartável com `service_role` conferido depois da 0020, e o diff inteiro — **limpo**) | FP1RA-1 (MEDIUM estrutural, a mesma causa raiz do FP1A-1: o conserto estreitou o caso e não o fechou) | corrigido, testado, sabotado; segue a passada final #2 sobre o HEAD estabilizado, como o critério manda — sem terceira repetição da #1 |
 
 ## 14. Riscos residuais
 
@@ -544,4 +555,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 153 = FIXED 94 + FALSE_POSITIVE 3 + DUPLICATE 8 + RISK_ACCEPTED 41 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 162 = FIXED 98 + FALSE_POSITIVE 3 + DUPLICATE 10 + RISK_ACCEPTED 44 + EXTERNAL_PENDING 7

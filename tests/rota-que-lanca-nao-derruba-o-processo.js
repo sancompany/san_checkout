@@ -183,6 +183,34 @@ const semError = await filho(`
 `);
 igual(semError.resultado?.st, { '/g/indefinido': 500, '/g/nulo': 500, '/g/rota': 500, '/g/sincrono': 500 }, `FP1B-1: guarda que falha sem Error vira 500 — nunca chega ao handler protegido (${JSON.stringify(semError.resultado)})`);
 
+/* ---- 2d. FP1R-B-1/B-2: motivo que não vira texto, e o erro do PostgREST ----
+   `String(Object.create(null))` LANÇA — dentro do invólucro isso era uma
+   rejeição sem dono, e o processo caía. E o erro do banco (objeto puro)
+   perdia `code` e `message`. */
+const motivoEstranho = await filho(`
+  let morreu = null;
+  process.on('unhandledRejection', () => { morreu = 'unhandledRejection'; });
+  const express = (await import('express')).default;
+  const { comRejeicaoTratada, roteador } = await import('./src/utils/rotaSegura.js');
+  const app = comRejeicaoTratada(express());
+  const r = roteador();
+  r.get('/sem-texto', () => Promise.reject(Object.create(null)));
+  r.get('/postgrest', async () => { throw { code: '42501', message: 'permission denied for table cobrancas', details: null }; });
+  app.use('/m', r);
+  const vistos = [];
+  app.use((erro, _q, res, _p) => { vistos.push([erro instanceof Error, erro.code ?? null, erro.message]); res.status(500).json({ erro: 'interno' }); });
+  const s = app.listen(0); await new Promise((ok) => s.once('listening', ok));
+  const base = 'http://127.0.0.1:' + s.address().port;
+  const st = [(await fetch(base + '/m/sem-texto')).status, (await fetch(base + '/m/postgrest')).status];
+  await new Promise((ok) => setTimeout(ok, 50));
+  s.close();
+  console.log(JSON.stringify({ st, vistos, morreu }));
+  process.exit(0);
+`);
+igual(motivoEstranho.resultado?.morreu, null, `FP1R-B-1: motivo que não vira texto não vira rejeição sem dono (${JSON.stringify(motivoEstranho.resultado)})`);
+igual(motivoEstranho.resultado?.st, [500, 500], 'FP1R-B-1: as duas falhas viram 500 do tratador');
+igual(motivoEstranho.resultado?.vistos?.[1], [true, '42501', 'handler falhou sem Error: permission denied for table cobrancas'], 'FP1R-B-2: o erro do PostgREST chega como Error, com o code e a mensagem do banco');
+
 /* ---- 2b. CP3: TODO método que o invólucro promete, nos dois alvos ----
    Achado da passada CP3 por sabotagem: tirar `use`, `all` ou
    `head`/`options` da lista de métodos de `rotaSegura.js`, ou o ramo que

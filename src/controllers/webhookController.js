@@ -1046,7 +1046,10 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
          dinheiro nosso sem registro (a reserva sem sessão foi apagada
          antes de o vínculo chegar, por exemplo). Voltar calado era perder
          o pagamento de vista; um humano confere. */
-      if (/^reserva-[0-9a-f-]{36}$/i.test(payment?.externalReference ?? '')) {
+      /* Só se a RESERVA não existe: parcela 2..N de um cartão parcelado
+         leva a mesma referência, com a linha dela viva (FP1R-A-2) — ali
+         não falta nada, e o alerta mandaria estornar à toa. */
+      if (/^reserva-[0-9a-f-]{36}$/i.test(payment?.externalReference ?? '') && !(await deps.buscarCobrancaPorReferenciaExterna(payment.externalReference))) {
         await deps.registrarErro(
           new Error(`pagamento ${chargeId} (${evento}) traz a referência ${payment.externalReference}, que é nossa, e não há linha em cobrancas — conferir na Asaas e religar à reserva`),
           { contexto: 'webhookController.reservaSemLinha', rota: 'webhook/asaas', metodo: 'POST' }
@@ -1408,9 +1411,15 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
     valorCobrado: payment.value ?? modelo.valor_cobrado
   });
 
-  // `duplicado`: outra entrega do MESMO evento venceu a inserção — ela
-  // notifica; esta para aqui (corrida de 16/09).
-  if (resultado?.duplicado) return null;
+  /* `duplicado`: a linha deste charge já existe — outra passada venceu a
+     inserção. NÃO para aqui (FP1R-A-1): quem venceu pode ser OUTRO evento
+     do mesmo ciclo (a recusa ou o vencimento chegando junto com a
+     confirmação), e parar descartava este — pago aqui, `recusado` lá, e
+     nenhum aviso. Segue com a linha que existe: a máquina de estados e o
+     UPDATE condicional decidem, e o aviso tem chave do fato
+     (`chaveDoFato`), então a mesma confirmação não notifica duas vezes
+     (a corrida de 16/09, RN-23). */
+  if (resultado?.duplicado) return deps.buscarCobranca(payment.id);
 
   return deps.buscarCobranca(payment.id);
 }
@@ -2000,16 +2009,23 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(n[0].payload.statusFinanceiro, 'confirmado');
   assert.equal(n[0].chave, 'assinatura|pay_ciclo2|cobranca_confirmada|confirmado', 'a chave é por cobrança — dois ciclos nunca colidem');
 
-  // 8. entrega perdedora da corrida do unique não notifica
-  let chamadasBuscar = 0;
-  deps = depsFalsas({
-    buscarCobranca: () => { chamadasBuscar += 1; return chamadasBuscar === 1 ? null : { ...modeloAssinatura, charge_id: 'pay_r', status: 'pendente' }; },
-    buscarCobrancaPorSubscriptionId: modeloAssinatura,
-    buscarAssinaturaPorId: assinaturaExistente,
-    registrarCicloAssinatura: () => ({ duplicado: true })
-  });
-  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_r', subscription: 'sub_1' } }, deps);
-  assert.equal(deps.notificados().length, 0, 'entrega perdedora da corrida não notifica');
+  // 8. entrega perdedora da corrida do unique SEGUE com a linha que existe
+  //    (FP1R-A-1) — e o aviso dela leva a MESMA chave do fato da vencedora,
+  //    que é o que a outbox deduplica (RN-23). Parar aqui descartava o
+  //    evento quando a vencedora era OUTRO evento do mesmo ciclo.
+  for (const estadoDaVencedora of ['pendente', 'confirmado']) {
+    let chamadasBuscar = 0;
+    deps = depsFalsas({
+      buscarCobranca: () => { chamadasBuscar += 1; return chamadasBuscar === 1 ? null : { ...modeloAssinatura, charge_id: 'pay_r', status: estadoDaVencedora }; },
+      buscarCobrancaPorSubscriptionId: modeloAssinatura,
+      buscarAssinaturaPorId: assinaturaExistente,
+      registrarCicloAssinatura: () => ({ duplicado: true })
+    });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_r', subscription: 'sub_1' } }, deps);
+    const chaves = deps.notificados().map((x) => x.chave);
+    assert.ok(chaves.length >= 1, `FP1R-A-1: a entrega perdedora (vencedora em "${estadoDaVencedora}") não é descartada`);
+    assert.deepEqual([...new Set(chaves)], ['assinatura|pay_r|cobranca_confirmada|confirmado'], 'RN-23: e o aviso dela é o MESMO fato da vencedora — a chave única da outbox não deixa notificar duas vezes');
+  }
 
   // 9. ciclo depois de troca nasce com o plano NOVO
   deps = depsFalsas({

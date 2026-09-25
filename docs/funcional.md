@@ -627,6 +627,12 @@ de pop-up do mesmo plano e documento (`0015`), e com uma renovação
 aberta o ciclo pago sumia calado. Agora só é `duplicado` se a linha
 daquele `charge_id` existe; se não, o evento lança e a inbox refaz com
 recuo até a reserva se resolver (esgotado, vira `erros`).
+E `duplicado` já não faz a entrega parar (FP1R-A-1): quem venceu a
+inserção pode ser OUTRO evento do mesmo ciclo (a recusa ou o vencimento
+chegando junto com a confirmação), e parar descartava a confirmação. A
+perdedora segue com a linha que existe; a máquina de estados decide, e o
+aviso ao contratante tem chave do fato — a MESMA confirmação continua
+saindo uma vez só, que é a garantia original desta regra.
 
 **RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
 avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com

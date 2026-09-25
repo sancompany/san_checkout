@@ -76,6 +76,12 @@ async function rodar({ tabelas, falhas = {}, asaas = {}, passos }) {
           resultados.push(await wc.reprocessarInbox());
         }
         if (passo.vincularCheckout) resultados.push(await cobrancas.vincularChargeIdAoCheckout(...passo.vincularCheckout));
+        if (passo.receberJuntos) {
+          const rs = passo.receberJuntos.map(() => ({ _s: null, status(c) { this._s = c; return this; }, json() { return this; } }));
+          await Promise.all(passo.receberJuntos.map((corpo, i) => wc.receberWebhookAsaas({ body: corpo, get: () => undefined, ip: '52.67.12.206' }, rs[i])));
+          await new Promise((r) => setTimeout(r, 300));
+          resultados.push(rs.map((r) => r._s));
+        }
         if (passo.registrarCiclo) resultados.push(await cobrancas.registrarCicloAssinatura(passo.registrarCiclo));
         if (passo.ajustar) {
           const estado = JSON.parse(readFileSync(process.env.BANCO_FALSO_ARQUIVO, 'utf8'));
@@ -226,6 +232,43 @@ const avisos = (banco, evento) => (banco.outbox_notificacoes ?? []).filter((o) =
     passos: [{ registrarCiclo: { chargeId: 'pay_rep', asaasSubscriptionId: 'sub_a', contratanteId: 'loja', planoId: 'plano_pro', documento: '11144477735', valorCheio: 50, valorComDesconto: 50, valorCobrado: 50 } }]
   });
   igual(r.resultados[0], { duplicado: true }, 'controle: charge repetido de verdade continua `duplicado` (a entrega perdedora não notifica — RN-23)');
+}
+
+/* ── F) FP1R-A-1: dois eventos DIFERENTES do mesmo ciclo novo, juntos ──
+   O vencimento (ou a recusa) e a confirmação disputam a inserção da linha
+   do ciclo. Quem perde lia "duplicado" e parava — se a perdedora era a
+   confirmação, o ciclo ficava `vencido` com a Asaas dizendo pago, a inbox
+   `processado` e ninguém avisado. Agora a perdedora segue com a linha que
+   existe: perde o UPDATE condicional, lança, e a inbox a refaz. */
+for (const [tipo, antes] of [['PAYMENT_OVERDUE', 'vencido'], ['PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'recusado']]) {
+  const primeiro = linhaDaPopup({ status: 'confirmado', charge_id: 'pay_1', asaas_subscription_id: 'sub_a', criado_em: new Date(Date.now() - 40 * 86400_000).toISOString() });
+  const assinatura = { id: 'sub_a', contratante_id: 'loja', plano_id: 'plano_pro', documento: '11144477735', valor: 50, ciclo: 'MONTHLY', status: 'ativa', mutation_version: 0 };
+  const r = await rodar({
+    tabelas: { cobrancas: [primeiro], assinaturas: [assinatura] },
+    asaas: { 'GET /v3/payments/pay_2': pagamento('pay_2', 'CONFIRMED', { externalReference: `reserva-${primeiro.id}` }) },
+    passos: [
+      { receberJuntos: [
+        { id: `evt_f_${tipo}`, event: tipo, dateCreated: '2026-09-25 10:00:00', payment: { id: 'pay_2' } },
+        { id: 'evt_f_conf', event: 'PAYMENT_CONFIRMED', dateCreated: '2026-09-25 10:00:05', payment: { id: 'pay_2' } }
+      ] },
+      { reprocessar: true }
+    ]
+  });
+  const ciclo = r.banco.cobrancas.filter((c) => c.charge_id === 'pay_2');
+  igual(ciclo.length, 1, `FP1R-A-1 (${tipo}): uma linha só para o ciclo`);
+  igual(ciclo[0]?.status, 'confirmado', `FP1R-A-1 (${tipo} junto com a confirmação): o ciclo que a Asaas diz pago termina confirmado, não "${antes}"`);
+  ok((r.banco.webhook_inbox ?? []).every((l) => l.status === 'processado'), `FP1R-A-1 (${tipo}): e só depois de aplicada a confirmação sai da inbox`);
+}
+
+/* ── G) FP1R-A-2: parcela 2..N de cartão parcelado não é "reserva sem linha" ── */
+{
+  const reserva = linhaDaPopup({ metodo_pagamento: 'cartao_credito', plano_id: null, pedido_id: 'ped_parc', status: 'confirmado', charge_id: 'pay_parc_1', asaas_subscription_id: null });
+  const r = await rodar({
+    tabelas: { cobrancas: [reserva] },
+    asaas: { 'GET /v3/payments/pay_parc_2': pagamento('pay_parc_2', 'CONFIRMED', { subscription: null, installment: 'ins_1', externalReference: `reserva-${reserva.id}` }) },
+    passos: [{ receber: evento('evt_g', 'PAYMENT_CONFIRMED', 'pay_parc_2') }]
+  });
+  ok(!(r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.reservaSemLinha'), 'FP1R-A-2: a parcela 2 de uma reserva que existe NÃO manda um humano estornar');
 }
 
 /* ── C) o vínculo do charge à sessão é CAS ─────────────────────────── */

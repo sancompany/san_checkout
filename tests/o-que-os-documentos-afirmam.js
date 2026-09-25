@@ -308,7 +308,7 @@ const contagem = Object.fromEntries(ESTADOS.map((e) => [e, 0]));
 const vistos = new Set();
 const ESTADO_EM_NEGRITO = new RegExp(`\\*\\*(${ESTADOS.join('|')})\\*\\*`);
 for (const linha of relatorio.split('\n')) {
-  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|FP\d+[A-Z]-\d+|C\d+-[A-Za-z0-9]+) \|/);
+  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|FP\d+[A-Z]+-\d+|C\d+-[A-Za-z0-9]+) \|/);
   /* Uma linha de tabela com estado final na última coluna e um id que o
      padrão não conhece ficava FORA da conta, calada — foi assim que as
      linhas FP1*-n nasceram sem entrar no total (25/09/2026). */

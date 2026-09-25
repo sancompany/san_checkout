@@ -31,7 +31,19 @@ function envolver(handler) {
     /* FP1B-1: o motivo vira SEMPRE um Error. Um `throw undefined` (ou uma
        rejeição com `null`, `'route'`) chegava ao `next()` como "siga em
        frente" — numa guarda, isso era passar adiante em vez de recusar. */
-    const falhar = (erro) => proximo(erro instanceof Error ? erro : new Error(`handler falhou sem Error: ${String(erro)}`));
+    const falhar = (erro) => {
+      if (erro instanceof Error) return proximo(erro);
+      /* FP1R-B-1/B-2: o texto de um objeto qualquer pode LANÇAR
+         (`Object.create(null)`), e isso aqui dentro seria uma rejeição sem
+         dono; e o erro do PostgREST é objeto puro — sem guardar `code` e
+         `message`, todo 500 do banco virava "[object Object]" e a mesma
+         impressão digital em `erros`. */
+      let texto = 'motivo ilegível';
+      try { texto = typeof erro?.message === 'string' ? erro.message : String(erro); } catch { /* fica o texto fixo */ }
+      const embrulho = new Error(`handler falhou sem Error: ${texto}`);
+      try { if (erro && typeof erro === 'object') { embrulho.cause = erro; if (typeof erro.code === 'string') embrulho.code = erro.code; } } catch { /* idem */ }
+      return proximo(embrulho);
+    };
     try {
       const resultado = handler.call(this, requisicao, resposta, proximo);
       if (resultado && typeof resultado.then === 'function') resultado.then(undefined, falhar);
