@@ -86,10 +86,27 @@ async function transitar(id, de, campos) {
 }
 
 async function operacoesDaCobranca(cobrancaId) {
-  const { data, error } = await supabase.from('estornos').select('id, estado, valor_centavos')
+  const { data, error } = await supabase.from('estornos').select('id, estado, valor_centavos, status_resultado')
     .eq('cobranca_id', cobrancaId);
   if (error) throw error;
   return data ?? [];
+}
+
+/**
+ * A Asaas NEGOU o estorno (D-1): a operação que o registrou como pedido
+ * (`CONFIRMED` + `estorno_solicitado`) volta a `FAILED_RETRYABLE` — a
+ * mesma chave pode pedir de novo, e o valor dela deixa de contar como
+ * devolvido. Sem isto, a repetição recebia o `200` antigo sem chamar a
+ * Asaas, e uma chave nova recebia "não há valor restante".
+ * @returns {Promise<number>} quantas reabriu
+ */
+export async function reabrirEstornosNegados(cobrancaId) {
+  const { data, error } = await supabase.from('estornos')
+    .update({ estado: 'FAILED_RETRYABLE', ultimo_erro: 'a Asaas negou o estorno (PAYMENT_REFUND_DENIED)', chamando_em: null, atualizado_em: new Date().toISOString() })
+    .eq('cobranca_id', cobrancaId).eq('estado', 'CONFIRMED').eq('status_resultado', 'estorno_solicitado')
+    .select('id');
+  if (error) throw error;
+  return (data ?? []).length;
 }
 
 async function operacoesParaReconciliar(limite = 20) {
@@ -132,7 +149,12 @@ export function restanteEstornavel(cobranca, operacoes, excetoId = null) {
   const cobrado = emCentavos(cobranca.valor_cobrado);
   if (cobrado == null) return null;
   const naCobranca = emCentavos(cobranca.valor_estornado) ?? 0;
-  const outras = (operacoes ?? []).filter((o) => o.id !== excetoId);
+  /* Estorno de boleto confirmado como PEDIDO (`estorno_solicitado`) e
+     depois NEGADO pela Asaas não devolveu nada: não conta (D-1). O
+     webhook do `REFUND_DENIED` também reabre a operação
+     (`reabrirEstornosNegados`); isto cobre o intervalo até ele rodar. */
+  const negado = cobranca.status === 'estorno_negado';
+  const outras = (operacoes ?? []).filter((o) => o.id !== excetoId && !(negado && o.estado === 'CONFIRMED' && o.status_resultado === 'estorno_solicitado'));
   const confirmadas = outras.filter((o) => o.estado === 'CONFIRMED').reduce((s, o) => s + Number(o.valor_centavos), 0);
   const emVoo = outras.filter((o) => ESTADOS_EM_ABERTO.includes(o.estado)).reduce((s, o) => s + Number(o.valor_centavos), 0);
   return { restante: cobrado - Math.max(naCobranca, confirmadas) - emVoo, emVoo, cobrado, confirmadas, jaEstornado: Math.max(naCobranca, confirmadas) };
@@ -351,7 +373,12 @@ export async function executarEstorno({ contratante, cobranca, chave, valorCenta
     const valor = total ? conta.restante : valorCentavos;
     if (valor <= 0 || valor > conta.restante) {
       await gancho.liberar(cobranca.charge_id);
-      if (op) await deps.transitar(op.id, ['FAILED_RETRYABLE'], { estado: 'FAILED_FINAL', ultimo_erro: 'o restante estornável da cobrança já não comporta este estorno' });
+      /* Só fecha de vez quando o restante acabou DE VERDADE. Com outro
+         estorno ainda sem confirmação (`emVoo`), o "não cabe" é
+         provisório: se aquele se provar ausente, esta chave tem de poder
+         pedir de novo — fechada, a chave padrão do total ficava em
+         `estorno_impossivel` para sempre (D-4). */
+      if (op && conta.emVoo === 0) await deps.transitar(op.id, ['FAILED_RETRYABLE'], { estado: 'FAILED_FINAL', ultimo_erro: 'o restante estornável da cobrança já não comporta este estorno' });
       if (conta.emVoo > 0) {
         return { http: 409, corpo: { codigo: 'estorno_anterior_em_reconciliacao', erro: `Há estorno anterior desta cobrança ainda sem confirmação da Asaas (R$ ${emReais(conta.emVoo).toFixed(2)}) — o restante só é conhecido depois dele. Tente em alguns minutos.` } };
       }

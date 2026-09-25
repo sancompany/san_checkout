@@ -307,7 +307,7 @@ const relatorio = readFileSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2
 const contagem = Object.fromEntries(ESTADOS.map((e) => [e, 0]));
 const vistos = new Set();
 for (const linha of relatorio.split('\n')) {
-  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|C\d+-[A-Za-z0-9]+) \|/);
+  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|DIF-\d+|CP\d+-\d+|C\d+-[A-Za-z0-9]+) \|/);
   if (!m) continue;
   ok(!vistos.has(m[1]), `ledger: ${m[1]} aparece uma vez só`);
   vistos.add(m[1]);

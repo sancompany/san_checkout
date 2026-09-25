@@ -213,6 +213,35 @@ const consultar = `
   igual((banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'criada').length, 0, 'C2-L1: e nenhum `criada` de novo');
 }
 
+/* ── D-1: o PAYMENT_REFUND_DENIED reabre a operação que registrou o pedido ── */
+{
+  const { banco } = await rodar({
+    tabelas: {
+      cobrancas: [linha({ id: 'b-negado', metodo_pagamento: 'boleto', status: 'estorno_solicitado', charge_id: 'pay_negado' })],
+      estornos: [
+        { id: 'op-negada', cobranca_id: 'b-negado', contratante_id: 'loja', charge_id: 'pay_negado', chave_idempotencia: 'total-b-negado', valor_centavos: 5000, total: true, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm1' },
+        { id: 'op-de-outra', cobranca_id: 'outra', contratante_id: 'loja', charge_id: 'pay_x', chave_idempotencia: 'k', valor_centavos: 100, total: false, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm2' }
+      ]
+    },
+    codigo: `
+      globalThis.fetch = async (url, opcoes = {}) => {
+        const u = new URL(String(url));
+        if (u.hostname === 'api-sandbox.asaas.com' && u.pathname === '/v3/payments/pay_negado') return new Response(JSON.stringify({ id: 'pay_negado', status: 'RECEIVED', value: 50, externalReference: 'reserva-b-negado' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      const wc = await import('./src/controllers/webhookController.js');
+      const res = { _s: null, status(c) { this._s = c; return this; }, json() { return this; } };
+      await wc.receberWebhookAsaas({ body: { id: 'evt_negado', event: 'PAYMENT_REFUND_DENIED', dateCreated: '2026-09-25 10:00:00', payment: { id: 'pay_negado' } }, get: () => undefined, ip: '52.67.12.206' }, res);
+      await new Promise((x) => setTimeout(x, 200));
+      console.log(JSON.stringify(res._s));
+    `
+  });
+  const op = (id) => banco.estornos.find((o) => o.id === id);
+  igual(banco.cobrancas[0].status, 'estorno_negado', 'controle: a negativa foi aplicada');
+  igual(op('op-negada').estado, 'FAILED_RETRYABLE', 'D-1: a operação do pedido negado reabre — a mesma chave pode pedir de novo');
+  igual(op('op-de-outra').estado, 'CONFIRMED', 'e a de outra cobrança não é tocada');
+}
+
 /* ---- C1-08: a guarda do estorno, na função REAL contra o banco falso ----
    "Só grava sobre status estornável, e o valor estornado só sobe" (SEC-022)
    era provada numa CÓPIA escrita à mão da função — e o banco falso nem

@@ -38,12 +38,14 @@ export const STATUS_FINANCEIROS = [
   'cancelado_por_outro_pagamento'
 ];
 
-/** Estados dos quais NADA sai por evento de pagamento. `cancelado` é de
- *  sessão de pop-up abandonada (a cobrança nunca existiu). `expirado`
- *  NÃO está aqui: o prazo local de 65 min pode vencer antes de a
- *  pop-up pagar (a Asaas não nos avisa do `CHECKOUT_EXPIRED` sempre), e
- *  o `PAYMENT_CONFIRMED` que vier depois tem de valer. */
-export const STATUS_TERMINAIS = ['estornado', 'cancelado'];
+/** Estados dos quais NADA sai por evento de pagamento. `expirado` e
+ *  `cancelado` NÃO estão aqui: o prazo local de 65 min pode vencer antes
+ *  de a pop-up pagar, e a cobrança substituída por uma nova (Pix/boleto
+ *  desatualizado, pop-up de outro preço) pode ser liquidada pela Asaas no
+ *  instante em que era excluída (D-3). Desde SEC-007 toda transição de
+ *  pagamento é conferida na Asaas antes de valer — sair de `cancelado`
+ *  para `confirmado` só acontece com o dinheiro lá. */
+export const STATUS_TERMINAIS = ['estornado'];
 
 /**
  * De cada estado, para quais outros um evento da Asaas pode levar.
@@ -55,7 +57,7 @@ const TRANSICOES = {
   confirmado:             ['estorno_solicitado', 'estornado_parcialmente', 'estornado', 'chargeback', 'pendente'],
   recusado:               ['confirmado', 'em_analise', 'cancelado_por_outro_pagamento'], // nova tentativa de captura na mesma cobrança
   vencido:                ['confirmado', 'pendente', 'cancelado_por_outro_pagamento'],   // boleto pago depois do vencimento; prazo estendido
-  cancelado:              [],
+  cancelado:              ['confirmado'],                            // substituída e ainda assim liquidada: pagamento real, vira duplicidade (RN-52) — D-3
   expirado:               ['confirmado'],                            // o prazo LOCAL (65 min) venceu, mas a pop-up ainda pagou
   estorno_solicitado:     ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
   estorno_negado:         ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'], // negado = o pagamento continua válido
@@ -171,7 +173,9 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   assert.deepEqual(caminhoDeTransicoes('em_analise', 'estornado_parcialmente'), ['confirmado', 'estornado_parcialmente']);
   assert.deepEqual(caminhoDeTransicoes('confirmado', 'confirmado'), [], 'já está lá: nenhum passo');
   assert.equal(caminhoDeTransicoes('estornado', 'confirmado'), null, 'terminal não tem caminho de volta — o reconciliador chama um humano');
-  assert.equal(caminhoDeTransicoes('cancelado', 'confirmado'), null);
+  assert.deepEqual(caminhoDeTransicoes('cancelado', 'confirmado'), ['confirmado'], 'D-3: a cobrança substituída que a Asaas liquidou tem caminho');
+  assert.ok(!transicaoPermitida('cancelado', 'estornado'), 'de cancelado só sai o pagamento: estornado só depois dele');
+  assert.deepEqual(caminhoDeTransicoes('cancelado', 'estornado'), ['confirmado', 'estornado'], 'e o reconciliador passa pelo pagamento antes do estorno');
   assert.equal(caminhoDeTransicoes('pendente', 'inexistente'), null, 'destino fora do vocabulário: sem caminho');
   for (const de of STATUS_FINANCEIROS) {
     for (const para of STATUS_FINANCEIROS) {
@@ -195,7 +199,8 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   assert.ok(!transicaoPermitida('estornado', 'confirmado'), 'CONFIRMED atrasado depois de REFUNDED');
   assert.ok(!transicaoPermitida('chargeback', 'pendente'), 'CASH_UNDONE depois de chargeback');
   assert.ok(!transicaoPermitida('estornado', 'pendente'));
-  assert.ok(!transicaoPermitida('cancelado', 'confirmado'));
+  assert.ok(transicaoPermitida('cancelado', 'confirmado'), 'D-3: pagamento real de cobrança substituída vale');
+  assert.ok(!transicaoPermitida('cancelado', 'pendente') && !transicaoPermitida('cancelado', 'expirado'), 'e CHECKOUT_*/vencimento atrasados não mexem nela');
   assert.ok(!transicaoPermitida('expirado', 'estornado'), 'expirado só sai para confirmado (pop-up que pagou depois do prazo local)');
 
   // reversões legítimas do PSP continuam possíveis

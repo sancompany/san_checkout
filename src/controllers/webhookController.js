@@ -104,6 +104,7 @@ import { resolverAposClassificacao, retomarAplicacao } from '../services/trocaEx
 import { classificarPagamentoDoAcerto } from '../services/classificacaoFinanceiraService.js';
 import { registrarErro } from '../services/erroService.js';
 import { aoLiquidarCobrancaDePedido, dispararCancelador } from '../services/irmasObsoletasService.js';
+import { reabrirEstornosNegados } from '../services/estornoService.js';
 
 /** Versão do contrato Checkout → contratante (API.md §4.3). A 2 é
  *  ADITIVA sobre a 1 (nenhum campo saiu, nenhum mudou de significado):
@@ -119,6 +120,7 @@ export const VERSAO_WEBHOOK = 2;
  */
 const dependenciasPadrao = {
   buscarCobranca,
+  reabrirEstornosNegados,
   aplicarTransicao,
   buscarCobrancaPorCheckoutId,
   buscarCobrancaPorReferenciaExterna,
@@ -1176,6 +1178,10 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
       { contexto: 'webhookController.primeiroCicloFalhou', rota: 'webhook/asaas', metodo: 'POST' }
     );
   }
+
+  /* Estorno NEGADO (D-1): a operação que o registrou como pedido reabre, e
+     a mesma chave pode pedir de novo. Também na reentrega — é idempotente. */
+  if (statusGravado === 'estorno_negado' && cobranca.id) await deps.reabrirEstornosNegados(cobranca.id);
 
   const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
 

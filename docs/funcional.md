@@ -1204,6 +1204,23 @@ webhook: pago na Asaas com valor diferente do cobrado não vira
 `confirmado` sozinho. *Violada:* o webhook recusava, e a próxima consulta
 da tela confirmava por cima. *Quem vê:* o comprador e o contratante. C1-10.
 
+**RN-70 · Cobrança substituída que a Asaas liquidou vale.** Substituir um
+Pix/boleto ou uma pop-up desatualizada grava a antiga como `cancelado`; se
+a Asaas a liquidar mesmo assim (o pagador pagou no instante da exclusão),
+o pagamento é aplicado (`cancelado → confirmado`, só com o respaldo da
+Asaas, SEC-007) e vira duplicidade (RN-52) se o pedido já estava pago.
+*Violada:* `cancelado` não tinha saída; o evento esbarrava oito vezes e o
+reconciliador não achava caminho — dinheiro recebido, contratante nunca
+avisado. *Quem vê:* o contratante. D-3.
+
+**RN-71 · Estorno negado pode ser pedido de novo.** O estorno de boleto
+confirmado como pedido e depois negado pela Asaas (`PAYMENT_REFUND_DENIED`)
+reabre a operação: a mesma chave pede de novo, e o valor dela não conta
+como devolvido. E o "não cabe" provisório — outro estorno ainda sem
+resposta — nunca fecha a chave de vez. *Violada:* a repetição devolvia o
+`200` antigo sem chamar a Asaas; uma chave nova recebia "não há valor
+restante". *Quem vê:* o contratante e o comprador. D-1, D-4.
+
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
 (índice único: pedido+método, ou plano+documento+método) e só então

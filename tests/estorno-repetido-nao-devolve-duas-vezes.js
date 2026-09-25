@@ -125,7 +125,7 @@ function mundo() {
       Object.assign(op, campos, { atualizado_em: iso() });
       return clone(op);
     },
-    operacoesDaCobranca: async (cid) => [...estornos.values()].filter((o) => o.cobranca_id === cid).map((o) => ({ id: o.id, estado: o.estado, valor_centavos: o.valor_centavos })),
+    operacoesDaCobranca: async (cid) => [...estornos.values()].filter((o) => o.cobranca_id === cid).map((o) => ({ id: o.id, estado: o.estado, valor_centavos: o.valor_centavos, status_resultado: o.status_resultado })),
     operacoesParaReconciliar: async () => [...estornos.values()].filter((o) => ESTADOS_EM_ABERTO.includes(o.estado)).map(clone),
     buscarCobrancaDaOperacao: async (id) => clone(cobrancas.get(id) ?? null),
     estornarCobranca,
@@ -373,6 +373,52 @@ function mundo() {
   n.avancar(MINUTOS_ATE_PROVAR_AUSENCIA + 1);
   await reconciliarEstornosUmaVez(n.depsServico);
   igual([...n.estornos.values()][0].estado, 'FAILED_RETRYABLE', 'controle: a Asaas só tem o estorno de 20 (anterior, menor que 30) — este de 30 é provado ausente e pode ser refeito');
+}
+
+/* ===== 7e. ESTORNO DE BOLETO NEGADO PELA ASAAS (D-1, auditoria do diff) =====
+   O estorno total de boleto é um PEDIDO: a operação fica CONFIRMED com
+   `estorno_solicitado`. Se a Asaas o nega, a cobrança volta a
+   `estorno_negado` — estornável de novo (API.md §5.4). Antes desta
+   correção, a repetição com a chave padrão devolvia o 200 antigo sem
+   chamar a Asaas, e uma chave nova recebia "não há valor restante". */
+{
+  const m = mundo();
+  m.cobranca('c1', { metodo_pagamento: 'boleto' });
+  const a = await m.estornar({ pedidoId: 'ped_1' });
+  igual([a.codigo, [...m.estornos.values()][0].status_resultado], [200, 'estorno_solicitado'], 'controle: o pedido de estorno do boleto foi aceito');
+  m.cobrancas.get('c1').status = 'estorno_negado'; // o PAYMENT_REFUND_DENIED chegou
+  m.asaas.statusPagamento.set('pay_c1', 'RECEIVED');
+  const b = await m.estornar({ pedidoId: 'ped_1', chaveIdempotencia: 'estorno-depois-da-negativa' });
+  igual(b.codigo, 200, `D-1: com o estorno negado, uma chave nova estorna — o negado não conta como devolvido (${b.corpo?.erro ?? ''})`);
+  igual(m.asaas.chamadas.length, 2, 'e a Asaas é chamada de novo');
+  /* a mesma chave, depois de o webhook reabrir a operação (o que `reabrirEstornosNegados` faz no banco) */
+  const n = mundo();
+  n.cobranca('c1', { metodo_pagamento: 'boleto' });
+  await n.estornar({ pedidoId: 'ped_1' });
+  n.cobrancas.get('c1').status = 'estorno_negado';
+  n.asaas.statusPagamento.set('pay_c1', 'RECEIVED');
+  for (const op of n.estornos.values()) if (op.estado === 'CONFIRMED' && op.status_resultado === 'estorno_solicitado') Object.assign(op, { estado: 'FAILED_RETRYABLE' });
+  const c = await n.estornar({ pedidoId: 'ped_1' });
+  igual([c.codigo, c.corpo?.repetido ?? false, n.asaas.chamadas.length], [200, false, 2], 'D-1: reaberta, a MESMA chave (a padrão do total) pede de novo à Asaas — não devolve o 200 antigo');
+}
+
+/* ===== 7f. O "não cabe" PROVISÓRIO não fecha a chave de vez (D-4) ===== */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('recusa');
+  await m.estornar({ pedidoId: 'ped_1' });                                 // total: recusa limpa → FAILED_RETRYABLE
+  m.asaas.roteiro.push('timeout_antes');
+  await m.estornar({ pedidoId: 'ped_1', valor: 100, chaveIdempotencia: 'parcial-100' }); // 100 em voo (sem resposta)
+  m.avancar(6); // o arrendamento da cobrança (5 min) venceu; o parcial continua sem resposta
+  const emVoo = await m.estornar({ pedidoId: 'ped_1' });
+  igual(emVoo.corpo?.codigo, "estorno_anterior_em_reconciliacao", `com outro estorno em voo, o total responde 409 de "espere" (veio ${emVoo.codigo} ${JSON.stringify(emVoo.corpo)} — ops ${JSON.stringify([...m.estornos.values()].map((o) => [o.chave_idempotencia, o.estado]))})`);
+  const total = [...m.estornos.values()].find((o) => o.total);
+  igual(total.estado, 'FAILED_RETRYABLE', 'D-4: e a operação do total NÃO é fechada de vez — o "não cabe" é provisório');
+  for (const o of m.estornos.values()) if (!o.total) o.estado = 'FAILED_RETRYABLE'; // o reconciliador provou que o parcial não aconteceu
+  const depois = await m.estornar({ pedidoId: 'ped_1' });
+  igual(depois.codigo, 200, `D-4: provado ausente o outro, a MESMA chave do total estorna (${depois.corpo?.erro ?? depois.corpo?.codigo ?? ''})`);
+  m.acumuladoNuncaPassaDoCobrado('D-4');
 }
 
 /* ======= 8. OPERAÇÃO EM VOO CONTA NO RESTANTE (acumulado ≤ elegível) ======= */

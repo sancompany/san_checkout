@@ -209,7 +209,7 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={t
 | `c` | sim | Seu `contratante_id` |
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
-| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra — **e é recusado se o comprador já tem uma assinatura ativa ou pausada DESTE plano** (`409 assinatura_ja_existe`, desde 25/09/2026): duas assinaturas cobrando o mesmo cartão pelo mesmo plano não existem mais. Para trocar o cartão, o link leva o token |
+| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra — **e é recusado se o comprador já tem uma assinatura ativa ou pausada DESTE plano** (`409 assinatura_ja_existe`, desde 25/09/2026): duas assinaturas cobrando o mesmo cartão pelo mesmo plano não existem mais. Para trocar o cartão, o link leva o token. ⚠️ "Ativa" é o que o **nosso** registro diz: a assinatura encerrada do lado da Asaas (cartão vencido, cancelada no painel) continua `ativa` aqui até a conciliação (`POST /consultar-assinatura`, §5.3) — os eventos `SUBSCRIPTION_*` ainda não são tratados em código. Antes de mandar o comprador ao link comum para assinar de novo, concilie |
 | `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
@@ -291,6 +291,17 @@ pedidos do seu projeto**. Com id imprevisível, não há o que varrer.
 
 O checkout **recusa** (HTTP 400) um `pedido` ou `assinatura` formado só
 por dígitos com **menos de 8 caracteres**.
+
+**E todo id tem uma grafia só** (desde 25/09/2026, SEC-001): `pedidoId`,
+`planoId`, `contratanteId`, `chargeId` e os demais ids de fronteira são
+**texto** de 1 a 128 caracteres entre `A–Z`, `a–z`, `0–9`, `_` e `-`.
+Ponto, dois-pontos, barra, espaço, acento e `%` são recusados com `400`,
+na URL e no corpo; e um id mandado como **número JSON** (`"pedidoId":
+123`) também — mande `"123…"` como texto. O motivo: a mesma chave com
+duas grafias (`PED.01` × `PED%2E01`, `123` × `"123"`) virava dois
+pedidos para o mesmo pagamento, e um `/` decodificado no id mudava o
+caminho da chamada à sua API (`GET {apiBaseUrl}/pedidos/{id}`). Os ids
+das integrações em produção foram conferidos e cabem.
 
 ```
 ✅  550e8400-e29b-41d4-a716-446655440000
@@ -2125,7 +2136,7 @@ direto não contorna nada.
 | CNPJ | 14 dígitos, com dígito verificador conferido | `400` idem |
 | Telefone | 10 ou 11 dígitos, DDD ≥ 11, celular começando em 9 | `400` "Telefone inválido" |
 | CEP | 8 dígitos | `400` "CEP inválido" |
-| `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres | `400`, com explicação |
+| `pedidoId` / `planoId` | não pode ser só dígitos com menos de 8 caracteres; só `[A-Za-z0-9_-]`, 1–128, como texto (nunca número JSON) | `400`, com explicação |
 | Timeout da sua API | 45 segundos | `504` |
 | Requisições | 10/min (dinheiro) · 60/min (consulta) | `429` |
 | `GET /api/saude` | 30/min | `429` |

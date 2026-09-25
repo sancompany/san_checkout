@@ -367,6 +367,31 @@ async function rodar({ tabelas = {}, asaas = {}, passos }) {
   igual(r.porCharge('pay_c3').status, 'vencido');
 }
 
+/* ── S11d) A cobrança substituída que a Asaas liquidou no mesmo instante ──
+   D-3 (auditoria do diff): substituir um Pix/boleto ou uma pop-up
+   desatualizada grava a antiga como `cancelado`, que não tinha saída. Se
+   a Asaas ainda assim liquidar (o pagador pagou no instante da exclusão),
+   o evento esbarrava em "Asaas à frente" oito vezes, e o reconciliador
+   não achava caminho: dinheiro recebido, contratante nunca avisado. */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ id: uuid(117), metodo_pagamento: 'pix', status: 'cancelado', charge_id: 'pay_substituida' })] },
+    asaas: { 'GET /v3/payments/pay_substituida': [naAsaas('RECEIVED', { externalReference: `reserva-${uuid(117)}` })] },
+    passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_substituida') }]
+  });
+  igual(r.erroDoPasso(0), null, `D-3: o pagamento real de uma cobrança substituída é aplicado (${r.erroDoPasso(0)})`);
+  igual(r.porCharge('pay_substituida').status, 'confirmado', 'D-3: e a cobrança fica paga — é dinheiro recebido');
+}
+/* ── S11e) …mas o CHECKOUT_* atrasado não tira nada de `cancelado` ─────── */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ id: uuid(118), metodo_pagamento: 'pix', status: 'cancelado', charge_id: 'pay_sem_pagar' })] },
+    asaas: { 'GET /v3/payments/pay_sem_pagar': [naAsaas('PENDING', { externalReference: `reserva-${uuid(118)}` })] },
+    passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_sem_pagar') }]
+  });
+  igual(r.porCharge('pay_sem_pagar').status, 'cancelado', 'D-3 controle: evento de pagamento que a Asaas NÃO respalda não tira do cancelado');
+}
+
 /* ── S12) DOIS pagamentos na Asaas para a mesma reserva ───────────────── */
 {
   const r = await rodar({

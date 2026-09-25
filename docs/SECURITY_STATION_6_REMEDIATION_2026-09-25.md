@@ -336,6 +336,36 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/uma-assinatura-viva-por-plano.js` | +105 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/webhook-confere-na-asaas.js` | +549 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 
+### 7.2 Auditoria de regressões do diff (`43635c4` → `7c0c94d`)
+
+Dois revisores independentes sobre o diff inteiro, com a lista de verificação fixa. Cada item foi verificado no código antes de contar. **Achado real pediu código — o contador de passadas limpas continua em 0.**
+
+| Pergunta | Resposta | Onde |
+|---|---|---|
+| Quebra de API para o integrador | intencionais e documentadas (estorno parcial com chave, 502 para falha da Asaas, 409s novos, Access no admin); **a regra de id não estava no `API.md`** → DIF-05 | `API.md` §3, §5.4, §6.3, §10 |
+| Mudança comercial / de preço | **nenhuma** — taxa, parcelamento, valor do plano e momento da cobrança iguais; só deixou de reaproveitar sessão de preço antigo | — |
+| Mudança de entitlement | eventos e formatos da outbox iguais; bloqueio de 2ª assinatura documentado, **com a ressalva de "ativa aqui" que faltava** → DIF-06 | `API.md` §2 |
+| Nova race / deadlock / vazamento de arrendamento | nenhuma nova confirmada; dois pré-existentes reabertos → DIF-08, DIF-09 | — |
+| Chamada externa duplicada | nenhuma nova (um DELETE repetido da assinatura antiga em confirmação concorrente, idempotente na Asaas) → DIF-09 | — |
+| Nova janela de crash | **cobrança substituída e liquidada ficava invisível** → DIF-03 | `transicoesFinanceiras.js` |
+| Migration incompatível | nenhuma: o HEAD **não depende** da 0020; depende da 0018/0019, já aplicadas; o código antigo roda com elas | — |
+| Callback / webhook incompatível | nenhuma: autenticação igual (IP estrito desligado), `200` em até 8 s, assinatura e formato da nossa notificação iguais | RN-67 |
+| Fronteira de tenant | nenhuma consulta nova sem `contratante_id` | — |
+| Comportamento não documentado | DIF-05, DIF-06, DIF-07 | — |
+| Repetição bloqueada por estado | **estorno negado não podia ser pedido de novo** → DIF-01; **chave do total fechada por condição provisória** → DIF-04 | `estornoService.js` |
+
+| ID | Sev. | Classe | Achado | Status final |
+|---|---|---|---|---|
+| DIF-01 | MEDIUM | CR-02 | estorno de boleto negado pela Asaas não podia ser pedido de novo: a chave padrão devolvia o `200` antigo sem chamar a Asaas, e uma chave nova recebia "não há valor restante" — regressão contra o `API.md` §5.4 | **FIXED** — o `REFUND_DENIED` reabre a operação; o negado não conta no restante (RN-71) |
+| DIF-02 | MEDIUM | CR-09 | quem tem o CPF cancela a pop-up aberta de outra pessoa | **DUPLICATE** de C1-05b |
+| DIF-03 | MEDIUM | CR-05 | cobrança substituída (`cancelado`) que a Asaas liquidou no mesmo instante: dinheiro recebido, evento travado, reconciliador sem caminho | **FIXED** — `cancelado → confirmado` com o respaldo da Asaas; vira duplicidade (RN-70) |
+| DIF-04 | LOW | CR-02 | a chave padrão do estorno total era fechada de vez (`FAILED_FINAL`) por um "não cabe" provisório (outro estorno em voo) | **FIXED** — só fecha com nada em voo (RN-71) |
+| DIF-05 | LOW | doc | regra de id canônico (`[A-Za-z0-9_-]{1,128}`, texto) fora do `API.md` | **FIXED** — `API.md` |
+| DIF-06 | LOW | doc | a "assinatura ativa" do `409 assinatura_ja_existe` é o registro local, que só muda na conciliação | **FIXED** — `API.md` §2 |
+| DIF-07 | INFO | CR-11 | `/api/saude` 503 com worker atrasado derrubaria o serviço se virasse liveness do Northflank | **FIXED** — medido: nenhum health check configurado; RUNBOOK §6.3 manda usar como readiness, nunca liveness |
+| DIF-08 | LOW | CR-07 | `liberarTroca`/`liberarEstorno` soltam o arrendamento sem conferir o dono (pré-existente; o diff acrescenta chamadores) | **RISK_ACCEPTED** RES-12 — exige processo travado além do arrendamento de 5 min, acima do teto de 20 s de toda chamada |
+| DIF-09 | LOW | CR-08 | duas confirmações simultâneas da renovação podem mandar dois DELETE da assinatura antiga | **RISK_ACCEPTED** RES-13 — o segundo DELETE é idempotente na Asaas e só gera uma linha em `erros` |
+
 ## 8. Testes de regressão
 
 **82 suítes**, `npm run check` verde (análise de sintaxe de todo JS, inclusive `public/js/`, e as suítes). Suítes novas desta rodada, uma por classe: `identificador-canonico-em-toda-fronteira`, `estorno-repetido-nao-devolve-duas-vezes`, `instrumento-obsoleto-nunca-volta`, `saida-nunca-segue-redirecionamento`, `webhook-confere-na-asaas`, `acerto-de-troca-nunca-fica-orfao`, `nenhuma-promessa-sem-dono`, `uma-assinatura-viva-por-plano`, `assinatura-nasce-inteira`, `admin-so-pelo-access`, `escrita-de-estado-e-condicional`, `erro-da-asaas-nao-vaza`, `ci-so-le-e-fixa-o-que-roda`, `sessao-de-assinatura-nao-vaza-por-cpf`, `filtro-or-so-interpola-o-que-o-servidor-fez`, `banco-sem-privilegio-publico`, `rota-que-lanca-nao-derruba-o-processo`.
@@ -403,6 +433,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 |---|---|---|---|---|
 | 1 | `8be71d3`…`8c96576` | 4 (dinheiro; admin/Access; webhook/crash/workers; tenant/entrada/testes) | 3 HIGH, 6 MEDIUM, 6 LOW (C1-01…C1-15) | 0 |
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
+| auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
 
 ## 14. Riscos residuais
 
@@ -412,4 +443,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 86 = FIXED 64 + FALSE_POSITIVE 3 + DUPLICATE 5 + RISK_ACCEPTED 9 + EXTERNAL_PENDING 5
+TOTAL_LEDGER = 95 = FIXED 70 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 11 + EXTERNAL_PENDING 5
