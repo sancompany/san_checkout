@@ -23,6 +23,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { criarLimitadorCriacao, criarLimitadorConsulta } from './middlewares/limitadores.js';
+import { exigirAccess } from './middlewares/exigirAccess.js';
 import { supabase } from './config/supabase.js';
 import { sincronizarTaxasAsaas } from './services/taxaService.js';
 import { expurgarAuditoria } from './services/auditoriaWebhookService.js';
@@ -45,7 +46,7 @@ import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from '.
 import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
 import { cancelarIrmasUmaVez } from './services/irmasObsoletasService.js';
 import { reconciliarEstornosUmaVez } from './services/estornoService.js';
-import { umaPassadaPorVez } from './utils/passadas.js';
+import { umaPassadaPorVez, workersAtrasados } from './utils/passadas.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
 const app = express();
@@ -149,7 +150,19 @@ app.use('/api/checkout/trocar-plano', criarLimitadorCriacao());
    tentativa continua vindo `429` com `RateLimit-Limit: 5`.
 
    A ordem daqui é a natural de ler (do específico para o geral) e não
-   depende de nada — quem vier depois não precisa preservá-la por medo. */
+   depende de nada — quem vier depois não precisa preservá-la por medo.
+
+   A GUARDA DO ACCESS VEM ANTES DOS DOIS, e essa ordem sim importa
+   (SEC-015, 25/09/2026). Desde que o painel fala com a API pela função do
+   Pages, as chamadas do operador chegam aqui do IP de SAÍDA da
+   Cloudflare — o mesmo de qualquer outro Worker de qualquer outra conta
+   no mesmo datacenter. Com o limitador na frente, cinco tentativas sem
+   Access de um Worker alheio esgotariam o teto do operador por um minuto,
+   a cada minuto. Com a guarda na frente, quem não tem o JWT recebe 401
+   sem tocar em limitador, banco ou scrypt, e o teto só conta quem passou
+   pelo Access. O `adminRoutes.js` repete a guarda, para o roteador não
+   depender desta linha. */
+app.use('/api/admin', exigirAccess);
 app.use('/api/admin/sessao', rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -262,7 +275,15 @@ app.get('/api/saude', async (_req, resposta) => {
   // cliente" (Lei 8). A outra metade é ligar o alerta no painel do
   // monitor — RUNBOOK §2. Expiração de chave da Asaas é aviso, não
   // queda: fica no corpo (`alertasChaveAsaas`), sem derrubar o HTTP.
-  const saudavel = supabaseAtivo;
+  /* WORKER PARADO É QUEDA (SEC-031, 25/09/2026). Até aqui a última rodada
+     de cada um ia no corpo e o HTTP era `200` de qualquer jeito — e um
+     monitor de uptime lê o CÓDIGO, não o corpo. Um worker parado (a
+     passada pendurada numa chamada que não volta, ou falhando a cada
+     rodada) é queda silenciosa do caminho do dinheiro: confirmação que
+     não é reprocessada, aviso que não sai, estorno que ninguém
+     reconcilia. A regra do atraso mora em `utils/passadas.js`. */
+  const atrasados = workersAtrasados({ intervalos: INTERVALO_DOS_WORKERS_MS, ultimaRodada: ultimaRodadaDosWorkers, ligadosEm: workersLigadosEm });
+  const saudavel = supabaseAtivo && atrasados.length === 0;
   resposta.status(saudavel ? 200 : 503).json({
     status: saudavel ? 'ok' : 'degradado',
     chaveAsaasConfigurada: Boolean(process.env.ASAAS_API_KEY),
@@ -270,12 +291,23 @@ app.get('/api/saude', async (_req, resposta) => {
     supabaseRespondendo: supabaseAtivo,
     alertasChaveAsaas,
     filas,
-    workers
+    workers,
+    workersAtrasados: atrasados
   });
 });
 
 /** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
 const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null, estornos: null, divergencias: null };
+
+/** O intervalo de cada worker — o MESMO número que o `setInterval` dele
+ *  usa lá embaixo, e é daqui que ele o tira. */
+const INTERVALO_DOS_WORKERS_MS = {
+  inbox: 60_000, outbox: 30_000, reconciliador: 5 * 60_000, trocaDePlano: 60_000,
+  canceladorDeIrmas: 60_000, estornos: 2 * 60_000, divergencias: 15 * 60_000
+};
+/** Quando os workers foram ligados (`null` no modo de teste, que não os liga). */
+let workersLigadosEm = null;
+
 
 
 // ---------------------------------------------------------------------
@@ -526,8 +558,9 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     })
     .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message)));
 
+  workersLigadosEm = Date.now();
   rodarVarreduraDeTroca();
-  setInterval(rodarVarreduraDeTroca, UM_MINUTO_MS).unref();
+  setInterval(rodarVarreduraDeTroca, INTERVALO_DOS_WORKERS_MS.trocaDePlano).unref();
 
   /* OS TRÊS WORKERS DA CONSOLIDAÇÃO (24/09/2026). Uma instância só
      (medido no Northflank: `instances: 1`), então `setInterval` basta —
@@ -544,19 +577,19 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     .then((r) => { ultimaRodadaDosWorkers.inbox = Date.now(); if (r.examinadas > 0) console.log(`[inbox] reprocessamento: ${r.processadas} ok, ${r.falhas} falha(s).`); })
     .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message)));
   rodarInbox();
-  setInterval(rodarInbox, UM_MINUTO_MS).unref();
+  setInterval(rodarInbox, INTERVALO_DOS_WORKERS_MS.inbox).unref();
 
   const rodarOutbox = umaPassadaPorVez(() => enviarOutbox()
     .then((r) => { ultimaRodadaDosWorkers.outbox = Date.now(); if (r.examinadas > 0) console.log(`[outbox] ${r.enviadas} enviada(s), ${r.falhas} falha(s), ${r.abandonadas} abandonada(s).`); })
     .catch((erro) => console.error('[outbox] envio falhou:', erro.message)));
   rodarOutbox();
-  setInterval(rodarOutbox, 30 * 1000).unref();
+  setInterval(rodarOutbox, INTERVALO_DOS_WORKERS_MS.outbox).unref();
 
   const rodarReconciliador = umaPassadaPorVez(() => reconciliarReservas()
     .then((r) => { ultimaRodadaDosWorkers.reconciliador = Date.now(); if (r.examinadas > 0) console.log(`[reconciliador] ${r.completadas} completada(s), ${r.liberadas} liberada(s), ${r.aguardando} aguardando.`); })
     .catch((erro) => console.error('[reconciliador] falhou:', erro.message)));
   rodarReconciliador();
-  setInterval(rodarReconciliador, 5 * UM_MINUTO_MS).unref();
+  setInterval(rodarReconciliador, INTERVALO_DOS_WORKERS_MS.reconciliador).unref();
 
   /* O CANCELADOR DE IRMÃS (RN-51, 25/09/2026, 60 s): o Pix/boleto/pop-up
      de um pedido que outra cobrança já pagou é invalidado na Asaas. O
@@ -571,7 +604,7 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     })
     .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message)));
   rodarCanceladorDeIrmas();
-  setInterval(rodarCanceladorDeIrmas, UM_MINUTO_MS).unref();
+  setInterval(rodarCanceladorDeIrmas, INTERVALO_DOS_WORKERS_MS.canceladorDeIrmas).unref();
 
   /* O RECONCILIADOR DE ESTORNOS (SEC-002, 25/09/2026, 2 min): decide as
      operações de estorno cuja resposta da Asaas se perdeu (timeout, 5xx,
@@ -586,7 +619,7 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     })
     .catch((erro) => console.error('[estornos] reconciliador falhou:', erro.message)));
   rodarReconciliadorDeEstornos();
-  setInterval(rodarReconciliadorDeEstornos, 2 * UM_MINUTO_MS).unref();
+  setInterval(rodarReconciliadorDeEstornos, INTERVALO_DOS_WORKERS_MS.estornos).unref();
 
   /* O RECONCILIADOR DIRIGIDO (JULES-004, 25/09/2026, 15 min): a cobrança
      que EXISTE e divergiu da Asaas porque um evento se perdeu — o
@@ -603,7 +636,7 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     })
     .catch((erro) => console.error('[divergencias] reconciliador falhou:', erro.message)));
   rodarReconciliadorDeDivergencias();
-  setInterval(rodarReconciliadorDeDivergencias, 15 * UM_MINUTO_MS).unref();
+  setInterval(rodarReconciliadorDeDivergencias, INTERVALO_DOS_WORKERS_MS.divergencias).unref();
 
   /* Expurgos diários das tabelas novas: inbox/outbox já processadas
      (90 dias — o payload da outbox leva o documento do pagador, Lei 10)

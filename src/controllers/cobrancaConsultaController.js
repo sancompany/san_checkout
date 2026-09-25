@@ -38,7 +38,7 @@ import {
   buscarCobrancaPorPedido,
   buscarUltimaCobrancaDaAssinatura,
   buscarCobrancaPorSubscriptionId,
-  atualizarStatusCobranca
+  aplicarTransicao
 } from '../services/cobrancaService.js';
 import {
   buscarAssinaturaAtiva,
@@ -85,8 +85,12 @@ async function statusAtualizado(cobranca) {
     const confirmado = statusAsaas === 'RECEIVED' || statusAsaas === 'CONFIRMED';
     if (!confirmado) return cobranca.status;
 
-    await atualizarStatusCobranca(cobranca.charge_id, 'confirmado');
-    return 'confirmado';
+    /* Por CAS sobre o status que se LEU (SEC-022, 25/09/2026): um
+       estorno ou chargeback que o webhook gravou entre a leitura e esta
+       escrita não é apagado por um `confirmado` atrasado. Perdeu a
+       corrida, vale o que está no banco. */
+    const gravou = await aplicarTransicao(cobranca.charge_id, { de: cobranca.status, para: 'confirmado' });
+    return gravou ? 'confirmado' : cobranca.status;
   } catch (erro) {
     console.error(`[consulta] falha ao reconsultar ${cobranca.charge_id} na Asaas:`, erro.message);
     return cobranca.status;

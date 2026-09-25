@@ -17,7 +17,8 @@ runbook é pior que ausência.
 | Frontend estático | Cloudflare Pages, projeto `san-checkout` | `https://checkout.sancocore.com.br` |
 | Banco | Supabase, projeto `San_Checkout`, `sa-east-1` (São Paulo) | ref `zacuaroarelaqnzjjlcz` |
 | Pagamento | Asaas — **sandbox** hoje (`ASAAS_AMBIENTE`) | `api-sandbox.asaas.com` |
-| Porta do `/admin` | Cloudflare Access, equipe `fancy-dawn-740a` | política "Somente o operador" |
+| Porta do `/admin` | Cloudflare Access, equipe `fancy-dawn-740a` | política "Somente o operador"; nove destinos, inclusive `/api/admin` e as prévias `*.san-checkout.pages.dev` (`CONSTRAINTS.md` §2.6) |
+| Proxy do admin | Pages Function `functions/api/admin/[[caminho]].js`, atrás do Access | `checkout.sancocore.com.br/api/admin/*` → `api.sancocore.com.br` |
 | Repositório | GitHub `sancompany/san_checkout`, branch `main` | — |
 | Ping externo | cron-job.org, a cada 10 min em `/api/saude` | mantém Supabase ativo |
 
@@ -355,7 +356,12 @@ funcionaria se a API fosse posta atrás do proxy laranja primeiro. Ver
 
 Quem protege a API é a **auth de aplicação** (token de sessão do admin,
 `X-Checkout-Key` do contratante, HMAC do webhook de saída, token do
-webhook de entrada) — não uma camada de borda. Fechar a API atrás do
+webhook de entrada) — não uma camada de borda. **Desde 25/09/2026 a área
+administrativa tem também a primeira camada NA ORIGEM:** `/api/admin/*`
+só responde com o JWT do Cloudflare Access (`Cf-Access-Jwt-Assertion`),
+que só a função do Pages atrás do Access repassa — pela API ou pela
+origem direta, sem ele é `401 acessoRestrito` antes da senha
+(`CONSTRAINTS.md` §2.6, "A camada 1 também na origem"). Fechar a API atrás do
 Cloudflare para ganhar WAF/limite de borda é decisão de infra do dono,
 não feita: exigiria ligar o proxy em `api.sancocore.com.br` com SSL
 Full (strict) e conferir o certificado da origem. Está em
@@ -763,11 +769,11 @@ A pergunta que esta tabela responde é a única que importa às 3 da manhã:
 |---|---|---|---|
 | e-mail da Asaas: falha na entrega de webhook | Asaas, a cada falha | nossa URL recusou ou não respondeu | conferir **qual URL** o e-mail cita: pode ser hospedagem antiga ainda cadastrada (§6.2, passo 2). Sendo a atual, seguir §8 |
 | a fila de webhook pausou | Asaas (e o sintoma: pagamento pago e não confirmado) | 15 falhas seguidas | reativar no painel e **conciliar** (`API.md` §5.2 e §5.3) |
-| `/api/saude` devolvendo 503 | curl, ou o ping de 10 min do cron-job.org | banco inalcançável | §6.1, item 3 e 4; se for o Supabase, §6 (restaurar) só depois de confirmar que não é rede |
+| `/api/saude` devolvendo 503 | curl, ou o ping de 10 min do cron-job.org | banco inalcançável **ou** worker parado (desde 25/09/2026) — o corpo diz qual: `supabaseRespondendo: false`, ou `workersAtrasados` não vazio | banco: §6.1, item 3 e 4; se for o Supabase, §6 (restaurar) só depois de confirmar que não é rede. Worker: a linha de baixo |
 | aba **Erros** do painel crescendo | captura de exceção (migration 0007) | 5xx acontecendo agora | `ocorrencias` + `ultima_vez` dizem se é rajada; §6.1 |
 | `/api/saude` → `filas.inbox.esgotadas > 0` | curl / aba Filas | um evento da Asaas falhou 8 vezes no processamento (o `200` já foi dado; o evento está guardado) | ler `ultimo_erro` na aba Filas; corrigir a causa; **reenfileirar** — nunca pedir reenvio à Asaas |
 | `/api/saude` → `filas.outbox.abandonadas > 0` | curl / aba Filas | o contratante recusou 8 vezes (1 min … 24 h) | ver `ultimo_status_http`; avisar o contratante; **reenviar** quando ele voltar — mesmo `eventoId`, ele deduplica |
-| `/api/saude` → `workers.*` parado | curl | o processo está de pé mas um `setInterval` morreu | reiniciar o serviço (§4); abrir erro |
+| `/api/saude` → `workersAtrasados` não vazio (e o HTTP 503) | curl / o monitor de uptime | o processo está de pé, mas aquele worker está sem uma passada bem-sucedida há mais de 3 intervalos dele + 2 min: pendurado numa chamada, ou falhando a cada rodada | aba **Erros** e o log daquele worker (`[inbox]`, `[outbox]`, `[estornos]`…) dizem se é falha repetida; se for pendura, reiniciar o serviço (§4) e abrir erro. A regra é `utils/passadas.js`, `workersAtrasados` |
 | aba **Erros**: `PAGAMENTO DUPLICADO` | cancelador de irmãs (RN-52) | o mesmo pedido foi pago duas vezes — os dois pagamentos são reais e estão `confirmado` | listar todos (a linha de `erros` agrega por origem e guarda só a última mensagem): `select contratante_id, pedido_id, charge_id, metodo_pagamento, pagamento_duplicado_com from cobrancas where pagamento_duplicado_em is not null`; combinar com o contratante qual devolver e estornar **um** (`POST /api/checkout/estornar` ou painel da Asaas). Nunca apagar a linha |
 | aba **Erros**: `cancelamento de irmã ESGOTADO` | cancelador de irmãs (RN-51) | um Pix/boleto/pop-up de pedido já pago segue pagável na Asaas depois de 8 tentativas | ver `cancelamento_ultimo_erro` da linha; excluir à mão no painel da Asaas. Se ela tiver sido paga nesse meio-tempo, é o caso de cima. Para o cancelador tentar de novo: `update cobrancas set cancelamento_tentativas = 0, cancelamento_proxima_em = now() where id = '<id>'` |
 | build ou deploy vermelho | Northflank / GitHub Actions | o que está no ar continua o commit anterior | §3 e §4; CI vermelho **não** publica |
@@ -833,6 +839,27 @@ se perde é o aviso, e a conciliação (`API.md` §5.2) é o caminho de volta.
 **Perdi o acesso ao `/admin`:**
 - Barrado pelo Cloudflare Access → painel Zero Trust, com a conta
   Cloudflare. Não há dependência circular entre as duas camadas.
+- O painel abre mas toda chamada dá erro de rede, ou o login responde
+  "só abre pelo endereço protegido" → a sessão do Access (24 h) venceu no
+  meio do uso, ou o painel foi aberto por um endereço que não é o do
+  Access. **Recarregue `checkout.sancocore.com.br/admin`** — o Access pede
+  o login de novo e a chamada seguinte leva o JWT novo.
+- `503 "Não foi possível conferir o acesso administrativo"` → a API não
+  conseguiu ler as chaves da equipe
+  (`https://fancy-dawn-740a.cloudflareaccess.com/cdn-cgi/access/certs`).
+  É fechado de propósito: não há interruptor que deixe passar. Confira se
+  o endereço responde; se a equipe do Access mudou de nome, a constante
+  `EQUIPE_ACCESS` em `src/utils/accessJwt.js` muda junto, em código.
+- **Aplicativo do Access recriado** (apagado e feito de novo) → o `aud`
+  muda, e a origem passa a recusar todo JWT com `401` (motivo `aud` no
+  log). Leia o `aud` novo na API do Access e troque `AUD_DO_PAINEL` em
+  `src/utils/accessJwt.js`. É constante e não variável de propósito: um
+  `aud` trocado por configuração abriria o painel à política de outro
+  aplicativo da equipe.
+- Reverter o SEC-015 inteiro, se ele travar o painel sem saída: `git
+  revert` do commit que o trouxe (§4) — o painel volta a chamar a API
+  direto e a origem para de exigir o JWT. Os destinos novos do Access
+  podem ficar: sem a função, `/api/admin` no Pages só dá 404.
 - Usuário/senha recusados → gerar hash novo com
   `node scripts/gerar-hash-admin.js` (rodar na raiz do projeto) e trocar
   `CHECKOUT_ADMIN_PASS_HASH` no Northflank. Trocar a senha **invalida
@@ -948,7 +975,7 @@ que importa é a última.
 | **Supabase** | tudo | nada | `/api/saude` 503 | §6; RTO medido de 1 s para restaurar noutro Postgres, **mas sem cópia externa hoje** (exceção §3) |
 | **Northflank** | a API inteira | as telas (Cloudflare Pages) continuam servindo — e isso é pior que cair junto: o comprador vê a página e ela não funciona | `/api/saude` sem resposta | §4 (reverter) só resolve se a causa é o nosso commit |
 | **Cloudflare — DNS** | `api.` e `checkout.` deixam de resolver | nada | nada resolve, de nenhum lugar | é a única dependência sem plano B: o registro aponta para lá |
-| **Cloudflare — Access** | o `/admin` | o checkout do comprador, inteiro | login do admin não abre | por desenho: falha fechada. Painel Zero Trust, sem dependência circular |
+| **Cloudflare — Access** | o `/admin` e a API do admin (a origem confere o JWT dele, e com as chaves fora do ar responde `503`) | o checkout do comprador, inteiro | login do admin não abre | por desenho: falha fechada. Painel Zero Trust, sem dependência circular |
 | **Cloudflare — Pages** | as telas do comprador | a API — contratante integrado por API sente menos | página não carrega | o link de cobrança fica inútil até voltar |
 | **Google Workspace** | `juridico@` e `suporte@` | o sistema | e-mail devolvido | **é canal legal do titular** (LGPD): indisponibilidade prolongada é problema de conformidade, não só de suporte |
 | **registro.br** | o domínio, e com ele tudo | nada | ninguém avisa — é o motivo da data em §1.1 | **31/08/2027**; renovar antes |

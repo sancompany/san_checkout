@@ -29,11 +29,17 @@ import { exigirIdCanonico } from '../utils/validadores.js';
  * (documento, e-mail, telefone). Sequência de 8+ dígitos e endereço de
  * e-mail saem; texto longo é cortado.
  */
-function resumirRespostaAsaas(corpo) {
-  const limpar = (texto) => String(texto)
+/** E-mail e sequência longa de dígitos (CPF, CNPJ, telefone, cartão)
+ *  saem de todo texto da Asaas antes de ir a log OU a quem chamou. */
+export function redigirTextoDaAsaas(texto) {
+  return String(texto)
     .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]')
     .replace(/\d[\d.\-/\s]{7,}\d/g, '[numero]')
     .slice(0, 300);
+}
+
+function resumirRespostaAsaas(corpo) {
+  const limpar = redigirTextoDaAsaas;
 
   const erros = Array.isArray(corpo?.errors) ? corpo.errors : null;
   if (erros?.length) {
@@ -137,7 +143,10 @@ async function chamarAsaas(caminho, opcoes = {}) {
     // único lugar que guarda a rota e o status juntos.
     console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminhoParaLog(caminho)} → ${resposta.status}: ${resumo}`);
 
-    const erro = new Error(descricao);
+    /* A descrição vai à tela e ao log de `responderErro` — redigida
+       aqui, na origem, pela mesma regra do resumo acima (SEC-028,
+       25/09/2026: o resumo era redigido e a mensagem, crua). */
+    const erro = new Error(redigirTextoDaAsaas(descricao));
     erro.status = resposta.status;
     erro.corpoAsaas = corpo;
     erro.resumoAsaas = resumo;

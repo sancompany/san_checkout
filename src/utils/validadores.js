@@ -4,7 +4,7 @@
  * que não dá pra pular chamando a API direto.
  */
 
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 
 /**
  * TETO DE TAMANHO POR CAMPO.
@@ -54,18 +54,36 @@ const TETOS = {
   id: 128
 };
 
+/**
+ * O que entra por JSON como TEXTO: string — ou número, para os campos de
+ * dígitos (documento, telefone, CEP) que um integrador manda sem aspas.
+ * Objeto, lista e booleano não são texto (SEC-027, 25/09/2026): até aqui
+ * cada validador fazia `String(valor)`, e `["Fulano", "x"]` virava
+ * `"Fulano,x"`, `{}` virava `"[object Object]"` — o validador aprovava o
+ * que ninguém digitou, e quem gravava gravava o valor CRU do corpo.
+ * Devolve `null` para o que não é texto.
+ */
+function comoTexto(valor) {
+  if (typeof valor === 'string') return valor;
+  if (typeof valor === 'number' && Number.isFinite(valor)) return String(valor);
+  return null;
+}
+
 /** Longo demais é recusa, não truncamento: truncar aceitaria um dado
- *  que o comprador não digitou e mandaria isso para a Asaas. */
+ *  que o comprador não digitou e mandaria isso para a Asaas. Ausente
+ *  passa (quem exige presença é o controlador); o que não é texto, não. */
 function passaNoTeto(valor, teto) {
-  return String(valor ?? '').length <= teto;
+  if (valor === undefined || valor === null) return true;
+  const texto = comoTexto(valor);
+  return texto !== null && texto.length <= teto;
 }
 
 /** Compara duas strings em tempo constante — usado em toda comparação
  *  de credencial/token vindo de fora (admin, webhook), pra não vazar
  *  por timing quantos caracteres bateram antes de falhar. */
 export function compararSeguro(a, b) {
-  const bufA = Buffer.from(String(a ?? ''));
-  const bufB = Buffer.from(String(b ?? ''));
+  const bufA = Buffer.from(typeof a === 'string' ? a : '');
+  const bufB = Buffer.from(typeof b === 'string' ? b : '');
 
   /* VAZIO NUNCA BATE COM VAZIO.
      Sem esta linha, `compararSeguro(undefined, undefined)` devolve
@@ -91,12 +109,20 @@ export function compararSeguro(a, b) {
      precisa ser constante é a comparação entre dois valores reais. */
   if (bufA.length === 0 || bufB.length === 0) return false;
 
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
+  /* O TAMANHO TAMBÉM NÃO VAZA (INFO-05, 25/09/2026). Até aqui a recusa
+     por tamanho diferente saía antes da comparação — mais rápida que a
+     comparação de dois valores do mesmo tamanho, e o tempo dizia a quem
+     sondava quantos caracteres a credencial tem. Comparar os resumos
+     SHA-256 põe os dois lados no mesmo tamanho (32 bytes) sempre; o
+     resumo é determinístico, então iguais continuam iguais. */
+  return timingSafeEqual(
+    createHash('sha256').update(bufA).digest(),
+    createHash('sha256').update(bufB).digest()
+  );
 }
 
 export function cpfValido(valor) {
-  const cpf = String(valor ?? '').replace(/\D/g, '');
+  const cpf = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (cpf.length !== 11) return false;
   if (/^(\d)\1{10}$/.test(cpf)) return false;
 
@@ -113,7 +139,7 @@ export function cpfValido(valor) {
 }
 
 export function cnpjValido(valor) {
-  const cnpj = String(valor ?? '').replace(/\D/g, '');
+  const cnpj = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (cnpj.length !== 14) return false;
   if (/^(\d)\1{13}$/.test(cnpj)) return false;
 
@@ -139,7 +165,7 @@ export function cnpjValido(valor) {
  *  (Pix, Boleto, Cartão, Assinatura, cancelamento). */
 export function documentoValido(valor) {
   if (!passaNoTeto(valor, TETOS.documento)) return false;
-  const digitos = String(valor ?? '').replace(/\D/g, '');
+  const digitos = (comoTexto(valor) ?? '').replace(/\D/g, '');
   if (digitos.length === 11) return cpfValido(digitos);
   if (digitos.length === 14) return cnpjValido(digitos);
   return false;
@@ -173,12 +199,12 @@ export function documentoValido(valor) {
  * `cpfCnpj`.
  */
 export function normalizarDocumento(valor) {
-  return String(valor ?? '').replace(/\D/g, '');
+  return (comoTexto(valor) ?? '').replace(/\D/g, '');
 }
 
 export function emailValido(valor) {
-  if (!passaNoTeto(valor, TETOS.email)) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor ?? '').trim());
+  if (typeof valor !== 'string' || !passaNoTeto(valor, TETOS.email)) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor.trim());
 }
 
 export function valorValido(valor) {
@@ -334,7 +360,7 @@ export const MENSAGEM_PISO_ASAAS =
  *   → todos `16987654321`
  */
 export function normalizarTelefone(valor) {
-  const digitos = String(valor ?? '').replace(/\D/g, '');
+  const digitos = (comoTexto(valor) ?? '').replace(/\D/g, '');
   return /^55\d{10,11}$/.test(digitos) ? digitos.slice(2) : digitos;
 }
 
@@ -354,7 +380,7 @@ export function telefoneValido(valor) {
 
 export function cepValido(valor) {
   if (!passaNoTeto(valor, TETOS.cep)) return false;
-  const cep = String(valor ?? '').replace(/\D/g, '');
+  const cep = (comoTexto(valor) ?? '').replace(/\D/g, '');
   return cep.length === 8;
 }
 
@@ -368,7 +394,7 @@ export function cepValido(valor) {
  */
 export function camposDeEnderecoDentroDoTeto(campos) {
   return Object.entries(campos).every(
-    ([campo, valor]) => valor === undefined || passaNoTeto(valor, TETOS[campo])
+    ([campo, valor]) => valor === undefined || valor === null || (typeof valor === 'string' && passaNoTeto(valor, TETOS[campo]))
   );
 }
 
@@ -383,7 +409,8 @@ export function camposDeEnderecoDentroDoTeto(campos) {
  * caminho do dinheiro é pior que aceitar um nome esquisito.
  */
 export function nomeValido(valor) {
-  const nome = String(valor ?? '').trim();
+  if (typeof valor !== 'string') return false;
+  const nome = valor.trim();
   return nome.length >= 2 && nome.length <= TETOS.nome;
 }
 
@@ -729,6 +756,37 @@ if (process.argv[1]?.endsWith('validadores.js')) {
   }
   assert.throws(() => exigirIdCanonico('x'.repeat(129), 'pedidoId'), /excede o tamanho máximo de 128/, 'acima do teto diz qual é o teto');
   assert.throws(() => exigirIdCanonico('../x', 'planoId'), /planoId é inválido/, 'a mensagem cita o rótulo');
+
+  /* --- SEC-027: o que não é texto não é aprovado por virar texto --- */
+  const NAO_SAO_TEXTO = { 'lista': ['Fulano de Tal', 'x'], 'objeto': { nome: 'Fulano de Tal' }, 'booleano': true };
+  for (const [tipo, valor] of Object.entries(NAO_SAO_TEXTO)) {
+    assert.ok(!nomeValido(valor), `nome do tipo ${tipo} é recusado (String() o aprovava)`);
+    assert.ok(!emailValido(valor), `e-mail do tipo ${tipo} é recusado`);
+    assert.ok(!documentoValido(valor), `documento do tipo ${tipo} é recusado`);
+    assert.ok(!telefoneValido(valor), `telefone do tipo ${tipo} é recusado`);
+    assert.ok(!cepValido(valor), `CEP do tipo ${tipo} é recusado`);
+    assert.equal(normalizarDocumento(valor), '', `normalizar um documento do tipo ${tipo} dá vazio, não "[object Object]"`);
+    assert.ok(!camposDeEnderecoDentroDoTeto({ endereco: valor }), `endereço do tipo ${tipo} é recusado`);
+  }
+  assert.ok(!documentoValido(['111.444.777-35']), 'a lista com UM CPF válido — que String() deixava idêntica ao CPF — é recusada');
+  assert.ok(!nomeValido(['Fulano de Tal']), 'idem para o nome');
+  /* controle positivo: número continua valendo nos campos de dígitos */
+  assert.ok(documentoValido(11144477735), 'CPF como número (integrador sem aspas) continua válido');
+  assert.ok(telefoneValido(16987654321), 'telefone como número continua válido');
+  assert.ok(cepValido(14020260), 'CEP como número continua válido');
+  assert.ok(camposDeEnderecoDentroDoTeto({ endereco: 'Rua A', complemento: undefined, bairro: null }), 'ausente e nulo passam no teto (presença é do controlador)');
+
+  /* --- INFO-05: tamanho diferente passa pela MESMA comparação --- */
+  assert.ok(compararSeguro('segredo-de-teste', 'segredo-de-teste'), 'controle: iguais batem');
+  assert.ok(!compararSeguro('segredo-de-teste', 'segredo-de-tesTe'), 'mesmo tamanho, diferente: não bate');
+  assert.ok(!compararSeguro('segredo-de-teste', 'segredo'), 'tamanho diferente: não bate');
+  assert.ok(!compararSeguro(['segredo-de-teste'], 'segredo-de-teste'), 'lista com a credencial não vira a credencial');
+  {
+    const fonte = (await import('node:fs')).readFileSync(new URL(import.meta.url), 'utf8');
+    const corpo = fonte.slice(fonte.indexOf('export function compararSeguro'), fonte.indexOf('export function cpfValido'));
+    assert.ok(!/bufA\.length !== bufB\.length/.test(corpo), 'a recusa antecipada por tamanho não voltou');
+    assert.ok(/createHash\('sha256'\)/.test(corpo), 'os dois lados vão ao mesmo tamanho pelo resumo');
+  }
 
   console.log(`validadores: ${checagens} checagens OK`);
 }

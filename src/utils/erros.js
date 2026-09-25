@@ -11,8 +11,29 @@
 
 import { registrarErro } from '../services/erroService.js';
 
+/** A Asaas recusando a NOSSA credencial (401/403) ou fora do ar (5xx). */
+function falhaDaAsaasQueNaoEDeQuemChamou(erro) {
+  return erro.resumoAsaas !== undefined && (erro.status === 401 || erro.status === 403 || erro.status >= 500);
+}
+
 export function responderErro(resposta, erro, contexto, statusPadrao = 502) {
   console.error(`[${contexto}]`, erro.message);
+
+  /* A ASAAS RECUSANDO A NOSSA CREDENCIAL, OU FORA DO AR, NÃO É ERRO DE
+     QUEM CHAMOU (INFO-11, 25/09/2026). Até aqui o status dela passava
+     direto: um `401` da Asaas (a NOSSA chave recusada) chegava ao
+     contratante como `401` com "A chave de API fornecida é inválida" —
+     que o `API.md` define como a `X-Checkout-Key` DELE inválida —, e um
+     5xx levava o texto interno dela. Para quem chamou, é o que o
+     contrato já promete: `502`, falha ao falar com a Asaas — e, sendo
+     5xx, entra na captura abaixo: a nossa chave recusada é incidente,
+     não validação. 4xx de validação (400, 404, 409, 429…) segue como
+     está, com a mensagem já redigida na origem (`chamarAsaas`). */
+  if (falhaDaAsaasQueNaoEDeQuemChamou(erro)) {
+    erro = Object.assign(new Error('O meio de pagamento não aceitou a operação agora. Tente de novo em instantes.'), {
+      status: 502, resumoAsaas: erro.resumoAsaas, statusDaAsaas: erro.status
+    });
+  }
 
   const status = erro.status ?? statusPadrao;
 

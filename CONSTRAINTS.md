@@ -718,12 +718,37 @@ contratante `admin-master` e o `ligarAtalhoAdmin()` do `app.js`.
    > verificação tem que vir de onde não há cookie, e tem que cobrir as
    > outras grafias da mesma URL: com e sem extensão, com e sem barra
    > final.
+   >
+   > **E hoje são nove (25/09/2026, SEC-015 e NEW-01).** A varredura da
+   > Estação 6 achou mais uma porta ao lado, do mesmo formato: o projeto
+   > do Pages publica uma **prévia para cada branch e cada deploy**
+   > (`<hash>.san-checkout.pages.dev`, `<branch>.san-checkout.pages.dev`),
+   > e nenhuma delas passava pelo Access — medido sem cookie:
+   > `87b8e864.san-checkout.pages.dev/admin` respondia `200` com o painel.
+   > O dano era limitado (o painel sem a senha não abre nada, e a API
+   > continuava exigindo o token), mas a primeira camada simplesmente não
+   > existia ali. Entraram `*.san-checkout.pages.dev/admin`,
+   > `/admin.html` e `/api/admin`, mais `/api/admin` nos dois domínios de
+   > produção (a função do Pages da camada 1 na origem, abaixo). Conferido
+   > depois, sem cookie: os nove destinos e vinte e uma grafias
+   > (maiúsculas, `//`, `%61dmin`, `/./`, `/x/../`, `?`, `#`) dão `302`
+   > para o login da equipe ou `404`; `/`, `/status`, `/troca` e
+   > `/termos` continuam `200`. O cookie do Access passou a ser
+   > `HttpOnly` no mesmo dia — nada do front o lê, e um XSS que o lesse
+   > levaria a primeira camada inteira.
+   >
+   > **O que a política aceita, registrado como está:** "Somente o
+   > operador" permite o e-mail do dono **ou qualquer endereço
+   > `@sancocore.com.br`** (a regra `email_domain`, lida da API em
+   > 25/09/2026). É domínio próprio, sob controle dele — mas quem ganhar
+   > uma caixa nesse domínio passa pela primeira camada. A decisão é do
+   > dono, e não foi alterada.
 
 2. **Token de sessão validado no backend**, em toda rota de
    `/api/admin` (`verificarAdminKey`). Vale mesmo que a camada 1 caia ou
-   não esteja configurada, e é ela que protege a API — que fica em outro
-   domínio e não passa pelo Access. Como o token nasce e como ele é
-   conferido está logo abaixo, em "A sessão do admin".
+   não esteja configurada. Até 25/09/2026 era a ÚNICA que protegia a API
+   — ver "A camada 1 também na origem", abaixo. Como o token nasce e
+   como ele é conferido está logo abaixo, em "A sessão do admin".
 3. **`X-Robots-Tag: noindex, nofollow, noarchive`** em `public/_headers`,
    para **seis** caminhos: `/admin.html`, `/admin`, `/admin/`,
    `/status.html`, `/status` e `/status/`.
@@ -775,10 +800,45 @@ sitemap lista duas páginas — Termos e Privacidade. O checkout aberto sem
 `?c=` e `?pedido=` não é conteúdo indexável, e as duas áreas `noindex`
 não entram ali pelo mesmo motivo de não entrarem no `robots.txt`.
 
-**Limite assumido, declarado:** a API (`/api/admin/*`) fica em outro
-domínio (`api.sancocore.com.br`, hoje no Northflank) e **não passa pelo
-Access** — quem a protege é só a camada 2. Isso é o desenho, não
-descuido: o Access da Cloudflare cobre o que a Cloudflare serve.
+**A camada 1 também na origem (25/09/2026, SEC-015).** Até esta data
+este parágrafo dizia: *"Limite assumido, declarado: a API
+(`/api/admin/*`) fica em outro domínio e não passa pelo Access — quem a
+protege é só a camada 2. Isso é o desenho, não descuido."* Era descuido
+declarado. A lei do projeto (`seguranca-san`, "Área administrativa")
+exige as duas camadas **e** diz que origem alcançável por fora é a
+barreira inteira contornada — "fechar a origem (…segredo exigido na
+origem) é parte da tarefa". A API respondia pelo domínio dela e pela
+origem da Northflank, e o login inteiro (a senha, o scrypt) ficava ao
+alcance de qualquer um.
+
+Como é agora:
+
+- O painel chama `/api/admin/*` no **próprio domínio** dele
+  (`public/js/utils/api.js`). Ali mora uma função do Pages
+  (`functions/api/admin/[[caminho]].js`) **atrás do Access** — é um dos
+  nove destinos acima. Ela repassa à API só o JWT do Access, o token de
+  sessão e o `content-type`; o cookie do Access e o resto do navegador
+  ficam nela, e ela não segue redirecionamento.
+- A origem **confere o JWT de novo** (`src/middlewares/exigirAccess.js`,
+  com `src/utils/accessJwt.js`): RS256 com a chave da equipe, `aud` do
+  aplicativo do painel (o do MostrAí não serve), `iss` da equipe,
+  `type: app` (o `meta` que o Access dá a qualquer visitante não serve),
+  validade. Sem ele, **nenhuma** rota de `/api/admin` responde —
+  inclusive a de login —, pelo domínio da API ou pela origem.
+- **Não existe desligamento**, nem por variável: o `aud` e a equipe são
+  constantes no código, e a URL das chaves só troca para o servidor
+  local das suítes. Aplicativo do Access recriado muda o `aud` em código
+  revisado (`RUNBOOK.md` §5). As chaves indisponíveis dão `503`, nunca
+  "passa".
+- A guarda vem **antes** dos limitadores do admin (`server.js`): a
+  função sai da Cloudflare por IPs compartilhados com qualquer Worker de
+  qualquer conta, e com o limitador na frente um Worker alheio
+  esgotaria o teto de login do operador.
+
+O custo, declarado: o painel **não abre mais em `localhost` pelo
+navegador** — não há JWT ali. O teste manual local vai por `curl` com um
+Access de mentira (`docs/TESTES.md`, passo 2), e as suítes montam a
+pilha com ele (`tests/access-de-teste.js`).
 
 ### A sessão do admin (substituiu a senha por requisição em 12/09/2026)
 

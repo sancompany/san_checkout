@@ -136,7 +136,23 @@ export async function completarCobranca(id, dados) {
  * de sucesso — não há resposta boa a atrasar).
  */
 export async function liberarReservaCobranca(id) {
-  const { error } = await supabase.from('cobrancas').delete().eq('id', id);
+  /* CONDICIONAL desde 25/09/2026 (SEC-025): só apaga a reserva que
+     continua reserva — `pendente`, sem pagamento e sem sessão. Entre a
+     decisão de liberar e o `delete` a linha pode ter sido completada
+     (pelo reconciliador, ou por um evento que chegou) — e apagar uma
+     linha com `charge_id` é perder de vista um pagamento da Asaas. */
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .delete()
+    .eq('id', id)
+    .eq('status', 'pendente')
+    .is('charge_id', null)
+    .is('asaas_checkout_id', null)
+    .select('id');
+  if (!error && !(Array.isArray(data) && data.length === 1)) {
+    console.warn(`[cobrancaService.liberarReservaCobranca] a reserva ${id} não foi apagada: deixou de ser reserva (ganhou pagamento ou sessão) — fica para o reconciliador`);
+    return false;
+  }
   if (error) {
     console.error('[cobrancaService.liberarReservaCobranca]', error.message);
     await registrarErro(
@@ -147,7 +163,9 @@ export async function liberarReservaCobranca(id) {
       ),
       { contexto: 'cobrancaService.liberarReservaCobranca', rota: 'checkout/pix-ou-boleto', metodo: 'POST' }
     );
+    return false;
   }
+  return true;
 }
 
 /** Folga sobre `MINUTOS_DE_SESSAO_DE_CHECKOUT` (asaasService) para
@@ -598,15 +616,6 @@ function camposDeStatus(status) {
   };
 }
 
-export async function atualizarStatusPorCheckoutId(asaasCheckoutId, status) {
-  const { error } = await supabase
-    .from('cobrancas')
-    .update(camposDeStatus(status))
-    .eq('asaas_checkout_id', asaasCheckoutId);
-
-  if (error) console.error('[cobrancaService.atualizarStatusPorCheckoutId]', error.message);
-}
-
 /** A mesma transição condicional de `aplicarTransicao`, endereçada pela
  *  SESSÃO (eventos `CHECKOUT_*`, que não trazem charge). Os eventos de
  *  sessão passam pela máquina de estados como os de pagamento — antes
@@ -949,15 +958,6 @@ export async function listarCobrancasParadas({ limite = 20 } = {}) {
     .limit(limite);
   if (error) throw error;
   return data ?? [];
-}
-
-export async function atualizarStatusCobranca(chargeId, status) {
-  const { error } = await supabase
-    .from('cobrancas')
-    .update(camposDeStatus(status))
-    .eq('charge_id', chargeId);
-
-  if (error) console.error('[cobrancaService.atualizarStatusCobranca]', error.message);
 }
 
 /**

@@ -938,7 +938,7 @@ domínio; o endereço interno do provedor muda sem aviso.
 | `404` | Não existe |
 | `409` | Conflito de estado (pedido já pago, cancelado ou expirado) |
 | `429` | Limite de requisições — ver abaixo |
-| `502` / `504` | Falha ao falar com a Asaas ou com a **sua** API (504 = timeout) |
+| `502` / `504` | Falha ao falar com a Asaas ou com a **sua** API (504 = timeout). Inclui a Asaas **recusando a credencial do checkout** e a Asaas fora do ar: desde 25/09/2026 isso é sempre `502`, com mensagem genérica — antes o `401` dela chegava a você como `401`, que aqui significa só **a sua** `X-Checkout-Key` |
 
 **Limite de requisições** (por IP, janela de 60 segundos):
 
@@ -1237,6 +1237,7 @@ cobranças pagas (a duplicidade do RN-52, avisada com
 | `409 estorno_em_reconciliacao` | Um estorno com esta chave está em curso ou sem confirmação da Asaas — repita mais tarde, com a mesma chave; ele **não** será repetido às cegas |
 | `409 estorno_anterior_em_reconciliacao` | Um estorno anterior desta cobrança ainda não tem confirmação da Asaas, e o valor pedido só caberia se ele não tivesse acontecido — o restante só é conhecido depois dele |
 | `409 mais_de_uma_cobranca_paga` | Duas cobranças pagas no pedido: informe o `chargeId` |
+| `409 estorno_de_parcelamento` | A cobrança é uma **compra parcelada no cartão** (desde 25/09/2026). O estorno de parcelamento não é feito por esta API: o `chargeId` dela é a primeira parcela, e a Asaas estorna parcelamento por outro endpoint, cujo efeito sobre as demais parcelas ainda não foi medido — estornar daqui arriscaria devolver uma parcela e registrar o total. Estorne pelo painel da Asaas; o `PAYMENT_REFUNDED` chega pela notificação de sempre |
 | `502`/`504` | A Asaas recusou (a mensagem traz o motivo dela) ou não respondeu a tempo — repita com a **mesma** chave |
 
 > **Desde 22/09/2026, só uma cobrança `confirmado` (ou, desde 24/09,
@@ -1563,7 +1564,11 @@ GET {BASE}/api/saude
 
 Sem autenticação. Útil para um monitor externo. **Código HTTP:** `200`
 quando saudável; `503` com `"status": "degradado"` quando o banco não
-responde (o serviço está no ar mas não cobra nem concilia) — aponte o
+responde (o serviço está no ar mas não cobra nem concilia) **ou quando um
+worker parou** — desde 25/09/2026, a lista `workersAtrasados` no corpo diz
+quais (inbox, outbox, reconciliadores…) estão sem uma passada bem-sucedida
+há mais de três intervalos: confirmação sem reprocessar e aviso sem sair
+são queda do caminho do dinheiro, não detalhe. Aponte o
 monitor de uptime para alertar no HTTP não-2xx. `alertasChaveAsaas` não
 vazio significa que a chave de API da Asaas está para expirar ou já
 expirou (cobranças param de funcionar) — é aviso no corpo, não derruba o
@@ -1620,6 +1625,17 @@ QR do preço antigo com a tela mostrando o novo. Agora:
   cobranca_em_confirmacao` — tente de novo em instantes, nada é criado;
 - na pop-up (cartão e assinatura), a sessão aberta por outro valor, outro
   número de parcelas ou outro ciclo é encerrada antes de abrir outra.
+
+**Na assinatura, a sessão pendente só é reaproveitada para quem a abriu**
+(desde 25/09/2026, NEW-02). A reserva da assinatura é pelo plano + CPF/CNPJ,
+e o link do plano é público: até aqui, quem mandasse o CPF de outra pessoa
+recebia a janela de pagamento dela — que a Asaas mostra **preenchida** com
+nome, e-mail, telefone e endereço. Agora a janela só é reaproveitada quando
+o **e-mail** e o **telefone** também são os de quem a abriu (sem diferença
+de maiúsculas, espaço ou `+55`). Diferentes, a antiga é encerrada na Asaas
+e abre-se uma nova com os dados de quem pediu. E o `409
+pagamento_em_processamento` de uma sessão já concluída só traz o
+`asaasCheckoutId` para o mesmo pagador; para outra pessoa, vem sem ele.
 
 ### 6.4 Métodos habilitados por contratante
 

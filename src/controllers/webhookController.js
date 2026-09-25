@@ -57,12 +57,10 @@
 import {
   buscarCobranca,
   aplicarTransicao,
-  atualizarStatusCobranca,
   buscarCobrancaPorCheckoutId,
   buscarCobrancaPorReferenciaExterna,
   vincularChargeIdAoCheckout,
   vincularSessaoAReserva,
-  atualizarStatusPorCheckoutId,
   aplicarTransicaoPorCheckoutId,
   marcarSessaoConcluida,
   atualizarSubscriptionIdDaCobranca,
@@ -122,12 +120,10 @@ export const VERSAO_WEBHOOK = 2;
 const dependenciasPadrao = {
   buscarCobranca,
   aplicarTransicao,
-  atualizarStatusCobranca,
   buscarCobrancaPorCheckoutId,
   buscarCobrancaPorReferenciaExterna,
   vincularChargeIdAoCheckout,
   vincularSessaoAReserva,
-  atualizarStatusPorCheckoutId,
   aplicarTransicaoPorCheckoutId,
   marcarSessaoConcluida,
   atualizarSubscriptionIdDaCobranca,
@@ -837,8 +833,18 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
     'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_REFUSED'
   ];
 
+  /* Por CAS, desde 25/09/2026 (SEC-020): só ativa o que está
+     `pendente`, e só encerra o que está `pendente` ou `confirmado` — um
+     estorno não é apagado por um evento de autorização, e a reentrega do
+     mesmo evento não repete o aviso ao contratante. A semântica em si
+     ("autorização ativada" vira `confirmado` sem dinheiro nenhum ter
+     entrado) NÃO foi mudada: o método está desligado nesta conta
+     (`CONSTRAINTS.md` §2.4) e o evento real nunca foi medido — risco
+     aceito, registrado no relatório da Estação 6. */
   if (evento === ATIVOU) {
-    await deps.atualizarStatusPorCheckoutId(autorizacaoId, 'confirmado');
+    if (cobranca.status !== 'pendente') return;
+    const ativou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: 'pendente', para: 'confirmado', ocorridoEm });
+    if (!ativou) return;
     await deps.upsertAssinatura({
       id: autorizacaoId,
       contratanteId: cobranca.contratante_id,
@@ -852,7 +858,9 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
   }
 
   if (ENCERROU.includes(evento)) {
-    await deps.atualizarStatusPorCheckoutId(autorizacaoId, 'cancelado');
+    if (cobranca.status !== 'pendente' && cobranca.status !== 'confirmado') return;
+    const encerrou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: cobranca.status, para: 'cancelado', ocorridoEm });
+    if (!encerrou) return;
     return notificarAssinatura(cobranca, { evento: 'cancelada', assinaturaId: autorizacaoId, chargeId: null, statusFinanceiro: 'cancelado', ocorridoEm }, deps);
   }
 }

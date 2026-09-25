@@ -50,7 +50,7 @@ function mundo() {
   const iso = () => new Date(relogio).toISOString();
   const cobrancas = new Map();
   const estornos = new Map();
-  const asaas = { chamadas: [], refunds: new Map(), roteiro: [], statusPagamento: new Map(), duranteChamada: null };
+  const asaas = { chamadas: [], refunds: new Map(), roteiro: [], statusPagamento: new Map(), parcelamento: new Map(), leituras: 0, leituraFalha: false, duranteChamada: null };
   const erros = [];
   const avisos = [];
 
@@ -128,6 +128,11 @@ function mundo() {
     estornarCobranca,
     listarEstornosDaCobranca: async (chargeId) => (asaas.refunds.get(chargeId) ?? []).map(clone),
     consultarPagamento: async (chargeId) => ({ status: asaas.statusPagamento.get(chargeId) ?? 'RECEIVED', excluida: false }),
+    lerPagamentoNaAsaas: async (chargeId) => {
+      asaas.leituras += 1;
+      if (asaas.leituraFalha) throw erroAsaas(504, 'A Asaas não respondeu a tempo.', false);
+      return { id: chargeId, status: asaas.statusPagamento.get(chargeId) ?? 'CONFIRMED', installment: asaas.parcelamento.get(chargeId) ?? null };
+    },
     foiRecusaLimpaDaAsaas,
     registrarErro: async (e) => { erros.push(e.message); },
     registrarNaCobrancaSemSoltar: (chargeId, dados) => registrarEstorno(chargeId, dados, { liberarArrendamento: false }),
@@ -456,6 +461,41 @@ function mundo() {
   const servico = readFileSync(new URL('../src/services/estornoService.js', import.meta.url), 'utf8');
   ok(/descricao: marcador/.test(servico), 'o marcador vai para a Asaas na chamada de verdade');
   ok(/description: descricao/.test(readFileSync(new URL('../src/services/asaasService.js', import.meta.url), 'utf8')), 'e o adaptador o põe em `description`');
+}
+
+/* ============ SEC-018: COMPRA PARCELADA NÃO SE ESTORNA PELA API ============ */
+{
+  const m = mundo();
+  m.cobranca('c1', { metodo_pagamento: 'cartao_credito', parcelas: 3 });
+  m.asaas.parcelamento.set('pay_c1', 'ins_abc123');
+  const total = await m.estornar({ pedidoId: 'ped_1' });
+  igual([total.codigo, total.corpo?.codigo], [409, 'estorno_de_parcelamento'], 'SEC-018: estorno TOTAL de compra parcelada é recusado com código próprio');
+  const parcial = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'parcial-parcelado' });
+  igual([parcial.codigo, parcial.corpo?.codigo], [409, 'estorno_de_parcelamento'], 'e o PARCIAL também');
+  igual(m.asaas.chamadas.length, 0, 'e a Asaas NUNCA recebe o estorno de uma parcela como se fosse o todo');
+  igual(m.cobrancas.get('c1').estornando_em, null, 'o arrendamento volta — a cobrança não fica travada');
+  igual(m.cobrancas.get('c1').status, 'confirmado', 'e nada muda nela');
+
+  /* controle: cartão À VISTA (sem parcelamento na Asaas) estorna normalmente */
+  const m2 = mundo();
+  m2.cobranca('c2', { metodo_pagamento: 'cartao_credito', charge_id: 'pay_c2' });
+  const vista = await m2.estornar({ pedidoId: 'ped_1' });
+  igual([vista.codigo, vista.corpo?.status], [200, 'estornado'], 'controle: cartão à vista estorna');
+  ok(m2.asaas.leituras === 1, 'depois de conferir UMA vez na Asaas se é parcelado');
+
+  /* controle: Pix não vai à Asaas conferir parcelamento */
+  const m3 = mundo();
+  m3.cobranca('c3', { charge_id: 'pay_c3' });
+  await m3.estornar({ pedidoId: 'ped_1' });
+  igual(m3.asaas.leituras, 0, 'Pix não tem parcelamento: nenhuma leitura a mais');
+
+  /* a conferência falhou: 502, nada estornado, arrendamento de volta */
+  const m4 = mundo();
+  m4.cobranca('c4', { metodo_pagamento: 'cartao_credito', charge_id: 'pay_c4' });
+  m4.asaas.leituraFalha = true;
+  const semLeitura = await m4.estornar({ pedidoId: 'ped_1' });
+  igual(semLeitura.codigo, 502, 'sem conseguir conferir na Asaas, 502 — "não sei se é parcelado" nunca vira "não é"');
+  igual([m4.asaas.chamadas.length, m4.cobrancas.get('c4').estornando_em], [0, null], 'nada estornado, arrendamento de volta');
 }
 
 console.log(`estorno-repetido-nao-devolve-duas-vezes: ${checagens} checagens OK`);

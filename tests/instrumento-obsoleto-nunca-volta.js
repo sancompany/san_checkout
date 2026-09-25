@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:0';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? 'teste';
 
-const { abrirSessaoComReserva, sessaoDoCartaoServe, sessaoDaAssinaturaServe } = await import('../src/controllers/asaasCheckoutController.js');
+const { abrirSessaoComReserva, sessaoDoCartaoServe, sessaoDaAssinaturaServe, mesmoPagador } = await import('../src/controllers/asaasCheckoutController.js');
 const { escolherCobrancaRepresentativa } = await import('../src/services/cobrancaService.js');
 
 let checagens = 0;
@@ -152,20 +152,31 @@ const serveSe = (valor, parcelas) => (e) => sessaoDoCartaoServe(e, { valorCobrad
 
 /* ---- 9b. as duas regras de sessão vigente, direto, e a fiação delas ---- */
 {
-  const base = { valor_cobrado: 105.5, parcelas: 3, ciclo: 'MONTHLY', obsoleta_desde: null };
+  const base = { valor_cobrado: 105.5, parcelas: 3, ciclo: 'MONTHLY', obsoleta_desde: null, email: 'maria@exemplo.com', telefone: '16987654321' };
+  const pagador = { email: 'maria@exemplo.com', telefone: '16987654321' };
   ok(sessaoDoCartaoServe(base, { valorCobrado: 105.5, parcelas: 3 }), 'cartão: mesmo valor e parcelas serve');
   ok(!sessaoDoCartaoServe(base, { valorCobrado: 105.5, parcelas: 1 }), 'cartão: outra parcela NÃO serve');
   ok(!sessaoDoCartaoServe(base, { valorCobrado: 105.51, parcelas: 3 }), 'cartão: um centavo diferente NÃO serve');
   ok(sessaoDoCartaoServe(base, { valorCobrado: 105.50000000000001, parcelas: 3 }), 'cartão: comparação em centavos, sem ruído de ponto flutuante');
   ok(!sessaoDoCartaoServe({ ...base, obsoleta_desde: 'x' }, { valorCobrado: 105.5, parcelas: 3 }), 'cartão: obsoleta nunca serve');
-  ok(sessaoDaAssinaturaServe(base, { valor: 105.5, ciclo: 'MONTHLY' }), 'assinatura: mesmo valor e ciclo serve');
-  ok(!sessaoDaAssinaturaServe(base, { valor: 105.5, ciclo: 'YEARLY' }), 'assinatura: outro ciclo NÃO serve');
-  ok(!sessaoDaAssinaturaServe(base, { valor: 99, ciclo: 'MONTHLY' }), 'assinatura: outro valor NÃO serve');
-  ok(!sessaoDaAssinaturaServe({ ...base, obsoleta_desde: 'x' }, { valor: 105.5, ciclo: 'MONTHLY' }), 'assinatura: obsoleta nunca serve');
+  ok(sessaoDaAssinaturaServe(base, { valor: 105.5, ciclo: 'MONTHLY', ...pagador }), 'assinatura: mesmo valor, ciclo e pagador serve');
+  ok(!sessaoDaAssinaturaServe(base, { valor: 105.5, ciclo: 'MONTHLY', email: 'outra@exemplo.com', telefone: '16987654321' }), 'assinatura: OUTRO pagador (mesmo CPF) NÃO serve — NEW-02');
+  ok(!sessaoDaAssinaturaServe(base, { valor: 105.5, ciclo: 'YEARLY', ...pagador }), 'assinatura: outro ciclo NÃO serve');
+  ok(!sessaoDaAssinaturaServe(base, { valor: 99, ciclo: 'MONTHLY', ...pagador }), 'assinatura: outro valor NÃO serve');
+  ok(!sessaoDaAssinaturaServe({ ...base, obsoleta_desde: 'x' }, { valor: 105.5, ciclo: 'MONTHLY', ...pagador }), 'assinatura: obsoleta nunca serve');
+  /* `mesmoPagador` sozinha (NEW-02): a forma do dado não pode separar a
+     mesma pessoa, e ausência não pode juntar duas. O handler já normaliza
+     o telefone antes; a regra não depende disso. */
+  const linhaDaMaria = { email: 'maria@exemplo.com', telefone: '16987654321' };
+  ok(mesmoPagador(linhaDaMaria, { email: '  Maria@Exemplo.COM ', telefone: '+55 (16) 98765-4321' }), 'mesmo pagador: caixa, espaço e +55 não separam a mesma pessoa');
+  ok(!mesmoPagador(linhaDaMaria, { email: 'maria@exemplo.com', telefone: '16987654320' }), 'outro telefone é outra pessoa');
+  ok(!mesmoPagador(linhaDaMaria, { email: 'mario@exemplo.com', telefone: '16987654321' }), 'outro e-mail é outra pessoa');
+  ok(!mesmoPagador({ email: null, telefone: null }, { email: null, telefone: null }), 'ausente dos dois lados NÃO é "o mesmo"');
+  ok(!mesmoPagador({ email: 'maria@exemplo.com', telefone: null }, { email: 'maria@exemplo.com', telefone: undefined }), 'nem com só o e-mail batendo');
   const { readFileSync } = await import('node:fs');
   const fonte = readFileSync(new URL('../src/controllers/asaasCheckoutController.js', import.meta.url), 'utf8');
   ok(/sessaoServe: \(existente\) => sessaoDoCartaoServe\(existente, \{ valorCobrado, parcelas: parcelasOfertadas \}\)/.test(fonte), 'o cartão passa a regra dele ao abrir a sessão');
-  ok(/sessaoServe: \(existente\) => sessaoDaAssinaturaServe\(existente, \{ valor, ciclo \}\)/.test(fonte), 'e a assinatura, a dela');
+  ok(/sessaoServe: \(existente\) => sessaoDaAssinaturaServe\(existente, \{ valor, ciclo, email, telefone \}\)/.test(fonte), 'e a assinatura, a dela — com quem está pedindo');
 }
 
 /* ---- 10. SEC-005: a cobrança do pedido é a que SEGURA dinheiro ---- */

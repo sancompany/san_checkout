@@ -1,0 +1,206 @@
+/**
+ * SAN CHECKOUT v2 — src/utils/accessJwt.js
+ *
+ * O JWT do Cloudflare Access (SEC-015, 25/09/2026).
+ *
+ * A API administrativa (`/api/admin/*`) morava em `api.sancocore.com.br`,
+ * que é DNS-only — fora do Cloudflare Access —, e também respondia pela
+ * origem da Northflank. Quem a protegia era só o login próprio. A lei do
+ * projeto (skill `seguranca-san`, "Área administrativa: Cloudflare Access
+ * na frente, sempre") exige as DUAS camadas, e diz que a origem alcançável
+ * por fora é a barreira inteira contornada — "fechar a origem (…segredo
+ * exigido na origem) é parte da tarefa".
+ *
+ * O segredo exigido na origem é este JWT: o Access o põe em toda
+ * requisição que ele deixou passar (`Cf-Access-Jwt-Assertion`), assinado
+ * com a chave da equipe (RS256), e só ele o emite. O painel fala com
+ * `/api/admin` pelo MESMO domínio dele (a função do Pages
+ * `functions/api/admin/[[caminho]].js`, atrás do Access), e a origem
+ * recusa qualquer chamada administrativa sem um JWT válido — pelo domínio
+ * da API ou pelo da Northflank, tanto faz.
+ *
+ * Conferido aqui, nesta ordem, e recusado ao primeiro que falhar:
+ *   1. formato (três partes base64url, JSON nas duas primeiras);
+ *   2. `alg` RS256 e nada mais (`none` e HS256 são os ataques clássicos);
+ *   3. `kid` de uma chave da equipe;
+ *   4. assinatura;
+ *   5. `aud` do aplicativo do painel (outro aplicativo da mesma equipe não serve);
+ *   6. `iss` da equipe;
+ *   7. `type: app` (o `meta` que o Access entrega a qualquer visitante NÃO é credencial);
+ *   8. validade (`exp`, `nbf`, com 60 s de folga de relógio);
+ *   9. `email` presente — é quem entrou.
+ */
+
+import { createPublicKey, verify } from 'node:crypto';
+
+/** A equipe e o aplicativo do painel (`CONSTRAINTS.md` §2.6). Não são
+ *  segredo: identificam, não autorizam. E são constantes, NÃO variáveis de
+ *  ambiente, de propósito: um `aud` trocado por configuração abriria o
+ *  painel a quem passa pela política de OUTRO aplicativo da equipe (o do
+ *  MostrAí, por exemplo). Aplicativo do Access recriado muda aqui, em
+ *  código revisado — `RUNBOOK.md` §5. */
+export const EQUIPE_ACCESS = 'https://fancy-dawn-740a.cloudflareaccess.com';
+export const AUD_DO_PAINEL = '68d3d6ba08788001e497f765a0872491087dcf981c911665f3d77ac77558f4d0';
+const FOLGA_DE_RELOGIO_S = 60;
+
+const deBase64Url = (texto) => Buffer.from(String(texto).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+/** As três partes do JWT, ou `null` se não tiver a forma de um. */
+export function decodificarJwt(token) {
+  if (typeof token !== 'string' || token.length > 8192) return null;
+  const partes = token.split('.');
+  if (partes.length !== 3 || partes.some((p) => !/^[A-Za-z0-9_-]+$/.test(p))) return null;
+  try {
+    const cabecalho = JSON.parse(deBase64Url(partes[0]).toString('utf8'));
+    const carga = JSON.parse(deBase64Url(partes[1]).toString('utf8'));
+    if (!cabecalho || typeof cabecalho !== 'object' || !carga || typeof carga !== 'object') return null;
+    return { cabecalho, carga, assinado: `${partes[0]}.${partes[1]}`, assinatura: deBase64Url(partes[2]) };
+  } catch {
+    return null;
+  }
+}
+
+/** A assinatura RS256 confere com alguma chave do JWKS (pelo `kid`)? */
+export function assinaturaConfere(jwt, jwks) {
+  if (!jwt || jwt.cabecalho.alg !== 'RS256' || typeof jwt.cabecalho.kid !== 'string') return false;
+  const chave = (jwks?.keys ?? []).find((k) => k?.kid === jwt.cabecalho.kid && k?.kty === 'RSA');
+  if (!chave) return false;
+  try {
+    const publica = createPublicKey({ key: { kty: 'RSA', n: chave.n, e: chave.e }, format: 'jwk' });
+    return verify('RSA-SHA256', Buffer.from(jwt.assinado), publica, jwt.assinatura);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * O veredito sobre um JWT do Access. `{ valido: true, email }` ou
+ * `{ valido: false, motivo }` — o motivo é para o LOG, nunca para quem chamou.
+ */
+export function verificarJwtDoAccess(token, { jwks, aud = AUD_DO_PAINEL, equipe = EQUIPE_ACCESS, agora = Date.now() } = {}) {
+  const jwt = decodificarJwt(token);
+  if (!jwt) return { valido: false, motivo: 'formato' };
+  if (jwt.cabecalho.alg !== 'RS256') return { valido: false, motivo: `alg ${jwt.cabecalho.alg}` };
+  if (!assinaturaConfere(jwt, jwks)) return { valido: false, motivo: 'assinatura' };
+  const c = jwt.carga;
+  const auds = Array.isArray(c.aud) ? c.aud : [c.aud];
+  if (!auds.includes(aud)) return { valido: false, motivo: 'aud' };
+  if (c.iss !== equipe) return { valido: false, motivo: 'iss' };
+  if (c.type !== 'app') return { valido: false, motivo: `type ${c.type}` };
+  const segundos = Math.floor(agora / 1000);
+  if (!Number.isFinite(c.exp) || c.exp + FOLGA_DE_RELOGIO_S < segundos) return { valido: false, motivo: 'vencido' };
+  if (Number.isFinite(c.nbf) && c.nbf - FOLGA_DE_RELOGIO_S > segundos) return { valido: false, motivo: 'ainda não vale' };
+  if (typeof c.email !== 'string' || !c.email.includes('@')) return { valido: false, motivo: 'sem email' };
+  return { valido: true, email: c.email };
+}
+
+/**
+ * As chaves da equipe, com cache. Busca de novo quando o `kid` pedido não
+ * está no cache (o Access roda as chaves) — no máximo uma vez a cada
+ * `intervaloMinimoMs`, para um token forjado com `kid` inventado não virar
+ * uma requisição à Cloudflare por chamada.
+ */
+export function criarBuscadorDeChaves({ url = `${EQUIPE_ACCESS}/cdn-cgi/access/certs`, fetch = (...a) => globalThis.fetch(...a), ttlMs = 3600_000, intervaloMinimoMs = 60_000, agora = () => Date.now(), timeoutMs = 5000 } = {}) {
+  let cache = null; let buscadoEm = 0;
+  return async function chavesPara(kid) {
+    const temKid = cache?.keys?.some((k) => k.kid === kid);
+    const vencido = agora() - buscadoEm > ttlMs;
+    const podeBuscar = agora() - buscadoEm > intervaloMinimoMs;
+    if (cache && !vencido && (temKid || !podeBuscar)) return cache;
+    const controlador = new AbortController();
+    const teto = setTimeout(() => controlador.abort(), timeoutMs);
+    try {
+      const resposta = await fetch(url, { signal: controlador.signal, redirect: 'error' });
+      if (!resposta.ok) throw new Error(`certs do Access responderam ${resposta.status}`);
+      const corpo = await resposta.json();
+      if (!Array.isArray(corpo?.keys)) throw new Error('certs do Access sem `keys`');
+      cache = { keys: corpo.keys }; buscadoEm = agora();
+      return cache;
+    } finally {
+      clearTimeout(teto);
+    }
+  };
+}
+
+/* ------------------------------------------------------------------
+   Autoteste — `node src/utils/accessJwt.js`
+------------------------------------------------------------------ */
+if (process.argv[1]?.endsWith('accessJwt.js')) {
+  const { strict: assert } = await import('node:assert');
+  const { generateKeyPairSync, createSign } = await import('node:crypto');
+  let checagens = 0;
+  const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
+
+  /* Material PÚBLICO da Cloudflare, capturado em 25/09/2026 para o controle positivo offline:
+     a chave de assinatura do Access da equipe (de `/cdn-cgi/access/certs`, que qualquer um lê) e um
+     token `meta` que o Access entrega a qualquer visitante no redirecionamento para o login. O token
+     não dá acesso a nada (é `type: meta`, e já venceu) — serve só para provar que a verificação RS256
+     daqui aceita uma assinatura DE VERDADE da Cloudflare, e não só as que o próprio teste fabrica. */
+  const CHAVE_REAL_DO_ACCESS = {"kid": "28fb9540768dd6d6cd80b78f7b6c61322d5be548aa70f4550e5f039326ae17a0", "kty": "RSA", "alg": "RS256", "use": "sig", "e": "AQAB", "n": "nj1kmXXFwpSuOnuG05a2nYv_m5ZyMZhctkfV4A4liJx94pvqr0w-v7bxvteLooAQ7SpqvcHTTxpl1jMZOPa7NqbFYd9wtqvObacpe_gD8GwoJUo94RaxXkGiao6s52IglwkauLs-vD-AhJIiC3MkduYxtH80VnM27CNlHrn-XAfBH45D9fojcuZamjFUq3q_Ani3uZM4D2TVseaXx2tvVFiLuxPZg5JxQCuHd0sXCQMDhzfJrI78UgI5wTmZZ7VzVV6STnZe1S6yXXSF27phzXvEuEVWSMjaT4HIv0J_pxClIFyvVQIxNK0CgFzZc7UWvvKe0olxEsMz3jQkQCD8hQ"};
+  const TOKEN_META_REAL = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6IjI4ZmI5NTQwNzY4ZGQ2ZDZjZDgwYjc4ZjdiNmM2MTMyMmQ1YmU1NDhhYTcwZjQ1NTBlNWYwMzkzMjZhZTE3YTAifQ.eyJ0eXBlIjoibWV0YSIsImF1ZCI6IjY4ZDNkNmJhMDg3ODgwMDFlNDk3Zjc2NWEwODcyNDkxMDg3ZGNmOTgxYzkxMTY2NWYzZDc3YWM3NzU1OGY0ZDAiLCJob3N0bmFtZSI6ImNoZWNrb3V0LnNhbmNvY29yZS5jb20uYnIiLCJyZWRpcmVjdF91cmwiOiIvYWRtaW4iLCJzZXJ2aWNlX3Rva2VuX3N0YXR1cyI6ZmFsc2UsImlzX3dhcnAiOmZhbHNlLCJpc19nYXRld2F5IjpmYWxzZSwiZXhwIjoxNzkwMzI2NTg3LCJuYmYiOjE3OTAzMjYyODcsImlhdCI6MTc5MDMyNjI4NywiYXV0aF9zdGF0dXMiOiJOT05FIiwibXRsc19hdXRoIjp7ImNlcnRfaXNzdWVyX2RuIjoiIiwiY2VydF9zZXJpYWwiOiIiLCJjZXJ0X2lzc3Vlcl9za2kiOiIiLCJjZXJ0X3ByZXNlbnRlZCI6ZmFsc2UsImNvbW1vbl9uYW1lIjoiIiwiYXV0aF9zdGF0dXMiOiJOT05FIn0sInJlYWxfY291bnRyeSI6IlVTIiwiYXBwX3Nlc3Npb25faGFzaCI6Ijc1YmIyNzk2N2RhZDExZDliNTA0ZTJiNTg3NWQzOTAzYWI0ODkzYWNmNmZlYTljYmRjN2I3YjU4NmRiNjNmMjQifQ.Mh4fSJBDI1rcahjxsm5Hex_LVoT49olRyDX3XTcKLYQyN_sOSNJi9GlI8g1OEeyZFVUEPgjKM91GNDaKyGv33I0ZH0IHJnm_eN1ZH_6UD5YTc1au_yUAfbLaCcj1dDRfAftZUbbhmCBStzGiz7t04aDVX9adICApOhx3uw5O2NTYtOQXZsqaJEG8z5mtd0o9M-gCrPFyonbDpOIrgLcyK4GYJT2qgKAASUf8MOjfT-JqnXlSKt2rydXizu8K407dJBOUG-LrRm_SuwrpSYJ6ucS_i7UNTxm-keF3hM_3NlSpIVN8yGNoEzRTLo5jMJFG57NB2nX1ihmads_rNz8mUA';
+  /* ---- controle positivo com material REAL da Cloudflare ---- */
+  const real = decodificarJwt(TOKEN_META_REAL);
+  ok(real && real.cabecalho.alg === 'RS256', 'o token meta real tem a forma de um JWT RS256');
+  ok(assinaturaConfere(real, { keys: [CHAVE_REAL_DO_ACCESS] }), 'CONTROLE POSITIVO: a verificação daqui aceita uma assinatura DE VERDADE da Cloudflare');
+  const adulterado = { ...real, assinado: real.assinado.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')) };
+  ok(!assinaturaConfere(adulterado, { keys: [CHAVE_REAL_DO_ACCESS] }), 'e recusa o mesmo token com um caractere trocado');
+  const r = verificarJwtDoAccess(TOKEN_META_REAL, { jwks: { keys: [CHAVE_REAL_DO_ACCESS] }, agora: real.carga.iat * 1000 });
+  ok(!r.valido && /iss|type/.test(r.motivo), `o token META (que o Access entrega a qualquer visitante) NÃO é credencial (${r.motivo})`);
+
+  /* ---- chaves de teste: o que a Cloudflare assinaria ---- */
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'kid-teste', alg: 'RS256' };
+  const jwks = { keys: [jwk] };
+  const outra = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const assinar = (carga, { cabecalho = { alg: 'RS256', kid: 'kid-teste', typ: 'JWT' }, chave = privateKey } = {}) => {
+    const corpo = `${b64(cabecalho)}.${b64(carga)}`;
+    const s = createSign('RSA-SHA256'); s.update(corpo);
+    return `${corpo}.${s.sign(chave).toString('base64url')}`;
+  };
+  const agora = Date.parse('2026-09-25T12:00:00Z');
+  const cargaBoa = { aud: [AUD_DO_PAINEL], iss: EQUIPE_ACCESS, type: 'app', email: 'dono@exemplo.com', sub: 'u1', iat: agora / 1000 - 10, nbf: agora / 1000 - 10, exp: agora / 1000 + 3600 };
+  const veredito = (token, extra = {}) => verificarJwtDoAccess(token, { jwks, agora, ...extra });
+
+  ok(veredito(assinar(cargaBoa)).valido, 'controle positivo: o token de aplicativo bem assinado passa');
+  ok(veredito(assinar(cargaBoa)).email === 'dono@exemplo.com', 'e diz quem entrou');
+  const recusas = [
+    ['assinado por OUTRA chave', assinar(cargaBoa, { chave: outra.privateKey })],
+    ['alg none', `${b64({ alg: 'none', kid: 'kid-teste' })}.${b64(cargaBoa)}.`],
+    // Com assinatura NÃO vazia: o vazio a checagem de formato já barra, e a de `alg` ficava sem exercício (sabotagem H9).
+    ['alg none com assinatura qualquer', `${b64({ alg: 'none', kid: 'kid-teste' })}.${b64(cargaBoa)}.AAAA`],
+    ['alg RS512 com a chave certa', (() => { const corpo = `${b64({ alg: 'RS512', kid: 'kid-teste' })}.${b64(cargaBoa)}`; const s = createSign('RSA-SHA512'); s.update(corpo); return `${corpo}.${s.sign(privateKey).toString('base64url')}`; })()],
+    ['alg HS256 com a chave pública como segredo', `${b64({ alg: 'HS256', kid: 'kid-teste' })}.${b64(cargaBoa)}.AAAA`],
+    ['kid desconhecido', assinar(cargaBoa, { cabecalho: { alg: 'RS256', kid: 'kid-inventado' } })],
+    ['aud de outro aplicativo', assinar({ ...cargaBoa, aud: ['7120cda61ce638992a2af382565cf88867f5b95e7987155cf1f439b90c4ea1e3'] })],
+    ['iss de outra equipe', assinar({ ...cargaBoa, iss: 'https://outra.cloudflareaccess.com' })],
+    ['type meta', assinar({ ...cargaBoa, type: 'meta' })],
+    ['vencido', assinar({ ...cargaBoa, exp: agora / 1000 - 3600 })],
+    ['ainda não vale', assinar({ ...cargaBoa, nbf: agora / 1000 + 3600 })],
+    ['sem email', assinar({ ...cargaBoa, email: undefined })],
+    ['sem exp', assinar({ ...cargaBoa, exp: undefined })],
+    ['carga trocada depois de assinar', (() => { const t = assinar(cargaBoa).split('.'); t[1] = b64({ ...cargaBoa, email: 'intruso@exemplo.com' }); return t.join('.'); })()],
+    ['lixo', 'nao.e.jwt'], ['vazio', ''], ['nulo', null], ['duas partes', 'a.b']
+  ];
+  for (const [nome, token] of recusas) ok(!veredito(token).valido, `recusa: ${nome}`);
+  ok(veredito(assinar({ ...cargaBoa, exp: agora / 1000 - 30 })).valido, 'folga de relógio: vencido há 30 s ainda passa (o relógio da Cloudflare e o nosso não são o mesmo)');
+  ok(veredito(assinar({ ...cargaBoa, aud: AUD_DO_PAINEL })).valido, '`aud` como texto (não lista) também é aceito');
+
+  /* ---- o buscador de chaves: cache, rotação e teto ---- */
+  let buscas = 0; let relogio = 0;
+  const buscador = criarBuscadorDeChaves({
+    fetch: async () => { buscas += 1; return { ok: true, json: async () => jwks }; },
+    agora: () => relogio
+  });
+  await buscador('kid-teste'); await buscador('kid-teste');
+  ok(buscas === 1, 'o cache evita buscar de novo');
+  relogio += 1000; await buscador('kid-inventado');
+  ok(buscas === 1, 'kid desconhecido dentro do intervalo mínimo NÃO busca (forjado não vira chamada à Cloudflare por requisição)');
+  relogio += 61_000; await buscador('kid-inventado');
+  ok(buscas === 2, 'passado o intervalo, um kid novo (rotação) busca de novo');
+  let erro = null;
+  await criarBuscadorDeChaves({ fetch: async () => ({ ok: false, status: 503 }) })('x').catch((e) => { erro = e; });
+  ok(erro && /503/.test(erro.message), 'certs indisponíveis LANÇAM — quem chama responde 503, nunca "passa"');
+
+  console.log(`accessJwt: ${checagens} checagens OK`);
+}

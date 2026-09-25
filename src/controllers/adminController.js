@@ -660,10 +660,16 @@ export async function criarSubconta(requisicao, resposta) {
     .single();
 
   if (error) {
-    // A subconta já existe na Asaas nesse ponto — só o INSERT local
-    // falhou. Loga os dados devolvidos pra não se perderem: sem isso,
-    // o operador teria que recriar a subconta na Asaas à toa.
-    console.error('[admin.criarSubconta] Supabase falhou DEPOIS da Asaas já ter criado a subconta — dados pra recuperar manualmente:', criada);
+    /* A subconta já existe na Asaas nesse ponto — só o INSERT local
+       falhou. Loga os IDENTIFICADORES para ela não se perder (sem isso,
+       o operador recriaria a subconta na Asaas à toa) — e NUNCA a chave
+       de API dela (SEC-016, 25/09/2026): até aqui o objeto inteiro ia
+       para o stdout, e com ele a `apiKey`, que opera a subconta na Asaas
+       e ficava no log da hospedagem para quem o lesse. A chave não é
+       recuperável daqui, e não precisa ser: a conta-mãe gera outra para
+       a subconta na Asaas. */
+    console.error('[admin.criarSubconta] Supabase falhou DEPOIS da Asaas já ter criado a subconta — recuperar à mão pelo id:',
+      { asaasAccountId: criada.asaasAccountId, walletId: criada.walletId, chaveDeApi: 'omitida (gerar outra na Asaas)' });
     return responderErro(resposta, error, 'admin.criarSubconta');
   }
 
@@ -676,17 +682,37 @@ export async function criarSubconta(requisicao, resposta) {
 export async function atualizarLinkAtivacaoSubconta(requisicao, resposta) {
   const { linkAtivacao } = requisicao.body ?? {};
   if (!linkAtivacao) return resposta.status(400).json({ erro: 'linkAtivacao é obrigatório.' });
+  /* O link vira `href` de um botão no painel (SEC-032, 25/09/2026): até
+     aqui qualquer texto era gravado — `javascript:…` inclusive, que só a
+     CSP impedia de rodar. É um link que a Asaas manda por e-mail: https,
+     e com teto. */
+  if (!linkDeAtivacaoAceitavel(linkAtivacao)) {
+    return resposta.status(400).json({ erro: 'linkAtivacao precisa ser um endereço https (o link que a Asaas mandou por e-mail).' });
+  }
 
   const { data, error } = await supabase
     .from('subcontas')
     .update({ link_ativacao: linkAtivacao })
     .eq('id', requisicao.params.id)
     .select('*')
-    .single();
+    .maybeSingle();
 
   if (error) return responderErro(resposta, error, 'admin.atualizarLinkAtivacaoSubconta');
   if (!data) return resposta.status(404).json({ erro: 'Subconta não encontrada.' });
-  resposta.json(data);
+  /* A chave da subconta só sai na criação (H-08). Até 25/09/2026 esta
+     resposta devolvia a linha inteira, com a `api_key`, a cada link
+     colado (SEC-016). */
+  resposta.json(mascararChave(data));
+}
+
+/** `https:` e até 2 KB — nada de `javascript:`, `data:` ou `http:`. */
+export function linkDeAtivacaoAceitavel(valor) {
+  if (typeof valor !== 'string' || valor.length > 2048) return false;
+  try {
+    return new URL(valor).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 // --- Auditoria do webhook (Lei 8) --------------------------------------

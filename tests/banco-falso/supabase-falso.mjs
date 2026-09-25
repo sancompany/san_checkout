@@ -29,7 +29,15 @@ const UNICAS = {
   webhook_inbox: [['impressao_digital'], ['id']],
   clientes_asaas: [['ambiente', 'documento_hash']],
   contratantes: [['id']],
-  cobrancas: [['id'], ['charge_id']]
+  /* Os PARCIAIS também, com o predicado de produção (lidos de `pg_indexes`
+     em 25/09/2026). Sem eles o dublê aceitava duas reservas pendentes do
+     mesmo plano+documento, e nenhuma suíte exercitava de verdade o
+     reaproveitamento da reserva de assinatura (NEW-02). */
+  cobrancas: [
+    ['id'], ['charge_id'], ['asaas_checkout_id'],
+    { colunas: ['contratante_id', 'pedido_id', 'metodo_pagamento'], onde: (l) => l.status === 'pendente' && l.pedido_id != null },
+    { colunas: ['contratante_id', 'plano_id', 'documento', 'metodo_pagamento'], onde: (l) => l.status === 'pendente' && l.plano_id != null && l.pedido_id == null }
+  ]
 };
 
 function ler() {
@@ -120,6 +128,23 @@ class Consulta {
   maybeSingle() { this.um = 'maybe'; return this; }
   single() { this.um = 'single'; return this; }
 
+  /** `maybeSingle`/`single` valem para escrita com `select` também — o
+   *  PostgREST devolve UM objeto (ou `null`), nunca a lista. O dublê
+   *  devolvia a lista num `update().select().maybeSingle()`, e quem a
+   *  espalhava num objeto via as chaves `0`, `1`… (SEC-016, 25/09/2026). */
+  moldar(data, error) {
+    if (!Array.isArray(data)) return { data, error };
+    if (this.um === 'maybe') {
+      if (data.length > 1) return { data: null, error: { code: 'PGRST116', message: 'mais de uma linha' } };
+      return { data: data[0] ?? null, error };
+    }
+    if (this.um === 'single') {
+      if (data.length !== 1) return { data: null, error: { code: 'PGRST116', message: 'esperava uma linha' } };
+      return { data: data[0], error };
+    }
+    return { data, error };
+  }
+
   projeta(linha) {
     if (this.colunas === '*' || this.colunas.includes('(')) return { ...linha };
     const saida = {};
@@ -150,8 +175,12 @@ class Consulta {
     } else if (this.modo === 'insert') {
       const novas = (Array.isArray(this.corpo) ? this.corpo : [this.corpo]).map((c) => ({ id: randomUUID(), criado_em: new Date().toISOString(), ...c }));
       for (const nova of novas) {
-        for (const chave of UNICAS[this.tabela] ?? []) {
-          if (chave.every((k) => nova[k] !== undefined && nova[k] !== null) && linhas.some((l) => chave.every((k) => l[k] === nova[k]))) {
+        for (const indice of UNICAS[this.tabela] ?? []) {
+          const chave = Array.isArray(indice) ? indice : indice.colunas;
+          const onde = Array.isArray(indice) ? () => true : indice.onde;
+          if (!onde({ status: 'pendente', ...nova })) continue;
+          if (chave.every((k) => nova[k] !== undefined && nova[k] !== null)
+            && linhas.some((l) => onde(l) && chave.every((k) => l[k] === nova[k]))) {
             return { data: null, error: { code: '23505', message: `duplicate key (${chave.join(',')})` }, count: null };
           }
         }
@@ -162,9 +191,15 @@ class Consulta {
       const alvo = linhas.filter(casa);
       for (const l of alvo) Object.assign(l, this.corpo);
       data = this.retornar ? alvo.map((l) => this.projeta(l)) : null;
+      ({ data, error } = this.moldar(data, error));
     } else if (this.modo === 'delete') {
-      const restantes = linhas.filter((l) => !casa(l));
-      estado.tabelas[this.tabela] = restantes;
+      /* `delete().select()` devolve as linhas APAGADAS, como no PostgREST —
+         o dublê devolvia `null` sempre, e um delete condicional que
+         confere quantas linhas saíram (SEC-025) não tinha como ser testado. */
+      const apagadas = linhas.filter(casa);
+      estado.tabelas[this.tabela] = linhas.filter((l) => !casa(l));
+      data = this.retornar ? apagadas.map((l) => this.projeta(l)) : null;
+      ({ data, error } = this.moldar(data, error));
     } else {
       let sel = linhas.filter(casa);
       if (this.ordem) sel.sort((a, b) => (String(a[this.ordem.c]) < String(b[this.ordem.c]) ? -1 : 1) * (this.ordem.ascending ? 1 : -1));

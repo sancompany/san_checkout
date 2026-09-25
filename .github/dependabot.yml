@@ -1,0 +1,18 @@
+# Dependabot (SEC-034, 25/09/2026): aviso de versão nova de dependência e
+# de ação do GitHub, uma vez por semana. Ele só ABRE o pull request — quem
+# decide é o CI verde e quem revisa, como qualquer outra mudança. As ações
+# ficam fixadas por SHA (ci.yml, seguranca.yml); é por isso que o aviso
+# importa: SHA fixo não se atualiza sozinho, nem quando a versão fixada
+# ganha uma correção de segurança.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

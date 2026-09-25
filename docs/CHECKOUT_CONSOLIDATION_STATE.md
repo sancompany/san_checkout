@@ -19,7 +19,7 @@ Resta o PR #43 (consultas 5.2/5.3 com `versao: 2` + este relatório).
 | backend | Northflank `san-co/san-checkout/san-checkout`, 1 instância, plano `nf-compute-50`, porta 3001, `api.sancocore.com.br` | `northflank get service -o json` |
 | deployedSHA backend | `f7b1cb9` (= main), deploy COMPLETED 24/09 09:04Z | idem |
 | env do backend | 11 variáveis: ASAAS_AMBIENTE, ASAAS_API_KEY, ASAAS_WEBHOOK_TOKEN, CHECKOUT_ADMIN_PASS_HASH, CHECKOUT_ADMIN_USER, NODE_ENV, ORIGEM_FRONTEND, SUPABASE_SERVICE_KEY, SUPABASE_URL, TAXA_FIXA, TAXA_PERCENTUAL — todas CONFIGURADAS | idem (só nomes) |
-| ASAAS_AMBIENTE | `sandbox`; chave classe `$aact_hmlg…` (últimos 4: `OWMy`) | idem |
+| ASAAS_AMBIENTE | `sandbox`; chave da classe de homologação da Asaas (o sufixo que estava aqui foi retirado em 25/09/2026 — INFO-12 da Estação 6: pedaço de segredo não se escreve em documento) | idem |
 | taxa | 0.9 % + R$ 0,50 | idem |
 | frontend | Cloudflare Pages `san-checkout`, branch de produção `main`, `checkout.sancocore.com.br` + `san-checkout.pages.dev` | API Cloudflare |
 | Access | app "Painel admin do San Checkout" cobre `/admin` e `/admin.html` nos dois hosts; `GET /admin.html` anônimo → 302 para o login do Access | API + curl |

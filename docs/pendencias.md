@@ -18,18 +18,52 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ## Bloqueiam a esteira
 
-### 🔴 Estação 6 · baseline de segurança (25/09/2026) — 2 HIGH, 5 bloqueadores, nada corrigido ainda
-Relatório completo: `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md`
-(auditado `43635c4`, o mesmo SHA em produção). É a baseline **antes** de
-qualquer correção, para a auditoria adversarial independente (Codex):
-nenhum achado foi corrigido nesta fase, de propósito. Bloqueadores para
-fechar a estação: SEC-001 (caminho arbitrário no pull autenticado do
-contratante, com a resposta devolvida a anônimo), SEC-002 (estorno
-parcial repetido devolve o dinheiro duas vezes), SEC-003 (`pedidoId` não
-canônico contorna RN-04/RN-04.1/RN-51), SEC-004 (reaproveitamento de
-Pix/boleto antes da guarda de pedido pago) e SEC-006 (outbox segue
-redirect sem revalidar). Ordem combinada com o dono: Codex audita →
-achados voltam → só então se corrige → fecha a estação.
+### 🟠 Estação 6 · remediação final (25/09/2026) — os bloqueadores da baseline corrigidos em código; o que sobra depende de fora
+Ledger e relatório: `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`.
+A baseline (`docs/SECURITY_STATION_6_BASELINE_2026-09-25.md`, auditada em
+`43635c4`) fica como estava, de propósito: é o retrato de antes. Os cinco
+bloqueadores dela (SEC-001, 002, 003, 004, 006) e os demais achados foram
+corrigidos por classe de causa raiz (CR-01…CR-15), cada correção com
+regressão e sabotagem. O que NÃO fecha só com código, e fica aqui até
+fechar:
+
+- **O dono entrar no `/admin` pelo Access depois do deploy** (SEC-015). A
+  API do admin passou a exigir, na origem, o JWT do Cloudflare Access; o
+  painel chega a ela por uma função do Pages atrás do Access. Tudo que dá
+  para provar sem a credencial foi provado (JWT real da Cloudflare
+  verificado, recusa sem JWT pela API e pela origem, os nove destinos do
+  Access sem cookie). O login de verdade só o dono faz. Se travar:
+  `RUNBOOK.md`, "Perdi o acesso ao `/admin`" — inclusive o `git revert`.
+- **Estorno de compra parcelada no cartão** (SEC-018): recusado pela API
+  com `409 estorno_de_parcelamento` até medir, no SANDBOX, o
+  `POST /v3/installments/{id}/refund` e onde o estorno aparece (em qual
+  cobrança, em que `GET …/refunds`). Exige uma compra parcelada de teste
+  no sandbox e uma chave de sandbox — nenhuma das duas existe nesta
+  sessão. Produção não tem compra parcelada nenhuma (conferido em
+  25/09/2026).
+- **Modo estrito do IP do webhook** (M-01, SEC-007): o código confere a
+  origem contra os IPs oficiais da Asaas e, por ora, só registra. Ligar
+  `ASAAS_WEBHOOK_IP_ESTRITO=1` depois de ver o `ip` da primeira entrega
+  natural batendo com a lista (o log de ingresso da Northflank não está
+  disponível nesta conta).
+- **Health check da Northflank** (SEC-031): `/api/saude` agora dá `503`
+  com worker parado. Configurar a Northflank para reiniciar com base nela é
+  decisão de infraestrutura do dono — reiniciar em loop durante uma queda
+  do Supabase não ajuda, então o recomendado é o monitor de uptime
+  alertar, não a Northflank reiniciar.
+- **Proteção de branch da `main`** (SEC-034): não é legível com as
+  credenciais desta sessão. O CI só lê (`permissions: contents: read`),
+  as ações e a imagem estão fixadas e o Dependabot existe; exigir o CI
+  verde para mesclar é configuração do GitHub, do dono.
+- **Prazos de retenção** de `intencoes_troca_plano`, `clientes_asaas` e
+  `subcontas` (SEC-030): decisão jurídica (skill `legal`), não técnica.
+- **O CPF como oráculo de "tem assinatura"** (NEW-03): com o CPF de alguém
+  e o link público de um plano, o `409 assinatura_ja_existe` diz que essa
+  pessoa assina aquele plano. É consequência da regra de uma assinatura
+  viva por plano e documento (RN-59) e o CPF não é segredo neste
+  desenho; esconder a resposta pioraria a tela de quem já é assinante.
+  Registrado para o dono decidir (e para a skill `legal`, se o serviço de
+  algum contratante for sensível).
 
 ### 🟠 Primeiro pagamento real (25/09/2026) · Pix sem QR e assinatura "ativa" sem débito — corrigido em código, falta o dono
 O incidente inteiro, com IDs e linha do tempo:

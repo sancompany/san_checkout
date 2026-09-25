@@ -37,7 +37,7 @@
 import { randomUUID } from 'node:crypto';
 import { supabase } from '../config/supabase.js';
 import { emCentavos, emReais } from '../utils/dinheiro.js';
-import { estornarCobranca, listarEstornosDaCobranca, consultarPagamento, foiRecusaLimpaDaAsaas } from './asaasService.js';
+import { estornarCobranca, listarEstornosDaCobranca, consultarPagamento, lerPagamentoNaAsaas, foiRecusaLimpaDaAsaas } from './asaasService.js';
 import { registrarEstorno } from './cobrancaService.js';
 import { registrarErro } from './erroService.js';
 
@@ -112,7 +112,7 @@ async function buscarCobrancaDaOperacao(cobrancaId) {
 const dependenciasPadrao = {
   buscarOperacao, inserirOperacao, transitar, operacoesDaCobranca, operacoesParaReconciliar,
   buscarCobrancaDaOperacao, estornarCobranca, listarEstornosDaCobranca, consultarPagamento,
-  foiRecusaLimpaDaAsaas, registrarErro,
+  lerPagamentoNaAsaas, foiRecusaLimpaDaAsaas, registrarErro,
   /* A reconciliação grava o estado confirmado também na cobrança — sem
      soltar o arrendamento, que pode ser de outra requisição viva. */
   registrarNaCobrancaSemSoltar: (chargeId, dados) => registrarEstorno(chargeId, dados, { liberarArrendamento: false }),
@@ -308,6 +308,31 @@ export async function executarEstorno({ contratante, cobranca, chave, valorCenta
        pode ter mudado (um webhook de estorno no meio). Com o arrendamento
        na mão, nenhum outro estorno NOSSO desta cobrança anda em paralelo. */
     const atual = (await deps.buscarCobrancaDaOperacao(cobranca.id)) ?? cobranca;
+
+    /* COMPRA PARCELADA NÃO SE ESTORNA POR AQUI (SEC-018, 25/09/2026). O
+       `charge_id` de um cartão parcelado é a PRIMEIRA parcela, e o estorno
+       daqui é `POST /v3/payments/{id}/refund` — que a Asaas documenta para
+       UMA cobrança. Para o parcelamento inteiro ela tem outro endpoint
+       (`POST /v3/installments/{id}/refund`, lido na doc em 25/09/2026), e o
+       que acontece com as outras parcelas quando se estorna uma nunca foi
+       medido. O risco é o pior do caminho do dinheiro: o comprador recebe
+       uma parcela de volta, e o registro diz "estornado" pelo total. Até a
+       medição no sandbox, recusa com código próprio — o estorno sai pelo
+       painel da Asaas, e o webhook traz o resultado. */
+    if (atual.metodo_pagamento === 'cartao_credito') {
+      let pagamento;
+      try {
+        pagamento = await deps.lerPagamentoNaAsaas(cobranca.charge_id);
+      } catch {
+        await gancho.liberar(cobranca.charge_id);
+        return { http: 502, corpo: { erro: 'Não foi possível conferir a cobrança na Asaas agora. Nada foi estornado — tente de novo em instantes.' } };
+      }
+      if (pagamento?.installment) {
+        await gancho.liberar(cobranca.charge_id);
+        return { http: 409, corpo: { codigo: 'estorno_de_parcelamento', erro: 'Esta cobrança é uma compra parcelada no cartão, e o estorno de parcelamento não é feito pela API do checkout. Faça o estorno pelo painel da Asaas — a notificação chega quando ele for processado.' } };
+      }
+    }
+
     const operacoes = await deps.operacoesDaCobranca(cobranca.id);
     const conta = restanteEstornavel(atual, operacoes, op?.id ?? null);
     if (!conta) {

@@ -105,12 +105,19 @@ conferir(
 ------------------------------------------------------------------ */
 const servidor = ler('src/server.js');
 const posLimiteSessao = servidor.indexOf("app.use('/api/admin/sessao'");
-const posLimiteAdmin = servidor.indexOf("app.use('/api/admin'");
 
 conferir(posLimiteSessao !== -1, '/api/admin/sessao tem limitador próprio');
+/* Aqui se conferia que o limitador da sessão vinha ANTES do de
+   `/api/admin`, "senão o mais largo casa primeiro". O `server.js` provou
+   em 17/09/2026 que isso é falso (o `app.use` roda TODOS os que casam, e
+   o mais apertado barra), e a checagem continuou afirmando a regra falsa
+   até 25/09/2026, quando a guarda do Access entrou em `/api/admin` e a
+   derrubou por posição. O que importa é o teto: o mais apertado do
+   projeto. A ordem que importa de verdade — a guarda do Access antes dos
+   limitadores — é conferida em `tests/admin-so-pelo-access.js`. */
 conferir(
-  posLimiteSessao < posLimiteAdmin,
-  'o limitador da sessão é montado ANTES do de /api/admin, senão o mais largo casa primeiro'
+  /app\.use\('\/api\/admin\/sessao', rateLimit\(\{[^}]*max: 5,/.test(servidor),
+  'o limitador da sessão é o mais apertado do projeto (5 por minuto)'
 );
 
 console.log(`senha-nao-fica-no-navegador: ${checagens} checagens OK`);

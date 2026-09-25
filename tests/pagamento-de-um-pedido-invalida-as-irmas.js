@@ -450,10 +450,16 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
   ok(escolherCobrancaRepresentativa([irma, paga])?.id === 'paga', 'status/consulta por pedido nunca escolhem a irmã cancelada, nem sendo a mais recente');
   ok(escolherCobrancaRepresentativa([irma]) === null, 'e só a irmã cancelada não é "a cobrança do pedido"');
   const fonte = readFileSync(join(RAIZ, 'src/services/cobrancaService.js'), 'utf8');
-  const trecho = fonte.slice(fonte.indexOf('export async function buscarCobrancaPorPedido'), fonte.indexOf('export async function atualizarStatusCobranca'));
+  /* O fim do trecho é a PRÓXIMA função, qualquer que seja — a âncora antiga
+     (`atualizarStatusCobranca`) saiu com o SEC-022, e `indexOf` de uma âncora
+     que sumiu devolve -1 e o trecho vira o arquivo quase inteiro, calado. */
+  const inicio = fonte.indexOf('export async function buscarCobrancaPorPedido');
+  const fim = fonte.indexOf('\nexport ', inicio + 1);
+  ok(inicio > 0 && fim > inicio, 'o trecho da consulta foi achado');
+  const trecho = fonte.slice(inicio, fim);
   ok(/return escolherCobrancaRepresentativa\(data\)/.test(trecho), 'e a consulta de verdade passa por ela');
   const servidor = readFileSync(join(RAIZ, 'src/server.js'), 'utf8');
-  ok(/setInterval\(rodarCanceladorDeIrmas, UM_MINUTO_MS\)/.test(servidor), 'o cancelador roda sozinho, de minuto em minuto');
+  ok(/setInterval\(rodarCanceladorDeIrmas, INTERVALO_DOS_WORKERS_MS\.canceladorDeIrmas\)/.test(servidor) && /canceladorDeIrmas: 60_000/.test(servidor), 'o cancelador roda sozinho, de minuto em minuto');
 }
 
 console.log(`pagamento-de-um-pedido-invalida-as-irmas: ${checagens} checagens OK`);

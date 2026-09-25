@@ -29,6 +29,7 @@ const SUITES = [
   'src/utils/chaveContratante.js',   // a api_key: tamanho, formato, e não repetir
   'src/utils/senhaAdmin.js',         // hash da senha do admin (scrypt)
   'src/utils/sessaoAdmin.js',        // token de sessão do admin: forja, adulteração, validade
+  'src/utils/accessJwt.js',          // o JWT do Cloudflare Access: assinatura RS256, aud do painel, iss da equipe, type app (SEC-015)
   'src/services/auditoriaWebhookService.js', // redação do log: nenhum dado de pessoa sobrevive
   'src/services/erroService.js',     // captura de exceção: nenhum dado de pessoa entra no diagnóstico
   'src/utils/diaCivil.js',           // dia civil de Brasília decidido no servidor (guarda do ICU)
@@ -80,6 +81,13 @@ const SUITES = [
   'tests/uma-assinatura-viva-por-plano.js', // CR-08: reabrir o link do plano abria uma SEGUNDA assinatura no mesmo cartão (SEC-012)
   'tests/assinatura-nasce-inteira.js', // CR-06/08: falha de banco na 1ª confirmação deixava a assinatura órfã, e o 1º ciclo recusado a deixava invisível (SEC-014/011)
   'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
+  'tests/admin-so-pelo-access.js', // CR-09: a API do admin respondia a quem chamasse a origem direto, sem o Access (SEC-015)
+  'tests/escrita-de-estado-e-condicional.js', // CR-07: conciliação, liberação de reserva e Pix Automático gravavam por cima de um estorno (SEC-020/022/025)
+  'tests/erro-da-asaas-nao-vaza.js', // CR-12: a descrição da Asaas ia crua ao log, e o 401 dela (a NOSSA chave) chegava ao contratante como se fosse a dele (SEC-028, INFO-11)
+  'tests/ci-so-le-e-fixa-o-que-roda.js', // CR-13: CI sem `permissions:`, gitleaks baixado sem checksum, imagem pela `latest` (SEC-034)
+  'tests/sessao-de-assinatura-nao-vaza-por-cpf.js', // NEW-02: com o CPF de alguém, a rota pública entregava a sessão pendente dele — preenchida com nome, e-mail, telefone e endereço
+  'tests/filtro-or-so-interpola-o-que-o-servidor-fez.js', // CR-01/JX-01: valor de fora num .or() do PostgREST é filtro, não valor — varre src/ inteiro
+  'tests/banco-sem-privilegio-publico.js', // CR-09: a chave PÚBLICA do Supabase tinha tudo nas 12 tabelas, TRUNCATE incluído (INFO-13) — varre as migrations
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
   'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)

@@ -31,9 +31,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { gerarHashSenha } from '../src/utils/senhaAdmin.js';
 
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
 const ok = (condicao, mensagem) => { assert.ok(condicao, mensagem); checagens += 1; };
 const igual = (a, b, mensagem) => { assert.deepEqual(a, b, mensagem); checagens += 1; };
@@ -50,6 +54,14 @@ process.env.CHECKOUT_ADMIN_PASS_HASH = HASH;
 process.env.SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:0';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? 'teste';
 
+/* O Access de mentira (SEC-015): toda rota de `/api/admin` exige o JWT
+   do Cloudflare Access desde 25/09/2026. As chamadas de admin abaixo o
+   levam por padrão, para esta suíte continuar provando a SEGUNDA camada
+   (o login próprio); a primeira tem suíte própria,
+   `tests/admin-so-pelo-access.js`. */
+const { subirAccessDeTeste } = await import('./access-de-teste.js');
+const access = await subirAccessDeTeste();
+
 /* A pilha de verdade, com as variáveis já no lugar: o módulo lê
    `process.env` no import. */
 const { app } = await import('../src/server.js');
@@ -58,13 +70,14 @@ const servidor = app.listen(0);
 await once(servidor, 'listening');
 const base = `http://127.0.0.1:${servidor.address().port}`;
 
-async function chamar(caminho, { metodo = 'GET', corpo, cabecalhos = {} } = {}) {
+async function chamar(caminho, { metodo = 'GET', corpo, cabecalhos = {}, semAccess = false } = {}) {
   const cancelador = new AbortController();
   const relogio = setTimeout(() => cancelador.abort(), 15000);
+  const doAccess = caminho.startsWith('/api/admin') && !semAccess ? { 'cf-access-jwt-assertion': access.jwt() } : {};
   try {
     const resposta = await fetch(base + caminho, {
       method: metodo,
-      headers: { 'content-type': 'application/json', ...cabecalhos },
+      headers: { 'content-type': 'application/json', ...doAccess, ...cabecalhos },
       body: corpo === undefined ? undefined : JSON.stringify(corpo),
       signal: cancelador.signal
     });
@@ -173,6 +186,10 @@ try {
     'com o Supabase apontado para uma porta morta, a saúde é 503 — é isto que deixa um monitor externo alertar'
   );
   igual(saude.corpo.status, 'degradado', 'e o corpo diz "degradado"');
+  /* SEC-031: o corpo diz QUAIS workers estão atrasados, e o HTTP cai com
+     eles — a regra é de `utils/passadas.js`; aqui, que a saúde a usa. */
+  ok(Array.isArray(saude.corpo.workersAtrasados), 'a saúde lista os workers atrasados (vazio no modo de teste, que não liga os workers)');
+  ok(/const saudavel = supabaseAtivo && atrasados\.length === 0;/.test(readFileSync(join(RAIZ, 'src/server.js'), 'utf8')), 'e worker atrasado derruba o HTTP da saúde, não só o corpo');
   ok(saude.cabecalhos.get('x-content-type-options') === 'nosniff', 'o helmet está na pilha (nosniff presente)');
   ok(!saude.cabecalhos.get('x-powered-by'), 'e o X-Powered-By não vaza');
 

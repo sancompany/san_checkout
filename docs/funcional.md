@@ -274,7 +274,8 @@ Duas telas: **login** e **painel**.
 | Sucesso | a seção pedida, com os dados |
 | Vazio | texto próprio por seção: "Nenhum contratante cadastrado" (com "Cadastre o primeiro projeto que vai usar o checkout."), "Nenhuma subconta criada", "Nenhuma cobrança no período", "Nada arquivado", "Nenhum webhook recebido ainda", e na aba **Filas** (desde 24/09/2026) "Nenhum evento na inbox" / "Nenhuma notificação na outbox" |
 | Erro | mensagem do backend em toast, sem detalhe interno |
-| **Sem permissão** | Cloudflare Access barra antes da página; sem token válido, `401`; **backend sem as variáveis de admin devolve `503`, não `401`** — "admin desativado" é diferente de "senha errada"; mais de 5 tentativas de login por minuto, `429` |
+| **Sem permissão** | Cloudflare Access barra antes da página **e antes da API** (desde 25/09/2026 o painel chama `/api/admin/*` pelo próprio domínio, atrás do Access — RN-61); chamada que chega à API sem o JWT do Access, `401` com "O painel administrativo só abre pelo endereço protegido", antes até do login; sem token válido, `401`; **backend sem as variáveis de admin devolve `503`, não `401`** — "admin desativado" é diferente de "senha errada"; chaves do Access ilegíveis, `503`; mais de 5 tentativas de login por minuto, `429` |
+| Sessão do Access vencida no meio do uso | a chamada seguinte é redirecionada para o login da Cloudflare, e o navegador a recusa: o toast mostra um erro de rede. Recarregar `/admin` pede o login do Access de novo (`RUNBOOK.md`, "Perdi o acesso ao `/admin`") |
 | Lista longa demais | a aba Webhook pede os **100** eventos mais recentes e o backend limita a **200** (padrão 50); as demais listas são pequenas por natureza — um operador, poucos contratantes |
 
 Sem sessão guardada em cookie: o token fica no `sessionStorage` da aba e
@@ -1116,6 +1117,58 @@ Asaas e 404 aqui; o ciclo seguinte a um primeiro ciclo recusado era
 descartado com uma linha de log; e pausar travava cancelar por 5
 minutos. *Quem vê:* o assinante e o contratante. SEC-011, SEC-013,
 SEC-014, SEC-029.
+
+**RN-61 · A área administrativa só responde a quem passou pelo Access —
+na origem, não só na página.** Toda rota de `/api/admin`, inclusive a
+de login, exige o JWT do Cloudflare Access do aplicativo do painel
+(assinatura da equipe, `aud` do painel, `type: app`, dentro da
+validade); sem ele, `401` antes da senha, pelo domínio da API ou pela
+origem da Northflank. O painel chega à API por uma função do Pages no
+próprio domínio, atrás do Access, que repassa só o JWT, o token de
+sessão e o `content-type`. A senha continua sendo a segunda camada.
+Não há desligamento; chaves do Access ilegíveis dão `503`. Tentativa
+sem o Access não gasta o teto de login do operador. *Violada:* a API
+do admin respondia a qualquer um pela origem, e o login inteiro ficava
+ao alcance de quem soubesse o endereço; e as prévias do Pages serviam
+`/admin` sem Access nenhum. *Quem vê:* o operador. SEC-015, NEW-01.
+
+**RN-62 · A janela de pagamento de uma assinatura só volta para quem a
+abriu.** A reserva da assinatura é pelo plano + CPF/CNPJ, e a sessão
+pendente só é reaproveitada quando o e-mail e o telefone de quem pede são
+os mesmos de quem a abriu (sem diferença de maiúsculas, espaço ou `+55`).
+Diferentes, a antiga é encerrada na Asaas e nasce outra com os dados de
+quem pediu; a sessão já concluída nunca é substituída, e o id dela só volta
+para o mesmo pagador. *Violada:* com o CPF de alguém — que não é segredo —
+e o link público do plano, recebia-se a janela de pagamento dela,
+preenchida pela Asaas com nome, e-mail, telefone e endereço. *Quem vê:* o
+assinante. NEW-02.
+
+**RN-63 · Compra parcelada no cartão não se estorna pela API.** O estorno
+pede à Asaas o estado da cobrança antes; se ela é parte de um parcelamento,
+a resposta é `409 estorno_de_parcelamento` e nada é chamado — o estorno sai
+pelo painel da Asaas, e o resultado chega pelo webhook. Sem conseguir
+conferir, `502` e nada estornado. *Violada:* o `chargeId` da compra
+parcelada é a primeira parcela; estorná-lo pelo endpoint de cobrança
+arriscava devolver uma parcela e registrar o total como estornado. *Quem
+vê:* o comprador e o contratante. SEC-018 (a medição no sandbox do estorno
+de parcelamento fica em `docs/pendencias.md`).
+
+**RN-64 · Escrita de estado confere o estado que leu.** A conciliação do
+contratante só grava `confirmado` sobre o status que ela leu; a reserva só
+é apagada enquanto é reserva (pendente, sem pagamento e sem sessão); e a
+autorização do Pix Automático só ativa o que está pendente e só encerra o
+que está pendente ou confirmado. Quem perde a corrida não escreve. *Violada:*
+um estorno gravado pelo webhook no meio da conciliação voltava a
+`confirmado`; uma reserva que ganhou pagamento podia ser apagada; e a
+reentrega da autorização repetia o aviso ao contratante. *Quem vê:* o
+contratante e o operador. SEC-020, SEC-022, SEC-025.
+
+**RN-65 · Worker parado derruba a saúde.** `/api/saude` responde `503` quando
+um worker (inbox, outbox, reconciliadores, cancelador de irmãs, varredura
+da troca) fica sem uma passada bem-sucedida por mais de três intervalos
+dele e mais dois minutos, e lista quais em `workersAtrasados`. *Violada:* o
+HTTP era `200` com o worker parado — e o monitor de uptime lê o código, não
+o corpo. *Quem vê:* o operador. SEC-031.
 
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
