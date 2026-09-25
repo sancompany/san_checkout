@@ -40,6 +40,22 @@ cobertas por regressão com os payloads reais. O que **só o dono** decide:
   contratante passou o pedido a "pago" (o pull devolve `Este pedido já
   está com status "pago"`). Filas zeradas. É também o gatilho escrito da
   exceção de backup (`CONSTRAINTS.md` §3).
+- ✅ **Cartão avulso em produção HOMOLOGADO (25/09/2026, 02:39 UTC)**:
+  `pay_dcgfypwu5475muvb`, R$ 10,00 1x, Asaas `CONFIRMED` →
+  `PAYMENT_CONFIRMED` chegou ANTES do `CHECKOUT_PAID` (o caminho
+  "pagamento antes da sessão", exercitado ao vivo) → `confirmado` →
+  outbox 200 ao testemaster. Cobrado no ato: a correção de fuso vale.
+- **Boleto `pay_4b4o86s675b7sw5n` (R$ 10,00)**: emitido com vencimento
+  27/09 (dia de Brasília + 3 — a 1ª prova ao vivo de RN-49; em UTC teria
+  saído 28/09); pagamento agendado pelo dono no banco, aguardando
+  compensação.
+- ✅ **Pedido pago reabria como pagável — corrigido (RN-04.1).** O
+  contratante de teste guarda os pagos na memória de cada instância da
+  Cloudflare, e `ped_isento`/`ped_dez_cartao` voltaram a abrir. O checkout
+  agora também pergunta ao próprio banco. Fora do escopo, declarado: um
+  Pix/boleto `pendente` de um método continua pagável enquanto o pedido é
+  pago por OUTRO método (o RN-04 é por método) — fechar isso exige
+  cancelar a cobrança pendente na Asaas, e é decisão de produto.
 - **Marcar as duas como `e_teste`** (RN-33, mão única): são teste do
   dono em produção e, sem a marca, entram na métrica de sucesso.
 - **Confirmar a chave Pix**: existe uma `EVP` ativa na conta; às 01:24
