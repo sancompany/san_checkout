@@ -940,6 +940,22 @@ Investigado só com leitura antes de tocar em código, como o dono mandou.
   corrigidas. Não medido: de quais status a Asaas deixa excluir e o
   formato do `GET` de uma cobrança removida (`docs/pendencias.md`).
 
+- **Remediação final da Estação 6 mesclada e no ar** (PR #50,
+  `b8f3b07`). Ledger único de 205 achados, cada um num estado final
+  (`docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`, contado por
+  teste), e convergência pelo critério revisto do dono: uma auditoria de
+  dinheiro limpa depois da última correção substantiva. **O deploy
+  serviu o commit errado primeiro**: a mescla disparou dois builds, o de
+  um commit mais velho terminou por último, e produção rodou o código
+  anterior à remediação por oito minutos com o painel dizendo
+  `COMPLETED`. Corrigido construindo o sha da `main`, e a regra foi para
+  o `RUNBOOK` §3 (conferir o `deployedSHA` **e** o comportamento). O
+  build errado serviu de controle positivo para a sonda de IP forjado:
+  o código velho gravou o IP forjado, o novo gravou o IP real, e o
+  JULES-002 é FALSE_POSITIVE. Ficam com o dono: aplicar a 0020, entrar
+  no Access, configurar o health check do Northflank e decidir o C1-05b
+  (§11.4 e §14 do relatório).
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
