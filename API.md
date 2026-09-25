@@ -684,7 +684,7 @@ teste que separa os dois; não teste "tem `tipo`".
 | `versao` | Versão do contrato. Hoje `2` (seção 10) |
 | `tipo` | `"pedido"` (v2). Ausente na v1 |
 | `eventoId` | Id ÚNICO desta notificação. Deduplique por ele (seção 4.3.6). Também vai no header `X-Checkout-Event-Id` |
-| `ocorridoEm` | Quando o fato aconteceu do lado da Asaas (ISO 8601, UTC). Dois eventos do mesmo `chargeId` se ordenam por ele |
+| `ocorridoEm` | Quando o fato aconteceu do lado da Asaas (ISO 8601, UTC). Dois eventos do mesmo `chargeId` se ordenam por ele. Quando o fato é **descoberto por conciliação** — uma consulta de status (§5.2, §5.3, §5.7) ou o reconciliador, que acharam na Asaas um pagamento que o webhook ainda não tinha trazido —, é o momento da descoberta, não o do pagamento. A consulta que descobre a confirmação também é quem dispara este aviso: ele pode chegar na mesma hora em que a sua consulta responde `confirmado` |
 | `pedidoId` | O mesmo id que você mandou no link |
 | `chargeId` | Id da cobrança na Asaas. **Nunca `null` desde o v2**: o aviso de pedido só sai no evento que traz o id |
 | `status` | Ver a tabela abaixo |

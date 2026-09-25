@@ -307,6 +307,16 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP2RC-1 | INFO | CR-02 | o aviso dobrado de estorno entre a rota e o webhook | **DUPLICATE** de FP2RA-2 |
 | FP2RC-2 | INFO | doc | a §7.1 ficou velha de novo depois do `47520b1` (sete arquivos) e a linha do banco falso dizia "regressão de classe" | **FIXED** — regerada; o banco falso passa a ser classificado como infraestrutura de teste |
 | FP2RC-3 | INFO | teste | o caso do ciclo 2+ do FP2A-1 não tem regressão ponta a ponta própria (só a renovação tem) | **RISK_ACCEPTED** RES-58 — a fila e a fiação são provadas por autoteste determinístico, que reprova a sabotagem; o caminho do ciclo passa pela mesma fiação |
+| FP3A-1 | MEDIUM | CR-05 | o "aconteceu de novo" (reconfirmação depois de baixa desfeita, chargeback vencido, negativa de estorno) só era reconhecido pela passada que APLICOU a transição: se ela falhava entre a transição e a outbox (banco piscando, reinício), a retentativa via o status já no alvo, a chave do fato já usada, e o aviso da segunda vez se perdia para sempre — o contratante ficava com "trate como não pago" (pagamento sem direito). Anterior a esta remediação (a mesma lógica está em `43635c4`). Reproduzido com falha injetada | **FIXED** — o "de novo" também é reconhecido pelo que está GRAVADO: o momento do estado atual (`status_evento_em`, que só a transição do webhook escreve) posterior ao aviso existente, com folga de 5 min entre relógios; a chave leva esse momento gravado, então a retentativa cai na mesma linha. Regressão com e sem a falha, controle do RECEIVED de D+30 (não vira "de novo"); sabotagem pega |
+| FP3A-2 | LOW | CR-10 | no caminho síncrono da troca de plano, a chave do `plano_trocado` é por plano anterior, sem intenção nem charge: A→B, B→A, A→B de novo deduplica a terceira | **RISK_ACCEPTED** RES-59 — o contratante fez a chamada e recebeu o `200` com o `planoId` novo; o `API.md` §5.6 só faz o evento ser a fonte no caminho assíncrono |
+| FP3A-3 | INFO | CR-03 | a segunda transição (`estornado_parcialmente → estornado`) ignora o resultado do CAS | **RISK_ACCEPTED** RES-60 — nenhum escritor concorrente a torna nociva: o CAS da rota de estorno não passa ali e a fila do charge serializa o webhook |
+| FP3B-1 | INFO | CR-05 | na janela em que a linha está `pendente` e a Asaas já diz pago, cada consulta anônima que leu `pendente` enfileira uma passada completa (um GET a mais na Asaas cada); 40 simultâneas fizeram 84 GETs | **DUPLICATE** de FP2RB-2 — a primeira passada confirma e fecha a janela; um aviso só; o limitador por IP vale |
+| FP3B-2 | INFO | CR-12 | a linha de log nova `[consulta]` repete a `description` do erro da Asaas | **RISK_ACCEPTED** RES-61 — o log do `chamarAsaas` já imprime o mesmo texto; nunca vai à resposta |
+| FP3B-3 | INFO | front | o polling da tela de status usa `setInterval` sem guarda de pedido em voo | **RISK_ACCEPTED** RES-62 — no máximo um pedido a mais a cada 10 s por navegador; comportamento, não segurança |
+| FP3C-1 | INFO | doc | o `API.md` definia `ocorridoEm` só como o momento do lado da Asaas e não dizia que uma consulta de status pode disparar o aviso | **FIXED** — `API.md`, tabela do payload: o fato descoberto por conciliação leva o momento da descoberta, e o aviso pode chegar junto com a resposta da consulta |
+| FP3C-2 | INFO | CR-05 | a consulta de status pode esperar atrás de uma passada do mesmo charge e custa um GET a mais na Asaas | **DUPLICATE** de FP2RB-2 |
+| FP3C-3 | INFO | CR-05 | o "de novo" depende do `aplicada` em memória | **DUPLICATE** de FP3A-1 |
+| FP3C-4 | INFO | CR-08 | `consultarAssinatura` lê a assinatura antes da conciliação; se a passada sintética cria a assinatura durante a chamada, aquela resposta traz `assinaturaId: null` | **RISK_ACCEPTED** RES-63 — a chamada seguinte já vem certa; nada se perde |
 
 ## 7. Correções
 
@@ -502,7 +512,8 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | Repetição da passada final #1 (FP1RA-1, FP1RA-2, FP1RB-1) | 3 | 3 | — |
 | Passada final #2 (FP2A-1: a fiação da fila, a fila em si, e a fiação de novo contra a regressão ponta a ponta) | 3 | 3 | a regressão ponta a ponta não pegava a sabotagem sem latência da Asaas no dublê — fechada com `atrasoDaAsaasMs` |
 | Repetição da passada final #2 (FP2RA-1, FP2RA-2) | 2 | 2 | — |
-| **Total** | **244** | **243** | **13**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
+| Passada final #3 (FP3A-1: o "de novo" só por `aplicada`) | 1 | 1 | — |
+| **Total** | **245** | **244** | **13**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
 
 **As 48 sabotagens da 3ª tentativa, por classe** (critério do dono de 25/09/2026 — toda SECURITY_CONTROL e FINANCIAL_INVARIANT relevante tem de ser detectada):
 
@@ -570,6 +581,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | #1 (repetição, a única que o critério permite) | `2c959f0` | 3 (dinheiro — **não limpo**, e todo `23505` do `src/` conferido um a um; auth/infra com o `server.js` real, 30 alvos de SSRF e o invólucro contra Express 4.22.3 — **limpo**; migrations aplicadas três vezes num Postgres 17 descartável com `service_role` conferido depois da 0020, e o diff inteiro — **limpo**) | FP1RA-1 (MEDIUM estrutural, a mesma causa raiz do FP1A-1: o conserto estreitou o caso e não o fechou) | corrigido, testado, sabotado; segue a passada final #2 sobre o HEAD estabilizado, como o critério manda — sem terceira repetição da #1 |
 | #2 | `e489cdc` | 3 (dinheiro com latência injetada no banco e na Asaas — **não limpo**; auth/infra com falha de banco injetada em 24 rotas — **limpo**; migrations aplicadas e reaplicadas com dados num Postgres 17 descartável, e o diff inteiro — **limpo**) | FP2A-1 (MEDIUM: aviso dobrado ao contratante, direito sem pagamento) | corrigido, testado, sabotado; **#2 se repete uma vez** sobre o HEAD estabilizado |
 | #2 (repetição) | `47520b1` | 3 (dinheiro — **não limpo**; auth/infra com 40 eventos simultâneos no mesmo charge contra a fila nova — **limpo**; migrations reaplicadas com dados e o diff inteiro — **limpo**) | FP2RA-1 (MEDIUM: evento financeiro perdido — a reconfirmação que a tela do pagador gravava por fora) | corrigido, testado, sabotado |
+| #3 | `5303359` | 3 (dinheiro, com todo escritor de `cobrancas.status` e todo aviso fora do webhook enumerados — **não limpo**; auth/infra com 40 consultas anônimas simultâneas contra a rota pública que agora dispara o webhook — **limpo**; migrations reaplicadas três vezes com dados e o diff inteiro, com 25 rodadas concorrentes da tela contra o webhook — **limpo**) | FP3A-1 (MEDIUM: a reconfirmação perdida numa falha entre a transição e a outbox — anterior à remediação) | corrigido, testado, sabotado |
 
 ## 14. Riscos residuais
 
@@ -648,4 +660,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 182 = FIXED 105 + FALSE_POSITIVE 3 + DUPLICATE 11 + RISK_ACCEPTED 56 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 192 = FIXED 107 + FALSE_POSITIVE 3 + DUPLICATE 14 + RISK_ACCEPTED 61 + EXTERNAL_PENDING 7

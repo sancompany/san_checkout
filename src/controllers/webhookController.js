@@ -148,7 +148,7 @@ const dependenciasPadrao = {
    * escrita local — a rede fica com o worker, então um contratante
    * pendurado nunca segura a resposta à Asaas (CONSTRAINTS.md §2.3).
    */
-  notificar: async ({ contratante, tipo, evento, chave, payload, ocorridoEm, aplicada = false }) => {
+  notificar: async ({ contratante, tipo, evento, chave, payload, ocorridoEm, aplicada = false, momentoDoFato = null }) => {
     const enfileirar = (chaveIdempotencia) => enfileirarNotificacao({
       contratanteId: contratante?.id ?? payload?.contratanteId ?? null,
       url: contratante?.webhook_url,
@@ -158,16 +158,24 @@ const dependenciasPadrao = {
       payload,
       ocorridoEm
     });
-    let { id, nova } = await enfileirar(chave);
-    /* O MESMO fato, de novo, de verdade: a transição foi APLICADA agora
-       (não é reentrega) e a chave do fato já existia — é uma cobrança
-       que voltou a `confirmado` depois de `pendente` (baixa desfeita e
-       refeita), ou um chargeback vencido. O contratante precisa ouvir
-       a segunda vez; uma reentrega ou um evento equivalente
-       (`PAYMENT_RECEIVED` depois de `PAYMENT_CONFIRMED`) NÃO aplica
-       transição e cai na chave do fato, que já existe → nada. */
-    if (!nova && aplicada && id) {
-      ({ id, nova } = await enfileirar(`${chave}|r${ocorridoEm ?? new Date().toISOString()}`));
+    let { id, nova, criadoEm } = await enfileirar(chave);
+    /* O MESMO fato, de novo, de verdade: uma cobrança que voltou a
+       `confirmado` depois de `pendente` (baixa desfeita e refeita), ou um
+       chargeback vencido. O contratante precisa ouvir a segunda vez; uma
+       reentrega ou um evento equivalente (`PAYMENT_RECEIVED` depois de
+       `PAYMENT_CONFIRMED`) cai na chave do fato, que já existe → nada.
+       "De novo" é decidido pelo que está GRAVADO, não só por esta passada
+       (FP3A-1): a passada que aplicou a transição e morreu antes da outbox
+       deixava a retentativa sem `aplicada`, e o segundo aviso se perdia
+       para sempre. Agora vale também quando o momento gravado do estado
+       atual (`status_evento_em`, que só a transição do webhook escreve) é
+       posterior ao aviso que já existe — com folga de 5 min, porque os
+       relógios são de lados diferentes. A chave do "de novo" leva esse
+       momento gravado, então a retentativa cai na MESMA linha. */
+    const momentoPosteriorAoAviso = momentoDoFato && criadoEm
+      && Date.parse(momentoDoFato) > Date.parse(criadoEm) + FOLGA_DE_RELOGIO_DO_DE_NOVO_MS;
+    if (!nova && id && (aplicada || momentoPosteriorAoAviso)) {
+      ({ id, nova } = await enfileirar(`${chave}|r${momentoDoFato ?? ocorridoEm ?? new Date().toISOString()}`));
     }
     if (nova) tentarAgora(id);
     return { id, nova };
@@ -598,6 +606,7 @@ export function valorDivergenteDaCobranca(cobranca, pagamento) {
    banco. Nada dentro de `processarEventoPayment` chama
    `processarWebhook` de volta, então não há trava aninhada. */
 const FILA_POR_COBRANCA = new Map();
+const FOLGA_DE_RELOGIO_DO_DE_NOVO_MS = 5 * 60_000;
 export function umaPassadaPorCobranca(chave, fazer) {
   if (!chave) return fazer();
   const anterior = FILA_POR_COBRANCA.get(chave) ?? Promise.resolve();
@@ -1253,7 +1262,10 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
      a mesma chave pode pedir de novo. Também na reentrega — é idempotente. */
   if (statusGravado === 'estorno_negado' && cobranca.id) await deps.reabrirEstornosNegados(cobranca.id);
 
-  const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
+  /* O momento GRAVADO do estado atual: o que esta passada escreveu, ou o
+     que já estava na linha. É ele que identifica a ocorrência (FP3A-1). */
+  const momentoDoFato = aplicada ? carimbo : (cobranca.status_evento_em ?? null);
+  const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada, momentoDoFato };
 
   /* O ACERTO DE UMA TROCA DE PLANO (H-03). Confirmação é anunciada pela
      própria troca (`plano_trocado`); mas uma REVERSÃO do acerto —
@@ -1604,7 +1616,7 @@ function chaveDoFato({ tipo, evento, chargeId, assinaturaId, statusFinanceiro, v
   return `assinatura|${referencia}|${evento}${statusFinanceiro ? `|${statusFinanceiro}` : ''}${sufixoParcial}`;
 }
 
-async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEstornado, ocorridoEm, aplicada = false }, deps) {
+async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEstornado, ocorridoEm, aplicada = false, momentoDoFato = null }, deps) {
   const contratante = contratanteDaCobranca(cobranca);
   if (!contratante.webhook_url) return;
   return deps.notificar({
@@ -1614,7 +1626,8 @@ async function notificarPedido(cobranca, { chargeId, statusFinanceiro, valorEsto
     chave: chaveDoFato({ tipo: 'pedido', chargeId, statusFinanceiro, valorEstornado }),
     payload: montarPayloadConfirmacaoPedido(cobranca, chargeId, statusFinanceiro, { valorEstornado }),
     ocorridoEm,
-    aplicada
+    aplicada,
+    momentoDoFato
   });
 }
 
@@ -1648,7 +1661,8 @@ async function notificarAssinatura(cobranca, dados, deps) {
     chave: chaveDoFato({ tipo: 'assinatura', ...dados, cobranca }),
     payload: montarPayloadAssinatura(cobranca, dados),
     ocorridoEm: dados.ocorridoEm,
-    aplicada: Boolean(dados.aplicada)
+    aplicada: Boolean(dados.aplicada),
+    momentoDoFato: dados.momentoDoFato ?? null
   });
 }
 

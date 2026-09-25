@@ -462,4 +462,86 @@ for (const comConsulta of [false, true]) {
   if (comConsulta) igual(saida.tela, 'confirmado', 'FP2RA-1: e a tela do pagador mostra pago');
 }
 
+/* ── FP3A-1: a reconfirmação sobrevive a uma falha entre a transição e a outbox ──
+   A passada que aplicou `pendente → confirmado` (de novo) e falhou antes de
+   gravar o aviso deixava a retentativa sem `aplicada`, e o "de novo" só
+   era reconhecido por ela: o aviso da reconfirmação sumia para sempre. Os
+   carimbos são os de verdade (o 1º aviso horas antes da reconfirmação). */
+for (const falhar of [false, true]) {
+  const { saida, banco } = await rodar({
+    tabelas: { cobrancas: [linha({ charge_id: 'pay_x', status: 'pendente', contratantes: undefined })] },
+    codigo: `
+      const { readFileSync, writeFileSync } = await import('node:fs');
+      const ARQ = process.env.BANCO_FALSO_ARQUIVO;
+      const mexer = (f) => { const e = JSON.parse(readFileSync(ARQ, 'utf8')); f(e); writeFileSync(ARQ, JSON.stringify(e)); };
+      let asaasStatus = 'RECEIVED';
+      globalThis.fetch = async (url) => {
+        const u = new URL(String(url));
+        if (u.hostname !== 'api-sandbox.asaas.com') return new Response('{}', { status: 200 });
+        if (u.pathname === '/v3/payments/pay_x/refunds') return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200, headers: { 'content-type': 'application/json' } });
+        if (u.pathname === '/v3/payments/pay_x') return new Response(JSON.stringify({ id: 'pay_x', status: asaasStatus, value: 50, deleted: false, externalReference: 'reserva-7a7a7a7a-0000-4000-8000-000000000001', billingType: 'PIX' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{"errors":[{"description":"fora do roteiro"}]}', { status: 500 });
+      };
+      const wc = await import('./src/controllers/webhookController.js');
+      const res = () => ({ _s: 200, status(c) { this._s = c; return this; }, json() { return this; } });
+      const antes = (min) => new Date(Date.now() - min * 60_000).toISOString();
+      const receber = (id, event, dc) => wc.receberWebhookAsaas({ body: { id, event, dateCreated: dc, payment: { id: 'pay_x' } }, get: () => undefined, ip: '52.67.12.206' }, res());
+      asaasStatus = 'RECEIVED';
+      await receber('evt_1', 'PAYMENT_RECEIVED', antes(180));
+      asaasStatus = 'PENDING';
+      await receber('evt_2', 'PAYMENT_RECEIVED_IN_CASH_UNDONE', antes(120));
+      // os avisos anteriores foram criados quando os fatos aconteceram, horas atrás
+      mexer((e) => { for (const o of e.tabelas.outbox_notificacoes) o.criado_em = o.chave_idempotencia.endsWith('|pendente') ? antes(119) : antes(179); });
+      asaasStatus = 'RECEIVED';
+      if (${falhar}) mexer((e) => { e.falhas = { 'outbox_notificacoes.insert': 1 }; });
+      await receber('evt_3', 'PAYMENT_RECEIVED', antes(10));
+      mexer((e) => { for (const l of e.tabelas.webhook_inbox) if (l.status === 'falhou') l.proxima_tentativa_em = antes(1); });
+      const worker = await wc.reprocessarInbox();
+      await new Promise((ok) => setTimeout(ok, 200));
+      console.log(JSON.stringify({ worker }));
+    `
+  });
+  const chaves = (banco.outbox_notificacoes ?? []).map((o) => o.chave_idempotencia);
+  const rotulo = falhar ? 'com a falha no meio' : 'controle, sem falha';
+  igual(banco.cobrancas[0].status, 'confirmado', `FP3A-1 (${rotulo}): termina confirmada`);
+  igual(chaves.filter((c) => c.startsWith('pedido|pay_x|confirmado|r')).length, 1, `FP3A-1 (${rotulo}): o aviso da reconfirmação existe, uma vez só (${JSON.stringify(chaves)})`);
+  ok((banco.webhook_inbox ?? []).every((l) => l.status === 'processado'), `FP3A-1 (${rotulo}): e a inbox termina processada`);
+  if (falhar) igual(saida.worker?.processadas, 1, 'FP3A-1: a retentativa foi quem recuperou o aviso');
+}
+
+/* ── FP3A-1, controle do caminho comum: o RECEIVED de D+30 do cartão NÃO é "de novo" ──
+   CONFIRMED há 30 dias, aviso criado na hora; o RECEIVED da liquidação
+   chega agora. Se isto virasse "aconteceu de novo", todo cartão pago
+   receberia dois `confirmado`. */
+{
+  const { banco } = await rodar({
+    tabelas: { cobrancas: [linha({ charge_id: 'pay_x', metodo_pagamento: 'cartao_credito', status: 'pendente', contratantes: undefined })] },
+    codigo: `
+      const { readFileSync, writeFileSync } = await import('node:fs');
+      const ARQ = process.env.BANCO_FALSO_ARQUIVO;
+      const mexer = (f) => { const e = JSON.parse(readFileSync(ARQ, 'utf8')); f(e); writeFileSync(ARQ, JSON.stringify(e)); };
+      let asaasStatus = 'CONFIRMED';
+      globalThis.fetch = async (url) => {
+        const u = new URL(String(url));
+        if (u.hostname !== 'api-sandbox.asaas.com') return new Response('{}', { status: 200 });
+        if (u.pathname === '/v3/payments/pay_x/refunds') return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200, headers: { 'content-type': 'application/json' } });
+        if (u.pathname === '/v3/payments/pay_x') return new Response(JSON.stringify({ id: 'pay_x', status: asaasStatus, value: 50, deleted: false, externalReference: 'reserva-7a7a7a7a-0000-4000-8000-000000000001', billingType: 'CREDIT_CARD' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{"errors":[{"description":"fora do roteiro"}]}', { status: 500 });
+      };
+      const wc = await import('./src/controllers/webhookController.js');
+      const res = () => ({ _s: 200, status(c) { this._s = c; return this; }, json() { return this; } });
+      const antes = (min) => new Date(Date.now() - min * 60_000).toISOString();
+      const receber = (id, event, dc) => wc.receberWebhookAsaas({ body: { id, event, dateCreated: dc, payment: { id: 'pay_x' } }, get: () => undefined, ip: '52.67.12.206' }, res());
+      await receber('evt_c', 'PAYMENT_CONFIRMED', antes(30 * 24 * 60));
+      mexer((e) => { for (const o of e.tabelas.outbox_notificacoes) o.criado_em = antes(30 * 24 * 60 - 1); });
+      asaasStatus = 'RECEIVED';
+      await receber('evt_r', 'PAYMENT_RECEIVED', antes(1));
+      await new Promise((ok) => setTimeout(ok, 200));
+      console.log(JSON.stringify({}));
+    `
+  });
+  const chaves = (banco.outbox_notificacoes ?? []).map((o) => o.chave_idempotencia);
+  igual(chaves, ['pedido|pay_x|confirmado'], `FP3A-1 (controle): a liquidação de D+30 não repete o "confirmado" (${JSON.stringify(chaves)})`);
+}
+
 console.log(`escrita-de-estado-e-condicional: ${checagens} checagens OK`);

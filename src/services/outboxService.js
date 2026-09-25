@@ -63,10 +63,10 @@ export async function enfileirarNotificacao({ contratanteId, url, tipo, evento, 
 
   const { data: existente } = await supabase
     .from('outbox_notificacoes')
-    .select('id')
+    .select('id, criado_em')
     .eq('chave_idempotencia', chaveIdempotencia)
     .maybeSingle();
-  if (existente) return { id: existente.id, nova: false };
+  if (existente) return { id: existente.id, nova: false, criadoEm: existente.criado_em ?? null };
 
   const id = crypto.randomUUID();
   const corpo = {
@@ -86,13 +86,14 @@ export async function enfileirarNotificacao({ contratanteId, url, tipo, evento, 
       chave_idempotencia: chaveIdempotencia,
       payload: corpo,
       status: 'pendente',
-      proxima_tentativa_em: new Date().toISOString()
+      proxima_tentativa_em: new Date().toISOString(),
+      criado_em: new Date().toISOString()
     });
 
   if (error?.code === '23505') {
     const { data: vencedora } = await supabase
-      .from('outbox_notificacoes').select('id').eq('chave_idempotencia', chaveIdempotencia).maybeSingle();
-    return { id: vencedora?.id ?? null, nova: false };
+      .from('outbox_notificacoes').select('id, criado_em').eq('chave_idempotencia', chaveIdempotencia).maybeSingle();
+    return { id: vencedora?.id ?? null, nova: false, criadoEm: vencedora?.criado_em ?? null };
   }
   if (error) throw error;
   return { id, nova: true };
