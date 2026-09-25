@@ -549,7 +549,64 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 
 ## 14. Riscos residuais
 
-_(em andamento)_
+Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceitou, com a justificativa que está escrita lá (quando o ledger só traz o número, vai a descrição do achado). **RES-03 não existe** — o número foi pulado quando o ledger foi montado, e nenhum achado o cita.
+
+**Nenhum CRITICAL ou HIGH está aberto.** Quatro MEDIUM não estão FIXED, e é aqui que o dono precisa olhar:
+
+| Achado | Estado | O que é, e o que falta |
+|---|---|---|
+| `C1-05b` | RISK_ACCEPTED (RES-01) | quem tem o CPF do pagador consegue encerrar uma pop-up de assinatura ainda aberta dele (abre uma sessão nova, que substitui a antiga). Não move dinheiro nem dá acesso — derruba uma tentativa de pagamento. Fechar exige um segredo por pagador que a API não tem hoje; **é decisão do dono** se isso vira atualização futura |
+| `JULES-003` | RISK_ACCEPTED | arquitetura: o backend único fala com o banco como `service_role`. A defesa em profundidade é a 0020 (INFO-13, EP-02) |
+| `SEC-018` | EXTERNAL_PENDING (EP-03) | estorno de cartão parcelado bloqueado pela API (`409`) até a semântica da Asaas ser medida em sandbox |
+| `JULES-002` | EXTERNAL_PENDING (EP-09) | o `trust proxy 1` só se prova com a sonda de IP forjado em produção, depois do deploy (§11) |
+
+| RES | Achado(s) no ledger | Por que é aceito (texto do próprio ledger) |
+|---|---|---|
+| RES-01 | C1-05b | (o achado) quem tem o CPF cancela a sessão aberta da vítima (sem vazar nada; ela reabre) |
+| RES-02 | SEC-020 | FIXED `8be71d3` + C1-09 (CAS e refeitura idempotente). A semântica "autorização = confirmado" é (método desligado) |
+| RES-04 | SEC-011 | FIXED `5475d69` (vínculo no 1º evento; recusa do 1º ciclo chama humano). O comportamento da Asaas depois da recusa segue não medido → §14 |
+| RES-05 | C1-14 | toda migration roda como `postgres` |
+| RES-06 | SEC-030 | EXTERNAL_PENDING EP-05 — o prazo de retenção é decisão jurídica; o hash sem sal é (documento em claro já existe por desenho) |
+| RES-07 | INFO-03 | sem entrada de usuário refletida em estilo; |
+| RES-08 | INFO-04 | imagem vem do contratante, que já recebe o evento; |
+| RES-09 | INFO-07 | `strict-origin-when-cross-origin` não leva a query a terceiro; |
+| RES-10 | INFO-08 | reprocesso manual depois de 90 dias é operação de humano; |
+| RES-11 | INFO-14 | UX; o pagamento em si é recusado pela Asaas depois de a irmã ser cancelada; |
+| RES-12 | DIF-08 | exige processo travado além do arrendamento de 5 min, acima do teto de 20 s de toda chamada |
+| RES-13 | DIF-09 | o segundo DELETE é idempotente na Asaas e só gera uma linha em `erros` |
+| RES-14 | CP1-03 | nenhum dinheiro sai; exige a negativa no intervalo de uma leitura |
+| RES-15 | CP1-04 | antes o pagamento sumia calado, o que era pior; exige a Asaas liquidar sessão que ela deu como cancelada |
+| RES-16 | CP1-05 | exige falha de banco num instante exato e novo pedido dentro da janela; a Asaas tende a recusar o segundo pedido de estorno de boleto |
+| RES-17 | CP1-06 | a refeitura da inbox fecha; a chave nova já funciona no intervalo (teste 7e) |
+| RES-18 | CP1-07 | endurecimento opcional, sem exploração |
+| RES-19 | CP1-08 | a API é servida só em HTTPS pela borda; o 301 não é alcançável de fora com `Host` arbitrário na Northflank |
+| RES-20 | CP1-09 | resposta é JSON com `content-type` explícito, atrás do Access |
+| RES-21 | CP1-10 | nenhuma construção com opções existe em `src/`; endurecimento opcional do teste |
+| RES-22 | CP1-11 | decisão registrada (sem resolução de DNS); só admin; o TLS falha |
+| RES-23 | CP1-12 | cada linha é reivindicada por CAS; sem efeito duplicado |
+| RES-24 | CP1-13 | limitador por IP e a borda da Northflank; sem derrubar o processo (medido) |
+| RES-25 | CP1-14 | limitado pelo rate limit e pelo expurgo diário |
+| RES-26 | CP2-02 | exige o webhook esgotar ANTES da consulta confirmar; o esgotamento já vira `erros` para um humano |
+| RES-27 | CP2-03 | a linha esgotada da inbox já está em `erros` |
+| RES-28 | CP2-04 | (o achado) o segundo `estorno_solicitado` depois de uma negativa não gera webhook ao contratante (a chave do fato deduplica); a resposta síncrona 200 avisa |
+| RES-29 | CP2-05 | exige as duas coisas no intervalo de uma chamada à Asaas |
+| RES-30 | CP2-06 | termina em `erros` para um humano; o comportamento da Asaas para cartão/Pix não foi medido |
+| RES-31 | CP2-12 | cinto e suspensório de propósito; o assíncrono, que é o que importa, é provado |
+| RES-32 | CP2-14 | a Asaas sempre manda `id` |
+| RES-33 | CP3-03 | método desligado nesta conta (`CONSTRAINTS.md` §2.4) e a linha é achada pelo id da autorização; falso positivo seria só um alerta a mais |
+| RES-34 | CP3-04 | cada mensagem já diz o que conferir; a tabela não se propõe completa |
+| RES-35 | CP3-06 | exige falha num instante exato mais uma confirmação depois de negativa que a Asaas não foi medida mandando; a operação presa aparece pelo 409 e pelo RUNBOOK §6.3 |
+| RES-36 | CP3-07 | ruído, nenhum dinheiro; a mesma lógica existia antes do D-3 |
+| RES-37 | CP3-08 | alarme a mais, nunca a menos; o humano confere e encerra |
+| RES-38 | CP3-18 | o pior efeito é um alerta falso de "não permite decidir"; o raciocínio está no comentário do bloco 15 da suíte |
+| RES-39 | FP1A-2 | janela de milissegundos, ou uma intenção órfã que o sweeper resolve; o desfecho depende de como a Asaas responde a um `PUT` em assinatura removida, não medido; o `PUT` que lança vai a `erros` |
+| RES-40 | FP1A-3 | não medido se a Asaas troca o id na retentativa; o alerta leva um humano à Asaas antes de qualquer estorno |
+| RES-41 | FP1B-3 | os limites protegem custo e força bruta, e as chaves têm 192 bits; se os clientes chegam por IPv6 à Northflank não foi medido (junto do EP-09) |
+| RES-42 | FP1C-3 | recusa é o modo seguro; classificar `estornos` (antes de `cobrancas`, pela FK) é decisão para quando o script voltar a ser usado, e nesta rodada nenhum registro se apaga |
+| RES-43 | FP1C-5 | só o operador; os dois saem da `main` juntos |
+| RES-44 | FP1RA-3 | nenhum dinheiro se move; alarme a mais |
+| RES-45 | FP1RA-4 | alarme a mais, nunca a menos |
+| RES-46 | FP1RA-5 | a Asaas reenvia; o evento não se perde enquanto houver reenvio |
 
 ## 15. Cobertura do fechamento
 
