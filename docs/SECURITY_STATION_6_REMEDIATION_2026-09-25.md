@@ -294,6 +294,11 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP2C-1 | LOW | doc | `409 estorno_impossivel` não estava no `API.md` §5.4 | **FIXED** — linha nova na tabela de respostas do estorno |
 | FP2C-2 | INFO | doc | a §7.1 tinha contagens de linhas velhas em seis arquivos e três justificativas erradas (`CHECKOUT_CONSOLIDATION_STATE.md` é a INFO-12; `CLAUDE.md`/`README.md` só mudam a contagem de suítes) | **FIXED** — tabela regerada com as regras corrigidas |
 | FP2C-3 | INFO | CR-02 | a 0018 declara as FKs de `estornos` sem `ON DELETE`, ao contrário das outras tabelas: apagar um contratante ou uma cobrança com estorno falharia | **RISK_ACCEPTED** RES-51 — nenhum caminho apaga essas linhas hoje (só reserva sem charge, que nunca tem estorno); é a trava certa para dinheiro que saiu |
+| FP2A-1 | MEDIUM | CR-05 | duas passadas do MESMO charge em paralelo (o teto de 8 s, o worker da inbox, o reconciliador) terminavam em qualquer ordem, e a que aplicou a transição, achando a chave do fato já gravada pela outra, enfileirava um segundo aviso com `eventoId` novo — "o mesmo fato aconteceu de novo". O contratante que dá um período por confirmação dava dois (direito sem pagamento). O FP1RA-1 tornou o caminho do ciclo alcançável; o da renovação (`criada` dobrado) é anterior a esta remediação. Reproduzido: 4/40 e 10/60 no ciclo, 12/30 na renovação | **FIXED** — uma passada por charge de cada vez (`umaPassadaPorCobranca`, fila em memória; vale por haver uma instância só, escrito no `CONSTRAINTS.md` §2). Depois: 0/40 no ciclo e 0/30 na renovação. Autoteste determinístico da fila e da fiação, e regressão ponta a ponta com latência da Asaas; três sabotagens pegas |
+| FP2A-2 | INFO | CR-08 | na mesma corrida, as duas passadas mandavam `DELETE` da assinatura antiga à Asaas (30/30); a segunda podia virar um "Cancele na mão" falso | **FIXED** — a mesma fila (0/30 depois); a antiga termina `cancelada` na regressão |
+| FP2A-3 | LOW | CR-08 | se o 1º ciclo falhou e o ciclo 2 cria a assinatura, o contratante ouve `criada` para aquele charge e, depois, `cobranca_confirmada` para o mesmo `chargeId` | **RISK_ACCEPTED** RES-53 — dentro da borda do SEC-011/RES-04, cujo comportamento na Asaas não foi medido; o contratante recebe dois fatos diferentes, não o mesmo duas vezes |
+| FP2A-4 | INFO | CR-05 | um `OVERDUE`/recusa atrasado se aplica com a Asaas já dizendo `CONFIRMED` (alvo informativo não pede respaldo): o contratante ouve `cobranca_falhou` antes do `cobranca_confirmada` | **RISK_ACCEPTED** RES-54 — o estado final é o certo e os dois avisos chegam; a ordem é a documentada no `API.md` §4.3.6 (eventos podem chegar fora de ordem) |
+| FP2A-5 | INFO | CR-05 | a fila por charge é em memória: na troca de versão, a instância antiga e a nova convivem por segundos e podem processar o mesmo charge ao mesmo tempo | **RISK_ACCEPTED** RES-52 — janela de segundos, a cada deploy; o estado segue protegido pelo UPDATE condicional; `CONSTRAINTS.md` §2 manda trocar por arrendamento no banco antes de qualquer réplica |
 
 ## 7. Correções
 
@@ -487,7 +492,8 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | Lacunas da 3ª tentativa (CP3-09…18), refeitas contra o HEAD com os testes novos e as 82 suítes inteiras | 48 | 47 | a sobrevivente é `rest-exceto-off`, sem efeito observável (CP3-18, RES-38) |
 | Passada final #1 (FP1A-1 ×2, FP1A-4, FP1B-1) | 4 | 4 | — |
 | Repetição da passada final #1 (FP1RA-1, FP1RA-2, FP1RB-1) | 3 | 3 | — |
-| **Total** | **239** | **238** | **12**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
+| Passada final #2 (FP2A-1: a fiação da fila, a fila em si, e a fiação de novo contra a regressão ponta a ponta) | 3 | 3 | a regressão ponta a ponta não pegava a sabotagem sem latência da Asaas no dublê — fechada com `atrasoDaAsaasMs` |
+| **Total** | **242** | **241** | **13**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
 
 **As 48 sabotagens da 3ª tentativa, por classe** (critério do dono de 25/09/2026 — toda SECURITY_CONTROL e FINANCIAL_INVARIANT relevante tem de ser detectada):
 
@@ -553,6 +559,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 |---|---|---|---|---|
 | #1 | `f30191f` (congelado) | 3 (dinheiro — **não limpo**; auth/infra com o `server.js` real e 200 requisições hostis — **limpo**; migrations aplicadas num Postgres 17 descartável e o diff inteiro — **limpo**) | FP1A-1 (MEDIUM estrutural: idempotência e perda permanente de evento financeiro) | corrigido, testado, sabotado; **#1 se repete uma vez** sobre `ba97202` |
 | #1 (repetição, a única que o critério permite) | `2c959f0` | 3 (dinheiro — **não limpo**, e todo `23505` do `src/` conferido um a um; auth/infra com o `server.js` real, 30 alvos de SSRF e o invólucro contra Express 4.22.3 — **limpo**; migrations aplicadas três vezes num Postgres 17 descartável com `service_role` conferido depois da 0020, e o diff inteiro — **limpo**) | FP1RA-1 (MEDIUM estrutural, a mesma causa raiz do FP1A-1: o conserto estreitou o caso e não o fechou) | corrigido, testado, sabotado; segue a passada final #2 sobre o HEAD estabilizado, como o critério manda — sem terceira repetição da #1 |
+| #2 | `e489cdc` | 3 (dinheiro com latência injetada no banco e na Asaas — **não limpo**; auth/infra com falha de banco injetada em 24 rotas — **limpo**; migrations aplicadas e reaplicadas com dados num Postgres 17 descartável, e o diff inteiro — **limpo**) | FP2A-1 (MEDIUM: aviso dobrado ao contratante, direito sem pagamento) | corrigido, testado, sabotado; **#2 se repete uma vez** sobre o HEAD estabilizado |
 
 ## 14. Riscos residuais
 
@@ -571,7 +578,7 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 |---|---|---|
 | RES-01 | C1-05b | (o achado) quem tem o CPF cancela a sessão aberta da vítima (sem vazar nada; ela reabre) |
 | RES-02 | SEC-020 | FIXED `8be71d3` + C1-09 (CAS e refeitura idempotente). A semântica "autorização = confirmado" é (método desligado) |
-| RES-04 | SEC-011 | FIXED `5475d69` (vínculo no 1º evento; recusa do 1º ciclo chama humano). O comportamento da Asaas depois da recusa segue não medido → §14 |
+| RES-04 | FP2A-3, SEC-011 | FIXED `5475d69` (vínculo no 1º evento; recusa do 1º ciclo chama humano). O comportamento da Asaas depois da recusa segue não medido → §14 |
 | RES-05 | C1-14 | toda migration roda como `postgres` |
 | RES-06 | SEC-030 | EXTERNAL_PENDING EP-05 — o prazo de retenção é decisão jurídica; o hash sem sal é (documento em claro já existe por desenho) |
 | RES-07 | INFO-03 | sem entrada de usuário refletida em estilo; |
@@ -614,9 +621,17 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 | RES-44 | FP1RA-3 | nenhum dinheiro se move; alarme a mais |
 | RES-45 | FP1RA-4 | alarme a mais, nunca a menos |
 | RES-46 | FP1RA-5 | a Asaas reenvia; o evento não se perde enquanto houver reenvio |
+| RES-47 | FP2B-1 | observabilidade; nenhum handler público rejeita com objeto puro (todos passam por `responderErro`), nada vaza e nada financeiro se perde |
+| RES-48 | FP2B-2 | mesma classe do SEC-028; nenhuma rota pública chega a isso hoje; fica para a manutenção logar só `message`/`code` |
+| RES-49 | FP2B-3 | exige uma rejeição já sem dono |
+| RES-50 | FP2B-4 | as duas camadas continuam exigidas; o Access libera só o e-mail do dono |
+| RES-51 | FP2C-3 | nenhum caminho apaga essas linhas hoje (só reserva sem charge, que nunca tem estorno); é a trava certa para dinheiro que saiu |
+| RES-52 | FP2A-5 | janela de segundos, a cada deploy; o estado segue protegido pelo UPDATE condicional; `CONSTRAINTS.md` §2 manda trocar por arrendamento no banco antes de qualquer réplica |
+| RES-53 | FP2A-3 | dentro da borda do SEC-011/RES-04, cujo comportamento na Asaas não foi medido; o contratante recebe dois fatos diferentes, não o mesmo duas vezes |
+| RES-54 | FP2A-4 | o estado final é o certo e os dois avisos chegam; a ordem é a documentada no `API.md` §4.3.6 (eventos podem chegar fora de ordem) |
 
 ## 15. Cobertura do fechamento
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 169 = FIXED 100 + FALSE_POSITIVE 3 + DUPLICATE 10 + RISK_ACCEPTED 49 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 174 = FIXED 102 + FALSE_POSITIVE 3 + DUPLICATE 10 + RISK_ACCEPTED 52 + EXTERNAL_PENDING 7

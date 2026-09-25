@@ -584,11 +584,38 @@ export function valorDivergenteDaCobranca(cobranca, pagamento) {
  * ANTES na rota. Exportada para o autoteste e para o worker, não para
  * ser reaproveitada em rota.
  */
+/* FP2A-1: UMA passada por cobrança de cada vez, neste processo. Duas
+   passadas simultâneas do mesmo charge (a resposta à Asaas que passou do
+   teto de 8 s e segue em segundo plano, o worker da inbox, o
+   reconciliador) terminavam em qualquer ordem, e a que APLICOU a
+   transição, achando a chave do fato já gravada pela outra, lia "o mesmo
+   fato aconteceu de novo" e enfileirava um segundo aviso com `eventoId`
+   novo — o contratante que dá um período por confirmação dava dois. O
+   UPDATE condicional continua sendo quem garante o estado; esta fila só
+   impede que duas passadas do MESMO charge se intercalem.
+   Vale porque o serviço roda em UMA instância, de propósito
+   (`CONSTRAINTS.md` §2). Com réplica, isto tem de virar arrendamento no
+   banco. Nada dentro de `processarEventoPayment` chama
+   `processarWebhook` de volta, então não há trava aninhada. */
+const FILA_POR_COBRANCA = new Map();
+export function umaPassadaPorCobranca(chave, fazer) {
+  if (!chave) return fazer();
+  const anterior = FILA_POR_COBRANCA.get(chave) ?? Promise.resolve();
+  const atual = anterior.then(() => fazer());
+  const cauda = atual.then(() => undefined, () => undefined);
+  FILA_POR_COBRANCA.set(chave, cauda);
+  cauda.then(() => { if (FILA_POR_COBRANCA.get(chave) === cauda) FILA_POR_COBRANCA.delete(chave); });
+  return atual;
+}
+
 export async function processarWebhook(corpo, deps = dependenciasPadrao) {
   const ocorridoEm = carimboAtePresente(ocorridoEmDoEvento(corpo));
   switch (classificarEvento(corpo?.event)) {
     case 'checkout': return processarEventoCheckout(corpo, deps, ocorridoEm);
-    case 'payment': return processarEventoPayment(corpo, deps, ocorridoEm);
+    case 'payment': {
+      const chargeId = typeof corpo?.payment?.id === 'string' ? corpo.payment.id : null;
+      return umaPassadaPorCobranca(chargeId && `payment:${chargeId}`, () => processarEventoPayment(corpo, deps, ocorridoEm));
+    }
     case 'subconta': return processarEventoSubconta(corpo, deps);
     case 'chave_api': return registrarAlertaChaveApi(corpo);
     case 'pix_automatico': return processarAutorizacaoPixAutomatico(corpo, deps, ocorridoEm);
@@ -1771,6 +1798,45 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: metodo, valor_cobrado: 50 }, { value: 60 }), false, `CP3-09: ${metodo} com preço mudado no painel NÃO é divergência (RN-34)`);
   }
   assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: 'cartao_credito', valor_cobrado: 60 }, { value: 20, installment: 'ins_1' }), false, 'CP3-09: parcela (value da parcela) não é divergência');
+
+  /* FP2A-1: uma passada por cobrança. Duas passadas do MESMO charge não se
+     intercalam; charges diferentes seguem em paralelo; uma que lança não
+     trava a seguinte; e a fila se desfaz sozinha. */
+  {
+    const dorme = (ms) => new Promise((ok) => setTimeout(ok, ms));
+    let emVoo = 0; let maximo = 0; const ordem = [];
+    const passada = (rotulo, ms, lanca = false) => async () => {
+      emVoo += 1; maximo = Math.max(maximo, emVoo); ordem.push(`+${rotulo}`);
+      await dorme(ms); emVoo -= 1; ordem.push(`-${rotulo}`);
+      if (lanca) throw new Error(`falhou ${rotulo}`);
+      return rotulo;
+    };
+    const r = await Promise.allSettled([
+      umaPassadaPorCobranca('payment:pay_x', passada('a', 20, true)),
+      umaPassadaPorCobranca('payment:pay_x', passada('b', 5)),
+      umaPassadaPorCobranca('payment:pay_x', passada('c', 1))
+    ]);
+    assert.equal(maximo, 1, 'FP2A-1: duas passadas do mesmo charge nunca ao mesmo tempo');
+    assert.deepEqual(ordem, ['+a', '-a', '+b', '-b', '+c', '-c'], 'FP2A-1: na ordem de chegada');
+    assert.deepEqual(r.map((x) => x.status), ['rejected', 'fulfilled', 'fulfilled'], 'FP2A-1: a que lança não trava as seguintes');
+    emVoo = 0; maximo = 0;
+    await Promise.all([umaPassadaPorCobranca('payment:pay_y', passada('y', 10)), umaPassadaPorCobranca('payment:pay_z', passada('z', 10))]);
+    assert.equal(maximo, 2, 'FP2A-1: charges diferentes seguem em paralelo (controle)');
+    await dorme(0);
+    assert.equal(FILA_POR_COBRANCA.size, 0, 'FP2A-1: a fila se desfaz quando esvazia');
+
+    /* E a FIAÇÃO: `processarWebhook` põe o evento de pagamento na fila do
+       charge — com duas entregas simultâneas, a busca da cobrança nunca
+       roda duas vezes ao mesmo tempo para o mesmo charge. */
+    let buscasEmVoo = 0; let maxBuscas = 0;
+    const depsLentas = depsFalsas({ buscarCobranca: null });
+    depsLentas.buscarCobranca = async () => { buscasEmVoo += 1; maxBuscas = Math.max(maxBuscas, buscasEmVoo); await dorme(15); buscasEmVoo -= 1; return null; };
+    await Promise.allSettled([
+      processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_fila' } }, depsLentas),
+      processarWebhook({ event: 'PAYMENT_RECEIVED', payment: { id: 'pay_fila' } }, depsLentas)
+    ]);
+    assert.equal(maxBuscas, 1, 'FP2A-1: processarWebhook serializa as passadas do mesmo charge');
+  }
 
   // --- Mapa evento → status ---
   assert.equal(mapearStatusPayment('PAYMENT_CONFIRMED'), 'confirmado');

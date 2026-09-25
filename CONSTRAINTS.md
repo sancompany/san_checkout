@@ -142,6 +142,16 @@ de virar regra escrita
   (Trimundi9, Vitrina ADS e sucessores), não para ser gateway de mercado
   aberto. Não há evidência de necessidade de fila, cache distribuído ou
   réplica — e nenhum dos três existe, de propósito.
+  ⚠️ **Uma instância só é premissa de correção, não só de custo** (FP2A-1,
+  25/09/2026): o webhook processa um charge por vez com uma fila **em
+  memória** (`umaPassadaPorCobranca`, `webhookController.js`). É ela que
+  impede duas passadas do mesmo pagamento de enviarem ao contratante dois
+  avisos do mesmo fato com `eventoId` diferentes, e de cancelarem duas
+  vezes a assinatura antiga numa renovação. O estado continua protegido
+  pelo UPDATE condicional em qualquer número de instâncias; o aviso, não.
+  **Antes de subir uma segunda instância**, essa fila tem de virar um
+  arrendamento no banco. Na troca de versão, a antiga e a nova convivem
+  por segundos — resíduo aceito (RES-52).
 - **Moeda**: BRL, único.
 - **Valor por cobrança**: R$ 0,01 a R$ 100.000,00 (`valorValido`).
 - **Parcelamento**: 1 a 12 vezes.

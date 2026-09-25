@@ -45,7 +45,7 @@ const linhaDaPopup = (extra = {}) => ({
 });
 const pagamento = (id, status, extra = {}) => ({ status: 200, corpo: { id, status, value: 50, deleted: false, refunds: [], subscription: 'sub_a', ...extra } });
 
-async function rodar({ tabelas, falhas = {}, asaas = {}, passos }) {
+async function rodar({ tabelas, falhas = {}, asaas = {}, passos, atrasoDaAsaasMs = 0 }) {
   const pasta = mkdtempSync(join(tmpdir(), 'assinatura-inteira-'));
   const arquivo = join(pasta, 'banco.json');
   writeFileSync(arquivo, JSON.stringify({ tabelas: { contratantes: [LOJA], assinaturas: [], outbox_notificacoes: [], webhook_inbox: [], ...tabelas }, falhas }));
@@ -56,6 +56,7 @@ async function rodar({ tabelas, falhas = {}, asaas = {}, passos }) {
       if (u.hostname !== 'api-sandbox.asaas.com') return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
       const r = roteiro[(opcoes.method ?? 'GET') + ' ' + u.pathname];
       if (!r) return new Response('{"errors":[{"description":"fora do roteiro"}]}', { status: 500 });
+      if (${atrasoDaAsaasMs}) await new Promise((ok) => setTimeout(ok, Math.random() * ${atrasoDaAsaasMs})); // a rede: sem ela, passadas concorrentes não se intercalam
       return new Response(JSON.stringify(r.corpo), { status: r.status, headers: { 'content-type': 'application/json' } });
     };
     const wc = await import('./src/controllers/webhookController.js');
@@ -269,6 +270,32 @@ for (const [tipo, antes] of [['PAYMENT_OVERDUE', 'vencido'], ['PAYMENT_CREDIT_CA
     passos: [{ receber: evento('evt_g', 'PAYMENT_CONFIRMED', 'pay_parc_2') }]
   });
   ok(!(r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.reservaSemLinha'), 'FP1R-A-2: a parcela 2 de uma reserva que existe NÃO manda um humano estornar');
+}
+
+/* ── H) FP2A-1/FP2A-2: CONFIRMED e RECEIVED do mesmo charge, juntos ──
+   A primeira cobrança de uma RENOVAÇÃO. Duas passadas simultâneas
+   terminavam em qualquer ordem: a que aplicou a transição, achando a
+   chave do fato já gravada pela outra, enfileirava um SEGUNDO `criada`
+   com `eventoId` novo, e as duas cancelavam a assinatura antiga na
+   Asaas. Agora uma passada por charge: um aviso, um DELETE. Rodado
+   algumas vezes porque a intercalação depende do agendador. */
+for (let rodada = 0; rodada < 6; rodada += 1) {
+  const renovacao = linhaDaPopup({ substitui_assinatura_id: 'sub_old' });
+  const antiga = { id: 'sub_old', contratante_id: 'loja', plano_id: 'plano_pro', documento: '11144477735', valor: 50, ciclo: 'MONTHLY', status: 'ativa', mutation_version: 0 };
+  const r = await rodar({
+    tabelas: { cobrancas: [renovacao], assinaturas: [antiga] },
+    asaas: {
+      'GET /v3/payments/pay_a': pagamento('pay_a', 'RECEIVED', { checkoutSession: 'chk_a', externalReference: `reserva-${renovacao.id}` }),
+      'DELETE /v3/subscriptions/sub_old': { status: 200, corpo: { deleted: true, id: 'sub_old' } }
+    },
+    passos: [{ receberJuntos: [
+      { id: `evt_h_c${rodada}`, event: 'PAYMENT_CONFIRMED', dateCreated: '2026-09-25 10:00:00', payment: { id: 'pay_a' } },
+      { id: `evt_h_r${rodada}`, event: 'PAYMENT_RECEIVED', dateCreated: '2026-09-25 10:00:03', payment: { id: 'pay_a' } }
+    ] }, { reprocessar: true }],
+    atrasoDaAsaasMs: 20
+  });
+  igual(avisos(r.banco, 'criada').length, 1, `FP2A-1 (rodada ${rodada}): o contratante ouve \`criada\` UMA vez — duas passadas do mesmo charge não se intercalam`);
+  igual(r.banco.assinaturas.filter((a) => a.id === 'sub_old').map((a) => a.status), ['cancelada'], `FP2A-2 (rodada ${rodada}): a antiga termina cancelada`);
 }
 
 /* ── C) o vínculo do charge à sessão é CAS ─────────────────────────── */

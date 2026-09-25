@@ -162,6 +162,14 @@ class Consulta {
   }
 
   projeta(linha) {
+    /* O `contratantes(...)` embutido do PostgREST, só para `cobrancas`: sem
+       ele, uma linha que o próprio código INSERE (o ciclo 2+) chegava sem
+       `webhook_url`, e nenhum aviso ao contratante era enfileirado — a
+       dedup da outbox nunca era exercitada (FP2A-1). */
+    if (this.colunas.includes('contratantes(') && this.tabela === 'cobrancas' && !linha.contratantes) {
+      const c = (ler().tabelas.contratantes ?? []).find((x) => x.id === linha.contratante_id);
+      return { ...linha, contratantes: c ? { webhook_url: c.webhook_url, nome: c.nome, api_key: c.api_key } : null };
+    }
     if (this.colunas === '*' || this.colunas.includes('(')) return { ...linha };
     const saida = {};
     for (const c of this.colunas.split(',').map((s) => s.trim())) if (c in linha) saida[c] = linha[c];
@@ -263,7 +271,12 @@ class Consulta {
     return { data, error, count };
   }
   then(resolve, reject) {
-    try { return Promise.resolve(this.executa()).then(resolve, reject); } catch (e) { return Promise.reject(e).then(resolve, reject); }
+    /* `JITTER_MS`: latência aleatória por operação, como a da rede — sem
+       ela, duas passadas concorrentes nunca se intercalam aqui como se
+       intercalam contra o banco de verdade. */
+    const j = Number(process.env.JITTER_MS ?? 0);
+    const esperar = j ? new Promise((r) => setTimeout(r, Math.random() * j)) : Promise.resolve();
+    return esperar.then(() => { try { return Promise.resolve(this.executa()).then(resolve, reject); } catch (e) { return Promise.reject(e).then(resolve, reject); } });
   }
 }
 

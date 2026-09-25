@@ -633,6 +633,12 @@ chegando junto com a confirmação), e parar descartava a confirmação. A
 perdedora segue com a linha que existe; a máquina de estados decide, e o
 aviso ao contratante tem chave do fato — a MESMA confirmação continua
 saindo uma vez só, que é a garantia original desta regra.
+*E a chave do fato não bastava sozinha (FP2A-1):* com duas passadas do
+mesmo charge em paralelo, a que aplicou a transição e achou a chave já
+gravada pela outra lia "o fato aconteceu de novo" e enfileirava um
+segundo aviso com `eventoId` novo. Agora o webhook processa um charge de
+cada vez (fila em memória; `CONSTRAINTS.md` §2 explica por que isso
+depende de haver uma instância só).
 
 **RN-24 · Pop-up bloqueada não pode travar o botão pra sempre.** Cartão
 avulso e assinatura por cartão abrem a pop-up hospedada da Asaas com
