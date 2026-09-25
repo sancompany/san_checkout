@@ -93,7 +93,7 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 | ID | Sev. Jules | Classe | Alegação | Triagem (antes do código) | Status final |
 |---|---|---|---|---|---|
 | JULES-001 | HIGH | CR-10 | `buscarCobrancaPorReferenciaExterna`, `buscarCobrancaPorCheckoutId`, `buscarIntencao`, `buscarAssinaturaPorId` sem `contratante_id` permitem A → B | a provar ou refutar: toda busca por id único precisa ser classificada pela ORIGEM do id (webhook autenticado, linha do nosso banco, capacidade não enumerável, ou entrada do contratante) | **FALSE_POSITIVE** — as 142 consultas classificadas pela origem do id: nenhuma leva de A para B; a única frágil (irmãs) coberta por teste |
-| JULES-002 | MEDIUM | CR-11 | `trust proxy 1` estrito demais; contorna rate limit | medir a cadeia real em produção antes de mexer | **FALSE_POSITIVE** se a sonda de §11 gravar o IP de saída real (160.79.106.132), não o forjado |
+| JULES-002 | MEDIUM | CR-11 | `trust proxy 1` estrito demais; contorna rate limit | medir a cadeia real em produção antes de mexer | **EXTERNAL_PENDING** EP-09 — medição em produção depois do deploy: se a sonda da §11 gravar o IP de saída real (160.79.106.132) e não o forjado, vira FALSE_POSITIVE; antes da medição não se afirma |
 | JULES-003 | MEDIUM | CR-09 | `service_role` ignora RLS | arquitetura/defesa em profundidade, salvo exploração demonstrada | **RISK_ACCEPTED** — arquitetura (backend único, `service_role`); defesa em profundidade = INFO-13 |
 | JULES-004 | MEDIUM | CR-05 | reconciliador só olha reservas sem `charge_id` | alvo FIXED com reconciliador **dirigido** (não polling global) | **FIXED** `af6f597` + C1-11 — reconciliador dirigido, que não fica preso nas que não resolve |
 
@@ -194,6 +194,21 @@ Quatro revisores independentes, cada achado relido por mim no código antes de c
 | C1-14 | LOW | CR-09 | privilégio padrão revogado só para objetos do `postgres` | **RISK_ACCEPTED** RES-05 — toda migration roda como `postgres` |
 | C1-15 | LOW | CR-09 | buscador de chaves do Access sem busca única nem recuo depois de falha | **FIXED** `baa3a88` |
 
+### 6.3 No ciclo adversarial 2 (sobre `baa3a88`)
+
+Dois revisores. **Não conta como passada limpa**: achou 1 MEDIUM e 6 LOW que pediram código. O contador de passadas limpas foi zerado depois de corrigir tudo.
+
+| ID | Sev. | Classe | Achado | Status final |
+|---|---|---|---|---|
+| C2-M1 | MEDIUM | CR-02 | o estorno que a Asaas pode ter feito e não dá para provar ficava travado para sempre, sem saída escrita | **FIXED** `ba36881` — trava mantida de propósito; o alerta nomeia a operação e aponta o procedimento do RUNBOOK §6.3, com as duas saídas; a suíte confere os dois |
+| C2-L1 | LOW | CR-06 | a refeitura do Pix Automático (C1-09) reescrevia a assinatura existente para `ativa` no plano de origem | **FIXED** `ba36881` |
+| C2-L2 | LOW | CR-08 | a refeitura da renovação (C1-03) cancelava a antiga também no evento de liquidação, 30 dias depois | **FIXED** `ba36881` — só em 72 h e com a nova ativa |
+| C2-L1b | LOW | CR-09 | quem tem o CPF cancela a pop-up aberta de outra pessoa | **DUPLICATE** de C1-05b |
+| C2-L2b | LOW | teste | banco falso gravava a escrita `single` que casava duas linhas | **FIXED** `7c0c94d` |
+| C2-L3b | LOW | teste | índice único do update no banco falso contra o estado anterior | **FIXED** `7c0c94d` |
+| C2-L4 | LOW | CR-06 | invólucro sem `head`, `options` e `route()` | **FIXED** `7c0c94d` |
+| C2-L5 | LOW | teste | a prova no `server.js` real não exercitava o invólucro | **FIXED** `7c0c94d` — handler real que rejeita, com exceção injetada |
+
 ## 7. Correções
 
 Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os de código:
@@ -211,6 +226,115 @@ Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os
 | `baa3a88` | ciclo adversarial 1 — C1-01…C1-15 |
 
 Migrations: **0018** (estornos) e **0019** (uma troca em voo) aplicadas em produção; **0020** (grants públicos) escrita e testada, aplicação pendente (EP-02).
+
+### 7.1 Classificação de todo o diff (`43635c4` → HEAD)
+
+Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo ficar sem classe; cada justificativa conferida contra o diff do próprio arquivo (três estavam imprecisas na primeira versão e foram corrigidas). A verificação das regressões que o diff poderia ter introduzido está na §7.2.
+
+| Arquivo | Linhas | Classe | Justificativa |
+|---|---|---|---|
+| `.env.example` | +14 −0 | DOCUMENTATION | variáveis opcionais novas, comentadas (CF_ACCESS_CERTS_URL só loopback, ASAAS_WEBHOOK_IP_ESTRITO) |
+| `.github/dependabot.yml` | +26 −0 | SECURITY_FIX | CI: permissions de leitura, ferramentas fixadas por hash, Dependabot com cooldown (SEC-034) |
+| `.github/workflows/ci.yml` | +6 −0 | SECURITY_FIX | CI: permissions de leitura, ferramentas fixadas por hash, Dependabot com cooldown (SEC-034) |
+| `.github/workflows/seguranca.yml` | +18 −3 | SECURITY_FIX | CI: permissions de leitura, ferramentas fixadas por hash, Dependabot com cooldown (SEC-034) |
+| `.gitleaksignore` | +11 −0 | SECURITY_FIX | impressões digitais das chaves de MENTIRA dos testes e do token meta público (CI da PR) |
+| `.ia/HANDOFF.md` | +1 −1 | DOCUMENTATION | contagem de suítes |
+| `API.md` | +120 −21 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `CLAUDE.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `CONSTRAINTS.md` | +75 −7 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `README.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `RUNBOOK.md` | +33 −5 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md` | +553 −0 | DOCUMENTATION | evidência imutável: baseline pré-correção (hash travado) |
+| `docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md` | +91 −0 | DOCUMENTATION | evidência imutável: revisão do Jules (hash travado) |
+| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +284 −0 | DOCUMENTATION | este relatório |
+| `docs/TESTES.md` | +31 −0 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/funcional.md` | +244 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/pendencias.md` | +64 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `functions/api/admin/[[caminho]].js` | +71 −0 | SECURITY_FIX | Pages Function: o painel fala com a API atrás do Access (SEC-015) |
+| `package-lock.json` | +12 −12 | SECURITY_FIX | express 4.22.3 / body-parser / qs 6.16.0 (SEC-033), sem --force |
+| `public/js/admin.js` | +8 −8 | SECURITY_FIX | encodeURIComponent nos ids e filtros das chamadas do painel (SEC-026) |
+| `public/js/modules/assinaturaCheckoutHandler.js` | +2 −2 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/assinaturaHandler.js` | +1 −1 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/assinaturaPixHandler.js` | +2 −2 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/boletoHandler.js` | +2 −2 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/cartaoHandler.js` | +2 −2 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/pedidoHandler.js` | +1 −1 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/modules/pixHandler.js` | +2 −2 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/status.js` | +1 −1 | SECURITY_FIX | encodeURIComponent em todo segmento de URL (SEC-026) |
+| `public/js/utils/api.js` | +9 −1 | SECURITY_FIX | o admin chama a mesma origem, atrás do Access (SEC-015) |
+| `scripts/checar.mjs` | +1 −1 | TEST | análise de sintaxe inclui functions/ |
+| `scripts/ensaio-restauracao.sh` | +7 −0 | MIGRATION | ensaio de restauração cria os papéis que a 0020 revoga |
+| `src/config/asaas.js` | +4 −1 | SECURITY_FIX | encodeURIComponent no id da sessão na URL do checkout que o navegador abre (SEC-001) |
+| `src/config/supabase.js` | +24 −1 | CORRECTNESS_FIX | teto de 20 s e sem redirect no cliente do banco (INFO-09) |
+| `src/controllers/adminController.js` | +32 −6 | SECURITY_FIX | chave da subconta fora do log e da resposta; link só https (SEC-016/032) |
+| `src/controllers/asaasCheckoutController.js` | +115 −11 | SECURITY_FIX | sessão só para o mesmo pagador (NEW-02, C1-05), logs sem corpo cru (SEC-028) |
+| `src/controllers/assinaturaController.js` | +88 −12 | CORRECTNESS_FIX | arrendamento devolvido no sucesso, falha local vira erros (SEC-029, SEC-013) |
+| `src/controllers/checkoutController.js` | +265 −39 | CORRECTNESS_FIX | instrumento só volta se ainda é o do pedido, pelo preço da tela (SEC-004/005) |
+| `src/controllers/cobrancaConsultaController.js` | +15 −6 | CORRECTNESS_FIX | CAS e binding de valor na consulta de status (SEC-022, C1-10) |
+| `src/controllers/refundController.js` | +147 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
+| `src/controllers/trocaPlanoController.js` | +51 −12 | RECOVERY | uma troca em voo, aviso com dono (SEC-010/013) |
+| `src/controllers/webhookController.js` | +829 −66 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2) |
+| `src/middlewares/exigirAccess.js` | +74 −0 | SECURITY_FIX | guarda do Access em /api/admin, fecha em 401/503 (SEC-015, C1-01) |
+| `src/middlewares/idsCanonicos.js` | +37 −0 | SECURITY_FIX | guarda canônica dos parâmetros de id (SEC-001/003/017) |
+| `src/routes/adminRoutes.js` | +15 −5 | SECURITY_FIX | Access antes de toda rota do admin (SEC-015); roteador com dono (C1-01) |
+| `src/routes/asaasCheckoutRoutes.js` | +5 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/assinaturaRoutes.js` | +2 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/checkoutRoutes.js` | +5 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/pedidoRoutes.js` | +5 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/planoRoutes.js` | +5 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/refundRoutes.js` | +2 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/trocaAprovacaoRoutes.js` | +2 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/routes/webhookRoutes.js` | +2 −2 | CORRECTNESS_FIX | roteador com dono (C1-01) e guarda canônica (SEC-001) |
+| `src/server.js` | +134 −35 | SECURITY_FIX | Access na origem, app com dono, saúde com workers, teto dos workers (SEC-015/031, C1-01) |
+| `src/services/asaasService.js` | +132 −26 | SECURITY_FIX | caminhos canônicos, texto da Asaas redigido, leitura de pagamento para conferir (SEC-017/028, SEC-007, C1-10) |
+| `src/services/assinaturaService.js` | +17 −8 | RECOVERY | upsert/vínculos relançam em vez de engolir (SEC-014) |
+| `src/services/auditoriaWebhookService.js` | +2 −1 | CORRECTNESS_FIX | promessa da descarga de rejeições com dono (SEC-013) |
+| `src/services/cobrancaService.js` | +173 −46 | CORRECTNESS_FIX | escrita condicional, delete condicional, estorno só sobe (SEC-022/025, NEW-01) |
+| `src/services/estornoService.js` | +426 −0 | CORRECTNESS_FIX | estorno durável e idempotente, reconciliação que não repete (SEC-002, C1-04, C2-M1) |
+| `src/services/outboxService.js` | +48 −5 | SECURITY_FIX | entrega sem seguir redirect, destino revalidado, orçamento de passada (SEC-006, C1-07) |
+| `src/services/pedidoService.js` | +30 −10 | SECURITY_FIX | id canônico na URL de saída do pull (SEC-001) |
+| `src/services/transicoesFinanceiras.js` | +49 −0 | CORRECTNESS_FIX | sair de chargeback só por disputa; caminhos para o reconciliador (SEC-019, JULES-004) |
+| `src/services/trocaExecucaoService.js` | +165 −64 | RECOVERY | cobrança do acerto nunca fica órfã; arrendamento não volta em falha ambígua (SEC-009/010) |
+| `src/services/trocaIntencaoService.js` | +44 −2 | RECOVERY | vínculo do acerto por CAS (SEC-009) |
+| `src/services/trocaSweeperService.js` | +126 −11 | RECOVERY | sweeper acha o acerto pela referência na Asaas (SEC-009) |
+| `src/services/webhookInboxService.js` | +87 −9 | RECOVERY | CAS respeita recuo, reenvio zera tentativas, candidatas à divergência (SEC-023/024, JULES-004) |
+| `src/utils/accessJwt.js` | +268 −0 | SECURITY_FIX | verificação RS256 do JWT do Access na origem (SEC-015, C1-01, C1-15) |
+| `src/utils/alvoDeRede.js` | +108 −11 | SECURITY_FIX | faixas de rede completas; destino revalidado (SEC-006/021) |
+| `src/utils/erros.js` | +21 −0 | SECURITY_FIX | erro da Asaas 401/403/5xx vira 502 genérico (INFO-11) |
+| `src/utils/passadas.js` | +91 −0 | OBSERVABILITY | uma passada por vez (SEC-023) e worker atrasado derruba a saúde (SEC-031) |
+| `src/utils/rotaSegura.js` | +57 −0 | CORRECTNESS_FIX | handler que lança não derruba o processo (C1-01, C2-L4) |
+| `src/utils/validadores.js` | +163 −30 | SECURITY_FIX | tipo na fronteira, teto de tamanho, comparação sem vazar tamanho (SEC-027, INFO-05) |
+| `supabase/migrations/0018_estornos_idempotentes.sql` | +66 −0 | MIGRATION | estornos como operação durável (SEC-002) — aditiva, aplicada |
+| `supabase/migrations/0019_uma_troca_em_voo_por_assinatura.sql` | +35 −0 | MIGRATION | uma troca em voo por assinatura (SEC-010) — índice parcial, aplicada |
+| `supabase/migrations/0020_anon_e_authenticated_sem_privilegio.sql` | +45 −0 | MIGRATION | revoga grants de anon/authenticated (INFO-13) — pendente EP-02; o código não depende dela |
+| `tests/access-de-teste.js` | +64 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/acerto-de-troca-nunca-fica-orfao.js` | +244 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/admin-so-pelo-access.js` | +285 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/assinatura-nasce-inteira.js` | +160 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/banco-falso/supabase-falso.mjs` | +123 −17 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/banco-sem-privilegio-publico.js` | +70 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/ci-so-le-e-fixa-o-que-roda.js` | +63 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/erro-da-asaas-nao-vaza.js` | +116 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/escrita-de-estado-e-condicional.js` | +272 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +545 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/executar.js` | +19 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/filtro-or-so-interpola-o-que-o-servidor-fez.js` | +79 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/identificador-canonico-em-toda-fronteira.js` | +219 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/instrumento-obsoleto-nunca-volta.js` | +207 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/nenhuma-chamada-de-saida-sem-teto.js` | +6 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/nenhuma-promessa-sem-dono.js` | +144 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/o-que-os-documentos-afirmam.js` | +25 −1 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/outbox-sobrevive-a-reinicio.js` | +17 −3 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/pagamento-de-um-pedido-invalida-as-irmas.js` | +42 −21 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/rota-que-lanca-nao-derruba-o-processo.js` | +180 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/rotas-http-respondem-como-prometido.js` | +19 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/saida-nunca-segue-redirecionamento.js` | +137 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/segredo-nao-sai-do-admin.js` | +62 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/senha-nao-fica-no-navegador.js` | +10 −3 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/sessao-de-assinatura-nao-vaza-por-cpf.js` | +163 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/uma-assinatura-viva-por-plano.js` | +105 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/webhook-confere-na-asaas.js` | +549 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 
 ## 8. Testes de regressão
 
@@ -273,7 +397,12 @@ As catorze estão provadas **em teste**, com sabotagem. Em produção, nenhuma f
 
 ## 13. Ciclos de convergência
 
-_(em andamento)_
+Passada **limpa** = nenhum achado novo confirmado que exija mudança de código. INFO, observação arquitetural ou endurecimento opcional sem exploit não quebram a passada, mas entram no ledger. Qualquer achado que peça código **zera o contador**.
+
+| Ciclo | Sobre | Revisores | Achados que pediram código | Contador depois |
+|---|---|---|---|---|
+| 1 | `8be71d3`…`8c96576` | 4 (dinheiro; admin/Access; webhook/crash/workers; tenant/entrada/testes) | 3 HIGH, 6 MEDIUM, 6 LOW (C1-01…C1-15) | 0 |
+| 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 
 ## 14. Riscos residuais
 
@@ -281,4 +410,6 @@ _(em andamento)_
 
 ## 15. Cobertura do fechamento
 
-_(em andamento)_
+**Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
+
+TOTAL_LEDGER = 86 = FIXED 64 + FALSE_POSITIVE 3 + DUPLICATE 5 + RISK_ACCEPTED 9 + EXTERNAL_PENDING 5

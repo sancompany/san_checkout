@@ -298,4 +298,28 @@ for (const [arquivo, hash] of Object.entries(IMUTAVEIS)) {
 }
 ok(existsSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md')), 'e o resultado pós-correção existe à parte');
 
-console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills)`);
+/* ---- O ledger da remediação se conta sozinho ----
+   Toda linha de achado (SEC, INFO, JULES, JX, NEW, C<n>-…) tem de terminar
+   com UM estado final, e o total que a §15 afirma tem de ser o que as
+   linhas somam. Contar à mão foi o que errou "28 FIXED" em 25/09/2026. */
+const ESTADOS = ['FIXED', 'FALSE_POSITIVE', 'DUPLICATE', 'RISK_ACCEPTED', 'EXTERNAL_PENDING'];
+const relatorio = readFileSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md'), 'utf8');
+const contagem = Object.fromEntries(ESTADOS.map((e) => [e, 0]));
+const vistos = new Set();
+for (const linha of relatorio.split('\n')) {
+  const m = linha.match(/^\| (SEC-\d+|INFO-\d+|JULES-\d+|JX-\d+|NEW-\d+|C\d+-[A-Za-z0-9]+) \|/);
+  if (!m) continue;
+  ok(!vistos.has(m[1]), `ledger: ${m[1]} aparece uma vez só`);
+  vistos.add(m[1]);
+  const celulas = linha.split('|').map((c) => c.trim()).filter(Boolean);
+  const achados = ESTADOS.filter((e) => new RegExp(`\\*\\*${e}\\*\\*`).test(celulas.at(-1)));
+  ok(achados.length === 1, `ledger: ${m[1]} tem exatamente um estado final na última coluna (tem ${achados.length})`);
+  contagem[achados[0]] += 1;
+}
+const total = vistos.size;
+const afirmado = relatorio.match(/TOTAL_LEDGER = (\d+) = FIXED (\d+) \+ FALSE_POSITIVE (\d+) \+ DUPLICATE (\d+) \+ RISK_ACCEPTED (\d+) \+ EXTERNAL_PENDING (\d+)/);
+const calculado = `TOTAL_LEDGER = ${total} = FIXED ${contagem.FIXED} + FALSE_POSITIVE ${contagem.FALSE_POSITIVE} + DUPLICATE ${contagem.DUPLICATE} + RISK_ACCEPTED ${contagem.RISK_ACCEPTED} + EXTERNAL_PENDING ${contagem.EXTERNAL_PENDING}`;
+ok(ESTADOS.reduce((soma, e) => soma + contagem[e], 0) === total, 'ledger: a soma dos cinco estados é o total');
+ok(afirmado && afirmado[0] === calculado, `ledger: a §15 afirma o que as linhas somam — calculado: ${calculado}`);
+
+console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills; ${calculado})`);
