@@ -64,6 +64,7 @@ import {
   vincularSessaoAReserva,
   atualizarStatusPorCheckoutId,
   aplicarTransicaoPorCheckoutId,
+  marcarSessaoConcluida,
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
   registrarCicloAssinatura,
@@ -118,6 +119,7 @@ const dependenciasPadrao = {
   vincularSessaoAReserva,
   atualizarStatusPorCheckoutId,
   aplicarTransicaoPorCheckoutId,
+  marcarSessaoConcluida,
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
   registrarCicloAssinatura,
@@ -778,7 +780,32 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao, ocorrid
   }
   if (!cobranca) return;
 
-  const STATUS_DA_SESSAO = { CHECKOUT_PAID: 'confirmado', CHECKOUT_CANCELED: 'cancelado', CHECKOUT_EXPIRED: 'expirado' };
+  /* `CHECKOUT_PAID` NÃO É DINHEIRO (primeiro pagamento real, 25/09/2026).
+     Ele diz que o pagador CONCLUIU a sessão hospedada — cartão digitado,
+     assinatura criada. Até aqui ele virava `confirmado`, e naquele dia a
+     tela mostrou "Assinatura Ativa ✓" com a primeira cobrança `PENDING`
+     na Asaas e o cartão sem débito nenhum. Quem confirma dinheiro é
+     `PAYMENT_CONFIRMED`/`PAYMENT_RECEIVED` (`processarEventoPayment`).
+     Aqui só se carimba a sessão: a linha segue `pendente`, e a tela
+     passa a dizer "processando" (`consultarStatusCheckout`). Nenhum aviso
+     sai daqui — nunca saiu. */
+  if (evento === 'CHECKOUT_PAID') {
+    await deps.marcarSessaoConcluida(asaasCheckoutId, ocorridoEm);
+    const chargeId = corpo?.checkout?.payment?.id ?? corpo?.payment?.id ?? null;
+    if (chargeId && !cobranca.charge_id) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
+    return;
+  }
+
+  /* Sessão já concluída não expira nem é cancelada: um `CHECKOUT_EXPIRED`
+     atrasado sobre ela é ruído, e marcá-la `expirado` soltaria a reserva
+     para uma SEGUNDA sessão/assinatura enquanto a primeira ainda vai ser
+     cobrada. */
+  if (cobranca.sessao_concluida_em) {
+    console.log(`[webhook/sessao] ${asaasCheckoutId}: ${evento} depois de CHECKOUT_PAID — ignorado`);
+    return;
+  }
+
+  const STATUS_DA_SESSAO = { CHECKOUT_CANCELED: 'cancelado', CHECKOUT_EXPIRED: 'expirado' };
   const novoStatus = STATUS_DA_SESSAO[evento];
   if (!novoStatus) return;
 
@@ -792,19 +819,6 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao, ocorrid
   }
   const gravou = await deps.aplicarTransicaoPorCheckoutId(asaasCheckoutId, { de: cobranca.status, para: novoStatus, ocorridoEm });
   if (!gravou) throw new Error(`transição ${cobranca.status} → ${novoStatus} da sessão ${asaasCheckoutId} perdeu a corrida; reprocessar`);
-
-  if (evento === 'CHECKOUT_PAID') {
-    /* O `CHECKOUT_PAID` real não traz `payment` (medido em 15/09); se um
-       dia trouxer, o charge é vinculado, e a assinatura é amarrada no
-       `PAYMENT_CONFIRMED`, que é quem confirma dinheiro. NENHUM aviso
-       sai daqui: quem avisa — `confirmado` no pedido, `criada` na
-       assinatura — é o `PAYMENT_CONFIRMED`, com os dois ids. O que
-       acontece AQUI é o que a tela precisa: a sessão vira `confirmado`
-       e o polling da pop-up fecha. */
-    const chargeId = corpo?.checkout?.payment?.id ?? corpo?.payment?.id ?? null;
-    if (chargeId && !cobranca.charge_id) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
-    return;
-  }
 
   if (evento === 'CHECKOUT_CANCELED') {
     // Renovação abandonada NÃO é a assinatura sendo cancelada (RN-20).
@@ -1261,15 +1275,17 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   const cobrancaAssinaturaCrua = { ...cobrancaPix, metodo_pagamento: 'assinatura', charge_id: null, asaas_checkout_id: 'chk_real', plano_id: 'plano_x', documento: '52998224725', contratante_id: 'mostrai', substitui_assinatura_id: null, ciclo: 'QUARTERLY', valor_cobrado: 267.3 };
   deps = depsFalsas({ buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua });
   await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } }, deps);
-  assert.deepEqual(deps.chamou('aplicarTransicaoPorCheckoutId')[0].args, ['chk_real', { de: 'pendente', para: 'confirmado', ocorridoEm: null }], 'a sessão vira confirmado pela máquina de estados (é o que o polling da pop-up lê)');
+  assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'CHECKOUT_PAID NÃO muda status: sessão concluída não é dinheiro (25/09/2026)');
+  assert.deepEqual(deps.chamou('marcarSessaoConcluida')[0].args, ['chk_real', null], 'só carimba a sessão — é o que a tela lê como "processando"');
   assert.equal(deps.notificados().length, 0, 'CHECKOUT_PAID não avisa nada: não tem chargeId nem subscription');
-  // reprocessamento administrativo de um CHECKOUT_PAID sobre uma linha já estornada: NÃO regride
+  // reprocessamento de um CHECKOUT_PAID sobre uma linha já estornada: nada muda de status
   deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'estornado' } });
   await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_real', status: 'PAID' } }, deps);
   assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'C-03 vale para a sessão também: estornado não volta a confirmado');
-  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' } });
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, sessao_concluida_em: '2026-09-25T01:26:34Z' } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
   assert.deepEqual(deps.chamou('vincularChargeIdAoCheckout')[0].args, ['chk_real', 'pay_real'], 'o charge_id é gravado aqui (bug de 15/09)');
+  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado', 'é o PAGAMENTO que leva a linha a confirmado — e grava confirmado_em no dia do dinheiro');
   assert.deepEqual(deps.chamou('atualizarSubscriptionIdDaCobranca')[0].args, ['pay_real', 'sub_real']);
   assert.equal(deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'QUARTERLY', 'ciclo vem de cobranca.ciclo');
   n = deps.notificados();
@@ -1279,7 +1295,12 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(n[0].payload.assinaturaId, 'sub_real', 'H-02: e assinaturaId');
   assert.equal(n[0].payload.valor, 267.3);
   assert.equal(n[0].chave, 'assinatura|pay_real|criada|confirmado');
-  assert.equal(deps.chamou('aplicarTransicao').length, 0, 'a sessão já estava confirmado: status não é regravado');
+  assert.equal(n[0].aplicada, true);
+  // linha LEGADA (gravada confirmado pelo CHECKOUT_PAID antigo): o PAYMENT_CONFIRMED ainda amarra e avisa
+  deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('upsertAssinatura').length, 1, 'legado: a assinatura nasce do mesmo jeito');
+  assert.equal(deps.notificados()[0].payload.evento, 'criada');
   // pagamento chegando ANTES do CHECKOUT_PAID: vincula e grava a transição
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: cobrancaAssinaturaCrua });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_antes', subscription: 'sub_antes', checkoutSession: 'chk_real' } }, deps);
@@ -1345,7 +1366,8 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_perdido', externalReference: 'reserva-abc' } }, deps);
   assert.deepEqual(deps.chamou('buscarCobrancaPorReferenciaExterna')[0].args, ['reserva-abc'], 'sem linha pela sessão, procura pela reserva');
   assert.deepEqual(deps.chamou('vincularSessaoAReserva')[0].args, ['abc', { asaasCheckoutId: 'chk_perdido' }], 'a sessão é amarrada pela LINHA (asaas_checkout_id é nulo — um update por ele não casaria)');
-  assert.deepEqual(deps.chamou('aplicarTransicaoPorCheckoutId')[0].args, ['chk_perdido', { de: 'pendente', para: 'confirmado', ocorridoEm: null }], 'e a reserva perdida vira confirmado');
+  assert.deepEqual(deps.chamou('marcarSessaoConcluida')[0].args, ['chk_perdido', null], 'e a reserva perdida fica com a sessão concluída — sem virar confirmado');
+  assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0);
   // PAYMENT_CONFIRMED citando a sessão perdida: amarra sessão E charge pela linha, e avisa
   deps = depsFalsas({
     buscarCobranca: null, buscarCobrancaPorCheckoutId: null,
@@ -1390,6 +1412,42 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, status: 'confirmado' } });
   await processarWebhook({ event: 'CHECKOUT_EXPIRED', checkout: { id: 'chk_real' } }, deps);
   assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'confirmado → expirado não existe na matriz');
+  // CHECKOUT_EXPIRED/CANCELED sobre uma sessão CONCLUÍDA (ainda pendente de dinheiro): ignorado
+  for (const evento of ['CHECKOUT_EXPIRED', 'CHECKOUT_CANCELED']) {
+    deps = depsFalsas({ buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, sessao_concluida_em: '2026-09-25T01:26:34Z' } });
+    await processarWebhook({ event: evento, checkout: { id: 'chk_real' } }, deps);
+    assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, `${evento} depois de CHECKOUT_PAID não solta a reserva para uma segunda assinatura`);
+    assert.equal(deps.notificados().length, 0, `${evento} depois de CHECKOUT_PAID não avisa "cancelada"`);
+  }
+
+  // 16b. O INCIDENTE DE 25/09/2026, com os payloads REAIS (redigidos) na ordem em
+  //      que chegaram: SUBSCRIPTION_CREATED, CHECKOUT_PAID — e o 1º ciclo PENDING.
+  {
+    const linha = { ...cobrancaAssinaturaCrua, id: 'bda7f6e9', asaas_checkout_id: '842e6f11', plano_id: 'plano_anual', ciclo: 'YEARLY', valor_cobrado: 10, contratante_id: 'testemaster' };
+    const subscriptionCreated = { id: 'evt_6561&1533536453', event: 'SUBSCRIPTION_CREATED', dateCreated: '2026-09-24 22:26:34', subscription: { id: 'sub_39mjscz7vl2jwx7g', cycle: 'YEARLY', value: 10, status: 'ACTIVE', deleted: false, nextDueDate: '2027-09-25', checkoutSession: '842e6f11', billingType: 'CREDIT_CARD' } };
+    const checkoutPaid = { id: 'evt_20f7&1533536454', event: 'CHECKOUT_PAID', dateCreated: '2026-09-24 22:26:34', checkout: { id: '842e6f11', status: 'PAID', subscription: { cycle: 'YEARLY', nextDueDate: '2026-09-25T03:00:00+0000' }, externalReference: 'reserva-bda7f6e9' } };
+    deps = depsFalsas({ buscarCobrancaPorCheckoutId: linha });
+    await processarWebhook(subscriptionCreated, deps);
+    await processarWebhook(checkoutPaid, deps);
+    assert.equal(deps.chamou('aplicarTransicaoPorCheckoutId').length, 0, 'INCIDENTE: nenhum dos dois eventos leva a linha a confirmado');
+    assert.equal(deps.chamou('aplicarTransicao').length, 0);
+    assert.equal(deps.chamou('upsertAssinatura').length, 0, 'INCIDENTE: nenhuma assinatura ativa nasce antes do dinheiro (entitlement)');
+    assert.equal(deps.notificados().length, 0, 'INCIDENTE: o contratante não ouve "criada" nem "confirmado"');
+    assert.equal(deps.chamou('marcarSessaoConcluida').length, 1, 'só a sessão é carimbada');
+    // o 1º ciclo é RECUSADO no vencimento: vira recusado, e nada é ativado
+    deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...linha, sessao_concluida_em: '2026-09-25T01:26:34Z' } });
+    await processarWebhook({ event: 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', payment: { id: 'pay_v6f2xr6j98reaxb9', subscription: 'sub_39mjscz7vl2jwx7g', checkoutSession: '842e6f11' } }, deps);
+    assert.equal(deps.chamou('aplicarTransicao')[0]?.args[1].para, 'recusado', 'cartão recusado no vencimento: recusado, nunca confirmado');
+    assert.equal(deps.chamou('upsertAssinatura').length, 0, 'e a assinatura NÃO é ativada');
+    assert.ok(!deps.notificados().some((x) => x.payload.evento === 'criada'), 'e "criada" não sai');
+    // o 1º ciclo é CONFIRMADO no vencimento: aí sim confirmado + criada
+    deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...linha, sessao_concluida_em: '2026-09-25T01:26:34Z' } });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_v6f2xr6j98reaxb9', subscription: 'sub_39mjscz7vl2jwx7g', checkoutSession: '842e6f11' } }, deps);
+    assert.equal(deps.chamou('aplicarTransicao')[0].args[1].para, 'confirmado');
+    assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_39mjscz7vl2jwx7g');
+    assert.equal(deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'YEARLY');
+    assert.equal(deps.notificados()[0].payload.evento, 'criada');
+  }
 
   // 17. rotas: classificação bate com o ramo que roda
   const CASOS_DE_ROTA = [

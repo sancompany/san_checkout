@@ -135,12 +135,18 @@ export function redigirPayload(corpo) {
  * novo não pode quebrar a auditoria dele mesmo.
  */
 export function extrairReferencia(corpo) {
+  /* `account` vem POR ÚLTIMO: todo evento real traz `account` (é a conta
+     que emite — medido no primeiro `SUBSCRIPTION_CREATED` e no primeiro
+     `CHECKOUT_PAID` de produção, 25/09/2026). Na frente, ele rotulava
+     todo `SUBSCRIPTION_*` como "account <id da nossa conta>", e a
+     referência que importa — a assinatura — não aparecia em lugar
+     nenhum. Só evento de conta de verdade (`ACCOUNT_STATUS_*`) cai nele. */
   const candidatos = [
     ['payment', corpo?.payment?.id],
     ['checkout', corpo?.checkout?.id],
-    ['account', corpo?.account?.id],
     ['subscription', corpo?.payment?.subscription ?? corpo?.subscription?.id],
-    ['authorization', corpo?.authorization?.id ?? corpo?.recurring?.id]
+    ['authorization', corpo?.authorization?.id ?? corpo?.recurring?.id],
+    ['account', corpo?.account?.id]
   ];
 
   for (const [tipo, id] of candidatos) {
@@ -517,6 +523,17 @@ if (process.argv[1]?.endsWith('auditoriaWebhookService.js')) {
   assert.deepEqual(
     extrairReferencia({ event: 'ACCOUNT_STATUS_DOCUMENT_APPROVED', account: { id: 'acc_1' } }),
     { tipo: 'account', id: 'acc_1' }
+  );
+  // O primeiro SUBSCRIPTION_CREATED real (25/09/2026), redigido: traz `account` E `subscription`.
+  assert.deepEqual(
+    extrairReferencia({ id: 'evt_6561&1533536453', event: 'SUBSCRIPTION_CREATED', account: { id: '29eceb5c', ownerId: null }, subscription: { id: 'sub_39mjscz7vl2jwx7g', checkoutSession: '842e6f11' } }),
+    { tipo: 'subscription', id: 'sub_39mjscz7vl2jwx7g' },
+    'SUBSCRIPTION_* real: a referência é a assinatura, não a conta que emitiu'
+  );
+  assert.deepEqual(
+    extrairReferencia({ event: 'CHECKOUT_PAID', account: { id: '29eceb5c' }, checkout: { id: '842e6f11' } }),
+    { tipo: 'checkout', id: '842e6f11' },
+    'CHECKOUT_PAID real também traz account — o checkout vence'
   );
   assert.deepEqual(extrairReferencia({ event: 'SEI_LA' }), { tipo: null, id: null });
   assert.deepEqual(extrairReferencia(null), { tipo: null, id: null });

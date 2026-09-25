@@ -94,6 +94,25 @@ export function hojeCivil(agora = new Date()) {
   return dataCivil(agora);
 }
 
+/**
+ * `AAAA-MM-DD HH:mm:ss` do instante, no relógio de Brasília — o formato
+ * de data-hora que a Asaas lê como hora local dela.
+ *
+ * Existe por causa do primeiro pagamento real (25/09/2026): o
+ * `nextDueDate` da assinatura era montado com `getDate()`/`getHours()`
+ * do processo, que é UTC. Às 22:26 de Brasília já era dia 25 em UTC, a
+ * Asaas recebeu vencimento "amanhã" e o cartão NÃO foi cobrado no ato —
+ * a sessão fechou com sucesso e o primeiro ciclo ficou `PENDING`.
+ * `docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`.
+ */
+export function dataHoraCivil(instante = new Date()) {
+  const p = Object.fromEntries(
+    FORMATO_COMPLETO.formatToParts(instante instanceof Date ? instante : new Date(instante)).map((x) => [x.type, x.value])
+  );
+  const hora = p.hour === '24' ? '00' : p.hour;
+  return `${p.year}-${p.month}-${p.day} ${hora}:${p.minute}:${p.second}`;
+}
+
 /** O dia civil `n` dias antes de `data` (string `AAAA-MM-DD`). */
 export function diaCivilAntes(data, n) {
   // Meio-dia como âncora: soma/subtração de dias em UTC nunca cruza a
@@ -166,6 +185,16 @@ if (process.argv[1]?.endsWith('diaCivil.js')) {
   );
   conferir(ultimosDiasCivis(1, madrugada).length === 1, 'dias = 1 devolve só hoje');
   conferir(ultimosDiasCivis(1, madrugada)[0] === '2026-09-16', 'e hoje é o dia civil de Brasília, não de UTC');
+
+  /* --- 5b. data-hora para a Asaas: o instante exato do incidente ----
+     01:26:21Z de 25/09 era 22:26:21 de 24/09 em Brasília. Montado em
+     UTC, virou "2026-09-25 01:26:21" — vencimento amanhã, cartão não
+     cobrado no ato. */
+  const incidente = new Date('2026-09-25T01:26:21Z');
+  conferir(dataHoraCivil(incidente) === '2026-09-24 22:26:21', `data-hora do incidente deu ${dataHoraCivil(incidente)}`);
+  conferir(dataHoraCivil(new Date('2026-09-25T03:00:00Z')) === '2026-09-25 00:00:00', 'meia-noite de Brasília sai 00, não 24');
+  conferir(dataHoraCivil(new Date('2026-09-25T15:00:00Z')) === '2026-09-25 12:00:00', 'meio-dia: mesmo dia nos dois fusos');
+  conferir(dataHoraCivil(incidente).slice(0, 10) === dataCivil(incidente), 'data-hora e dia civil concordam sobre o dia');
 
   /* --- 6. a série é contígua e sem repetição, em janela longa ------- */
   const trinta = ultimosDiasCivis(30, new Date('2026-03-15T12:00:00Z'));

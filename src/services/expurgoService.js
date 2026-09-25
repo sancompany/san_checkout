@@ -95,7 +95,11 @@ const FICAM_EM_COBRANCAS = new Set([
      um retrato sem dado de pessoa. Decididas NA MESMA mudança que criou
      as colunas — a lição de 18/09 e a de hoje (ver `mutation_version`
      abaixo). */
-  'valor_estornado', 'status_evento_em', 'cotacao_id'
+  'valor_estornado', 'status_evento_em', 'cotacao_id',
+  /* `sessao_concluida_em` (migration 0016, 25/09/2026): carimbo técnico
+     de quando a pop-up fechou — instante, sem dado de pessoa. Decidida
+     na MESMA mudança que criou a coluna. */
+  'sessao_concluida_em'
 ]);
 
 /**
@@ -482,7 +486,7 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
       'bairro', 'cep', 'cidade', 'uf', 'cidade_ibge', 'email', 'asaas_subscription_id',
       'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em',
       'ambiente', 'e_teste', 'estornando_em',
-      'valor_estornado', 'status_evento_em', 'cotacao_id'
+      'valor_estornado', 'status_evento_em', 'cotacao_id', 'sessao_concluida_em'
     ],
     assinaturas: [
       'id', 'contratante_id', 'documento', 'valor', 'ciclo', 'status',

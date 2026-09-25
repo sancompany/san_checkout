@@ -64,10 +64,15 @@ notificado.
 
 **Código:** `processarEventoCheckout`, ramo `CHECKOUT_PAID` (linha 795-848).
 
-Marca `confirmado`. **`payment` nunca vem** neste evento (medido); o
-vínculo de verdade só acontece em T4. Notifica `evento: criada` sempre
-(a exceção de "sem `chargeId` não notifica", linha 833, não vale pra
-assinatura — ela sempre notifica `criada` aqui).
+**Desde 25/09/2026 NÃO marca `confirmado`** — só carimba
+`sessao_concluida_em` (RN-47). O primeiro pagamento real de assinatura
+provou que sessão concluída não é dinheiro: `CHECKOUT_PAID` chegou com o
+1º ciclo `PENDING` para o dia seguinte (vencimento montado em UTC,
+RN-49), e a linha ficou `confirmado` com o cartão sem débito. **`payment`
+nunca vem** neste evento (medido); o vínculo, a transição para
+`confirmado` e o aviso `criada` acontecem em T4. Um `SUBSCRIPTION_CREATED`
+chega segundos antes, com `subscription.checkoutSession` — homologado,
+ainda não tratado (`CONSTRAINTS.md` §2.2).
 
 | Erro | Status |
 |---|---|

@@ -12,6 +12,7 @@
 import crypto, { createHash } from 'node:crypto';
 import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
 import { supabase } from '../config/supabase.js';
+import { hojeCivil, diaCivilAntes } from '../utils/diaCivil.js';
 
 /**
  * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
@@ -365,8 +366,11 @@ export async function buscarTaxasDaConta() {
   return taxas?.payment ?? null;
 }
 
+/* Vencimento é dia de BRASÍLIA, que é o que a Asaas entende por data.
+   O processo roda em UTC: `toISOString()` daria o dia seguinte entre
+   21h e meia-noite (primeiro pagamento real, 25/09/2026). */
 function dataDeHoje() {
-  return new Date().toISOString().slice(0, 10);
+  return hojeCivil();
 }
 
 /**
@@ -426,9 +430,7 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
 const DIAS_VENCIMENTO_BOLETO = 3; // API.md §6.1 (o que o boleto exige do comprador)
 
 function dataVencimentoBoleto() {
-  const data = new Date();
-  data.setDate(data.getDate() + DIAS_VENCIMENTO_BOLETO);
-  return data.toISOString().slice(0, 10);
+  return diaCivilAntes(hojeCivil(), -DIAS_VENCIMENTO_BOLETO);
 }
 
 /**

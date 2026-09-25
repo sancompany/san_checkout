@@ -405,6 +405,37 @@ ainda só é corrigida por conciliação (pull), com o atraso de quem
 concilia. O que mudou é que agora existe um payload real esperando para
 ser lido. `docs/pendencias.md`.
 
+**O primeiro payload real chegou em 25/09/2026** (`SUBSCRIPTION_CREATED`
+da primeira assinatura de produção, `sub_39mjscz7vl2jwx7g`, 4 s antes do
+`CHECKOUT_PAID` da mesma sessão). Estrutura medida, com os valores
+redigidos:
+
+| caminho | o que veio | nota |
+|---|---|---|
+| `id`, `event`, `dateCreated` | `evt_…&1533536453`, `SUBSCRIPTION_CREATED`, `2026-09-24 22:26:34` | `dateCreated` em Brasília, sem fuso — como os demais |
+| `account.id`, `account.ownerId` | id da nossa conta, `null` | **todo** evento real traz `account` — ele rotulava a referência errado (corrigido) |
+| `subscription.id` | `sub_39mjscz7vl2jwx7g` | |
+| `subscription.checkoutSession` | o id da sessão da pop-up | **é o que liga a assinatura à nossa linha** antes de qualquer pagamento |
+| `subscription.status`, `.deleted` | `ACTIVE`, `false` | ativa na Asaas **com o 1º ciclo `PENDING`** — não é sinal de dinheiro |
+| `subscription.cycle`, `.value`, `.billingType` | `YEARLY`, `10`, `CREDIT_CARD` | |
+| `subscription.nextDueDate` | `2027-09-25` | já o vencimento do **2º** ciclo — o 1º foi gerado antes do evento |
+| `subscription.customer`, `.creditCard.*`, `.paymentLink`, `.split`, `.externalReference`, `.description`, `.fine`, `.interest`, `.dateCreated`, `.object`, `.sendPaymentByPostalService` | (caminhos presentes; valores não gravados) | `creditCard` traz bandeira e final — fora da lista branca, de propósito |
+
+A lista branca do `auditoriaWebhookService.js` já guardava exatamente os
+campos úteis — a medição de 16/09 acertou. O que estava errado era a
+**referência**: `account` vinha antes de `subscription` na ordem de
+prioridade, e todo `SUBSCRIPTION_*` ficava registrado como "account".
+Corrigido em 25/09 (`extrairReferencia`), com o payload real no
+autoteste.
+
+**O tratamento continua aberto, e agora por decisão, não por falta de
+dado:** `SUBSCRIPTION_CREATED` sozinho **não pode** ativar nada — o
+incidente do mesmo dia mostrou a assinatura `ACTIVE` com o cartão sem
+débito. Quem ativa é o `PAYMENT_CONFIRMED` do 1º ciclo (que também traz
+`checkoutSession`). O que falta tratar em código é o **encerramento**
+(`SUBSCRIPTION_DELETED`/`_INACTIVATED`), e esses dois payloads ainda
+não chegaram — medir antes de codificar vale para eles também.
+
 **Grafia que engana:** `CHECKOUT_CANCELED` tem **um** L e
 `PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED` tem **dois**. As duas
 estão assim na documentação oficial e assim no código.

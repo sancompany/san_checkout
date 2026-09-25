@@ -73,6 +73,33 @@ export function statusLocalDoPagamento(pagamento) {
   return STATUS_POR_STATUS_ASAAS[pagamento?.status] ?? 'pendente';
 }
 
+/**
+ * Completa uma reserva órfã com o que a ASAAS sabe do pagamento que ela
+ * gerou, e devolve à inbox os eventos dele já consumidos sem achar a
+ * linha. Dado do pagador não é inventado (ficou na requisição que morreu).
+ *
+ * Compartilhado de propósito: o reconciliador (de 5 em 5 min) e o
+ * checkout (quando o pagador clica de novo, RN-48) chegam ao mesmo órfão
+ * por caminhos diferentes, e só amarrar o `charge_id` deixava a linha sem
+ * valor — e fora do alcance do reconciliador, que só olha reserva SEM
+ * `charge_id` (revisão de 25/09/2026).
+ *
+ * @returns {Promise<number>} quantos eventos voltaram para a inbox
+ */
+export async function completarComOQueAAsaasSabe(reservaId, pagamento, deps = dependenciasPadrao) {
+  await deps.completarCobranca(reservaId, {
+    chargeId: pagamento.id,
+    documento: null,
+    valorCheio: pagamento.value ?? null,
+    valorComDesconto: pagamento.value ?? null,
+    taxaAsaas: 0,
+    taxaPropria: 0,
+    taxaIsenta: true,
+    valorCobrado: pagamento.value ?? null
+  });
+  return deps.reenfileirarPorReferencia(pagamento.id);
+}
+
 export function criarReconciliador(deps = dependenciasPadrao) {
   async function reconciliarUmaVez() {
     const relatorio = { examinadas: 0, completadas: 0, liberadas: 0, aguardando: 0, erros: 0 };
@@ -95,18 +122,8 @@ export function criarReconciliador(deps = dependenciasPadrao) {
                que já chegaram (e foram consumidos sem achar a linha) são
                REENFILEIRADOS na inbox: reprocessados agora, acham a linha
                pelo `charge_id`, aplicam o status e avisam o contratante. */
-            await deps.completarCobranca(reserva.id, {
-              chargeId: vivo.id,
-              documento: null,
-              valorCheio: vivo.value ?? null,
-              valorComDesconto: vivo.value ?? null,
-              taxaAsaas: 0,
-              taxaPropria: 0,
-              taxaIsenta: true,
-              valorCobrado: vivo.value ?? null
-            });
+            const reenfileiradas = await completarComOQueAAsaasSabe(reserva.id, vivo, deps);
             relatorio.completadas += 1;
-            const reenfileiradas = await deps.reenfileirarPorReferencia(vivo.id);
             relatorio.reenfileiradas = (relatorio.reenfileiradas ?? 0) + reenfileiradas;
             await deps.registrarErro(
               new Error(`reconciliação: a reserva ${reserva.id} (${reserva.metodo_pagamento}, pedido ${reserva.pedido_id}) EXISTIA na Asaas como ${vivo.id} (${vivo.status}) e foi completada — o pagador/valor da requisição original não foram recuperados.`),

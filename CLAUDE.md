@@ -901,6 +901,30 @@ tratada com o mesmo rigor dos achados originais.
     17-18/09 já tinha coberto ou declarado — conferidos contra o estado
     atual do código, sem reabrir o que já tinha decisão.
 
+Feito em 25/09/2026 — **o primeiro pagamento real, e ele falhou duas
+vezes sem cobrar nada** (`docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`).
+Investigado só com leitura antes de tocar em código, como o dono mandou.
+- **Pix**: o pagamento foi criado e o QR falhou — a conta de produção não
+  tinha chave Pix, exigência que o sandbox não tem. O nosso defeito foi
+  não gravar o `chargeId` que já tínhamos e responder 409 "sendo criada"
+  ao segundo clique até o reconciliador passar. Agora a linha é
+  completada na hora, a resposta é 503 `qr_indisponivel`, e o clique
+  seguinte busca o QR do MESMO Pix (RN-48).
+- **Assinatura**: a tela disse "Assinatura Ativa ✓" e o cartão não foi
+  debitado. Duas causas: o `nextDueDate` era montado no relógio do
+  processo (UTC) — às 22:26 de Brasília a Asaas recebeu "amanhã" e
+  agendou o 1º ciclo (RN-49); e o `CHECKOUT_PAID` virava `confirmado`
+  (RN-47). Sessão concluída agora só carimba `sessao_concluida_em`
+  (migration 0016), a tela diz "processando", e a reserva dessa sessão
+  nunca expira sozinha — senão, 65 min depois, abriria uma segunda
+  assinatura no mesmo cartão.
+- **O primeiro `SUBSCRIPTION_CREATED` real** foi homologado
+  (`CONSTRAINTS.md` §2.2): a lista branca acertou os campos; a
+  referência estava errada (`account` antes de `subscription`).
+- Revisão em dois ciclos: o primeiro achou um furo na própria correção
+  (reserva órfã amarrada sem valor, fora do alcance do reconciliador),
+  o segundo fechou limpo. Seis sabotagens, todas pegas.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
@@ -941,7 +965,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 57 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 59 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada

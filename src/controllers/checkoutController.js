@@ -34,14 +34,17 @@ import {
   consultarStatus,
   recuperarCobrancaPix,
   recuperarCobrancaBoleto,
+  listarPagamentosPorReferenciaExterna,
   foiRecusaLimpaDaAsaas
 } from '../services/asaasService.js';
 import {
   reservarCobranca,
   completarCobranca,
   liberarReservaCobranca,
-  buscarCobrancaPendenteDoPedido
+  buscarCobrancaPendenteDoPedido,
+  buscarReservaPendenteDoPedido
 } from '../services/cobrancaService.js';
+import { completarComOQueAAsaasSabe } from '../services/reconciliacaoService.js';
 import {
   documentoValido, emailValido, nomeValido, telefoneValido,
   normalizarDocumento,
@@ -78,6 +81,9 @@ const dependenciasPadrao = {
   completarCobranca,
   liberarReservaCobranca,
   buscarCobrancaPendenteDoPedido,
+  buscarReservaPendenteDoPedido,
+  listarPagamentosPorReferenciaExterna,
+  completarReservaOrfa: (reservaId, pagamento) => completarComOQueAAsaasSabe(reservaId, pagamento),
   registrarErro
 };
 
@@ -95,27 +101,76 @@ const dependenciasPadrao = {
  * @param {Function} recuperar — recuperarCobrancaPix ou recuperarCobrancaBoleto
  */
 async function reaproveitarCobrancaPendente(deps, { contratanteId, pedidoId, metodo, recuperar }) {
+  let pendente;
   try {
-    const pendente = await deps.buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodo);
-    if (!pendente?.charge_id) return null;
-
-    const viva = await recuperar(pendente.charge_id);
-    if (!viva) return null;
-
-    console.log(`[checkout/${metodo}] reaproveitando cobrança ${pendente.charge_id} do pedido ${pedidoId} (evitou duplicidade)`);
-    return viva;
+    pendente = await deps.buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodo);
   } catch (erro) {
     console.error(`[checkout/${metodo}] falha ao checar cobrança pendente do pedido ${pedidoId}:`, erro.message);
     return null;
   }
+  if (!pendente?.charge_id) return null;
+  return recuperarPeloChargeId(recuperar, pendente.charge_id, { metodo, pedidoId });
 }
+
+/**
+ * A cobrança EXISTE (tem `charge_id`) e ainda pode estar pagável: busca de
+ * novo o que a tela precisa (QR/linha digitável).
+ *
+ * Se a busca FALHAR, a resposta é `{ indisponivel: true }` — nunca `null`.
+ * Até 25/09/2026 as duas coisas eram `null`, e `null` quer dizer "não há
+ * cobrança, pode criar": o fluxo seguia para reservar, batia na reserva
+ * que já existia e respondia "Já existe uma cobrança sendo criada" para
+ * sempre. Foi o que o primeiro Pix real encontrou — o pagamento criado,
+ * o QR indisponível (conta sem chave Pix), e o segundo clique num beco
+ * sem saída. `indisponivel` vira 503 com o `chargeId`: tentar de novo é
+ * seguro, é o MESMO Pix.
+ */
+async function recuperarPeloChargeId(recuperar, chargeId, { metodo, pedidoId }) {
+  try {
+    const viva = await recuperar(chargeId);
+    if (!viva) return null; // não está mais pagável (pago, vencido, estornado): pode criar outra
+    console.log(`[checkout/${metodo}] reaproveitando cobrança ${chargeId} do pedido ${pedidoId} (evitou duplicidade)`);
+    return viva;
+  } catch (erro) {
+    console.error(`[checkout/${metodo}] cobrança ${chargeId} do pedido ${pedidoId} existe, mas não foi possível recuperá-la agora:`, erro.message);
+    return { indisponivel: true, chargeId, motivo: erro.message };
+  }
+}
+
+/**
+ * A reserva que ficou SEM `charge_id` (a criação na Asaas deu timeout, ou
+ * a resposta se perdeu) é conferida NA HORA pela referência que ela levou
+ * — em vez de esperar o reconciliador de 5 em 5 minutos com o pagador
+ * parado diante de "Já existe uma cobrança sendo criada". Achou: amarra o
+ * `charge_id` à reserva e recupera. Não achou: ainda não se sabe, e a
+ * resposta diz isso. Nunca cria nada.
+ */
+async function recuperarReservaSemCobranca(deps, { contratanteId, pedidoId, metodo, recuperar }) {
+  try {
+    const reserva = await deps.buscarReservaPendenteDoPedido(contratanteId, pedidoId, metodo);
+    if (!reserva) return null;
+    const encontrados = await deps.listarPagamentosPorReferenciaExterna(gerarReferenciaExterna(reserva.id));
+    const vivo = encontrados.find((p) => p && !p.deleted);
+    if (!vivo?.id) return null;
+    await deps.completarReservaOrfa(reserva.id, vivo);
+    console.log(`[checkout/${metodo}] reserva ${reserva.id} do pedido ${pedidoId} existia na Asaas como ${vivo.id} — amarrada na hora`);
+    return recuperarPeloChargeId(recuperar, vivo.id, { metodo, pedidoId });
+  } catch (erro) {
+    console.error(`[checkout/${metodo}] falha ao conferir a reserva sem cobrança do pedido ${pedidoId}:`, erro.message);
+    return null;
+  }
+}
+
+const MENSAGEM_PIX_SEM_QR = 'Seu Pix foi criado, mas o QR Code não pôde ser gerado agora. Tente de novo em instantes — é o mesmo Pix, você não será cobrado duas vezes.';
+const MENSAGEM_BOLETO_INDISPONIVEL = 'Seu boleto foi criado, mas não conseguimos exibi-lo agora. Tente de novo em instantes — é o mesmo boleto, você não será cobrado duas vezes.';
+const MENSAGEM_EM_CONFIRMACAO = 'Estamos confirmando uma tentativa anterior deste pagamento. Tente de novo em instantes — nada será cobrado duas vezes.';
 
 /**
  * A coreografia reserva→cobra→completa, compartilhada por Pix e Boleto.
  * O que muda entre os dois é só O QUE cobrar (`cobrar`) — a ordem que
  * impede a cobrança duplicada é sempre a mesma.
  *
- * @returns {Promise<{tipo: 'corrida'}|{tipo: 'criada', reservaId: string, cobranca: object}>}
+ * @returns {Promise<{tipo: 'corrida'}|{tipo: 'criada', reservaId: string, cobranca: object}|{tipo: 'criada_sem_qr', reservaId: string, chargeId: string}>}
  */
 async function cobrarComReserva(deps, { contratanteId, pedidoId, metodoPagamento, cobrar }) {
   const reserva = await deps.reservarCobranca({ contratanteId, pedidoId, metodoPagamento });
@@ -129,6 +184,19 @@ async function cobrarComReserva(deps, { contratanteId, pedidoId, metodoPagamento
     // pelo próprio id da linha local.
     cobranca = await cobrar(reserva.id);
   } catch (erroAsaas) {
+    /* O pagamento FOI criado e a Asaas nos deu o id; só a segunda chamada
+       (o QR Code) falhou. Não é caso ambíguo: sabemos exatamente o que
+       existe. A reserva é completada pelo chamador com esse `chargeId`
+       JÁ, e o pagador recebe "tente de novo" — antes a linha ficava sem
+       `charge_id` até o reconciliador passar, 5 minutos depois
+       (primeiro Pix real, 25/09/2026). */
+    if (erroAsaas?.pagamentoJaCriado && erroAsaas.chargeId) {
+      await deps.registrarErro(
+        new Error(`${metodoPagamento}: a cobrança ${erroAsaas.chargeId} do pedido ${pedidoId} (contratante ${contratanteId}) foi CRIADA, mas a busca do QR falhou: ${erroAsaas.message}. A reserva ${reserva.id} foi completada com o chargeId; o pagador pode tentar de novo e recebe o mesmo Pix.`),
+        { contexto: 'checkoutController.cobrarComReserva.semQr', rota: `checkout/${metodoPagamento}`, metodo: 'POST' }
+      );
+      return { tipo: 'criada_sem_qr', reservaId: reserva.id, chargeId: erroAsaas.chargeId };
+    }
     if (foiRecusaLimpaDaAsaas(erroAsaas)) {
       await deps.liberarReservaCobranca(reserva.id);
     } else {
@@ -190,17 +258,14 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
       // Antes de criar: esse pedido já tem Pix pendente e pagável? Um
       // Pix já criado foi cobrado pela cotação da hora dele — reaproveitar
       // é o que impede o segundo Pix igualmente pagável.
+      const respostaPix = (cobranca) => (cobranca.indisponivel
+        ? resposta.status(503).json({ codigo: 'qr_indisponivel', chargeId: cobranca.chargeId, erro: MENSAGEM_PIX_SEM_QR })
+        : resposta.json({ chargeId: cobranca.chargeId, qrCodeBase64: cobranca.qrCodeBase64, copiaECola: cobranca.copiaECola, reaproveitada: true }));
+
       const jaExiste = await reaproveitarCobrancaPendente(deps, {
         contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
       });
-      if (jaExiste) {
-        return resposta.json({
-          chargeId: jaExiste.chargeId,
-          qrCodeBase64: jaExiste.qrCodeBase64,
-          copiaECola: jaExiste.copiaECola,
-          reaproveitada: true
-        });
-      }
+      if (jaExiste) return respostaPix(jaExiste);
 
       const { contratante, pedido, cotacao, total } = await cotarParaCobrar({ contratanteId, pedidoId, cotacaoId, metodo: 'pix' });
       if (!total) return resposta.status(400).json({ erro: 'Valor do pedido inválido.' });
@@ -231,22 +296,14 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
       if (resultado.tipo === 'corrida') {
         const reaproveitada = await reaproveitarCobrancaPendente(deps, {
           contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
+        }) ?? await recuperarReservaSemCobranca(deps, {
+          contratanteId, pedidoId, metodo: 'pix', recuperar: deps.recuperarCobrancaPix
         });
-        if (reaproveitada) {
-          return resposta.json({
-            chargeId: reaproveitada.chargeId,
-            qrCodeBase64: reaproveitada.qrCodeBase64,
-            copiaECola: reaproveitada.copiaECola,
-            reaproveitada: true
-          });
-        }
-        return resposta.status(409).json({ erro: 'Já existe uma cobrança sendo criada para este pedido. Tente novamente em instantes.' });
+        if (reaproveitada) return respostaPix(reaproveitada);
+        return resposta.status(409).json({ codigo: 'cobranca_em_confirmacao', erro: MENSAGEM_EM_CONFIRMACAO });
       }
 
-      const { chargeId, qrCodeBase64, copiaECola } = resultado.cobranca;
-
-      await deps.completarCobranca(resultado.reservaId, {
-        chargeId,
+      const dadosDaLinha = {
         documento,
         email,
         telefone,
@@ -262,7 +319,19 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
         taxaIsenta: Boolean(pedido.isentarTaxa),
         valorCobrado,
         cotacaoId: cotacao.id
-      });
+      };
+
+      if (resultado.tipo === 'criada_sem_qr') {
+        // O Pix existe: a linha ganha o `chargeId` e o pagador AGORA, e o
+        // próximo clique cai no `reaproveitar` acima, que busca o QR de novo.
+        await deps.completarCobranca(resultado.reservaId, { chargeId: resultado.chargeId, ...dadosDaLinha });
+        void deps.marcarCotacaoUsada(cotacao.id);
+        return resposta.status(503).json({ codigo: 'qr_indisponivel', chargeId: resultado.chargeId, erro: MENSAGEM_PIX_SEM_QR });
+      }
+
+      const { chargeId, qrCodeBase64, copiaECola } = resultado.cobranca;
+
+      await deps.completarCobranca(resultado.reservaId, { chargeId, ...dadosDaLinha });
       void deps.marcarCotacaoUsada(cotacao.id);
 
       resposta.json({ chargeId, qrCodeBase64, copiaECola });
@@ -307,6 +376,9 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
       const jaExiste = await reaproveitarCobrancaPendente(deps, {
         contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
       });
+      if (jaExiste?.indisponivel) {
+        return resposta.status(503).json({ codigo: 'boleto_indisponivel', chargeId: jaExiste.chargeId, erro: MENSAGEM_BOLETO_INDISPONIVEL });
+      }
       if (jaExiste) {
         return resposta.json({
           chargeId: jaExiste.chargeId,
@@ -354,7 +426,12 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
       if (resultado.tipo === 'corrida') {
         const reaproveitada = await reaproveitarCobrancaPendente(deps, {
           contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
+        }) ?? await recuperarReservaSemCobranca(deps, {
+          contratanteId, pedidoId, metodo: 'boleto', recuperar: deps.recuperarCobrancaBoleto
         });
+        if (reaproveitada?.indisponivel) {
+          return resposta.status(503).json({ codigo: 'boleto_indisponivel', chargeId: reaproveitada.chargeId, erro: MENSAGEM_BOLETO_INDISPONIVEL });
+        }
         if (reaproveitada) {
           return resposta.json({
             chargeId: reaproveitada.chargeId,
@@ -365,7 +442,7 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
             reaproveitada: true
           });
         }
-        return resposta.status(409).json({ erro: 'Já existe uma cobrança sendo criada para este pedido. Tente novamente em instantes.' });
+        return resposta.status(409).json({ codigo: 'cobranca_em_confirmacao', erro: MENSAGEM_EM_CONFIRMACAO });
       }
 
       const { chargeId, boletoUrl, linhaDigitavel, codigoBarras, vencimento } = resultado.cobranca;
@@ -477,6 +554,7 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
       consultarStatus: async () => ({ status: 'PENDING' }),
       recuperarCobrancaPix: async (chargeId) => {
         anotar('recuperarCobrancaPix', [chargeId]);
+        if (ajustes.qrFalhaAoRecuperar?.()) throw new Error('Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix.');
         return { chargeId, qrCodeBase64: 'QR-reaproveitado', copiaECola: 'COPIA-reaproveitada' };
       },
       recuperarCobrancaBoleto: async () => null,
@@ -500,7 +578,20 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
         anotar('buscarCobrancaPendenteDoPedido', [contratanteId, pedidoId, metodoPagamento]);
         const chave = `${contratanteId}:${pedidoId}:${metodoPagamento}`;
         const linha = linhas.get(chave);
-        return linha ? { charge_id: linha.chargeId } : null;
+        return linha?.chargeId ? { charge_id: linha.chargeId } : null; // como no banco: `charge_id is not null`
+      },
+      buscarReservaPendenteDoPedido: async (contratanteId, pedidoId, metodoPagamento) => {
+        anotar('buscarReservaPendenteDoPedido', [contratanteId, pedidoId, metodoPagamento]);
+        const linha = linhas.get(`${contratanteId}:${pedidoId}:${metodoPagamento}`);
+        return linha && !linha.chargeId ? { id: linha.id } : null;
+      },
+      listarPagamentosPorReferenciaExterna: async (ref) => {
+        anotar('listarPagamentosPorReferenciaExterna', [ref]);
+        return ajustes.naAsaasPorReferencia?.[ref] ?? [];
+      },
+      completarReservaOrfa: async (id, pagamento) => {
+        anotar('completarReservaOrfa', [id, pagamento]);
+        for (const linha of linhas.values()) if (linha.id === id) linha.chargeId = pagamento.id;
       },
       registrarErro: async (erro, ctx) => { anotar('registrarErro', [erro, ctx]); }
     };
@@ -641,7 +732,66 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
     !t.chamou('liberarReservaCobranca'),
     '`pagamentoJaCriado` NUNCA libera a reserva, mesmo com status 4xx e corpo — o pagamento já existe'
   );
-  conferir(t.chamou('registrarErro'), 'e vira Lei 8, como qualquer caso ambíguo');
+  conferir(t.chamou('registrarErro'), 'e vira Lei 8 — o QR falhar é problema operacional (conta sem chave Pix)');
+
+  /* --- 8b. O PRIMEIRO PIX REAL (25/09/2026, 01:24 UTC), na ordem em que
+     aconteceu: o pagamento é criado, o QR falha porque a conta de
+     produção não tinha chave Pix, o pagador clica de novo, e — depois de
+     a chave existir — clica mais uma vez. Antes da correção: o 1º
+     clique deixava a reserva SEM chargeId, o 2º respondia 409 "Já existe
+     uma cobrança sendo criada" (beco sem saída), e só o reconciliador,
+     5 minutos depois, amarrava o pagamento. -------------------------- */
+  {
+    let temChavePix = false;
+    const erroSemChave = new Error('Pix pay_x9eixae4vkg6ugzg foi criado na Asaas, mas a busca do QR Code falhou: Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix.');
+    erroSemChave.status = 400;
+    erroSemChave.corpoAsaas = { errors: [{ description: 'Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix.' }] };
+    erroSemChave.pagamentoJaCriado = true;
+    erroSemChave.chargeId = 'pay_x9eixae4vkg6ugzg';
+    const tr = costura({ erroNaCobranca: erroSemChave, qrFalhaAoRecuperar: () => !temChavePix });
+
+    const r1 = respostaFalsa();
+    await tr.gerarPix(pedido({ contratanteId: 'testemaster', pedidoId: 'ped_isento' }, corpoValido), r1);
+    conferir(r1.codigo === 503 && r1.corpo?.codigo === 'qr_indisponivel', `1º clique: 503 qr_indisponivel, veio ${r1.codigo} ${JSON.stringify(r1.corpo)}`);
+    conferir(r1.corpo?.chargeId === 'pay_x9eixae4vkg6ugzg', '1º clique: a resposta leva o chargeId do Pix que existe');
+    const completou = tr.chamadas.find((c) => c.nome === 'completarCobranca');
+    conferir(completou?.args[1].chargeId === 'pay_x9eixae4vkg6ugzg', '1º clique: a reserva é completada com o chargeId NA HORA — não 5 minutos depois pelo reconciliador');
+    conferir(completou?.args[1].documento === '11144477735', '1º clique: e com o pagador (o reconciliador não tem como recuperar)');
+    conferir(!tr.chamou('liberarReservaCobranca'), '1º clique: a reserva nunca é solta — o Pix existe');
+
+    const r2 = respostaFalsa();
+    await tr.gerarPix(pedido({ contratanteId: 'testemaster', pedidoId: 'ped_isento' }, corpoValido), r2);
+    conferir(r2.codigo === 503 && r2.corpo?.codigo === 'qr_indisponivel', `2º clique, ainda sem chave: 503 qr_indisponivel — nunca o 409 "sendo criada"; veio ${r2.codigo}`);
+    conferir(tr.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, '2º clique: nenhum segundo Pix é criado');
+
+    temChavePix = true;
+    const r3 = respostaFalsa();
+    await tr.gerarPix(pedido({ contratanteId: 'testemaster', pedidoId: 'ped_isento' }, corpoValido), r3);
+    conferir(r3.codigo === 200 && r3.corpo?.chargeId === 'pay_x9eixae4vkg6ugzg' && r3.corpo?.qrCodeBase64, `3º clique, com chave: o MESMO Pix com QR; veio ${r3.codigo}`);
+    conferir(tr.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, '3º clique: continua um Pix só');
+  }
+
+  /* --- 8c. Reserva sem chargeId (a criação deu timeout): o clique
+     seguinte confere NA HORA pela referência externa, em vez de 409
+     até o reconciliador passar. ---------------------------------------- */
+  {
+    const erroT = new Error('A Asaas não respondeu a tempo.');
+    erroT.status = 504;
+    let tt = costura({ erroNaCobranca: erroT, naAsaasPorReferencia: { 'reserva-res_1': [{ id: 'pay_perdido', status: 'PENDING' }] } });
+    await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t' }, corpoValido), respostaFalsa());
+    const rt = respostaFalsa();
+    await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t' }, corpoValido), rt);
+    conferir(tt.chamadas.some((c) => c.nome === 'completarReservaOrfa' && c.args[1].id === 'pay_perdido'), 'o Pix achado pela referência COMPLETA a reserva (valor da Asaas + eventos reenfileirados), não só amarra o id');
+    conferir(rt.codigo === 200 && rt.corpo?.chargeId === 'pay_perdido', `e o pagador recebe o QR dele; veio ${rt.codigo}`);
+    conferir(tt.chamadas.filter((c) => c.nome === 'criarCobrancaPix').length === 1, 'sem criar outro');
+
+    tt = costura({ erroNaCobranca: erroT });
+    await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t2' }, corpoValido), respostaFalsa());
+    const rn = respostaFalsa();
+    await tt.gerarPix(pedido({ contratanteId: 'c1', pedidoId: 'ped_t2' }, corpoValido), rn);
+    conferir(rn.codigo === 409 && rn.corpo?.codigo === 'cobranca_em_confirmacao', `nada na Asaas ainda: 409 cobranca_em_confirmacao; veio ${rn.codigo}`);
+    conferir(!tt.chamou('liberarReservaCobranca'), 'e a reserva ambígua continua de pé');
+  }
 
   /* --- 9. `referenciaExterna` vem do id da RESERVA, não de
      documento+timestamp — é o que torna uma reserva travada (caso 5/6/7

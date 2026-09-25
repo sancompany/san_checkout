@@ -207,7 +207,13 @@ export async function reservarCobrancaPopup({ contratanteId, pedidoId = null, pl
   consulta = pedidoId ? consulta.eq('pedido_id', pedidoId) : consulta.eq('plano_id', planoId).eq('documento', documento).is('pedido_id', null);
   const { data: existente } = await consulta.maybeSingle();
 
+  /* Sessão CONCLUÍDA (`CHECKOUT_PAID`) nunca é "travada", por mais velha
+     que seja: o pagador terminou, e o dinheiro vem no evento de
+     pagamento — que numa assinatura pode chegar só no vencimento.
+     Expirá-la aqui soltaria a reserva para uma SEGUNDA sessão, isto é,
+     uma segunda assinatura cobrando o mesmo cartão (25/09/2026). */
   const travada = existente
+    && !existente.sessao_concluida_em
     && new Date(existente.criado_em).getTime() < Date.now() - MINUTOS_ATE_RESERVA_DE_POPUP_TRAVAR * 60_000;
   if (travada && !segundaVez) {
     const { data: expirada } = await supabase
@@ -602,6 +608,22 @@ export async function aplicarTransicaoPorCheckoutId(asaasCheckoutId, { de, para,
   return Array.isArray(data) && data.length === 1;
 }
 
+/**
+ * `CHECKOUT_PAID` chegou: a sessão da pop-up foi CONCLUÍDA — o que não é
+ * o mesmo que dinheiro capturado (migration 0016, primeiro pagamento
+ * real de 25/09/2026). Não toca em `status` nem em `confirmado_em`: quem
+ * confirma é o `PAYMENT_CONFIRMED`/`RECEIVED`. Idempotente — só grava a
+ * primeira vez (`is null`), para uma reentrega não mover o carimbo.
+ */
+export async function marcarSessaoConcluida(asaasCheckoutId, ocorridoEm = null) {
+  const { error } = await supabase
+    .from('cobrancas')
+    .update({ sessao_concluida_em: ocorridoEm ?? new Date().toISOString(), atualizado_em: new Date().toISOString() })
+    .eq('asaas_checkout_id', asaasCheckoutId)
+    .is('sessao_concluida_em', null);
+  if (error) throw error;
+}
+
 /** Grava o id da assinatura na Asaas (`subscription`) na cobrança da
  *  1ª cobrança — chamado só uma vez, junto do CHECKOUT_PAID, pra
  *  depois servir de "cobrança-modelo" quando ciclos seguintes
@@ -772,6 +794,28 @@ export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, me
     .limit(1)
     .maybeSingle();
 
+  if (error) throw error;
+  return data;
+}
+
+/** A RESERVA pendente deste pedido+método que ainda não tem `charge_id`
+ *  — a criação na Asaas deu timeout ou a resposta se perdeu. É o que
+ *  `checkoutController` confere na hora pela referência externa, em vez
+ *  de responder "já existe uma cobrança sendo criada" até o reconciliador
+ *  passar. */
+export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
+  exigirIdNoTeto(pedidoId, 'pedidoId');
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('id, criado_em')
+    .eq('contratante_id', contratanteId)
+    .eq('pedido_id', pedidoId)
+    .eq('metodo_pagamento', metodoPagamento)
+    .eq('status', 'pendente')
+    .is('charge_id', null)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (error) throw error;
   return data;
 }
