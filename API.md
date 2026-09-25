@@ -1195,6 +1195,13 @@ No estorno **total** a chave é opcional: sem ela, o Checkout usa uma
 derivada da cobrança (um total só acontece uma vez), e repetir devolve o
 resultado gravado.
 
+**A exceção, e a única:** estorno de **boleto** que a Asaas **negou**
+(`PAYMENT_REFUND_DENIED`, cobrança em `estorno_negado`). O pedido negado
+não devolveu nada, então a mesma chave — inclusive a derivada do total —
+volta a pedir à Asaas e responde `200` **sem** `"repetido"`. Dinheiro
+nenhum sai duas vezes: o primeiro pedido foi recusado. A negativa só é
+aplicada quando a Asaas mostra o boleto pago de novo (RN-71).
+
 **Numa falha de rede sua, repita a MESMA chamada, com a mesma chave.**
 Até 25/09/2026 este parágrafo mandava "tentar de novo depois de alguns
 segundos" sem chave nenhuma — e era exatamente isso que devolvia o

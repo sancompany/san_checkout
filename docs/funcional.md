@@ -1024,7 +1024,9 @@ DELA, nunca do corpo; e a linha achada pelo `charge_id` tem de ser a que
 a Asaas reconhece (referência ou sessão diferente → nada aplicado).
 Transição que move dinheiro exige respaldo: `confirmado` só com a
 cobrança paga lá (ou num estado que implica que foi paga), estorno só
-com o estorno lá, contestação só com a contestação lá; sem respaldo o
+com o estorno lá, contestação só com a contestação lá, e a **negativa
+de estorno** só com o pagamento de volta a pago lá (desde 25/09/2026,
+CP1-01 — a negativa reabre o pedido, RN-71); sem respaldo o
 evento é tentado de novo pela inbox e, esgotado, vira `erros`. Não
 conseguir perguntar também é tentar de novo — nunca "confirmado".
 Confirmação de valor diferente do cobrado (pedido avulso sem parcela)
@@ -1216,7 +1218,14 @@ avisado. *Quem vê:* o contratante. D-3.
 **RN-71 · Estorno negado pode ser pedido de novo.** O estorno de boleto
 confirmado como pedido e depois negado pela Asaas (`PAYMENT_REFUND_DENIED`)
 reabre a operação: a mesma chave pede de novo, e o valor dela não conta
-como devolvido. E o "não cabe" provisório — outro estorno ainda sem
+como devolvido. **A negativa só vale com o pagamento de volta a pago na
+Asaas** (RN-56): com ela ainda mostrando o pedido de estorno em curso, o
+evento é tentado de novo pela inbox; esgotado, vai para `erros`, e o
+reconciliador dirigido (sinal: `estorno_solicitado` parado há mais de 3
+dias) aplica a negativa quando a Asaas refletir — uma negativa VELHA,
+reprocessada depois de um novo pedido aceito, nunca reabre o pedido vivo
+(CP1-01). O comportamento da Asaas depois da negativa (voltar a
+`RECEIVED`) é suposição não medida — `docs/pendencias.md`. E o "não cabe" provisório — outro estorno ainda sem
 resposta — nunca fecha a chave de vez. *Violada:* a repetição devolvia o
 `200` antigo sem chamar a Asaas; uma chave nova recebia "não há valor
 restante". *Quem vê:* o contratante e o comprador. D-1, D-4.

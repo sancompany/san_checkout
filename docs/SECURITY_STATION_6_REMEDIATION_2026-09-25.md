@@ -240,6 +240,9 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP2-04 | INFO | CR-06 | o segundo `estorno_solicitado` depois de uma negativa não gera webhook ao contratante (a chave do fato deduplica); a resposta síncrona 200 avisa | **RISK_ACCEPTED** RES-28 |
 | CP2-05 | INFO | CR-02 | corrida estreita da mesma família da RES-14 (negativa velha lendo a Asaas antes do novo pedido e reabrindo depois dele) | **RISK_ACCEPTED** RES-29 — exige as duas coisas no intervalo de uma chamada à Asaas |
 | CP2-06 | INFO | CR-02 | estorno de cartão/Pix tratado como síncrono: um `REFUND_IN_PROGRESS` depois negado deixa a cobrança `estornado` | **RISK_ACCEPTED** RES-30 — termina em `erros` para um humano; o comportamento da Asaas para cartão/Pix não foi medido |
+| CP2-07 | LOW | doc | RN-56 e RN-71 não diziam que a negativa de estorno exige respaldo da Asaas (mudança do `0808a13`) | **FIXED** — `docs/funcional.md` |
+| CP2-08 | LOW | doc | `API.md` §5.4 dizia "a mesma chave devolve o resultado gravado" sem a exceção do estorno de boleto negado | **FIXED** — `API.md` §5.4 |
+| CP2-09 | INFO | CR-02 | a suposição de que a Asaas devolve o boleto a `RECEIVED` depois de negar o estorno não foi medida | **EXTERNAL_PENDING** EP-10 — `docs/pendencias.md`; medir no primeiro estorno de boleto negado |
 
 ## 7. Correções
 
@@ -467,7 +470,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 | auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
 | passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado — **não limpo**; crash/auth/tenant com ~51 mil requisições hostis e 14 sabotagens — **limpo**; regressões do diff — **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido; 12 INFO classificados | 0 |
-| passada limpa #1 (2ª tentativa) | `d9adebe` | 3 (dinheiro/estado — **não limpo**; os outros dois abaixo) | 1 LOW (CP2-01); 5 INFO classificados | 0 |
+| passada limpa #1 (2ª tentativa) | `d9adebe` | 3 (dinheiro/estado — **não limpo**; regressões do diff — **não limpo**, 2 de documentação; crash/auth/tenant — ver abaixo) | 1 LOW de código (CP2-01), 2 LOW de documentação (CP2-07/08); 6 INFO classificados | 0 |
 
 ## 14. Riscos residuais
 
@@ -477,4 +480,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 115 = FIXED 73 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 28 + EXTERNAL_PENDING 5
+TOTAL_LEDGER = 118 = FIXED 75 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 28 + EXTERNAL_PENDING 6

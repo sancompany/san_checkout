@@ -47,10 +47,17 @@ fechar:
   natural batendo com a lista (o log de ingresso da Northflank não está
   disponível nesta conta).
 - **Health check da Northflank** (SEC-031): `/api/saude` agora dá `503`
-  com worker parado. Configurar a Northflank para reiniciar com base nela é
-  decisão de infraestrutura do dono — reiniciar em loop durante uma queda
-  do Supabase não ajuda, então o recomendado é o monitor de uptime
-  alertar, não a Northflank reiniciar.
+  com worker parado. **Medido em 25/09/2026: o serviço não tem health
+  check nenhum** (`northflank get service health-checks` → `[]`), então o
+  503 hoje só é lido pelo monitor de uptime. Se um dia for configurado, é
+  **readiness**, nunca liveness (RUNBOOK §6.3): reiniciar em loop durante
+  uma queda do Supabase ou um terceiro lento não conserta nada.
+- **O que a Asaas faz depois de negar um estorno de boleto** (RN-71,
+  CP1-01): o código supõe que o pagamento volta a `RECEIVED`/`CONFIRMED` —
+  é o respaldo exigido para aplicar a negativa. Não medido. Se ela ficar em
+  `REFUND_REQUESTED` ou for para um status que não mapeamos, a negativa
+  verdadeira nunca se aplica: esgota na inbox, vira `erros`, e um humano
+  resolve. Medir no primeiro estorno de boleto negado (sandbox ou real).
 - **Proteção de branch da `main`** (SEC-034): não é legível com as
   credenciais desta sessão. O CI só lê (`permissions: contents: read`),
   as ações e a imagem estão fixadas e o Dependabot existe; exigir o CI
