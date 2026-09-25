@@ -99,7 +99,17 @@ const FICAM_EM_COBRANCAS = new Set([
   /* `sessao_concluida_em` (migration 0016, 25/09/2026): carimbo técnico
      de quando a pop-up fechou — instante, sem dado de pessoa. Decidida
      na MESMA mudança que criou a coluna. */
-  'sessao_concluida_em'
+  'sessao_concluida_em',
+  /* Migration 0017 (25/09/2026, RN-51/RN-52): o rastro do cancelamento
+     da irmã obsoleta e da duplicidade — ids de cobrança, instantes, um
+     contador e a mensagem de erro da Asaas/da rede (nunca dado de
+     pagador: `invalidarNaAsaas` só monta texto com status e id).
+     `cancelamento_tentativas` é `not null default 0`: fora desta lista,
+     a anonimização gravaria `null` nela e falharia inteira — a lição de
+     18/09. Decididas na MESMA mudança que criou as colunas. */
+  'obsoleta_por_charge_id', 'obsoleta_desde', 'cancelamento_tentativas',
+  'cancelamento_proxima_em', 'cancelamento_ultimo_erro',
+  'pagamento_duplicado_em', 'pagamento_duplicado_com'
 ]);
 
 /**
@@ -486,7 +496,10 @@ if (process.argv[1]?.endsWith('expurgoService.js')) {
       'bairro', 'cep', 'cidade', 'uf', 'cidade_ibge', 'email', 'asaas_subscription_id',
       'substitui_assinatura_id', 'ciclo', 'proxima_cobranca', 'confirmado_em',
       'ambiente', 'e_teste', 'estornando_em',
-      'valor_estornado', 'status_evento_em', 'cotacao_id', 'sessao_concluida_em'
+      'valor_estornado', 'status_evento_em', 'cotacao_id', 'sessao_concluida_em',
+      'obsoleta_por_charge_id', 'obsoleta_desde', 'cancelamento_tentativas',
+      'cancelamento_proxima_em', 'cancelamento_ultimo_erro',
+      'pagamento_duplicado_em', 'pagamento_duplicado_com'
     ],
     assinaturas: [
       'id', 'contratante_id', 'documento', 'valor', 'ciclo', 'status',

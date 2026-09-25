@@ -825,11 +825,16 @@ export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
   // rota autenticada de contratante, mas id sem teto é carga sem teto.
   exigirIdNoTeto(pedidoId, 'pedidoId');
 
+  /* A irmã cancelada por outro pagamento (RN-51) nunca é "a cobrança do
+     pedido": por definição existe uma irmã que o PAGOU, e é ela que a
+     tela de status, a consulta do contratante e o `/estornar` precisam
+     achar — a mais recente pode ser justamente a cancelada. */
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
     .eq('contratante_id', contratanteId)
     .eq('pedido_id', pedidoId)
+    .neq('status', 'cancelado_por_outro_pagamento')
     .order('criado_em', { ascending: false })
     .limit(1)
     .maybeSingle();

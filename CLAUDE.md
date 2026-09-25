@@ -924,6 +924,21 @@ Investigado só com leitura antes de tocar em código, como o dono mandou.
 - Revisão em dois ciclos: o primeiro achou um furo na própria correção
   (reserva órfã amarrada sem valor, fora do alcance do reconciliador),
   o segundo fechou limpo. Seis sabotagens, todas pegas.
+- **Pedido pago no nosso banco não reabre (RN-04.1, PR #47)** — e, a
+  pedido do dono, a porta de trás também: **o primeiro pagamento torna
+  as irmãs obsoletas (RN-51)**. Pix/boleto pendente ou pop-up aberta do
+  MESMO pedido é invalidado na Asaas por um cancelador
+  (`irmasObsoletasService.js`, migration 0017) que lê o estado antes de
+  excluir, nunca toca o que está pago, grava cada tentativa com recuo e
+  para em 8 com aviso em `erros`. Dois pagamentos reais do mesmo pedido
+  ficam os dois, marcados como **duplicidade (RN-52)**, com
+  `pagamentoDuplicado` no aviso ao contratante — nada é estornado
+  sozinho. Suíte nova roda o webhook e o cancelador reais contra o banco
+  falso (regressões A–F do dono), 12 sabotagens pegas; a revisão (3
+  ciclos) achou a varredura pelo estado cega depois de 200 boletos
+  vencidos e a pop-up recusada sem a sessão encerrada, as duas
+  corrigidas. Não medido: de quais status a Asaas deixa excluir e o
+  formato do `GET` de uma cobrança removida (`docs/pendencias.md`).
 
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
@@ -965,7 +980,7 @@ de o dono mandar resolver sem ele:
 - Documentos legais: `public/termos.html` e `public/privacidade.html` (vigentes) · versões antigas em `docs/legal-arquivado/`
 - O que se entrega a um contratante para ele conferir o lado dele: `docs/prompt-escopo-assinatura-mostrai.md` — o escopo de assinatura inteiro, com o que é **medido** separado do que é **decisão**, escrito para ser colado numa sessão dele
 - Medição que precisa de navegador (fora do `npm test`, porque o CI não tem Chromium): `npm run acessibilidade` (axe-core, WCAG 2.2 AA) e `npm run desempenho` (`scripts/desempenho.mjs` — LCP/INP/CLS num funil de celular, mais o orçamento de 30 KB por imagem)
-- Testes: `tests/` — `npm test` roda as 61 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
+- Testes: `tests/` — `npm test` roda as 63 suítes; `npm run check` roda a análise de sintaxe de todo JS (inclusive `public/js/`, que os testes não alcançam) e depois as suítes. **Este número é conferido por teste** (`tests/o-que-os-documentos-afirmam.js`): ele já esteve errado três vezes em 17/09/2026, e corrigir à mão não impedia a próxima
 - Imagem de produção: `Dockerfile` · CI: `.github/workflows/`
 
 ## Mesclar é decisão tomada

@@ -363,6 +363,43 @@ resposta do banco, fecha (503). *Violada:* no primeiro dia de produção
 e o checkout os reabriu, porque só perguntava a ele. *Quem vê:* o
 comprador, que pagaria duas vezes. `tests/pedido-pago-nao-cobra-de-novo.js`.
 
+**RN-51 · O primeiro pagamento de um pedido torna as irmãs obsoletas.**
+Quando uma cobrança de um pedido é confirmada (ou já passou por
+confirmação: estorno em andamento/parcial/negado, contestação), toda
+outra cobrança do MESMO contratante e pedido que ainda pode ser paga —
+Pix ou boleto pendente ou vencido, pop-up de cartão aberta ou recusada —
+é marcada obsoleta, e o cancelador a invalida na Asaas: lê o estado e só
+então exclui a cobrança (`DELETE /v3/payments/{id}`) ou encerra a sessão
+(`POST /v3/checkouts/{id}/cancel`). O status local vira
+`cancelado_por_outro_pagamento` **só depois de a Asaas confirmar**. Não
+invalida: cobrança paga ou em análise (se liquidar, é RN-52), cobrança de
+outro pedido ou de outro contratante, e nada quando o único pagamento foi
+estornado por inteiro (o pedido volta a poder ser pago). Nada é apagado
+do banco. Falha da Asaas vira tentativa gravada com recuo (1, 5, 15 min,
+1 h, 4 h, 12 h, 24 h) e para em 8, com aviso ao operador em `erros`; o
+pedido continua pago o tempo todo. O webhook dispara na hora; a passada
+de minuto em minuto marca pelo ESTADO (pedidos liquidados nos últimos 3
+dias), então a liquidação vinda da consulta de status ou do reconciliador
+também invalida. O contratante
+não recebe aviso sobre a irmã (o pedido está pago), e a consulta, a tela
+de status e o `/estornar` por pedido nunca escolhem a irmã cancelada.
+*Violada:* o Pix/boleto emitido antes continuaria pagável no app do
+banco depois de o pedido ser pago no cartão. *Quem vê:* o comprador, no
+extrato, com dois débitos. `tests/pagamento-de-um-pedido-invalida-as-irmas.js`.
+
+**RN-52 · Dois pagamentos reais do mesmo pedido são duplicidade, nunca
+um só.** Se uma irmã liquidar mesmo assim (as duas confirmadas quase ao
+mesmo tempo, ou paga no instante em que era excluída), os dois registros
+ficam como estão — `confirmado`, dinheiro real —, as duas linhas ganham
+`pagamento_duplicado_em`/`pagamento_duplicado_com`, o aviso ao
+contratante leva `pagamentoDuplicado: true` e `duplicadoCom`, e o
+operador recebe uma linha em `erros` ("PAGAMENTO DUPLICADO"). Nada é
+estornado sozinho: um dos dois é devolvido pelo fluxo de estorno de
+sempre (`POST /api/checkout/estornar`, que estorna a mais recente, ou o
+painel da Asaas). *Violada:* um segundo pagamento sumiria da conta ou
+seria gravado como cancelado. *Quem vê:* o contratante, que precisa
+devolver um; o operador, no painel de erros.
+
 **RN-05 · Método não habilitado não cobra.** O contratante declara quais
 métodos aceita; o backend recusa os demais mesmo que a requisição peça.
 *Violada:* cobrança por um meio que o contratante não combinou. *Quem

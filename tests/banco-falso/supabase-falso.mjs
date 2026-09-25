@@ -161,4 +161,17 @@ class Consulta {
   }
 }
 
-export const supabase = { from: (tabela) => new Consulta(tabela) };
+/** `rpc` só para o que existe no banco de verdade e alguém precisa
+ *  PROVAR que foi chamado — hoje, `registrar_erro` (o aviso ao
+ *  operador). Guarda os argumentos numa tabela `erros` com o nome dos
+ *  parâmetros sem o `p_`. Qualquer outra função LANÇA. */
+function rpc(nome, args) {
+  if (nome !== 'registrar_erro') return Promise.reject(new Error(`rpc não suportada no banco falso: ${nome}`));
+  const estado = ler();
+  const linha = Object.fromEntries(Object.entries(args ?? {}).map(([k, v]) => [k.replace(/^p_/, ''), v]));
+  (estado.tabelas.erros ??= []).push({ id: randomUUID(), criado_em: new Date().toISOString(), ...linha });
+  gravar(estado);
+  return Promise.resolve({ data: null, error: null });
+}
+
+export const supabase = { from: (tabela) => new Consulta(tabela), rpc };

@@ -96,6 +96,7 @@ import { buscarIntencaoPorChargeId, marcarConfirmada as marcarIntencaoConfirmada
 import { resolverAposClassificacao, retomarAplicacao } from '../services/trocaExecucaoService.js';
 import { classificarPagamentoDoAcerto } from '../services/classificacaoFinanceiraService.js';
 import { registrarErro } from '../services/erroService.js';
+import { aoLiquidarCobrancaDePedido, dispararCancelador } from '../services/irmasObsoletasService.js';
 
 /** Versão do contrato Checkout → contratante (API.md §4.3). A 2 é
  *  ADITIVA sobre a 1 (nenhum campo saiu, nenhum mudou de significado):
@@ -129,6 +130,11 @@ const dependenciasPadrao = {
   buscarAssinaturaPorId,
   cancelarAssinaturaNaAsaas,
   registrarErro,
+  /** RN-51/RN-52: irmãs obsoletas e duplicidade, na liquidação de um
+   *  pedido. Local; a rede para a Asaas é do cancelador, disparado fora
+   *  do fluxo. */
+  aoLiquidarPedido: aoLiquidarCobrancaDePedido,
+  dispararCancelador: () => dispararCancelador(),
   /**
    * A notificação ao contratante: ENFILEIRA na outbox (durável) e
    * dispara a primeira tentativa fora do fluxo. O `await` aqui é só da
@@ -646,6 +652,19 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     }, deps);
   }
 
+  /* O PEDIDO FOI PAGO por esta cobrança (RN-51/RN-52, 25/09/2026). As
+     irmãs ainda pagáveis — o Pix/boleto emitido antes, a pop-up aberta —
+     viram obsoletas e o cancelador as invalida na Asaas; se outra irmã
+     JÁ tinha liquidado, as duas ficam marcadas como duplicidade e o
+     aviso ao contratante diz isso. Também na reentrega (`mesmoStatus`):
+     é idempotente, e é o que recupera uma marcação que falhou depois de
+     a transição ter sido gravada — o erro aqui LANÇA, e a inbox refaz. */
+  if (statusGravado === 'confirmado' && cobranca.pedido_id) {
+    const { duplicadoCom = [], obsoletas = 0 } = (await deps.aoLiquidarPedido(cobranca)) ?? {};
+    if (duplicadoCom.length > 0) cobranca = { ...cobranca, pagamento_duplicado_com: duplicadoCom };
+    if (obsoletas > 0) deps.dispararCancelador();
+  }
+
   // Pix/Boleto/Cartão avulso — repassa TODA mudança de status.
   return notificarPedido(cobranca, contexto, deps);
 }
@@ -864,7 +883,11 @@ export function montarPayloadConfirmacaoPedido(cobranca, chargeId, status, extra
     valorCobrado: cobranca.valor_cobrado,
     valorEstornado: extras.valorEstornado ?? null,
     estornoParcial: status === 'estornado_parcialmente',
-    cotacaoId: cobranca.cotacao_id ?? null
+    cotacaoId: cobranca.cotacao_id ?? null,
+    /* RN-52: outra cobrança DESTE pedido também liquidou. Os dois
+       pagamentos são reais; um precisa ser estornado (API.md §4.3.2). */
+    pagamentoDuplicado: Array.isArray(cobranca.pagamento_duplicado_com) && cobranca.pagamento_duplicado_com.length > 0,
+    duplicadoCom: Array.isArray(cobranca.pagamento_duplicado_com) ? cobranca.pagamento_duplicado_com : []
   };
 }
 
@@ -1576,6 +1599,70 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
       globalThis.fetch = fetchOriginal;
     }
     assert.equal(fetchChamado, 0);
+  }
+
+  /* ============================================================
+     RN-51/RN-52 (25/09/2026): a liquidação de um pedido invalida as
+     irmãs e denuncia a duplicidade. O serviço em si tem autoteste
+     próprio; aqui, a FIAÇÃO no receptor.
+     ============================================================ */
+  {
+    const pedidoPago = { id: 'row_cartao', ...cobrancaPix, charge_id: 'pay_cartao', metodo_pagamento: 'cartao_credito' };
+
+    // pago agora: a irmã é marcada e o cancelador é disparado
+    let d = depsFalsas({ buscarCobranca: pedidoPago, aoLiquidarPedido: () => ({ duplicadoCom: [], obsoletas: 1 }) });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_cartao' } }, d);
+    assert.equal(d.chamou('aoLiquidarPedido').length, 1, 'a confirmação de um pedido passa pelas irmãs');
+    assert.equal(d.chamou('aoLiquidarPedido')[0].args[0].id, 'row_cartao', 'com a linha que liquidou');
+    assert.equal(d.chamou('dispararCancelador').length, 1, 'e o cancelador sai logo, fora do fluxo');
+    assert.equal(d.notificados()[0].payload.pagamentoDuplicado, false);
+    assert.deepEqual(d.notificados()[0].payload.duplicadoCom, []);
+    const ordem = d.chamadas.map((c) => c.nome);
+    assert.ok(ordem.indexOf('aplicarTransicao') < ordem.indexOf('aoLiquidarPedido'), 'as irmãs são marcadas DEPOIS de a transição estar gravada');
+    assert.ok(ordem.indexOf('aoLiquidarPedido') < ordem.indexOf('notificar'), 'e ANTES do aviso, que precisa saber da duplicidade');
+
+    // nada a cancelar: o cancelador não é disparado à toa
+    d = depsFalsas({ buscarCobranca: pedidoPago, aoLiquidarPedido: () => ({ duplicadoCom: [], obsoletas: 0 }) });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_cartao' } }, d);
+    assert.equal(d.chamou('dispararCancelador').length, 0);
+
+    // D: a outra irmã já tinha liquidado — o aviso leva a duplicidade
+    d = depsFalsas({ buscarCobranca: pedidoPago, aoLiquidarPedido: () => ({ duplicadoCom: ['pay_pix'], obsoletas: 0 }) });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_cartao' } }, d);
+    assert.equal(d.chamou('aplicarTransicao')[0].args[1].para, 'confirmado', 'D: o segundo pagamento é gravado — não se reescreve a história');
+    assert.equal(d.notificados()[0].payload.pagamentoDuplicado, true, 'D: e o contratante ouve que é duplicado');
+    assert.deepEqual(d.notificados()[0].payload.duplicadoCom, ['pay_pix']);
+    assert.equal(d.notificados()[0].payload.status, 'confirmado', 'D: continua sendo um confirmado — é dinheiro real');
+
+    // E: reentrega do MESMO evento (status já gravado) — as irmãs de novo, idempotente
+    d = depsFalsas({ buscarCobranca: { ...pedidoPago, status: 'confirmado' }, aoLiquidarPedido: () => ({ duplicadoCom: [], obsoletas: 0 }) });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_cartao' } }, d);
+    assert.equal(d.chamou('aplicarTransicao').length, 0, 'E: nada é regravado');
+    assert.equal(d.chamou('aoLiquidarPedido').length, 1, 'E: a marcação é refeita (o serviço é idempotente) — recupera uma que tenha falhado');
+
+    // falha na marcação: LANÇA, para a inbox refazer (a transição já está gravada)
+    d = depsFalsas({ buscarCobranca: pedidoPago, aoLiquidarPedido: () => { throw new Error('banco fora'); } });
+    await assert.rejects(processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_cartao' } }, d), /banco fora/);
+
+    // só liquidação mexe nas irmãs; assinatura não é pedido
+    for (const evento of ['PAYMENT_OVERDUE', 'PAYMENT_REFUNDED', 'PAYMENT_AWAITING_RISK_ANALYSIS']) {
+      d = depsFalsas({ buscarCobranca: { ...pedidoPago, status: evento === 'PAYMENT_REFUNDED' ? 'confirmado' : 'pendente' } });
+      await processarWebhook({ event: evento, payment: { id: 'pay_cartao' } }, d);
+      assert.equal(d.chamou('aoLiquidarPedido').length, 0, `${evento} não invalida irmã nenhuma`);
+    }
+    d = depsFalsas({ buscarCobranca: { ...cobrancaPix, pedido_id: null, plano_id: 'plano_x', metodo_pagamento: 'assinatura', charge_id: 'pay_sub' } });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_sub', subscription: 'sub_1' } }, d);
+    assert.equal(d.chamou('aoLiquidarPedido').length, 0, 'assinatura não tem irmãs de pedido');
+
+    // a irmã JÁ cancelada que a Asaas liquida mesmo assim: o dinheiro vale
+    d = depsFalsas({ buscarCobranca: { ...pedidoPago, status: 'cancelado_por_outro_pagamento' }, aoLiquidarPedido: () => ({ duplicadoCom: ['pay_pix'], obsoletas: 0 }) });
+    await processarWebhook({ event: 'PAYMENT_RECEIVED', payment: { id: 'pay_cartao' } }, d);
+    assert.deepEqual(d.chamou('aplicarTransicao')[0].args[1], { de: 'cancelado_por_outro_pagamento', para: 'confirmado', ocorridoEm: null, valorEstornado: undefined }, 'pagamento depois da exclusão não se perde');
+    assert.equal(d.notificados()[0].payload.pagamentoDuplicado, true, 'e entra como duplicidade');
+    // …e um CHECKOUT_* atrasado não a ressuscita nem troca o motivo
+    d = depsFalsas({ buscarCobrancaPorCheckoutId: { ...pedidoPago, asaas_checkout_id: 'chk_1', status: 'cancelado_por_outro_pagamento' } });
+    await processarWebhook({ event: 'CHECKOUT_EXPIRED', checkout: { id: 'chk_1' } }, d);
+    assert.equal(d.chamou('aplicarTransicaoPorCheckoutId').length, 0);
   }
 
   console.log(`webhookController: ${checagens} checagens OK`);
