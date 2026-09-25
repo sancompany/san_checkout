@@ -284,9 +284,16 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP1RA-4 | INFO | CR-06 | `registrarAcertoDeTroca` trata qualquer erro, inclusive `23505` de uma refeitura depois de queda, como "não registrado" — alerta `acertoNaoRegistrado` falso | **RISK_ACCEPTED** RES-45 — alarme a mais, nunca a menos |
 | FP1RA-5 | INFO | CR-05 | a releitura da inbox depois de `23505` ignora o próprio erro (id nulo vira "duplicado", 200) | **RISK_ACCEPTED** RES-46 — a Asaas reenvia; o evento não se perde enquanto houver reenvio |
 | FP1RB-1 | INFO | CR-13 | o conserto do FP1B-1 chamava `String(erro)`, que LANÇA para `Object.create(null)`: dentro do invólucro, rejeição sem dono e o processo caía | **FIXED** — conversão em `try` com texto fixo; teste, sabotagem pega (o processo morria) |
-| FP1RB-2 | INFO | CR-13 | o erro do PostgREST (objeto puro) virava `Error("[object Object]")`, perdendo `code` e `message` e colapsando toda falha de banco numa impressão digital só em `erros` | **FIXED** — a mensagem e o `code` passam para o Error, o original vai em `cause`; teste |
+| FP1RB-2 | INFO | CR-13 | o erro do PostgREST (objeto puro) virava `Error("[object Object]")`, perdendo `code` e `message` e colapsando toda falha de banco numa impressão digital só em `erros` | **FIXED** — a mensagem e o `code` passam para o Error, o original vai em `cause`; teste. A impressão digital em `erros` continua a mesma para toda falha sem Error (o primeiro quadro é o invólucro) — isso é o FP2B-1, aceito à parte |
 | FP1RC-1 | LOW | CR-04 | o mesmo alarme falso das parcelas 2..N | **DUPLICATE** de FP1RA-2 |
 | FP1RC-2 | INFO | CR-13 | o mesmo `[object Object]` | **DUPLICATE** de FP1RB-2 |
+| FP2B-1 | INFO | CR-13 | toda falha sem Error que chega ao tratador final ganha a mesma impressão digital (`rotaSegura.js:43` é o primeiro quadro), e o `registrar_erro` sobrescreve a mensagem no conflito: falhas de banco diferentes viram uma linha só em `erros`, com a última mensagem | **RISK_ACCEPTED** RES-47 — observabilidade; nenhum handler público rejeita com objeto puro (todos passam por `responderErro`), nada vaza e nada financeiro se perde |
+| FP2B-2 | INFO | CR-12 | o tratador final loga o erro inteiro (`server.js`); um erro do PostgREST embrulhado leva `cause.details`, que numa violação de único pode trazer `documento` | **RISK_ACCEPTED** RES-48 — mesma classe do SEC-028; nenhuma rota pública chega a isso hoje; fica para a manutenção logar só `message`/`code` |
+| FP2B-3 | INFO | CR-13 | `morrerContando` chama `String(motivo)` fora de `try`; um motivo sem texto vira `uncaughtException` — o processo sai com código 1 do mesmo jeito, perde-se só o primeiro motivo | **RISK_ACCEPTED** RES-49 — exige uma rejeição já sem dono |
+| FP2B-4 | INFO | CR-09 | o token de sessão do admin não é amarrado à identidade do Access: outro operador liberado no Access que tenha um token vazado o reutiliza | **RISK_ACCEPTED** RES-50 — as duas camadas continuam exigidas; o Access libera só o e-mail do dono |
+| FP2C-1 | LOW | doc | `409 estorno_impossivel` não estava no `API.md` §5.4 | **FIXED** — linha nova na tabela de respostas do estorno |
+| FP2C-2 | INFO | doc | a §7.1 tinha contagens de linhas velhas em seis arquivos e três justificativas erradas (`CHECKOUT_CONSOLIDATION_STATE.md` é a INFO-12; `CLAUDE.md`/`README.md` só mudam a contagem de suítes) | **FIXED** — tabela regerada com as regras corrigidas |
+| FP2C-3 | INFO | CR-02 | a 0018 declara as FKs de `estornos` sem `ON DELETE`, ao contrário das outras tabelas: apagar um contratante ou uma cobrança com estorno falharia | **RISK_ACCEPTED** RES-51 — nenhum caminho apaga essas linhas hoje (só reserva sem charge, que nunca tem estorno); é a trava certa para dinheiro que saiu |
 
 ## 7. Correções
 
@@ -325,16 +332,16 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `.gitleaksignore` | +11 −0 | SECURITY_FIX | impressões digitais das chaves de MENTIRA dos testes e do token meta público (CI da PR) |
 | `.ia/HANDOFF.md` | +1 −1 | DOCUMENTATION | contagem de suítes |
 | `API.md` | +139 −22 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
-| `CLAUDE.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `CLAUDE.md` | +1 −1 | DOCUMENTATION | contagem de suítes (63 → 82) |
 | `CONSTRAINTS.md` | +75 −7 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
-| `README.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `README.md` | +1 −1 | DOCUMENTATION | contagem de suítes (63 → 82) |
 | `RUNBOOK.md` | +35 −5 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
-| `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | tira um fragmento de sufixo de chave do documento (INFO-12) |
 | `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md` | +553 −0 | DOCUMENTATION | evidência imutável: baseline pré-correção (hash travado) |
 | `docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md` | +91 −0 | DOCUMENTATION | evidência imutável: revisão do Jules (hash travado) |
-| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +531 −0 | DOCUMENTATION | este relatório |
+| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +615 −0 | DOCUMENTATION | este relatório |
 | `docs/TESTES.md` | +31 −0 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
-| `docs/funcional.md` | +281 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/funcional.md` | +287 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `docs/pendencias.md` | +71 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `functions/api/admin/[[caminho]].js` | +71 −0 | SECURITY_FIX | Pages Function: o painel fala com a API atrás do Access (SEC-015) |
 | `package-lock.json` | +12 −12 | SECURITY_FIX | express 4.22.3 / body-parser / qs 6.16.0 (SEC-033), sem --force |
@@ -360,7 +367,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/controllers/refundController.js` | +147 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
 | `src/controllers/trocaAprovacaoController.js` | +10 −2 | SECURITY_FIX | token da troca só texto e só UUID; handlers com try/catch (CP2-11) |
 | `src/controllers/trocaPlanoController.js` | +51 −12 | RECOVERY | uma troca em voo, aviso com dono (SEC-010/013) |
-| `src/controllers/webhookController.js` | +929 −67 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2) |
+| `src/controllers/webhookController.js` | +957 −79 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2, FP1RA-1/2) |
 | `src/middlewares/exigirAccess.js` | +74 −0 | SECURITY_FIX | guarda do Access em /api/admin, fecha em 401/503 (SEC-015, C1-01) |
 | `src/middlewares/idsCanonicos.js` | +37 −0 | SECURITY_FIX | guarda canônica dos parâmetros de id (SEC-001/003/017) |
 | `src/routes/adminRoutes.js` | +15 −5 | SECURITY_FIX | Access antes de toda rota do admin (SEC-015); roteador com dono (C1-01) |
@@ -389,7 +396,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/utils/alvoDeRede.js` | +108 −11 | SECURITY_FIX | faixas de rede completas; destino revalidado (SEC-006/021) |
 | `src/utils/erros.js` | +21 −0 | SECURITY_FIX | erro da Asaas 401/403/5xx vira 502 genérico (INFO-11) |
 | `src/utils/passadas.js` | +91 −0 | OBSERVABILITY | uma passada por vez (SEC-023) e worker atrasado derruba a saúde (SEC-031) |
-| `src/utils/rotaSegura.js` | +61 −0 | CORRECTNESS_FIX | handler que lança não derruba o processo; falha sem Error nunca vira next() (C1-01, C2-L4, FP1B-1) |
+| `src/utils/rotaSegura.js` | +73 −0 | CORRECTNESS_FIX | handler que lança não derruba o processo; falha sem Error nunca vira next(), e o erro do banco chega com code e mensagem (C1-01, C2-L4, FP1B-1, FP1RB-1/2) |
 | `src/utils/validadores.js` | +163 −30 | SECURITY_FIX | tipo na fronteira, teto de tamanho, comparação sem vazar tamanho (SEC-027, INFO-05) |
 | `supabase/migrations/0018_estornos_idempotentes.sql` | +66 −0 | MIGRATION | estornos como operação durável (SEC-002) — aditiva, aplicada |
 | `supabase/migrations/0019_uma_troca_em_voo_por_assinatura.sql` | +35 −0 | MIGRATION | uma troca em voo por assinatura (SEC-010) — índice parcial, aplicada |
@@ -397,7 +404,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/access-de-teste.js` | +64 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/acerto-de-troca-nunca-fica-orfao.js` | +244 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/admin-so-pelo-access.js` | +285 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/assinatura-nasce-inteira.js` | +241 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/assinatura-nasce-inteira.js` | +284 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/banco-falso/supabase-falso.mjs` | +123 −17 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/banco-sem-privilegio-publico.js` | +70 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/ci-so-le-e-fixa-o-que-roda.js` | +63 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
@@ -413,7 +420,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/o-que-os-documentos-afirmam.js` | +58 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/outbox-sobrevive-a-reinicio.js` | +17 −3 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/pagamento-de-um-pedido-invalida-as-irmas.js` | +42 −21 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/rota-que-lanca-nao-derruba-o-processo.js` | +290 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/rota-que-lanca-nao-derruba-o-processo.js` | +318 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/rotas-http-respondem-como-prometido.js` | +19 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/saida-nunca-segue-redirecionamento.js` | +137 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/segredo-nao-sai-do-admin.js` | +62 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
@@ -612,4 +619,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 162 = FIXED 98 + FALSE_POSITIVE 3 + DUPLICATE 10 + RISK_ACCEPTED 44 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 169 = FIXED 100 + FALSE_POSITIVE 3 + DUPLICATE 10 + RISK_ACCEPTED 49 + EXTERNAL_PENDING 7
