@@ -106,7 +106,14 @@ async function chamarAsaas(caminho, opcoes = {}) {
     resposta = await fetch(`${baseUrl}${caminho}`, {
       ...opcoes,
       headers: { ...headers, ...(opcoes.headers ?? {}) },
-      signal: controlador.signal
+      signal: controlador.signal,
+      /* `error`, nunca seguir (SEC-006, busca transversal de 25/09/2026):
+         num redirecionamento para outra origem o `fetch` só descarta
+         `Authorization` — o `access_token` da CONTA-MÃE, que é cabeçalho
+         próprio da Asaas, seria reenviado ao destino novo. A API da Asaas
+         não redireciona nenhuma rota que usamos; um 3xx aqui é anomalia,
+         e vira erro de rede (ambíguo), nunca uma segunda chamada. */
+      redirect: 'error'
     });
   } catch (erroRede) {
     // `AbortError` vira mensagem de gente, não rastro de biblioteca.

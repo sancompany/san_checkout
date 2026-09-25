@@ -842,6 +842,13 @@ o checkout tenta de novo com recuo crescente: **1 min, 5 min, 15 min,
 no painel do checkout, de onde o operador pode reenviá-la — **com o
 mesmo `eventoId`**.
 
+**O checkout não segue redirecionamento** (desde 25/09/2026, SEC-006).
+Um `3xx` do seu endpoint é falha de entrega, como um `5xx`: entra no
+recuo acima, e o corpo, a assinatura e os cabeçalhos **nunca** são
+reenviados ao endereço do `Location`. Se o seu webhook mudou de lugar,
+peça ao operador para cadastrar o endereço novo. O destino também é
+reconferido a cada envio (https, host público), não só no cadastro.
+
 Consequências práticas:
 
 - **Reiniciar o checkout não perde aviso.** O que está na fila

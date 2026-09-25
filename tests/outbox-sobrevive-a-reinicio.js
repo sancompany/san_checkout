@@ -82,7 +82,10 @@ const saidaA = await processo(`
     contratanteId: 'c1', url: process.env.URL_DO_CONTRATANTE, tipo: 'pedido', evento: 'confirmado',
     chaveIdempotencia: 'pedido|pay_1|confirmado', payload: { versao: 2, pedidoId: 'ped_1', status: 'confirmado' }
   });
-  tentarAgora(id);
+  // O contratante deste teste é um servidor em 127.0.0.1: o validador de
+  // destino de produção o recusaria (SEC-006) — o teste o troca, como a
+  // suíte de redirecionamento faz; a recusa em si é provada lá.
+  tentarAgora(id, { deps: { fetch: (...a) => globalThis.fetch(...a), agora: () => new Date(), aceitarAlvo: () => true } });
   await new Promise((r) => setTimeout(r, 400));
   console.log(JSON.stringify({ id, nova }));
 `);
@@ -102,7 +105,7 @@ const saidaB = await processo(`
   import { enviarPendentes } from './src/services/outboxService.js';
   // o relógio do worker está 5 minutos no futuro: o recuo já venceu
   const agora = () => new Date(Date.now() + 5 * 60_000);
-  const relatorio = await enviarPendentes({ deps: { fetch: (...a) => globalThis.fetch(...a), agora } });
+  const relatorio = await enviarPendentes({ deps: { fetch: (...a) => globalThis.fetch(...a), agora, aceitarAlvo: () => true } });
   console.log(JSON.stringify(relatorio));
 `);
 const relatorioB = JSON.parse(saidaB);
@@ -120,7 +123,7 @@ igual(depoisDeB[0].tentativas, 1, 'a contagem de tentativas é a da linha, não 
 /* PROCESSO C: uma terceira passada NÃO reentrega (a linha está enviada). */
 const saidaC = await processo(`
   import { enviarPendentes } from './src/services/outboxService.js';
-  console.log(JSON.stringify(await enviarPendentes({ deps: { fetch: (...a) => globalThis.fetch(...a), agora: () => new Date(Date.now() + 10 * 60_000) } })));
+  console.log(JSON.stringify(await enviarPendentes({ deps: { fetch: (...a) => globalThis.fetch(...a), agora: () => new Date(Date.now() + 10 * 60_000), aceitarAlvo: () => true } })));
 `);
 igual(JSON.parse(saidaC).examinadas, 0, 'linha enviada não é reexaminada');
 igual(recebidas.length, 2, 'e o contratante não ouviu uma terceira vez');

@@ -59,7 +59,7 @@ estiver rodando aí, pare ele antes.
 npm test
 ```
 
-Roda as 66 suítes de uma vez — e este número é **conferido por teste**
+Roda as 67 suítes de uma vez — e este número é **conferido por teste**
 (`tests/o-que-os-documentos-afirmam.js`), porque ele já esteve errado
 três vezes em 17/09/2026 e corrigir à mão não impede a próxima. Até
 aquele dia este parágrafo dizia "dezoito".

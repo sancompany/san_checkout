@@ -28,6 +28,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { assinarPayload } from '../utils/assinaturaWebhook.js';
+import { alvoDeRedeSeguro } from '../utils/alvoDeRede.js';
 
 /** Recuo por tentativa, em segundos. A soma dá ~2 dias; depois disso o
  *  endpoint do contratante está fora do ar há tempo demais para ser
@@ -45,7 +46,10 @@ const MINUTOS_DE_ARRENDAMENTO = 2;
 
 const dependenciasPadrao = {
   fetch: (...args) => globalThis.fetch(...args),
-  agora: () => new Date()
+  agora: () => new Date(),
+  // Só o teste de rede de verdade troca isto (servidor em 127.0.0.1);
+  // nenhum chamador de produção passa outro — mesmo padrão do pull.
+  aceitarAlvo: alvoDeRedeSeguro
 };
 
 /**
@@ -143,14 +147,31 @@ async function marcarFalha(id, tentativasAtuais, mensagem, statusHttp) {
 export async function entregar(linha, segredo, deps = dependenciasPadrao) {
   if (!segredo) return { ok: false, erro: 'contratante sem api_key — não dá para assinar', status: null };
 
+  /* O destino é conferido A CADA ENVIO, não só no cadastro (SEC-006).
+     A URL da linha foi congelada no enfileiramento, e a regra do que é
+     um destino seguro pode ter endurecido depois (SEC-021) — uma linha
+     velha não pode escapar dela. */
+  if (!(deps.aceitarAlvo ?? alvoDeRedeSeguro)(linha.url)) {
+    return { ok: false, erro: 'destino recusado: não é https com host público', status: null };
+  }
+
   const corpoCru = JSON.stringify(linha.payload);
   const timestamp = Math.floor(deps.agora().getTime() / 1000);
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_NOTIFICACAO_MS);
 
   try {
+    /* `redirect: 'manual'` (SEC-006, 25/09/2026). O `fetch` padrão SEGUE
+       redirecionamento: um endpoint de contratante que respondesse 307
+       para a rede interna levava este POST — com a assinatura HMAC e o
+       documento do pagador no corpo — até lá, e a entrega voltava `ok`.
+       Aqui nenhum 3xx é seguido: é falha de entrega como outra qualquer,
+       com recuo, e o corpo, a assinatura e os headers nunca vão para um
+       segundo destino. O webhook do contratante é um endpoint de API: ele
+       responde 2xx, não redireciona. */
     const resposta = await deps.fetch(linha.url, {
       method: 'POST',
+      redirect: 'manual',
       headers: {
         'Content-Type': 'application/json',
         'X-Checkout-Signature': assinarPayload(corpoCru, segredo, timestamp),
@@ -161,6 +182,11 @@ export async function entregar(linha, segredo, deps = dependenciasPadrao) {
       body: corpoCru,
       signal: controlador.signal
     });
+    // O corpo da resposta não interessa: descartado, para o socket voltar ao pool.
+    resposta.body?.cancel?.().catch?.(() => {});
+    if (resposta.status >= 300 && resposta.status < 400) {
+      return { ok: false, erro: `contratante respondeu ${resposta.status} (redirecionamento não é seguido)`, status: resposta.status };
+    }
     if (!resposta.ok) return { ok: false, erro: `contratante respondeu ${resposta.status}`, status: resposta.status };
     return { ok: true, status: resposta.status };
   } catch (erro) {
