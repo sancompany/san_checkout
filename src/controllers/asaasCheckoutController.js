@@ -45,8 +45,9 @@
 import { resolverPedido, resolverPlano } from '../services/pedidoService.js';
 import { exigirCotacaoParaCobrar, montarTotaisPedido, montarTotaisPlano, marcarCotacaoUsada } from '../services/cotacaoService.js';
 import { resolverCicloDoPlano } from './planoController.js';
-import { foiRecusaLimpaDaAsaas } from '../services/asaasService.js';
-import { reservarCobrancaPopup, completarReservaPopup, liberarReservaCobranca } from '../services/cobrancaService.js';
+import { foiRecusaLimpaDaAsaas, cancelarSessaoDeCheckout } from '../services/asaasService.js';
+import { reservarCobrancaPopup, completarReservaPopup, liberarReservaCobranca, aplicarTransicaoPorCheckoutId } from '../services/cobrancaService.js';
+import { emCentavos } from '../utils/dinheiro.js';
 import { registrarErro } from '../services/erroService.js';
 import {
   criarSessaoAsaasCheckout,
@@ -88,10 +89,63 @@ export const CICLOS_VALIDOS = [
  *
  * @returns {{tipo:'criada', asaasCheckoutId}|{tipo:'reaproveitada', asaasCheckoutId}|{tipo:'em_andamento'}}
  */
-const dependenciasDaReserva = { reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas };
+const dependenciasDaReserva = {
+  reservarCobrancaPopup, liberarReservaCobranca, registrarErro, foiRecusaLimpaDaAsaas,
+  cancelarSessaoDeCheckout, aplicarTransicaoPorCheckoutId
+};
 
-export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }, deps = dependenciasDaReserva) {
-  const r = await deps.reservarCobrancaPopup(reserva);
+/**
+ * A sessão aberta por OUTRO preço (ou outro número de parcelas, ou outro
+ * ciclo) não é reaproveitada: é encerrada na Asaas antes de abrir outra
+ * (SEC-004, 25/09/2026). Até aqui o reaproveitamento devolvia a pop-up
+ * antiga — com a tela mostrando 3x e a pop-up cobrando o valor de 1x, ou
+ * o preço de antes do cupom. Encerrada devolvida como PAID não se
+ * substitui (o pagamento está a caminho); qualquer outra resposta é
+ * "não sei", e nada novo nasce.
+ *
+ * @returns {Promise<'substituida'|'paga'|'indefinido'>}
+ */
+export async function substituirSessaoDesatualizada(existente, deps = dependenciasDaReserva) {
+  try {
+    const { status } = await deps.cancelarSessaoDeCheckout(existente.asaas_checkout_id);
+    if (status === 'PAID') return 'paga';
+    if (status !== 'CANCELED' && status !== 'EXPIRED') return 'indefinido';
+    // Nós gravamos primeiro: o `CHECKOUT_CANCELED` que vier depois encontra
+    // a linha já encerrada e não avisa "cancelada" a ninguém.
+    await deps.aplicarTransicaoPorCheckoutId(existente.asaas_checkout_id, { de: 'pendente', para: status === 'EXPIRED' ? 'expirado' : 'cancelado' });
+    return 'substituida';
+  } catch (erro) {
+    console.error(`[checkout/sessao] não foi possível encerrar a sessão desatualizada ${existente.asaas_checkout_id}:`, erro.message);
+    return 'indefinido';
+  }
+}
+
+/** A sessão aberta de CARTÃO ainda é a desta tela: não obsoleta, mesmo
+ *  valor cobrado (em centavos) e mesmo número de parcelas ofertado. */
+export function sessaoDoCartaoServe(existente, { valorCobrado, parcelas }) {
+  return !existente.obsoleta_desde
+    && emCentavos(existente.valor_cobrado) === emCentavos(valorCobrado)
+    && Number(existente.parcelas ?? 1) === Number(parcelas);
+}
+
+/** A sessão aberta de ASSINATURA ainda é a desta tela: não obsoleta,
+ *  mesmo valor e mesmo ciclo. */
+export function sessaoDaAssinaturaServe(existente, { valor, ciclo }) {
+  return !existente.obsoleta_desde
+    && emCentavos(existente.valor_cobrado) === emCentavos(valor)
+    && (existente.ciclo ?? null) === (ciclo ?? null);
+}
+
+export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto, sessaoServe = null }, deps = dependenciasDaReserva) {
+  let r = await deps.reservarCobrancaPopup(reserva);
+  /* A sessão que já existe só é reaproveitada se ainda é A sessão desta
+     tela (`sessaoServe`: mesmo valor, parcelas, ciclo; não obsoleta). */
+  if (!r.reservada && sessaoServe && r.existente?.asaas_checkout_id && !r.existente.sessao_concluida_em && !sessaoServe(r.existente)) {
+    const desfecho = await substituirSessaoDesatualizada(r.existente, deps);
+    if (desfecho === 'paga') return { tipo: 'em_processamento', asaasCheckoutId: r.existente.asaas_checkout_id };
+    if (desfecho !== 'substituida') return { tipo: 'em_andamento' };
+    r = await deps.reservarCobrancaPopup(reserva);
+  }
   if (!r.reservada) {
     // A sessão existente já foi concluída pelo pagador: reabrir a pop-up
     // dela não serve (a Asaas mostra "pago"), e abrir outra seria uma
@@ -247,6 +301,7 @@ export async function criarCheckoutCartao(requisicao, resposta) {
     const sessao = await abrirSessaoComReserva({
       contexto: 'cartao',
       reserva: { contratanteId, pedidoId, documento, metodoPagamento: 'cartao_credito' },
+      sessaoServe: (existente) => sessaoDoCartaoServe(existente, { valorCobrado, parcelas: parcelasOfertadas }),
       criarSessao: (externalReference) => criarSessaoAsaasCheckout({
         billingTypes: ['CREDIT_CARD'],
         chargeTypes: parcelasOfertadas > 1 ? ['DETACHED', 'INSTALLMENT'] : ['DETACHED'],
@@ -429,6 +484,7 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     const sessao = await abrirSessaoComReserva({
       contexto: 'assinatura',
       reserva: { contratanteId, planoId, documento, metodoPagamento: 'assinatura' },
+      sessaoServe: (existente) => sessaoDaAssinaturaServe(existente, { valor, ciclo }),
       criarSessao: (externalReference) => criarSessaoAsaasCheckout({
         billingTypes: ['CREDIT_CARD'],
         chargeTypes: ['RECURRENT'],

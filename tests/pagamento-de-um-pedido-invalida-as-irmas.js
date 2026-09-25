@@ -434,9 +434,17 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
 
 /* ── A cobrança do pedido, para quem consulta, é a que PAGOU ────── */
 {
+  /* Desde 25/09/2026 (SEC-005) a escolha é por prioridade financeira em
+     `escolherCobrancaRepresentativa`, e não mais um `.neq` na consulta —
+     então a checagem passou a ser de COMPORTAMENTO, não de texto. */
+  const { escolherCobrancaRepresentativa } = await import('../src/services/cobrancaService.js');
+  const paga = { id: 'paga', status: 'confirmado', criado_em: '2026-09-25T10:00:00Z' };
+  const irma = { id: 'irma', status: 'cancelado_por_outro_pagamento', criado_em: '2026-09-25T11:00:00Z' };
+  ok(escolherCobrancaRepresentativa([irma, paga])?.id === 'paga', 'status/consulta por pedido nunca escolhem a irmã cancelada, nem sendo a mais recente');
+  ok(escolherCobrancaRepresentativa([irma]) === null, 'e só a irmã cancelada não é "a cobrança do pedido"');
   const fonte = readFileSync(join(RAIZ, 'src/services/cobrancaService.js'), 'utf8');
   const trecho = fonte.slice(fonte.indexOf('export async function buscarCobrancaPorPedido'), fonte.indexOf('export async function atualizarStatusCobranca'));
-  ok(/\.neq\('status', 'cancelado_por_outro_pagamento'\)/.test(trecho), 'status/consulta/estorno por pedido nunca escolhem a irmã cancelada');
+  ok(/return escolherCobrancaRepresentativa\(data\)/.test(trecho), 'e a consulta de verdade passa por ela');
   const servidor = readFileSync(join(RAIZ, 'src/server.js'), 'utf8');
   ok(/setInterval\(rodarCanceladorDeIrmas, UM_MINUTO_MS\)/.test(servidor), 'o cancelador roda sozinho, de minuto em minuto');
 }

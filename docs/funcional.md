@@ -420,6 +420,22 @@ R$ 30 com a resposta perdida, o contratante repete e a Asaas devolve
 R$ 60. *Quem vê:* o contratante, que perde o dinheiro; o pagador, que
 recebe a mais.
 
+**RN-55 · Instrumento de pagamento só volta se ainda é o instrumento
+deste pedido, por este preço.** Desde 25/09/2026 (SEC-004/SEC-005,
+Estação 6): `POST /pix` e `/boleto` passam pela guarda de pedido pago
+(RN-04.1) e pela cotação ANTES de reaproveitar a cobrança pendente; a
+cobrança obsoleta (RN-51) nunca volta; valor diferente do da cotação
+exclui o Pix/boleto antigo na Asaas — lendo o estado antes, nunca sobre
+o que foi pago — antes de criar o novo. Na pop-up, sessão de outro
+valor, parcelas ou ciclo é encerrada antes de abrir outra (PAID não se
+substitui; qualquer dúvida é "tente de novo" sem nada novo). E "a
+cobrança do pedido" da tela de status e da consulta do contratante é a
+que segura dinheiro, depois a pendente vigente, depois a mais recente —
+nunca a irmã cancelada. *Violada:* o QR de um pedido já pago no cartão
+era devolvido de novo; o pagador via R$ 80 e pagava R$ 100; um pedido
+pago aparecia como cancelado. *Quem vê:* o pagador; o contratante na
+conciliação.
+
 **RN-54 · Identificador que atravessa fronteira tem uma grafia só.**
 Desde 25/09/2026 (SEC-001/SEC-003, Estação 6): `pedidoId`, `planoId`,
 `contratanteId` e os ids da Asaas que chegam por URL ou corpo só aceitam

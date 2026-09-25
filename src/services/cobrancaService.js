@@ -841,27 +841,49 @@ export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, met
   return data;
 }
 
+/**
+ * "A cobrança do pedido" para a TELA DE STATUS e a consulta do
+ * contratante — a que diz a verdade financeira, não a mais recente
+ * (SEC-005, 25/09/2026). Pix gerado, depois uma pop-up de cartão aberta e
+ * abandonada, depois o Pix pago: por data, a escolhida era a pop-up
+ * `cancelado`, e o pedido pago aparecia como cancelado; uma irmã boleto
+ * cuja exclusão falhou era "a mais recente pendente" e a tela oferecia as
+ * credenciais dela.
+ *
+ * A ordem, pura para o autoteste:
+ *   1. a que SEGURA dinheiro (confirmado, em análise, estorno em curso,
+ *      parcial, negado, contestação) — a mais recente delas;
+ *   2. senão, a pendente VIGENTE (não obsoleta) — a mais recente;
+ *   3. senão, a mais recente de todas.
+ * A irmã cancelada por outro pagamento (RN-51) nunca é escolhida. Estorno
+ * TOTAL não segura dinheiro: quem compra de novo o mesmo pedido vê a
+ * tentativa nova, não o estorno antigo.
+ */
+const STATUS_QUE_SEGURAM_DINHEIRO = ['confirmado', 'em_analise', 'estorno_solicitado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'];
+
+export function escolherCobrancaRepresentativa(linhas) {
+  const candidatas = (linhas ?? []).filter((l) => l && l.status !== 'cancelado_por_outro_pagamento')
+    .sort((a, b) => (String(a.criado_em) < String(b.criado_em) ? 1 : -1));
+  return candidatas.find((l) => STATUS_QUE_SEGURAM_DINHEIRO.includes(l.status))
+    ?? candidatas.find((l) => l.status === 'pendente' && !l.obsoleta_desde)
+    ?? candidatas[0]
+    ?? null;
+}
+
 export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
-  // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
-  // rota autenticada de contratante, mas id sem teto é carga sem teto.
+  // O contrato canônico do id, na raiz (`utils/validadores.js`).
   exigirIdCanonico(pedidoId, 'pedidoId');
 
-  /* A irmã cancelada por outro pagamento (RN-51) nunca é "a cobrança do
-     pedido": por definição existe uma irmã que o PAGOU, e é ela que a
-     tela de status, a consulta do contratante e o `/estornar` precisam
-     achar — a mais recente pode ser justamente a cancelada. */
   const { data, error } = await supabase
     .from('cobrancas')
     .select('*')
     .eq('contratante_id', contratanteId)
     .eq('pedido_id', pedidoId)
-    .neq('status', 'cancelado_por_outro_pagamento')
     .order('criado_em', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(50);
 
   if (error) throw error;
-  return data;
+  return escolherCobrancaRepresentativa(data);
 }
 
 /**

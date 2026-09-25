@@ -1582,6 +1582,23 @@ em vez de criar uma segunda igualmente pagável. Vale para boleto também,
 onde o estrago seria maior (o antigo segue pagável por dias). A resposta
 traz `"reaproveitada": true` nesse caso.
 
+**Desde 25/09/2026, reaproveitar exige que a cobrança antiga ainda seja
+a certa** (SEC-004). Antes o reaproveitamento rodava antes de tudo, e um
+`POST` direto recebia o Pix pendente de um pedido já pago no cartão, ou o
+QR do preço antigo com a tela mostrando o novo. Agora:
+
+- a guarda de pedido pago e a cotação (9.3) vêm **antes**: pedido pago
+  responde `409 pedido_ja_pago`, sem devolver QR nenhum;
+- a cobrança que outro pagamento do mesmo pedido tornou obsoleta (RN-51)
+  **nunca** volta a ser entregue;
+- se o valor do pedido **mudou** desde o Pix/boleto antigo, o antigo é
+  excluído na Asaas antes de nascer outro — nunca dois pagáveis. Se o
+  antigo já tinha sido pago, a resposta é `409 pagamento_em_processamento`
+  (o webhook confirma); se a exclusão não se confirma, `409
+  cobranca_em_confirmacao` — tente de novo em instantes, nada é criado;
+- na pop-up (cartão e assinatura), a sessão aberta por outro valor, outro
+  número de parcelas ou outro ciclo é encerrada antes de abrir outra.
+
 ### 6.4 Métodos habilitados por contratante
 
 Cada contratante tem uma lista de métodos liberados, definida no painel

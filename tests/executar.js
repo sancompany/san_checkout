@@ -66,6 +66,7 @@ const SUITES = [
   'tests/telefone-com-codigo-do-pais.js', // autopreenchimento +55 virava DDD 55: front e servidor com a mesma regra (25/09)
   'tests/pedido-pago-nao-cobra-de-novo.js', // contratante esqueceu o pago e o pedido reabriu: o NOSSO banco também decide (25/09)
   'tests/pagamento-de-um-pedido-invalida-as-irmas.js', // pago no cartão, o Pix/boleto antigo deixa de ser pagável; dois pagos = duplicidade marcada (RN-51/52)
+  'tests/instrumento-obsoleto-nunca-volta.js', // CR-03: pop-up de outro preço/parcela reaproveitada; "a cobrança do pedido" era a mais recente (SEC-004/005)
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
   'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
