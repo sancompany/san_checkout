@@ -21,6 +21,9 @@
  * do cobrado.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:0';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? 'teste';
@@ -356,7 +359,11 @@ function mundo() {
   igual(m.asaas.chamadas.length, 1, 'e nem chama o estorno de novo');
   m.avancar(MINUTOS_ATE_ALERTAR);
   await reconciliarEstornosUmaVez(m.depsServico);
-  ok(m.erros.some((e) => /não permite decidir/.test(e)), 'o que não dá para decidir chama um humano, com o valor e a cobrança');
+  const alerta = m.erros.find((e) => /não permite decidir/.test(e)) ?? '';
+  ok(alerta.includes(op.id) && alerta.includes('pay_c1'), 'o que não dá para decidir chama um humano, com a operação e a cobrança');
+  ok(/RUNBOOK §6\.3/.test(alerta), 'C2-M1: e o alerta diz ONDE está o procedimento para resolver — antes ele só mandava "conferir"');
+  const runbook = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'RUNBOOK.md'), 'utf8');
+  ok(/estorno <id> … a Asaas não permite decidir[\s\S]*?update estornos set estado = 'CONFIRMED'[\s\S]*?FAILED_RETRYABLE/.test(runbook), 'C2-M1: o RUNBOOK tem o procedimento, com as duas saídas (confirmar ou liberar a repetição)');
   /* controle: sem estorno nenhum na Asaas, a ausência continua provável */
   const n = mundo();
   n.cobranca('c1', { valor_estornado: 20, status: 'estornado_parcialmente' }); // estorno de 20 feito no painel, antes

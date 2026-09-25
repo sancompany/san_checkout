@@ -194,6 +194,25 @@ const consultar = `
   igual(Object.fromEntries(banco.cobrancas.map((c) => [c.id, c.status])), { aut_meio_ativada: 'confirmado', aut_meio_encerrada: 'cancelado' }, 'e nenhum status se move');
 }
 
+/* ── C2-L1: a refeitura NÃO passa por cima da assinatura que já existe ── */
+{
+  const autorizacao = { ...linha({ id: 'aut_pausada', metodo_pagamento: 'assinatura_pix', status: 'confirmado', charge_id: null, asaas_checkout_id: 'aut_pausada', plano_id: 'plano_pro', documento: '11144477735', ciclo: 'MONTHLY' }) };
+  const { banco } = await rodar({
+    tabelas: { cobrancas: [autorizacao], assinaturas: [{ id: 'aut_pausada', contratante_id: 'loja', plano_id: 'plano_novo', documento: '11144477735', status: 'pausada', valor: 80, ciclo: 'MONTHLY' }] },
+    codigo: `
+      globalThis.fetch = async () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+      const wc = await import('./src/controllers/webhookController.js');
+      const res = { _s: null, status(c) { this._s = c; return this; }, json() { return this; } };
+      await wc.receberWebhookAsaas({ body: { id: 'evt_reentrega_tardia', event: 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED', dateCreated: '2026-09-25 10:00:00', authorization: { id: 'aut_pausada' } }, get: () => undefined, ip: '52.67.12.206' }, res);
+      await new Promise((x) => setTimeout(x, 200));
+      console.log(JSON.stringify(res._s));
+    `
+  });
+  const a = banco.assinaturas.find((x) => x.id === 'aut_pausada');
+  igual([a.status, a.plano_id, a.valor], ['pausada', 'plano_novo', 80], 'C2-L1: a assinatura pausada e trocada de plano continua como estava');
+  igual((banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'criada').length, 0, 'C2-L1: e nenhum `criada` de novo');
+}
+
 /* ---- C1-08: a guarda do estorno, na função REAL contra o banco falso ----
    "Só grava sobre status estornável, e o valor estornado só sobe" (SEC-022)
    era provada numa CÓPIA escrita à mão da função — e o banco falso nem

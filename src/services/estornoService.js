@@ -244,7 +244,8 @@ export async function reconciliarOperacao(op, deps = dependenciasPadrao) {
   if (idadeMin >= MINUTOS_ATE_ALERTAR) {
     await deps.registrarErro(
       new Error(`estorno ${op.id} (cobrança ${op.charge_id}) em ${op.estado} há ${Math.floor(idadeMin)} min e a Asaas não permite decidir: ` +
-        `delta de ${delta} centavos para uma operação de ${op.valor_centavos}, ${outrasEmAberto} outra(s) em aberto. Conferir na Asaas antes de qualquer ação.`),
+        `delta de ${delta} centavos para uma operação de ${op.valor_centavos}, ${outrasEmAberto} outra(s) em aberto. ` +
+        'Conferir os estornos da cobrança no painel da Asaas e resolver a operação à mão — RUNBOOK §6.3, "estorno … a Asaas não permite decidir". Até lá ela fica em aberto (nunca é repetida às cegas).'),
       { contexto: 'estornoService.reconciliar', rota: 'worker/estornos', metodo: 'WORKER' }
     );
   }

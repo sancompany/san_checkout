@@ -908,6 +908,11 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
     if (cobranca.status === 'pendente') {
       const ativou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: 'pendente', para: 'confirmado', ocorridoEm });
       if (!ativou) return;
+    } else if (await deps.buscarAssinaturaPorId(autorizacaoId)) {
+      /* Refeitura com a assinatura JÁ criada: nada a refazer (C2-L1). O
+         `upsert` a devolveria a `ativa` no plano de origem — por cima de
+         uma pausa, cancelamento ou troca — e o aviso sairia de novo. */
+      return;
     }
     await deps.upsertAssinatura({
       id: autorizacaoId,
@@ -1136,16 +1141,21 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
     && payment?.subscription
   ) {
-    if (!(await deps.buscarAssinaturaPorId(payment.subscription))) {
+    const jaGravada = await deps.buscarAssinaturaPorId(payment.subscription);
+    if (!jaGravada) {
       await amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps);
       cobranca = { ...cobranca, asaas_subscription_id: payment.subscription };
       primeiraConfirmacaoDaAssinatura = true;
-    } else {
+    } else if (refeituraDaAmarracao(jaGravada, deps.agora?.() ?? new Date())) {
       /* C1-03: a nova já está gravada — mas a refeitura que chega aqui
          pode ser a de uma passagem que morreu ENTRE gravar a nova e
          cancelar a antiga. Pular isto deixava as duas cobrando. O
          encerramento é idempotente (a antiga já cancelada não recebe
-         outro DELETE), e só a linha da renovação tem a antiga. */
+         outro DELETE), e só a linha da renovação tem a antiga.
+         Só DENTRO da janela de refeitura (C2-L2): o `PAYMENT_RECEIVED` da
+         liquidação, 30 dias depois, não é refeitura — e cancelaria uma
+         antiga que um humano decidiu manter depois de o cancelamento
+         automático falhar. */
       await encerrarAssinaturaSubstituida(cobranca, payment.subscription, deps);
     }
   }
@@ -1224,6 +1234,16 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
 /* ------------------------------------------------------------------
    Vínculo da primeira cobrança / ciclos / renovação
 ------------------------------------------------------------------ */
+
+/** A refeitura da amarração só é refeitura enquanto a nova assinatura é
+ *  recente e ainda está ativa aqui: 72 h cobre as tentativas da inbox
+ *  (~42 h) e o reconciliador; depois disso, o evento é outro fato. */
+const JANELA_DE_REFEITURA_MS = 72 * 60 * 60_000;
+export function refeituraDaAmarracao(assinatura, agora = new Date()) {
+  if (!assinatura || assinatura.status !== 'ativa') return false;
+  const criada = Date.parse(assinatura.criado_em ?? '');
+  return Number.isFinite(criada) && agora.getTime() - criada <= JANELA_DE_REFEITURA_MS;
+}
 
 async function amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps = dependenciasPadrao) {
   await deps.atualizarSubscriptionIdDaCobranca(chargeId, payment.subscription);
@@ -2005,11 +2025,19 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   // tudo, e o pagador ficava com as duas assinaturas cobrando.
   deps = depsFalsas({
     buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real', substitui_assinatura_id: 'sub_velha' },
-    buscarAssinaturaPorId: (id) => ({ id, status: 'ativa' })
+    buscarAssinaturaPorId: (id) => ({ id, status: 'ativa', criado_em: new Date(Date.now() - 3600_000).toISOString() })
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
   assert.deepEqual(deps.chamou('cancelarAssinaturaNaAsaas').map((c) => c.args[0]), ['sub_velha'], 'C1-03: a refeitura com a nova já gravada cancela a antiga que ainda está ativa');
   assert.equal(deps.chamou('upsertAssinatura').length, 0, 'e não reescreve a nova, que já existe');
+  // C2-L2: a liquidação 30 dias depois NÃO é refeitura — a antiga que um humano manteve fica
+  deps = depsFalsas({
+    buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real', substitui_assinatura_id: 'sub_velha' },
+    buscarAssinaturaPorId: (id) => ({ id, status: 'ativa', criado_em: new Date(Date.now() - 30 * 86_400_000).toISOString() })
+  });
+  await processarWebhook({ event: 'PAYMENT_RECEIVED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0, 'C2-L2: o evento de 30 dias depois não cancela a antiga');
+  assert.equal(refeituraDaAmarracao({ status: 'cancelada', criado_em: new Date().toISOString() }), false, 'C2-L2: nova já cancelada aqui não autoriza encerrar a antiga');
   // um evento NÃO-confirmado chegando primeiro vincula o charge, mas NÃO ativa nem cancela nada
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga' } });
   await processarWebhook({ event: 'PAYMENT_AWAITING_RISK_ANALYSIS', payment: { id: 'pay_risco', subscription: 'sub_nova', checkoutSession: 'chk_real' } }, deps);
