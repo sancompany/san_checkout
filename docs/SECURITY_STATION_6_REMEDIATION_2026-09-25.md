@@ -315,18 +315,18 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `.github/workflows/seguranca.yml` | +18 −3 | SECURITY_FIX | CI: permissions de leitura, ferramentas fixadas por hash, Dependabot com cooldown (SEC-034) |
 | `.gitleaksignore` | +11 −0 | SECURITY_FIX | impressões digitais das chaves de MENTIRA dos testes e do token meta público (CI da PR) |
 | `.ia/HANDOFF.md` | +1 −1 | DOCUMENTATION | contagem de suítes |
-| `API.md` | +120 −21 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `API.md` | +139 −22 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `CLAUDE.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `CONSTRAINTS.md` | +75 −7 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `README.md` | +1 −1 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
-| `RUNBOOK.md` | +33 −5 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `RUNBOOK.md` | +35 −5 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md` | +553 −0 | DOCUMENTATION | evidência imutável: baseline pré-correção (hash travado) |
 | `docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md` | +91 −0 | DOCUMENTATION | evidência imutável: revisão do Jules (hash travado) |
-| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +284 −0 | DOCUMENTATION | este relatório |
+| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +531 −0 | DOCUMENTATION | este relatório |
 | `docs/TESTES.md` | +31 −0 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
-| `docs/funcional.md` | +244 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
-| `docs/pendencias.md` | +64 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/funcional.md` | +281 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/pendencias.md` | +71 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `functions/api/admin/[[caminho]].js` | +71 −0 | SECURITY_FIX | Pages Function: o painel fala com a API atrás do Access (SEC-015) |
 | `package-lock.json` | +12 −12 | SECURITY_FIX | express 4.22.3 / body-parser / qs 6.16.0 (SEC-033), sem --force |
 | `public/js/admin.js` | +8 −8 | SECURITY_FIX | encodeURIComponent nos ids e filtros das chamadas do painel (SEC-026) |
@@ -349,8 +349,9 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/controllers/checkoutController.js` | +265 −39 | CORRECTNESS_FIX | instrumento só volta se ainda é o do pedido, pelo preço da tela (SEC-004/005) |
 | `src/controllers/cobrancaConsultaController.js` | +15 −6 | CORRECTNESS_FIX | CAS e binding de valor na consulta de status (SEC-022, C1-10) |
 | `src/controllers/refundController.js` | +147 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
+| `src/controllers/trocaAprovacaoController.js` | +10 −2 | SECURITY_FIX | token da troca só texto e só UUID; handlers com try/catch (CP2-11) |
 | `src/controllers/trocaPlanoController.js` | +51 −12 | RECOVERY | uma troca em voo, aviso com dono (SEC-010/013) |
-| `src/controllers/webhookController.js` | +829 −66 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2) |
+| `src/controllers/webhookController.js` | +929 −67 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2) |
 | `src/middlewares/exigirAccess.js` | +74 −0 | SECURITY_FIX | guarda do Access em /api/admin, fecha em 401/503 (SEC-015, C1-01) |
 | `src/middlewares/idsCanonicos.js` | +37 −0 | SECURITY_FIX | guarda canônica dos parâmetros de id (SEC-001/003/017) |
 | `src/routes/adminRoutes.js` | +15 −5 | SECURITY_FIX | Access antes de toda rota do admin (SEC-015); roteador com dono (C1-01) |
@@ -366,20 +367,20 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/services/asaasService.js` | +132 −26 | SECURITY_FIX | caminhos canônicos, texto da Asaas redigido, leitura de pagamento para conferir (SEC-017/028, SEC-007, C1-10) |
 | `src/services/assinaturaService.js` | +17 −8 | RECOVERY | upsert/vínculos relançam em vez de engolir (SEC-014) |
 | `src/services/auditoriaWebhookService.js` | +2 −1 | CORRECTNESS_FIX | promessa da descarga de rejeições com dono (SEC-013) |
-| `src/services/cobrancaService.js` | +173 −46 | CORRECTNESS_FIX | escrita condicional, delete condicional, estorno só sobe (SEC-022/025, NEW-01) |
-| `src/services/estornoService.js` | +426 −0 | CORRECTNESS_FIX | estorno durável e idempotente, reconciliação que não repete (SEC-002, C1-04, C2-M1) |
+| `src/services/cobrancaService.js` | +191 −48 | CORRECTNESS_FIX | escrita condicional, delete condicional, estorno só sobe; 23505 do ciclo só é duplicado se o charge existe (SEC-022/025, NEW-01, FP1A-1) |
+| `src/services/estornoService.js` | +453 −0 | CORRECTNESS_FIX | estorno durável e idempotente, reconciliação que não repete (SEC-002, C1-04, C2-M1) |
 | `src/services/outboxService.js` | +48 −5 | SECURITY_FIX | entrega sem seguir redirect, destino revalidado, orçamento de passada (SEC-006, C1-07) |
 | `src/services/pedidoService.js` | +30 −10 | SECURITY_FIX | id canônico na URL de saída do pull (SEC-001) |
-| `src/services/transicoesFinanceiras.js` | +49 −0 | CORRECTNESS_FIX | sair de chargeback só por disputa; caminhos para o reconciliador (SEC-019, JULES-004) |
+| `src/services/transicoesFinanceiras.js` | +85 −8 | CORRECTNESS_FIX | sair de chargeback só por disputa; caminhos para o reconciliador (SEC-019, JULES-004) |
 | `src/services/trocaExecucaoService.js` | +165 −64 | RECOVERY | cobrança do acerto nunca fica órfã; arrendamento não volta em falha ambígua (SEC-009/010) |
 | `src/services/trocaIntencaoService.js` | +44 −2 | RECOVERY | vínculo do acerto por CAS (SEC-009) |
 | `src/services/trocaSweeperService.js` | +126 −11 | RECOVERY | sweeper acha o acerto pela referência na Asaas (SEC-009) |
 | `src/services/webhookInboxService.js` | +87 −9 | RECOVERY | CAS respeita recuo, reenvio zera tentativas, candidatas à divergência (SEC-023/024, JULES-004) |
-| `src/utils/accessJwt.js` | +268 −0 | SECURITY_FIX | verificação RS256 do JWT do Access na origem (SEC-015, C1-01, C1-15) |
+| `src/utils/accessJwt.js` | +324 −0 | SECURITY_FIX | verificação RS256 do JWT do Access na origem (SEC-015, C1-01, C1-15) |
 | `src/utils/alvoDeRede.js` | +108 −11 | SECURITY_FIX | faixas de rede completas; destino revalidado (SEC-006/021) |
 | `src/utils/erros.js` | +21 −0 | SECURITY_FIX | erro da Asaas 401/403/5xx vira 502 genérico (INFO-11) |
 | `src/utils/passadas.js` | +91 −0 | OBSERVABILITY | uma passada por vez (SEC-023) e worker atrasado derruba a saúde (SEC-031) |
-| `src/utils/rotaSegura.js` | +57 −0 | CORRECTNESS_FIX | handler que lança não derruba o processo (C1-01, C2-L4) |
+| `src/utils/rotaSegura.js` | +61 −0 | CORRECTNESS_FIX | handler que lança não derruba o processo; falha sem Error nunca vira next() (C1-01, C2-L4, FP1B-1) |
 | `src/utils/validadores.js` | +163 −30 | SECURITY_FIX | tipo na fronteira, teto de tamanho, comparação sem vazar tamanho (SEC-027, INFO-05) |
 | `supabase/migrations/0018_estornos_idempotentes.sql` | +66 −0 | MIGRATION | estornos como operação durável (SEC-002) — aditiva, aplicada |
 | `supabase/migrations/0019_uma_troca_em_voo_por_assinatura.sql` | +35 −0 | MIGRATION | uma troca em voo por assinatura (SEC-010) — índice parcial, aplicada |
@@ -387,30 +388,30 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/access-de-teste.js` | +64 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/acerto-de-troca-nunca-fica-orfao.js` | +244 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/admin-so-pelo-access.js` | +285 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/assinatura-nasce-inteira.js` | +160 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/assinatura-nasce-inteira.js` | +241 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/banco-falso/supabase-falso.mjs` | +123 −17 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/banco-sem-privilegio-publico.js` | +70 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/ci-so-le-e-fixa-o-que-roda.js` | +63 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/erro-da-asaas-nao-vaza.js` | +116 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/escrita-de-estado-e-condicional.js` | +272 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +545 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/escrita-de-estado-e-condicional.js` | +424 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +949 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/executar.js` | +19 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/filtro-or-so-interpola-o-que-o-servidor-fez.js` | +79 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/identificador-canonico-em-toda-fronteira.js` | +219 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/instrumento-obsoleto-nunca-volta.js` | +207 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/nenhuma-chamada-de-saida-sem-teto.js` | +6 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/nenhuma-promessa-sem-dono.js` | +144 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/o-que-os-documentos-afirmam.js` | +25 −1 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/o-que-os-documentos-afirmam.js` | +58 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/outbox-sobrevive-a-reinicio.js` | +17 −3 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/pagamento-de-um-pedido-invalida-as-irmas.js` | +42 −21 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/rota-que-lanca-nao-derruba-o-processo.js` | +180 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/rota-que-lanca-nao-derruba-o-processo.js` | +290 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/rotas-http-respondem-como-prometido.js` | +19 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/saida-nunca-segue-redirecionamento.js` | +137 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/segredo-nao-sai-do-admin.js` | +62 −2 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/senha-nao-fica-no-navegador.js` | +10 −3 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/sessao-de-assinatura-nao-vaza-por-cpf.js` | +163 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/uma-assinatura-viva-por-plano.js` | +105 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/webhook-confere-na-asaas.js` | +549 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/webhook-confere-na-asaas.js` | +649 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 
 ### 7.2 Auditoria de regressões do diff (`43635c4` → `7c0c94d`)
 
@@ -467,7 +468,18 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | Auditoria do diff (DIF-*) | 4 | 4 | — |
 | Relatórios imutáveis e contador do ledger | 3 | 3 | — |
 | Passadas limpas (CP1-01, CP1-02, CP2-01, CP2-10, CP2-11, CP3-05 ×2) | 7 | 7 | CP2-10 era, ela mesma, uma lacuna (achada pelo auditor) |
-| **Total** | **184** | **184** | **12**, todas fechadas |
+| Lacunas da 3ª tentativa (CP3-09…18), refeitas contra o HEAD com os testes novos e as 82 suítes inteiras | 48 | 47 | a sobrevivente é `rest-exceto-off`, sem efeito observável (CP3-18, RES-38) |
+| Passada final #1 (FP1A-1 ×2, FP1A-4, FP1B-1) | 4 | 4 | — |
+| **Total** | **236** | **235** | **12**, todas fechadas; 1 sabotagem sem efeito observável, classificada |
+
+**As 48 sabotagens da 3ª tentativa, por classe** (critério do dono de 25/09/2026 — toda SECURITY_CONTROL e FINANCIAL_INVARIANT relevante tem de ser detectada):
+
+| Classe | Quantas | Detectadas | Quais |
+|---|---|---|---|
+| SECURITY_CONTROL | 23 | 23 | respaldo do provedor (13 variações), sessão da pop-up, origem do webhook, métodos do invólucro de rota (4), camadas do JWT do Access (4) |
+| FINANCIAL_INVARIANT | 23 | 23 | CAS, exclusões, prova por valor, espera do boleto, FAILED_FINAL e arrendamentos do estorno (13); matriz de transições (2); reivindicação e CAS da cobrança (3); isenção de assinatura do binding de valor; CAS, reivindicação e validade da intenção de troca (3); `mutation_version` |
+| TEST_QUALITY_ONLY | 1 | 1 | o filtro de status de `marcarReconciladas` (conta de observabilidade) |
+| NOT_APPLICABLE | 1 | 0 | `excetoId` de `restanteEstornavel` — nenhum chamador alcança o termo (CP3-18) |
 
 ## 10. Validações externas
 
@@ -519,6 +531,10 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | passada limpa #1 (3ª tentativa) | `6ebc923` | 3 (dinheiro/estado — **não limpo**, 1 LOW de código; regressões do diff — **não limpo**, 2 de documentação; crash/auth/testes com 81.285 requisições hostis e 151 sabotagens — **não limpo**, 48 sabotagens sobreviventes) | CP3-05 (LOW de código); CP3-09…CP3-17 (lacunas de teste, nenhum comportamento inseguro novo em produção); INFO classificados | 0 |
 
 **Critério revisto pelo dono em 25/09/2026, a partir do HEAD que integra os testes da 3ª tentativa:** a passada deixa de ser "sem achado que peça código" e passa a ser "sem CRITICAL, HIGH, bloqueador financeiro, bypass de tenant/autorização, possibilidade real de cobrança ou estorno em dobro, direito sem pagamento, pagamento sem direito, evento financeiro perdido ou operação órfã, nem MEDIUM estrutural em dinheiro, tenant, credencial, recuperação de queda, fronteira de confiança do webhook, idempotência ou concorrência financeira". LOW, INFO, documentação e lacuna de teste que não revela comportamento inseguro não reiniciam o contador — continuam indo para o ledger com estado final. Depois de integrar a 3ª tentativa, o código funcional congela; seguem exatamente duas passadas finais.
+
+| Passada final | Sobre | Revisores | Achados que reiniciam (critério revisto) | Resultado |
+|---|---|---|---|---|
+| #1 | `f30191f` (congelado) | 3 (dinheiro — **não limpo**; auth/infra com o `server.js` real e 200 requisições hostis — **limpo**; migrations aplicadas num Postgres 17 descartável e o diff inteiro — **limpo**) | FP1A-1 (MEDIUM estrutural: idempotência e perda permanente de evento financeiro) | corrigido, testado, sabotado; **#1 se repete uma vez** sobre `ba97202` |
 
 ## 14. Riscos residuais
 
