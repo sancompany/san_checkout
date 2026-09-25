@@ -351,6 +351,18 @@ o comprador teria dois códigos igualmente pagáveis e pagaria duas vezes.
 *Quem vê:* o comprador, no extrato; o operador, em duas linhas pagas do
 mesmo pedido.
 
+**RN-04.1 · Pedido que o nosso banco sabe que foi pago não abre de novo,
+diga o contratante o que disser.** Antes de montar a tela ou cobrar (Pix,
+boleto, cartão), o checkout confere as próprias cobranças do pedido:
+confirmado, em análise, estorno em andamento/parcial/negado ou contestação
+→ "Este pedido já foi pago." (409 `pedido_ja_pago`); pop-up de cartão
+concluída sem confirmação → 409 `pagamento_em_processamento`. Estorno
+total, recusa, vencimento e cancelamento liberam pagar de novo. Sem
+resposta do banco, fecha (503). *Violada:* no primeiro dia de produção
+(25/09/2026) o contratante de teste esqueceu que dois pedidos foram pagos
+e o checkout os reabriu, porque só perguntava a ele. *Quem vê:* o
+comprador, que pagaria duas vezes. `tests/pedido-pago-nao-cobra-de-novo.js`.
+
 **RN-05 · Método não habilitado não cobra.** O contratante declara quais
 métodos aceita; o backend recusa os demais mesmo que a requisição peça.
 *Violada:* cobrança por um meio que o contratante não combinou. *Quem

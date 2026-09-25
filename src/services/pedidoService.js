@@ -147,6 +147,52 @@ export async function buscarContratantePorChave(apiKey) {
 }
 
 /**
+ * O NOSSO BANCO também diz se o pedido já foi pago — não só o contratante.
+ *
+ * Até 25/09/2026 a única guarda contra pagar duas vezes o mesmo pedido era
+ * o `status` que o contratante devolve no pull ("pago"/"cancelado"). O
+ * nosso próprio banco sabia que o pedido estava `confirmado` e ninguém
+ * perguntava a ele. No primeiro dia de produção, o contratante de teste
+ * guardava os pagos na memória de cada instância da Cloudflare: o aviso
+ * de "pago" caía numa instância, o pull noutra, e dois pedidos JÁ PAGOS
+ * (`ped_isento` por Pix, `ped_dez_cartao` por cartão) voltaram a abrir
+ * como pagáveis. Contratante que perde ou atrasa o registro de pago é
+ * falha comum — quem cobrou fomos nós, e quem sabe somos nós.
+ *
+ * Bloqueia o que significa "o dinheiro deste pedido entrou, ou está
+ * entrando": confirmado, em análise, estorno em andamento/parcial/negado,
+ * contestação; e a pop-up de cartão concluída ainda sem confirmação
+ * (RN-47). NÃO bloqueia estorno TOTAL (o dinheiro voltou; pagar de novo é
+ * legítimo), recusa, vencimento, cancelamento, expiração, nem Pix/boleto
+ * `pendente` — esse é o RN-04, que devolve o MESMO código em vez de outro.
+ */
+export const STATUS_DE_PEDIDO_JA_PAGO = ['confirmado', 'em_analise', 'estorno_solicitado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'];
+
+export function bloqueioPorPagamentoLocal(linhas) {
+  for (const linha of linhas ?? []) {
+    if (STATUS_DE_PEDIDO_JA_PAGO.includes(linha?.status)) {
+      return { codigo: 'pedido_ja_pago', mensagem: 'Este pedido já foi pago.' };
+    }
+  }
+  for (const linha of linhas ?? []) {
+    if (linha?.status === 'pendente' && linha?.sessao_concluida_em) {
+      return { codigo: 'pagamento_em_processamento', mensagem: 'O pagamento deste pedido já foi enviado e está em processamento. Não é preciso pagar de novo.' };
+    }
+  }
+  return null;
+}
+
+async function linhasDoPedido(contratanteId, pedidoId) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('status, sessao_concluida_em')
+    .eq('contratante_id', contratanteId)
+    .eq('pedido_id', pedidoId);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
  * Liga pra API do contratante e busca os dados reais do pedido.
  * @returns {Promise<object>} o pedido, como veio da API do contratante
  * @throws {Error} com .status 404/502/504 conforme a falha
@@ -161,6 +207,15 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
     throw erro;
   }
   exigirMetodoHabilitado(contratante, metodoRequerido);
+
+  /* Em paralelo com o pull — a ida ao banco não soma latência à tela.
+     `.then(ok, erro)` para a promessa nunca ficar rejeitada sem dono
+     enquanto o pull falha antes (o processo morre por rejeição não
+     observada, `server.js`). */
+  const pagamentoLocal = linhasDoPedido(contratante.id, pedidoId).then(
+    (linhas) => ({ linhas }),
+    (erroBanco) => ({ erroBanco })
+  );
 
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_MS);
@@ -215,6 +270,24 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
   if (pedido.expiraEm && new Date(pedido.expiraEm) < new Date()) {
     const erro = new Error('Este pedido expirou.');
     erro.status = 409;
+    erro.pedido = pedido;
+    throw erro;
+  }
+
+  /* O contratante diz "pendente" — o nosso banco concorda? Sem resposta
+     do banco, FECHA: não saber se já foi pago não autoriza cobrar de novo. */
+  const { linhas, erroBanco } = await pagamentoLocal;
+  if (erroBanco) {
+    const erro = new Error('Não foi possível confirmar a situação deste pedido agora. Tente de novo em instantes.');
+    erro.status = 503;
+    erro.cause = erroBanco;
+    throw erro;
+  }
+  const bloqueio = bloqueioPorPagamentoLocal(linhas);
+  if (bloqueio) {
+    const erro = new Error(bloqueio.mensagem);
+    erro.status = 409;
+    erro.codigo = bloqueio.codigo;
     erro.pedido = pedido;
     throw erro;
   }
@@ -392,6 +465,30 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
       corpo.includes(".is('arquivado_em', null)"),
       `${nomeFuncao} precisa recusar contratante arquivado — sem isso, arquivar vira só esconder da lista`
     );
+  }
+
+  /* --- PEDIDO JÁ PAGO NO NOSSO BANCO (25/09/2026) ---
+     As linhas REAIS de produção: o contratante de teste esqueceu que
+     estes dois pedidos foram pagos, e só o nosso banco lembrava. */
+  {
+    const conferirB = (linhas, codigo, mensagem) => {
+      const r = bloqueioPorPagamentoLocal(linhas);
+      if ((r?.codigo ?? null) !== codigo) throw new Error(`${mensagem}: esperado ${codigo}, veio ${r?.codigo ?? null}`);
+      checagens += 1;
+    };
+    conferirB([{ status: 'confirmado', sessao_concluida_em: null }], 'pedido_ja_pago', 'INCIDENTE ped_isento (Pix pago): bloqueia');
+    conferirB([{ status: 'confirmado', sessao_concluida_em: '2026-09-25T02:39:11Z' }], 'pedido_ja_pago', 'INCIDENTE ped_dez_cartao (cartão pago): bloqueia');
+    conferirB([{ status: 'pendente', sessao_concluida_em: '2026-09-25T02:39:11Z' }], 'pagamento_em_processamento', 'pop-up concluída, dinheiro a caminho: bloqueia');
+    for (const st of ['em_analise', 'estorno_solicitado', 'estornado_parcialmente', 'estorno_negado', 'chargeback']) {
+      conferirB([{ status: st }], 'pedido_ja_pago', `${st}: o dinheiro entrou (ou está entrando)`);
+    }
+    for (const st of ['estornado', 'recusado', 'vencido', 'cancelado', 'expirado']) {
+      conferirB([{ status: st }], null, `${st}: pagar de novo é legítimo`);
+    }
+    conferirB([{ status: 'pendente', sessao_concluida_em: null }], null, 'Pix/boleto pendente: é o RN-04 (mesmo código), não bloqueio');
+    conferirB([], null, 'pedido sem cobrança');
+    conferirB(null, null, 'sem linhas');
+    conferirB([{ status: 'estornado' }, { status: 'confirmado' }], 'pedido_ja_pago', 'estornado e depois pago de novo: o pago vence');
   }
 
   console.log(`pedidoService: ${checagens} checagens OK`);
