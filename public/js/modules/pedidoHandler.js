@@ -44,7 +44,7 @@ export async function resolverContexto() {
        validar aqui seria validar do lado que o atacante controla, e
        publicaria a lista de quebra (ver src/utils/retornoSeguro.js). */
     const resultado = await get(
-      `/api/checkout/pedido/${ids.contratanteId}/${ids.pedidoId}${montarRetornoNaQuery()}`
+      `/api/checkout/pedido/${encodeURIComponent(ids.contratanteId)}/${encodeURIComponent(ids.pedidoId)}${montarRetornoNaQuery()}`
     );
     contextoResolvido = { ...ids, ...resultado };
     definirRetorno(resultado.retornoUrl, resultado.contratanteNome);

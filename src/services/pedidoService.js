@@ -7,7 +7,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { puxarDoContratante, RespostaRecusada } from '../utils/puxarDoContratante.js';
-import { exigirIdNoTeto } from '../utils/validadores.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 
 const TIMEOUT_MS = 45000; // calibrado pro pior cold start de hospedagem gratuita
 
@@ -86,11 +86,12 @@ function exigirMetodoHabilitado(contratante, metodoRequerido) {
 const MINIMO_DIGITOS_ID = 8;
 
 function exigirIdImprevisivel(id, rotulo) {
-  // Teto primeiro: id gigante não é id, e nem chega a ser pergunta de
-  // previsibilidade. Ver `exigirIdNoTeto` em `utils/validadores.js`.
-  exigirIdNoTeto(id, rotulo);
+  // Forma canônica primeiro: id que não é canônico nem chega a ser
+  // pergunta de previsibilidade — e é ele que vira caminho de URL logo
+  // abaixo. Ver `exigirIdCanonico` em `utils/validadores.js` (SEC-001).
+  exigirIdCanonico(id, rotulo);
 
-  const texto = String(id ?? '');
+  const texto = id;
   const soDigitos = /^\d+$/.test(texto);
   if (!soDigitos || texto.length >= MINIMO_DIGITOS_ID) return;
 
@@ -227,7 +228,11 @@ export async function resolverPedido(contratanteId, pedidoId, { metodoRequerido 
      ver a nota no topo daquele arquivo. */
   let resposta;
   try {
-    resposta = await puxarDoContratante(`${contratante.api_base_url}/pedido/${pedidoId}`, {
+    /* `encodeURIComponent` depois da guarda canônica é redundante hoje
+       — e é de propósito: a montagem do caminho não pode depender de
+       quem validou antes. Se a guarda afrouxar um dia, o segmento
+       continua sendo UM segmento. */
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/pedido/${encodeURIComponent(pedidoId)}`, {
       chave: contratante.api_key,
       signal: controlador.signal
     });
@@ -338,7 +343,7 @@ export async function resolverPlano(contratanteId, planoId, { metodoRequerido, c
   // Mesma troca do `resolverPedido` — ver a nota lá.
   let resposta;
   try {
-    resposta = await puxarDoContratante(`${contratante.api_base_url}/plano/${planoId}`, {
+    resposta = await puxarDoContratante(`${contratante.api_base_url}/plano/${encodeURIComponent(planoId)}`, {
       chave: contratante.api_key,
       signal: controlador.signal
     });
@@ -412,9 +417,24 @@ if (process.argv[1]?.endsWith('pedidoService.js')) {
   assert.ok(!recusa('master'), 'slug passa');
   assert.ok(!recusa('PED-0001'), 'com prefixo passa');
 
-  // vazio/nulo não é tratado aqui (a rota do Express nem casa sem o
-  // parâmetro) — só não pode explodir
-  assert.ok(!recusa(undefined), 'undefined não estoura');
+  /* Ausente/nulo agora RECUSA (400). Antes "não estourava" e seguia como
+     o texto "undefined" até o caminho da URL — o contrato canônico
+     (SEC-001) não converte tipo nenhum. */
+  assert.ok(recusa(undefined), 'undefined recusa');
+  assert.ok(recusa(null), 'null recusa');
+  assert.ok(recusa(12345678), 'número no corpo JSON recusa — não vira texto');
+
+  /* --- SEC-001/SEC-003: a guarda vem ANTES de qualquer ida ao banco ou
+     à rede. Se viesse depois, o id adulterado já teria virado caminho
+     de uma requisição autenticada. Os ids chegam decodificados, como o
+     Express entrega `req.params`. */
+  for (const id of ['../admin/segredos?x=', './ped_1', 'a/../ped_1', 'ped_1/', '%2e%2e', 'ped∕1', 'ped_1#x', 'ped\u0000']) {
+    for (const [nome, chamar] of [['resolverPedido', () => resolverPedido('testemaster', id)], ['resolverPlano', () => resolverPlano('testemaster', id)]]) {
+      let status = null;
+      try { await chamar(); } catch (erro) { status = erro.status ?? 'sem status'; }
+      assert.equal(status, 400, `${nome}(${JSON.stringify(id)}) recusa com 400 antes de buscar o contratante`);
+    }
+  }
 
   /* O atalho de `resolverPlano` não pode calar uma discordância entre o
      `contratante` passado e o `contratanteId` pedido: se calasse, quem

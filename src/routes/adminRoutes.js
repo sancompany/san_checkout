@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { exigirParametrosCanonicos } from '../middlewares/idsCanonicos.js';
 import {
   verificarAdminKey,
   abrirSessao,
@@ -22,7 +23,9 @@ import {
   obterResumoFilas
 } from '../controllers/adminController.js';
 
-const router = Router();
+// Todo `:id` de rota passa pelo contrato canônico antes de qualquer handler
+// (SEC-001, `middlewares/idsCanonicos.js`).
+const router = exigirParametrosCanonicos(Router());
 
 /* ANTES da guarda, de propósito: é a rota que troca senha por token, e
    por isso é a única que não pode exigir token. Toda rota abaixo do

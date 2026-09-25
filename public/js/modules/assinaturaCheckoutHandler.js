@@ -67,7 +67,7 @@ function iniciarPollingPopup(asaasCheckoutId, { aoConfirmar, aoFalhar, aoProcess
   let avisouProcessando = false;
   idIntervaloAtivo = setInterval(async () => {
     try {
-      const { status } = await get(`/api/checkout/asaas-checkout/status/${asaasCheckoutId}`);
+      const { status } = await get(`/api/checkout/asaas-checkout/status/${encodeURIComponent(asaasCheckoutId)}`);
       if (status === 'CHECKOUT_PAID') { pararPolling(); aoConfirmar(); return; }
       if (status === 'CHECKOUT_CANCELED' || status === 'CHECKOUT_EXPIRED' || status === 'PAGAMENTO_RECUSADO') { pararPolling(); aoFalhar(status); return; }
       if (status === 'PROCESSANDO') {
@@ -129,7 +129,7 @@ export async function assinarAgora({ contratanteId, planoId, dadosPagador, mostr
 
   try {
     const { checkoutUrl, asaasCheckoutId } = await post(
-      `/api/checkout/assinatura/${contratanteId}/${planoId}`,
+      `/api/checkout/assinatura/${encodeURIComponent(contratanteId)}/${encodeURIComponent(planoId)}`,
       dadosPagador
     );
 

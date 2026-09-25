@@ -24,7 +24,7 @@ function iniciarPolling(chargeId, { aoConfirmar, aoFalhar }) {
   pararPolling();
   idIntervaloAtivo = setInterval(async () => {
     try {
-      const { status } = await get(`/api/checkout/pix/status/${chargeId}`);
+      const { status } = await get(`/api/checkout/pix/status/${encodeURIComponent(chargeId)}`);
       const resultado = avaliarStatusPix(status);
       if (resultado === 'sucesso') { pararPolling(); aoConfirmar(); }
       else if (resultado === 'falha') { pararPolling(); aoFalhar(status); }
@@ -50,7 +50,7 @@ export async function gerarPix({ contratanteId, pedidoId, dadosPagador, mostrarT
 
   try {
     const { qrCodeBase64, copiaECola, chargeId } = await post(
-      `/api/checkout/pix/${contratanteId}/${pedidoId}`,
+      `/api/checkout/pix/${encodeURIComponent(contratanteId)}/${encodeURIComponent(pedidoId)}`,
       dadosPagador
     );
 

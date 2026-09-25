@@ -14,7 +14,7 @@
  */
 
 import { supabase } from '../config/supabase.js';
-import { exigirIdNoTeto } from '../utils/validadores.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 
 /** Cria ou atualiza a linha da assinatura — chamado pelo
  *  webhookController (`amarrarAssinaturaACobranca`) assim que o
@@ -250,7 +250,7 @@ export async function atualizarStatusAssinatura(id, status) {
 export async function buscarAssinaturaAtiva(contratanteId, planoId, documento, statusAceitos = ['ativa']) {
   // Teto do id aqui, e não em cada um dos cinco controladores de
   // assinatura que chamam esta função (`utils/validadores.js`).
-  exigirIdNoTeto(planoId, 'planoId');
+  exigirIdCanonico(planoId, 'planoId');
 
   const { data, error } = await supabase
     .from('assinaturas')

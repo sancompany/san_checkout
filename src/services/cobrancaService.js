@@ -15,7 +15,7 @@
 import { supabase } from '../config/supabase.js';
 import { ambienteAsaas } from '../config/asaas.js';
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from './pedidoService.js';
-import { exigirIdNoTeto } from '../utils/validadores.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 import { registrarErro } from './erroService.js';
 
 /**
@@ -740,8 +740,29 @@ export async function buscarCobranca(chargeId) {
   return data;
 }
 
-/** Busca a cobrança mais recente de um pedido — usado no /estornar,
- *  que recebe pedidoId (não chargeId) do contratante. */
+/**
+ * A cobrança deste `chargeId` e deste método existe no NOSSO banco?
+ *
+ * É a porta das rotas PÚBLICAS de status (`/pix/status/:chargeId`,
+ * `/boleto/status/:chargeId`): elas consultam a Asaas com a chave da
+ * conta-mãe, e sem esta pergunta qualquer id da conta — de outro
+ * contratante, de outro produto, de nada nosso — virava consulta
+ * autenticada e um oráculo de existência/status (SEC-017). Só o id e o
+ * método saem do banco: a rota não precisa de mais nada, e a linha
+ * inteira traz dado do pagador.
+ */
+export async function existeCobrancaDoMetodo(chargeId, metodoPagamento) {
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('id')
+    .eq('charge_id', chargeId)
+    .eq('metodo_pagamento', metodoPagamento)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
 /**
  * Grava a situação cadastral de uma subconta, vinda do webhook
  * ACCOUNT_STATUS_* da Asaas. Antes disso, o operador conferia na mão se
@@ -780,7 +801,7 @@ export async function atualizarSituacaoSubconta(asaasAccountId, situacao) {
 export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
   // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
   // rota autenticada de contratante, mas id sem teto é carga sem teto.
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+  exigirIdCanonico(pedidoId, 'pedidoId');
 
   const { data, error } = await supabase
     .from('cobrancas')
@@ -804,7 +825,7 @@ export async function buscarCobrancaPendenteDoPedido(contratanteId, pedidoId, me
  *  de responder "já existe uma cobrança sendo criada" até o reconciliador
  *  passar. */
 export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, metodoPagamento) {
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+  exigirIdCanonico(pedidoId, 'pedidoId');
   const { data, error } = await supabase
     .from('cobrancas')
     .select('id, criado_em')
@@ -823,7 +844,7 @@ export async function buscarReservaPendenteDoPedido(contratanteId, pedidoId, met
 export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
   // Teto do id aqui, na raiz (`utils/validadores.js`) — quem chama é
   // rota autenticada de contratante, mas id sem teto é carga sem teto.
-  exigirIdNoTeto(pedidoId, 'pedidoId');
+  exigirIdCanonico(pedidoId, 'pedidoId');
 
   /* A irmã cancelada por outro pagamento (RN-51) nunca é "a cobrança do
      pedido": por definição existe uma irmã que o PAGOU, e é ela que a

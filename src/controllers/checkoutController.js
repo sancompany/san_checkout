@@ -42,7 +42,8 @@ import {
   completarCobranca,
   liberarReservaCobranca,
   buscarCobrancaPendenteDoPedido,
-  buscarReservaPendenteDoPedido
+  buscarReservaPendenteDoPedido,
+  existeCobrancaDoMetodo
 } from '../services/cobrancaService.js';
 import { completarComOQueAAsaasSabe } from '../services/reconciliacaoService.js';
 import {
@@ -82,6 +83,7 @@ const dependenciasPadrao = {
   liberarReservaCobranca,
   buscarCobrancaPendenteDoPedido,
   buscarReservaPendenteDoPedido,
+  existeCobrancaDoMetodo,
   listarPagamentosPorReferenciaExterna,
   completarReservaOrfa: (reservaId, pagamento) => completarComOQueAAsaasSabe(reservaId, pagamento),
   registrarErro
@@ -342,13 +344,29 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     }
   }
 
-  async function statusPix(requisicao, resposta) {
+  /**
+   * GET /pix/status/:chargeId e /boleto/status/:chargeId — PÚBLICAS.
+   * Só consultam a Asaas para uma cobrança que é NOSSA e deste método
+   * (SEC-017): a chamada sai com a chave da conta-mãe, e sem a pergunta
+   * ao banco qualquer id da conta virava consulta autenticada. O 404 é
+   * nosso e genérico — antes, um id inexistente devolvia o texto de erro
+   * da Asaas (INFO-11).
+   */
+  async function statusDaCobranca(requisicao, resposta, metodo) {
     try {
-      const { status } = await deps.consultarStatus(requisicao.params.chargeId);
+      const { chargeId } = requisicao.params;
+      if (!(await deps.existeCobrancaDoMetodo(chargeId, metodo))) {
+        return resposta.status(404).json({ erro: 'Cobrança não encontrada.' });
+      }
+      const { status } = await deps.consultarStatus(chargeId);
       resposta.json({ status });
     } catch (erro) {
-      responderErro(resposta, erro, 'checkout/pix/status');
+      responderErro(resposta, erro, `checkout/${metodo}/status`);
     }
+  }
+
+  async function statusPix(requisicao, resposta) {
+    return statusDaCobranca(requisicao, resposta, 'pix');
   }
 
   /**
@@ -478,12 +496,7 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
   }
 
   async function statusBoleto(requisicao, resposta) {
-    try {
-      const { status } = await deps.consultarStatus(requisicao.params.chargeId);
-      resposta.json({ status });
-    } catch (erro) {
-      responderErro(resposta, erro, 'checkout/boleto/status');
-    }
+    return statusDaCobranca(requisicao, resposta, 'boleto');
   }
 
   return { gerarPix, statusPix, gerarBoleto, statusBoleto };
@@ -555,7 +568,11 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
         return { chargeId: 'pay_1', qrCodeBase64: 'QR', copiaECola: 'COPIA' };
       },
       criarCobrancaBoleto: async () => { anotar('criarCobrancaBoleto', []); return {}; },
-      consultarStatus: async () => ({ status: 'PENDING' }),
+      consultarStatus: async (chargeId) => { anotar('consultarStatus', [chargeId]); return { status: 'PENDING' }; },
+      existeCobrancaDoMetodo: async (chargeId, metodo) => {
+        anotar('existeCobrancaDoMetodo', [chargeId, metodo]);
+        return (ajustes.cobrancasNossas ?? []).includes(`${metodo}:${chargeId}`);
+      },
       recuperarCobrancaPix: async (chargeId) => {
         anotar('recuperarCobrancaPix', [chargeId]);
         if (ajustes.qrFalhaAoRecuperar?.()) throw new Error('Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix.');
@@ -808,6 +825,34 @@ if (process.argv[1]?.endsWith('checkoutController.js')) {
     /^reserva-res_\d+$/.test(chamadaCriarPix.args[0].referenciaExterna),
     `referenciaExterna precisa ser derivada do id da reserva local (formato "reserva-<id>"), veio "${chamadaCriarPix.args[0].referenciaExterna}"`
   );
+
+  /* --- 10. SEC-017: a rota PÚBLICA de status só vai à Asaas (com a
+     chave da conta-mãe) para uma cobrança que é NOSSA e do método da
+     rota. Id de outro objeto da conta, ou de outro método, é 404 nosso —
+     sem consulta autenticada e sem o texto de erro da Asaas. ---------- */
+  {
+    const ts = costura({ cobrancasNossas: ['pix:pay_nosso', 'boleto:pay_boleto'] });
+    const rOk = respostaFalsa();
+    await ts.statusPix(pedido({ chargeId: 'pay_nosso' }), rOk);
+    conferir(rOk.codigo === 200 && rOk.corpo?.status === 'PENDING', `cobrança nossa: 200 com o status; veio ${rOk.codigo}`);
+    conferir(ts.chamadas.filter((c) => c.nome === 'consultarStatus').length === 1, 'e só então consulta a Asaas');
+
+    for (const [rota, chargeId, nome] of [
+      ['statusPix', 'pay_de_outro', 'id que não é nosso'],
+      ['statusPix', 'pay_boleto', 'id nosso, mas de BOLETO, na rota do Pix'],
+      ['statusBoleto', 'pay_nosso', 'id nosso, mas de PIX, na rota do boleto']
+    ]) {
+      const tn = costura({ cobrancasNossas: ['pix:pay_nosso', 'boleto:pay_boleto'] });
+      const rn = respostaFalsa();
+      await tn[rota](pedido({ chargeId }), rn);
+      conferir(rn.codigo === 404 && rn.corpo?.erro === 'Cobrança não encontrada.', `${nome}: 404 nosso; veio ${rn.codigo} ${JSON.stringify(rn.corpo)}`);
+      conferir(!tn.chamou('consultarStatus'), `${nome}: a Asaas NUNCA é consultada`);
+    }
+    const tb = costura({ cobrancasNossas: ['boleto:pay_boleto'] });
+    const rb = respostaFalsa();
+    await tb.statusBoleto(pedido({ chargeId: 'pay_boleto' }), rb);
+    conferir(rb.codigo === 200 && rb.corpo?.status === 'PENDING', `boleto nosso: 200; veio ${rb.codigo}`);
+  }
 
   console.log(`checkoutController: ${checagens} checagens OK`);
 }

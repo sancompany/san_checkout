@@ -73,7 +73,12 @@ const HISTORICOS = [
   'docs/lacunas-san-checkout-10-09-2026.md',
   'docs/relatorio-seguranca-09-09-2026.md',
   'docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md', // relatório externo de uma data, gravado verbatim — descreve o mundo daquele commit
-  'docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md' // relatório de entrega de 24/09: as contagens são as daquele dia
+  'docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md', // relatório de entrega de 24/09: as contagens são as daquele dia
+  // Estação 6: a baseline e o relatório do Jules descrevem o commit 43635c4
+  // e são CONGELADOS por decisão do dono ("NÃO alterar baseline histórica") —
+  // corrigir a contagem deles seria reescrever o que foi observado.
+  'docs/SECURITY_STATION_6_BASELINE_2026-09-25.md',
+  'docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md'
 ];
 
 const AFIRMAM = [

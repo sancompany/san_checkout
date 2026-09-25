@@ -303,11 +303,6 @@ app.use((requisicao, resposta) => {
 // transforma o tratador em middleware comum e o erro volta a cair no
 // embutido, calado.
 app.use((erro, requisicao, resposta, proximo) => {
-  // O detalhe vai para o log do servidor, nunca para a resposta: aqui
-  // dentro cabe nome de tabela, caminho de arquivo e versão de
-  // biblioteca — informação de graça para quem está sondando.
-  console.error('[checkout] erro não tratado:', requisicao.method, requisicao.originalUrl, erro);
-
   // Corpo JSON malformado chega aqui com status 400 já definido pelo
   // express.json(). É erro do cliente, não do servidor, e merece o
   // código certo — 500 aqui faria monitoramento futuro contar sondagem
@@ -315,6 +310,22 @@ app.use((erro, requisicao, resposta, proximo) => {
   const status = Number.isInteger(erro?.status) && erro.status >= 400 && erro.status < 500
     ? erro.status
     : 500;
+
+  /* O detalhe vai para o log do servidor, nunca para a resposta: aqui
+     dentro cabe nome de tabela, caminho de arquivo e versão de
+     biblioteca — informação de graça para quem está sondando.
+
+     Mas o log também tem regra (SEC-028): num 4xx o objeto de erro é o
+     do CLIENTE — o `JSON.parse` do Node 22 põe um trecho do corpo na
+     mensagem, e `express.json()` pendura o corpo inteiro em `erro.body`,
+     que é onde viaja CPF, e-mail e telefone. Recusa de cliente loga só o
+     tipo; a pilha completa fica para o 5xx, que é defeito nosso. E o
+     caminho vai sem a query (`requisicao.path`). */
+  if (status >= 500) {
+    console.error('[checkout] erro não tratado:', requisicao.method, requisicao.path, erro);
+  } else {
+    console.warn('[checkout] requisição recusada:', requisicao.method, requisicao.path, status, erro?.type ?? erro?.name ?? 'erro');
+  }
 
   /* O que escapou de todo tratador vira linha em `erros` (Lei 8). Só
      5xx: corpo JSON malformado é sondagem, não defeito nosso, e contar

@@ -44,7 +44,10 @@ export function getConfigAsaas() {
 /** Monta a URL da pop-up a partir do id retornado por POST /v3/checkouts. */
 export function montarUrlCheckoutSession(asaasCheckoutId) {
   const dominio = ambienteAsaas() === 'producao' ? CHECKOUT_PRODUCAO : CHECKOUT_SANDBOX;
-  return `${dominio}/checkoutSession/show?id=${asaasCheckoutId}`;
+  // Codificado: o id é da Asaas, mas o valor vira parte de uma URL que o
+  // navegador do comprador abre — nenhum texto chega a ela sem passar
+  // por `encodeURIComponent` (SEC-001, mesma regra dos caminhos).
+  return `${dominio}/checkoutSession/show?id=${encodeURIComponent(asaasCheckoutId)}`;
 }
 
 /**

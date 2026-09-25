@@ -33,7 +33,7 @@ function iniciarPolling(chargeId, { aoConfirmar, aoFalhar }) {
   pararPolling();
   idIntervaloAtivo = setInterval(async () => {
     try {
-      const { status } = await get(`/api/checkout/boleto/status/${chargeId}`);
+      const { status } = await get(`/api/checkout/boleto/status/${encodeURIComponent(chargeId)}`);
       const resultado = avaliarStatusBoleto(status);
       if (resultado === 'sucesso') { pararPolling(); aoConfirmar(); }
       else if (resultado === 'falha') { pararPolling(); aoFalhar(status); }
@@ -59,7 +59,7 @@ export async function gerarBoleto({ contratanteId, pedidoId, dadosPagador, mostr
 
   try {
     const { chargeId, boletoUrl, linhaDigitavel } = await post(
-      `/api/checkout/boleto/${contratanteId}/${pedidoId}`,
+      `/api/checkout/boleto/${encodeURIComponent(contratanteId)}/${encodeURIComponent(pedidoId)}`,
       dadosPagador
     );
 

@@ -13,6 +13,7 @@ import crypto, { createHash } from 'node:crypto';
 import { getConfigAsaas, montarCallbackPadrao, ambienteAsaas } from '../config/asaas.js';
 import { supabase } from '../config/supabase.js';
 import { hojeCivil, diaCivilAntes } from '../utils/diaCivil.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 
 /**
  * O que a Asaas respondeu, em uma linha legível — SEM dado de pessoa.
@@ -63,6 +64,37 @@ function resumirRespostaAsaas(corpo) {
  */
 const TIMEOUT_ASAAS_MS = 20_000;
 
+/**
+ * Um id vira UM segmento de caminho da Asaas — nunca dois, nunca um
+ * caminho novo (SEC-017, baseline da Estação 6).
+ *
+ * A requisição sai com o `access_token` da CONTA-MÃE, e alguns destes ids
+ * chegam de fora: `GET /pix/status/:chargeId` é pública. O Express
+ * decodifica `%2F` no parâmetro, então um `chargeId` com `../` apontava
+ * a chamada autenticada para outro recurso da conta. A rota pública hoje
+ * passa pelo guarda canônico antes (`middlewares/idsCanonicos.js`), e é
+ * justamente por isso que a montagem do caminho não pode depender dele:
+ * quem chama amanhã pode vir de outro lugar.
+ *
+ * Recusa (400) em vez de codificar sozinho o que não é canônico: um id da
+ * Asaas legítimo nunca tem outro caractere (`pay_…`, `sub_…`, `cus_…` e o
+ * UUID da sessão — conferido em todas as linhas de produção em
+ * 25/09/2026), e codificar em silêncio um id estranho só adiaria o erro
+ * para uma resposta confusa da Asaas.
+ */
+export function segmentoAsaas(id, rotulo = 'identificador da Asaas') {
+  exigirIdCanonico(id, rotulo);
+  return encodeURIComponent(id);
+}
+
+/** O caminho vai para o log sem a query: é ali que viaja o CPF/CNPJ da
+ *  busca de cliente (`/v3/customers?cpfCnpj=…`, SEC-028). A rota e o
+ *  status bastam para diagnosticar. */
+function caminhoParaLog(caminho) {
+  const i = String(caminho).indexOf('?');
+  return i === -1 ? caminho : `${caminho.slice(0, i)}?[consulta omitida]`;
+}
+
 async function chamarAsaas(caminho, opcoes = {}) {
   const { baseUrl, headers } = getConfigAsaas();
 
@@ -96,7 +128,7 @@ async function chamarAsaas(caminho, opcoes = {}) {
 
     // No log SEMPRE, mesmo quando a descrição chega bonita na tela: é o
     // único lugar que guarda a rota e o status juntos.
-    console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminho} → ${resposta.status}: ${resumo}`);
+    console.error(`[asaas] ${opcoes.method ?? 'GET'} ${caminhoParaLog(caminho)} → ${resposta.status}: ${resumo}`);
 
     const erro = new Error(descricao);
     erro.status = resposta.status;
@@ -321,7 +353,7 @@ export function criarBuscadorDeCliente(deps = dependenciasDeCliente) {
 export const buscarOuCriarCliente = criarBuscadorDeCliente();
 
 async function buscarOuCriarClienteNaAsaas({ nome, email, documento }) {
-  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${documento}`, { method: 'GET' });
+  const busca = await chamarAsaas(`/v3/customers?cpfCnpj=${encodeURIComponent(documento)}`, { method: 'GET' });
   if (busca.data?.length) return busca.data[0].id;
 
   // `notificationDisabled: true` é obrigatório aqui: sem isso a Asaas
@@ -410,7 +442,7 @@ export async function criarCobrancaPix({ clienteId, valor, descricao, referencia
 
   let qr;
   try {
-    qr = await chamarAsaas(`/v3/payments/${cobranca.id}/pixQrCode`, { method: 'GET' });
+    qr = await chamarAsaas(`/v3/payments/${segmentoAsaas(cobranca.id)}/pixQrCode`, { method: 'GET' });
   } catch (erroQr) {
     const erro = new Error(
       `Pix ${cobranca.id} foi criado na Asaas, mas a busca do QR Code falhou: ${erroQr.message}`
@@ -464,7 +496,7 @@ export async function criarCobrancaBoleto({ clienteId, valor, descricao, referen
   let linhaDigitavel = null;
   let codigoBarras = null;
   try {
-    const identificacao = await chamarAsaas(`/v3/payments/${cobranca.id}/identificationField`, { method: 'GET' });
+    const identificacao = await chamarAsaas(`/v3/payments/${segmentoAsaas(cobranca.id)}/identificationField`, { method: 'GET' });
     linhaDigitavel = identificacao?.identificationField ?? null;
     codigoBarras = identificacao?.barCode ?? null;
   } catch (erroIdentificacao) {
@@ -555,7 +587,7 @@ export async function listarPagamentosPorReferenciaExterna(referenciaExterna) {
 
 /** Status atual de uma cobrança. */
 export async function consultarStatus(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   return { status: cobranca.status };
 }
 
@@ -568,7 +600,7 @@ export async function consultarStatus(chargeId) {
  * de produção, 25/09/2026 — por isso quem usa isto lê `deleted` E status.
  */
 export async function consultarPagamento(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   return { status: cobranca?.status ?? null, excluida: cobranca?.deleted === true };
 }
 
@@ -582,7 +614,7 @@ export async function consultarPagamento(chargeId) {
  * cobrança paga.
  */
 export async function excluirCobranca(chargeId) {
-  const resposta = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'DELETE' });
+  const resposta = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'DELETE' });
   return { excluida: resposta?.deleted === true };
 }
 
@@ -596,7 +628,7 @@ export async function excluirCobranca(chargeId) {
  * "não sei", nunca como "cancelou".
  */
 export async function cancelarSessaoDeCheckout(asaasCheckoutId) {
-  const resposta = await chamarAsaas(`/v3/checkouts/${asaasCheckoutId}/cancel`, { method: 'POST' });
+  const resposta = await chamarAsaas(`/v3/checkouts/${segmentoAsaas(asaasCheckoutId)}/cancel`, { method: 'POST' });
   return { status: resposta?.status ?? null };
 }
 
@@ -609,10 +641,10 @@ export async function cancelarSessaoDeCheckout(asaasCheckoutId) {
  * estornada, vencida, removida) — aí o chamador cria uma nova.
  */
 export async function recuperarCobrancaPix(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   if (!STATUS_AINDA_PAGAVEL.includes(cobranca.status)) return null;
 
-  const qr = await chamarAsaas(`/v3/payments/${chargeId}/pixQrCode`, { method: 'GET' });
+  const qr = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/pixQrCode`, { method: 'GET' });
   return {
     chargeId: cobranca.id,
     status: cobranca.status,
@@ -626,13 +658,13 @@ export async function recuperarCobrancaPix(chargeId) {
  * cobrança; a linha digitável é buscada como na criação.
  */
 export async function recuperarCobrancaBoleto(chargeId) {
-  const cobranca = await chamarAsaas(`/v3/payments/${chargeId}`, { method: 'GET' });
+  const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
   if (!STATUS_AINDA_PAGAVEL.includes(cobranca.status)) return null;
 
   let linhaDigitavel = null;
   let codigoBarras = null;
   try {
-    const identificacao = await chamarAsaas(`/v3/payments/${chargeId}/identificationField`, { method: 'GET' });
+    const identificacao = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/identificationField`, { method: 'GET' });
     linhaDigitavel = identificacao?.identificationField ?? null;
     codigoBarras = identificacao?.barCode ?? null;
   } catch (erroIdentificacao) {
@@ -672,8 +704,8 @@ export async function recuperarCobrancaBoleto(chargeId) {
 export async function estornarCobranca(chargeId, { metodoPagamento, valor = null } = {}) {
   const assincrono = metodoPagamento === 'boleto';
   const caminho = assincrono
-    ? `/v3/payments/${chargeId}/bankSlip/refund`
-    : `/v3/payments/${chargeId}/refund`;
+    ? `/v3/payments/${segmentoAsaas(chargeId)}/bankSlip/refund`
+    : `/v3/payments/${segmentoAsaas(chargeId)}/refund`;
 
   const resultado = await chamarAsaas(caminho, {
     method: 'POST',
@@ -689,7 +721,7 @@ export async function estornarCobranca(chargeId, { metodoPagamento, valor = null
  * `DELETE /v3/subscriptions/{id}` — confirmado na doc da Asaas.
  */
 export async function cancelarAssinatura(subscriptionId) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'DELETE' });
 }
 
 /**
@@ -727,7 +759,7 @@ export async function cancelarAssinatura(subscriptionId) {
 export async function consultarAssinaturaNaAsaas(subscriptionId) {
   let corpo;
   try {
-    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+    corpo = await chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'GET' });
   } catch (erro) {
     if (erro.status === 404) return null;
     throw erro;
@@ -771,7 +803,7 @@ export async function consultarAssinaturaNaAsaas(subscriptionId) {
  * @param {'INACTIVE'|'ACTIVE'} status
  */
 export async function alterarStatusAssinatura(subscriptionId, status) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, {
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, {
     method: 'PUT',
     body: JSON.stringify({ status })
   });
@@ -814,7 +846,7 @@ export async function alterarStatusAssinatura(subscriptionId, status) {
  * @param {{valor: number, ciclo: string}} plano
  */
 export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
-  return chamarAsaas(`/v3/subscriptions/${subscriptionId}`, {
+  return chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, {
     method: 'PUT',
     body: JSON.stringify({
       value: valor,
@@ -859,7 +891,7 @@ export async function alterarPlanoAssinatura(subscriptionId, { valor, ciclo }) {
 export async function dadosDeCobrancaDaAssinatura(subscriptionId) {
   let corpo;
   try {
-    corpo = await chamarAsaas(`/v3/subscriptions/${subscriptionId}`, { method: 'GET' });
+    corpo = await chamarAsaas(`/v3/subscriptions/${segmentoAsaas(subscriptionId)}`, { method: 'GET' });
   } catch (erro) {
     if (erro.status === 404) return null;
     throw erro;

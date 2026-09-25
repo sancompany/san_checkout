@@ -311,7 +311,7 @@ async function rotacionarChaveContratante(id) {
   if (!ok) return;
 
   try {
-    const atualizado = await admin.post(`/contratantes/${id}/rotacionar-chave`, {});
+    const atualizado = await admin.post(`/contratantes/${encodeURIComponent(id)}/rotacionar-chave`, {});
     // A resposta traz a chave nova: atualiza a linha em memória em vez
     // de recarregar a lista, que custaria outra derivação de senha.
     if (alvo) alvo.api_key = atualizado.api_key;
@@ -344,7 +344,7 @@ async function alternarArquivoContratante(id, arquivar) {
   }
 
   try {
-    await admin.patch(`/contratantes/${id}/arquivar`, { arquivar });
+    await admin.patch(`/contratantes/${encodeURIComponent(id)}/arquivar`, { arquivar });
     mostrarToast(arquivar ? `${nome} arquivado.` : `${nome} de volta à lista.`);
     // Só a tela que está aberta é redesenhada. Cada `admin.get` custa uma
     // derivação de senha (~3s), então recarregar as duas listas a cada
@@ -377,7 +377,7 @@ async function alternarArquivoSubconta(id, arquivar) {
   }
 
   try {
-    const resultado = await admin.patch(`/subcontas/${id}/arquivar`, { arquivar });
+    const resultado = await admin.patch(`/subcontas/${encodeURIComponent(id)}/arquivar`, { arquivar });
     const usando = resultado?.contratantesUsando ?? [];
     if (arquivar && usando.length > 0) {
       // Aviso e não bloqueio: quem decide é o operador, mas não às cegas.
@@ -516,8 +516,8 @@ async function carregarFilas() {
   try {
     const [resumo, inbox, outbox] = await Promise.all([
       admin.get('/filas/resumo'),
-      admin.get(`/filas/inbox?limite=100${$('filas-inbox-filtro').value ? `&status=${$('filas-inbox-filtro').value}` : ''}`),
-      admin.get(`/filas/outbox?limite=100${$('filas-outbox-filtro').value ? `&status=${$('filas-outbox-filtro').value}` : ''}`)
+      admin.get(`/filas/inbox?limite=100${$('filas-inbox-filtro').value ? `&status=${encodeURIComponent($('filas-inbox-filtro').value)}` : ''}`),
+      admin.get(`/filas/outbox?limite=100${$('filas-outbox-filtro').value ? `&status=${encodeURIComponent($('filas-outbox-filtro').value)}` : ''}`)
     ]);
 
     const pendentes = (resumo.inbox?.esgotadas ?? 0) + (resumo.outbox?.abandonadas ?? 0);
@@ -562,7 +562,7 @@ document.addEventListener('click', async (evento) => {
   });
   if (!ok) return;
   try {
-    await admin.post(ehInbox ? `/filas/inbox/${id}/reenfileirar` : `/filas/outbox/${id}/reenviar`, {});
+    await admin.post(ehInbox ? `/filas/inbox/${encodeURIComponent(id)}/reenfileirar` : `/filas/outbox/${encodeURIComponent(id)}/reenviar`, {});
     mostrarToast(ehInbox ? 'Evento reenfileirado.' : 'Notificação reenviada.');
     carregarFilas();
   } catch (erro) {
@@ -713,7 +713,7 @@ async function salvarContratante() {
        listagem usa — então a tela se atualiza com a resposta que já veio,
        em vez de perguntar de novo. Uma ida ao servidor em vez de duas. */
     if (editandoId) {
-      const atualizado = await admin.patch(`/contratantes/${editandoId}`, corpo);
+      const atualizado = await admin.patch(`/contratantes/${encodeURIComponent(editandoId)}`, corpo);
       const i = contratantes.findIndex((c) => c.id === editandoId);
       if (i === -1) contratantes.unshift(atualizado); else contratantes[i] = atualizado;
       mostrarToast('Contratante atualizado.');
@@ -863,7 +863,7 @@ async function salvarLinkAtivacao() {
   limparErro('msg-link');
   botao.disabled = true;
   try {
-    await admin.patch(`/subcontas/${subcontaDoLink.id}`, { linkAtivacao: link });
+    await admin.patch(`/subcontas/${encodeURIComponent(subcontaDoLink.id)}`, { linkAtivacao: link });
     fecharModal('modal-link');
     mostrarToast('Link salvo.');
     await carregarSubcontas();
