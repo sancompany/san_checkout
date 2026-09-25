@@ -255,6 +255,45 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟡 Troca de plano recusa os primeiros dias de um ciclo de mês com mais de 30 dias — ACHADO 25/09/2026, na homologação real
+**Achado com a assinatura real `sub_39mjscz7vl2jwx7g`** (testemaster, `plano_anual`, R$ 10, paga em 25/09/2026, próximo vencimento 2027-09-25).
+`POST /trocar-plano` para `plano_semestral` respondeu, em produção:
+
+```
+409 {"erro":"Não foi possível calcular o acerto proporcional desta troca.","motivo":"dias restantes (365) maiores que o ciclo atual (360)"}
+```
+
+**Causa.** `calcularAcertoDeTroca` conta os dias até o vencimento em
+**dias civis** (365 até 2027-09-25). O ciclo é medido em **mês
+comercial** (`YEARLY` = 360, regra 5 do dono). Quando os dias civis
+passam do ciclo comercial, o dado é tratado como incoerente e a troca é
+recusada. Isso acontece:
+- nos cinco primeiros dias de um ciclo anual;
+- no primeiro dia de um mensal que vence num mês de 31 dias;
+- nos dois primeiros dias de um trimestral;
+- nos quatro primeiros dias de um semestral.
+
+**Efeito.** O 409 acontece antes de qualquer escrita, então nenhum
+dinheiro se move e nada é gravado. Conferido na Asaas e no banco depois
+da chamada: nada mudou, e nenhuma intenção nem linha em `erros` foi
+criada. O dano é de produto: o contratante recebe "não foi possível
+calcular" numa troca legítima e precisa tentar de novo dias depois.
+
+**O que decidir, e é do dono** (caminho de dinheiro, regra dele):
+- limitar os dias restantes ao ciclo (`min(dias, DIAS_DO_CICLO)`), o que
+  credita no máximo o período inteiro;
+- ou manter a recusa e documentá-la no `API.md` §5.6.
+
+A primeira é a leitura natural da regra 5, mas muda uma conta de
+dinheiro, e isso não se faz sem ele.
+
+**E a homologação da troca de preço não fecha com este catálogo.** No
+contratante de teste, todo plano custa mais por dia que o anual de
+R$ 10. Qualquer troca a partir dele cai na saída 3 (`202`, intenção), e
+o acerto só é cobrado depois que o pagador aprova, com uma cobrança
+nova no cartão. Na homologação real de 25/09 a cobrança nova estava
+proibida, então a troca de preço não foi exercitada.
+
 ### 🟢 Consolidação financeira — auditoria externa de 24/09/2026 (Codex), 22 achados + revisão própria
 
 Tudo em `docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md` (matriz,
