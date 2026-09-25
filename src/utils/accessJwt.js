@@ -45,6 +45,11 @@ const FOLGA_DE_RELOGIO_S = 60;
 
 const deBase64Url = (texto) => Buffer.from(String(texto).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 
+/** Valor do token (de quem chamou) posto num motivo de log: só texto
+ *  curto de caracteres comuns — nunca quebra de linha forjando uma linha
+ *  nossa, nunca um objeto que lança ao virar texto (C1-01). */
+const paraOLog = (valor) => (typeof valor === 'string' ? valor.replace(/[^\w.:-]/g, '?').slice(0, 20) : typeof valor);
+
 /** As três partes do JWT, ou `null` se não tiver a forma de um. */
 export function decodificarJwt(token) {
   if (typeof token !== 'string' || token.length > 8192) return null;
@@ -54,6 +59,11 @@ export function decodificarJwt(token) {
     const cabecalho = JSON.parse(deBase64Url(partes[0]).toString('utf8'));
     const carga = JSON.parse(deBase64Url(partes[1]).toString('utf8'));
     if (!cabecalho || typeof cabecalho !== 'object' || !carga || typeof carga !== 'object') return null;
+    /* `alg` e `kid` são texto, ou o token não tem a forma de um JWT. Um
+       `alg` objeto (`{"toString":0}`) lançava `TypeError` na primeira
+       interpolação — antes da assinatura, sem login, e derrubando o
+       processo (C1-01). */
+    if (typeof cabecalho.alg !== 'string' || (cabecalho.kid !== undefined && typeof cabecalho.kid !== 'string')) return null;
     return { cabecalho, carga, assinado: `${partes[0]}.${partes[1]}`, assinatura: deBase64Url(partes[2]) };
   } catch {
     return null;
@@ -80,13 +90,13 @@ export function assinaturaConfere(jwt, jwks) {
 export function verificarJwtDoAccess(token, { jwks, aud = AUD_DO_PAINEL, equipe = EQUIPE_ACCESS, agora = Date.now() } = {}) {
   const jwt = decodificarJwt(token);
   if (!jwt) return { valido: false, motivo: 'formato' };
-  if (jwt.cabecalho.alg !== 'RS256') return { valido: false, motivo: `alg ${jwt.cabecalho.alg}` };
+  if (jwt.cabecalho.alg !== 'RS256') return { valido: false, motivo: `alg ${paraOLog(jwt.cabecalho.alg)}` };
   if (!assinaturaConfere(jwt, jwks)) return { valido: false, motivo: 'assinatura' };
   const c = jwt.carga;
   const auds = Array.isArray(c.aud) ? c.aud : [c.aud];
   if (!auds.includes(aud)) return { valido: false, motivo: 'aud' };
   if (c.iss !== equipe) return { valido: false, motivo: 'iss' };
-  if (c.type !== 'app') return { valido: false, motivo: `type ${c.type}` };
+  if (c.type !== 'app') return { valido: false, motivo: `type ${paraOLog(c.type)}` };
   const segundos = Math.floor(agora / 1000);
   if (!Number.isFinite(c.exp) || c.exp + FOLGA_DE_RELOGIO_S < segundos) return { valido: false, motivo: 'vencido' };
   if (Number.isFinite(c.nbf) && c.nbf - FOLGA_DE_RELOGIO_S > segundos) return { valido: false, motivo: 'ainda não vale' };
@@ -100,13 +110,16 @@ export function verificarJwtDoAccess(token, { jwks, aud = AUD_DO_PAINEL, equipe 
  * `intervaloMinimoMs`, para um token forjado com `kid` inventado não virar
  * uma requisição à Cloudflare por chamada.
  */
-export function criarBuscadorDeChaves({ url = `${EQUIPE_ACCESS}/cdn-cgi/access/certs`, fetch = (...a) => globalThis.fetch(...a), ttlMs = 3600_000, intervaloMinimoMs = 60_000, agora = () => Date.now(), timeoutMs = 5000 } = {}) {
-  let cache = null; let buscadoEm = 0;
-  return async function chavesPara(kid) {
-    const temKid = cache?.keys?.some((k) => k.kid === kid);
-    const vencido = agora() - buscadoEm > ttlMs;
-    const podeBuscar = agora() - buscadoEm > intervaloMinimoMs;
-    if (cache && !vencido && (temKid || !podeBuscar)) return cache;
+export function criarBuscadorDeChaves({ url = `${EQUIPE_ACCESS}/cdn-cgi/access/certs`, fetch = (...a) => globalThis.fetch(...a), ttlMs = 3600_000, intervaloMinimoMs = 60_000, agora = () => Date.now(), timeoutMs = 5000, velhoServeAteMs = 24 * 3600_000 } = {}) {
+  let cache = null; let buscadoEm = -Infinity; let tentadoEm = -Infinity; let emVoo = null;
+  /* C1-15: uma busca por vez (as requisições simultâneas esperam a mesma);
+     depois de uma FALHA, o intervalo mínimo vale também — a queda da
+     Cloudflare não vira uma busca por token forjado; e durante a queda as
+     chaves já conhecidas continuam valendo por até `velhoServeAteMs` (a
+     Cloudflare roda chaves com sobreposição), em vez de 503 no painel
+     inteiro no minuto em que o cache vence. */
+  async function buscar() {
+    tentadoEm = agora();
     const controlador = new AbortController();
     const teto = setTimeout(() => controlador.abort(), timeoutMs);
     try {
@@ -118,6 +131,26 @@ export function criarBuscadorDeChaves({ url = `${EQUIPE_ACCESS}/cdn-cgi/access/c
       return cache;
     } finally {
       clearTimeout(teto);
+    }
+  }
+  return async function chavesPara(kid) {
+    const temKid = cache?.keys?.some((k) => k.kid === kid);
+    const vencido = agora() - buscadoEm > ttlMs;
+    const podeBuscar = agora() - Math.max(buscadoEm, tentadoEm) > intervaloMinimoMs;
+    if (cache && !vencido && (temKid || !podeBuscar)) return cache;
+    const serveVelho = () => (cache && agora() - buscadoEm <= velhoServeAteMs ? cache : null);
+    if (!podeBuscar && !emVoo) {
+      const velho = serveVelho();
+      if (velho) return velho;
+      if (!cache) throw new Error('certs do Access indisponíveis (última tentativa falhou há pouco)');
+    }
+    emVoo ??= buscar().finally(() => { emVoo = null; });
+    try {
+      return await emVoo;
+    } catch (erro) {
+      const velho = serveVelho();
+      if (velho) return velho;
+      throw erro;
     }
   };
 }
@@ -186,6 +219,13 @@ if (process.argv[1]?.endsWith('accessJwt.js')) {
   ok(veredito(assinar({ ...cargaBoa, exp: agora / 1000 - 30 })).valido, 'folga de relógio: vencido há 30 s ainda passa (o relógio da Cloudflare e o nosso não são o mesmo)');
   ok(veredito(assinar({ ...cargaBoa, aud: AUD_DO_PAINEL })).valido, '`aud` como texto (não lista) também é aceito');
 
+  /* ---- C1-01: cabeçalho de tipo errado é "não é JWT", e nada lança ---- */
+  const cabecalhoCru = (c) => `${b64(c)}.${b64(cargaBoa)}.AAAA`;
+  ok(decodificarJwt(cabecalhoCru({ alg: { toString: 0 }, kid: 'kid-teste' })) === null, 'C1-01: `alg` objeto não tem forma de JWT');
+  ok(decodificarJwt(cabecalhoCru({ alg: 'RS256', kid: { toString: 0 } })) === null, 'C1-01: `kid` objeto também não');
+  ok(decodificarJwt(cabecalhoCru({ alg: 'RS256' })) !== null, 'controle: `kid` ausente continua sendo forma (a recusa é da assinatura)');
+  ok(paraOLog({ toString: 0 }) === 'object' && paraOLog('HS256\nforjado') === 'HS256?forjado', 'o motivo de log nunca lança nem quebra linha');
+
   /* ---- o buscador de chaves: cache, rotação e teto ---- */
   let buscas = 0; let relogio = 0;
   const buscador = criarBuscadorDeChaves({
@@ -201,6 +241,28 @@ if (process.argv[1]?.endsWith('accessJwt.js')) {
   let erro = null;
   await criarBuscadorDeChaves({ fetch: async () => ({ ok: false, status: 503 }) })('x').catch((e) => { erro = e; });
   ok(erro && /503/.test(erro.message), 'certs indisponíveis LANÇAM — quem chama responde 503, nunca "passa"');
+
+  /* ---- C1-15: busca única, recuo depois de falha, chave velha durante a queda ---- */
+  {
+    let n = 0; let t = 0; let fora = false; const soltar = [];
+    const b = criarBuscadorDeChaves({
+      fetch: async () => { n += 1; if (fora) return { ok: false, status: 503 }; await new Promise((r) => { soltar.push(r); }); return { ok: true, json: async () => jwks }; },
+      agora: () => t
+    });
+    const juntas = [b('kid-teste'), b('kid-teste'), b('kid-teste')];
+    await new Promise((r) => setImmediate(r)); soltar.forEach((r) => r());
+    await Promise.all(juntas);
+    ok(n === 1, `C1-15: três pedidos simultâneos, UMA busca à Cloudflare (${n})`);
+    fora = true; t += 3600_001;
+    const velho = await b('kid-teste');
+    ok(velho?.keys?.length === jwks.keys.length && n === 2, 'C1-15: cache vencido e Cloudflare fora — a chave conhecida continua valendo');
+    t += 1000;
+    await b('kid-forjado'); await b('kid-forjado'); await b('kid-forjado');
+    ok(n === 2, `C1-15: depois de uma falha, token com kid inventado não vira busca por requisição (${n})`);
+    t += 25 * 3600_000;
+    let e2 = null; await b('kid-teste').catch((e) => { e2 = e; });
+    ok(e2 !== null, 'e a chave velha tem prazo: passado ele, sem Cloudflare, falha fechado');
+  }
 
   console.log(`accessJwt: ${checagens} checagens OK`);
 }

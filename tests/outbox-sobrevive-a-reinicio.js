@@ -100,6 +100,17 @@ igual(depoisDeA[0].status, 'falhou', 'a falha ficou GRAVADA — não num timer d
 igual(depoisDeA[0].tentativas, 1);
 ok(depoisDeA[0].proxima_tentativa_em > new Date().toISOString(), 'com a próxima tentativa agendada no futuro (recuo)');
 
+/* C1-07: com o orçamento da passada esgotado, a passada não reivindica
+   mais nada — a linha fica para o próximo tique, intocada. */
+const saidaOrcamento = await processo(`
+  import { enviarPendentes } from './src/services/outboxService.js';
+  const agora = () => new Date(Date.now() + 5 * 60_000);
+  console.log(JSON.stringify(await enviarPendentes({ orcamentoMs: 0, deps: { fetch: (...a) => globalThis.fetch(...a), agora, aceitarAlvo: () => true } })));
+`);
+igual([JSON.parse(saidaOrcamento).examinadas, JSON.parse(saidaOrcamento).adiadas], [0, 1], `C1-07: orçamento esgotado adia a linha em vez de reivindicá-la (${saidaOrcamento})`);
+igual(recebidas.length, 1, 'e o contratante não é chamado');
+igual(JSON.parse(readFileSync(arquivo, 'utf8')).tabelas.outbox_notificacoes[0].status, 'falhou', 'a linha adiada continua como estava, para o próximo tique');
+
 /* PROCESSO B: nasce do zero. O worker lê a tabela e entrega. */
 const saidaB = await processo(`
   import { enviarPendentes } from './src/services/outboxService.js';

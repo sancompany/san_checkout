@@ -26,7 +26,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:0';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? 'teste';
 
 const { criarRefundController } = await import('../src/controllers/refundController.js');
-const { executarEstorno, reconciliarEstornosUmaVez, ESTADOS_EM_ABERTO, MINUTOS_ATE_PROVAR_AUSENCIA } = await import('../src/services/estornoService.js');
+const { executarEstorno, reconciliarEstornosUmaVez, ESTADOS_EM_ABERTO, MINUTOS_ATE_PROVAR_AUSENCIA, MINUTOS_ATE_ALERTAR } = await import('../src/services/estornoService.js');
 const { foiRecusaLimpaDaAsaas } = await import('../src/services/asaasService.js');
 const { STATUS_ESTORNAVEIS } = await import('../src/services/cobrancaService.js');
 
@@ -329,6 +329,43 @@ function mundo() {
   igual([...p.estornos.values()][0].estado, 'FAILED_RETRYABLE', 'depois do prazo, sem marcador e sem valor novo: provado que não estornou');
   igual(p.asaas.chamadas.length, 1, 'o worker nunca chama o estorno');
   m.acumuladoNuncaPassaDoCobrado('queda sem estornar');
+}
+
+/* ===== 7d. O WEBHOOK DO PRÓPRIO ESTORNO CHEGOU ANTES DO RECONCILIADOR (C1-04) =====
+   A Asaas estornou, a resposta se perdeu (UNKNOWN), e o
+   `PAYMENT_PARTIALLY_REFUNDED` — que costuma chegar em segundos — já
+   gravou `valor_estornado = 30` na cobrança. Se o marcador não volta na
+   lista da Asaas, a conta "Asaas − o que já sabemos" dá ZERO: a primeira
+   versão tomava isso como prova de que nada foi estornado, a operação
+   virava FAILED_RETRYABLE, e a mesma chave estornava 30 DE NOVO. */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('timeout_depois');
+  const a = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  ok(a.codigo >= 500 || a.corpo?.codigo, 'controle: a resposta da Asaas se perdeu');
+  for (const r of m.asaas.refunds.get('pay_c1')) r.description = null; // o marcador não volta na lista
+  m.cobrancas.get('c1').valor_estornado = 30;                          // o webhook do estorno já gravou
+  m.cobrancas.get('c1').status = 'estornado_parcialmente';
+  m.avancar(MINUTOS_ATE_PROVAR_AUSENCIA + 1);
+  await reconciliarEstornosUmaVez(m.depsServico);
+  const op = [...m.estornos.values()][0];
+  ok(op.estado !== 'FAILED_RETRYABLE', `C1-04: o estorno que o webhook já registrou NÃO é "provado ausente" (ficou ${op.estado})`);
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  igual(m.asaas.refunds.get('pay_c1').length, 1, 'C1-04: a repetição da mesma chave não estorna uma segunda vez na Asaas');
+  igual(m.asaas.chamadas.length, 1, 'e nem chama o estorno de novo');
+  m.avancar(MINUTOS_ATE_ALERTAR);
+  await reconciliarEstornosUmaVez(m.depsServico);
+  ok(m.erros.some((e) => /não permite decidir/.test(e)), 'o que não dá para decidir chama um humano, com o valor e a cobrança');
+  /* controle: sem estorno nenhum na Asaas, a ausência continua provável */
+  const n = mundo();
+  n.cobranca('c1', { valor_estornado: 20, status: 'estornado_parcialmente' }); // estorno de 20 feito no painel, antes
+  n.asaas.refunds.set('pay_c1', [{ value: 20, status: 'DONE', description: null, dateCreated: new Date().toISOString() }]);
+  n.asaas.roteiro.push('timeout_antes');
+  await n.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-B' });
+  n.avancar(MINUTOS_ATE_PROVAR_AUSENCIA + 1);
+  await reconciliarEstornosUmaVez(n.depsServico);
+  igual([...n.estornos.values()][0].estado, 'FAILED_RETRYABLE', 'controle: a Asaas só tem o estorno de 20 (anterior, menor que 30) — este de 30 é provado ausente e pode ser refeito');
 }
 
 /* ======= 8. OPERAÇÃO EM VOO CONTA NO RESTANTE (acumulado ≤ elegível) ======= */

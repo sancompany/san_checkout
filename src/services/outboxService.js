@@ -209,8 +209,16 @@ export async function entregar(linha, segredo, deps = dependenciasPadrao) {
  * e, logo depois de enfileirar, por `tentarAgora` — para a primeira
  * tentativa não esperar o próximo tique.
  */
-export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoContratante, deps = dependenciasPadrao } = {}) {
+/** Quanto uma passada da outbox pode durar antes de deixar o resto para
+ *  o próximo tique (C1-07). Com endpoints pendurados (10 s cada), 50
+ *  linhas passariam de 8 minutos: o `/api/saude` acusaria a outbox (3 ×
+ *  30 s + 2 min) por culpa do contratante, e todo outro contratante
+ *  esperaria atrás dela. */
+export const ORCAMENTO_DA_PASSADA_DA_OUTBOX_MS = 60_000;
+
+export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoContratante, deps = dependenciasPadrao, orcamentoMs = ORCAMENTO_DA_PASSADA_DA_OUTBOX_MS, relogio = () => Date.now() } = {}) {
   const relatorio = { examinadas: 0, enviadas: 0, falhas: 0, abandonadas: 0 };
+  const inicio = relogio();
   const agora = deps.agora();
 
   const { data, error } = await supabase
@@ -222,7 +230,9 @@ export async function enviarPendentes({ limite = 50, buscarSegredo = segredoDoCo
     .limit(limite);
   if (error) throw error;
 
-  for (const { id, contratante_id: contratanteId } of data ?? []) {
+  const candidatas = data ?? [];
+  for (const [posicao, { id, contratante_id: contratanteId }] of candidatas.entries()) {
+    if (relogio() - inicio >= orcamentoMs) { relatorio.adiadas = candidatas.length - posicao; break; }
     const linha = await reivindicarEnvio(id, agora);
     if (!linha) continue;
     relatorio.examinadas += 1;

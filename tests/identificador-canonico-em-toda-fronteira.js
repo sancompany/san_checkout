@@ -177,7 +177,7 @@ for (const arquivo of readdirSync(join(RAIZ, 'src/routes'))) {
     ok(PARAMETROS_DE_ID.includes(p), `${arquivo}: o parâmetro :${p} está na lista do guarda canônico (senão nasceria sem guarda)`);
   }
   if (parametros.length) {
-    ok(/exigirParametrosCanonicos\(Router\(\)\)/.test(fonte), `${arquivo}: declara :${[...new Set(parametros)].join(', :')} e registra o guarda canônico`);
+    ok(/exigirParametrosCanonicos\((?:Router|roteador)\(\)\)/.test(fonte), `${arquivo}: declara :${[...new Set(parametros)].join(', :')} e registra o guarda canônico`);
   }
 }
 

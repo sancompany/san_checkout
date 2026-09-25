@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
 import { exigirParametrosCanonicos } from '../middlewares/idsCanonicos.js';
 import { exigirAccess } from '../middlewares/exigirAccess.js';
 import {
@@ -26,7 +26,7 @@ import {
 
 // Todo `:id` de rota passa pelo contrato canônico antes de qualquer handler
 // (SEC-001, `middlewares/idsCanonicos.js`).
-const router = exigirParametrosCanonicos(Router());
+const router = exigirParametrosCanonicos(roteador());
 
 /* A PRIMEIRA camada, antes de tudo — inclusive do login (SEC-015,
    25/09/2026): sem o JWT do Cloudflare Access, nenhuma rota daqui

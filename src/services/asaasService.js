@@ -604,7 +604,8 @@ export async function listarPagamentosPorReferenciaExterna(referenciaExterna) {
 /** Status atual de uma cobrança. */
 export async function consultarStatus(chargeId) {
   const cobranca = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
-  return { status: cobranca.status };
+  // `valor` e `installment` para quem confirma pelo status conferir o valor também (C1-10).
+  return { status: cobranca.status, valor: cobranca.value ?? null, installment: cobranca.installment ?? null };
 }
 
 /**

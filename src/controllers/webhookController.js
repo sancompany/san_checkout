@@ -246,7 +246,7 @@ async function listarCandidatasADivergencia() {
   for (const { charge_id: chargeId } of await listarCobrancasParadas()) {
     if (!porCharge.has(chargeId)) porCharge.set(chargeId, { chargeId, linhasDaInbox: [] });
   }
-  return [...porCharge.values()].slice(0, 20);
+  return [...porCharge.values()];
 }
 
 /* ------------------------------------------------------------------
@@ -619,7 +619,18 @@ async function processarLinhaDaInbox(linha, corpo, deps) {
  * Fábrica para o autoteste injetar dependências (o Express chama o
  * handler com `(req, res, next)`). ⚠️ Também não valida origem.
  */
-export function criarReceptorWebhook(deps = dependenciasPadrao) {
+/** Teto do processamento INLINE antes do 200 (C1-06). Desde SEC-007 o
+ *  processamento pergunta à Asaas (até 20 s por chamada, às vezes mais de
+ *  uma); com a Asaas lenta, a resposta levaria dezenas de segundos — e
+ *  resposta lenta a Asaas conta como falha, 15 seguidas PAUSAM a fila da
+ *  conta inteira (`CONSTRAINTS.md` §2.7.1), parando a confirmação de
+ *  todos os pagamentos. Passado o teto, responde 200 e o processamento
+ *  termina em segundo plano: o evento já está na inbox, a linha já está
+ *  reivindicada, e a ordem por cobrança é garantida pela máquina de
+ *  estados, não pela pressa. */
+export const TETO_DE_RESPOSTA_DO_WEBHOOK_MS = 8000;
+
+export function criarReceptorWebhook(deps = dependenciasPadrao, { tetoDeRespostaMs = TETO_DE_RESPOSTA_DO_WEBHOOK_MS } = {}) {
   return async function receberWebhookAsaas(requisicao, resposta) {
     const corpo = requisicao.body;
     const evento = corpo?.event;
@@ -663,13 +674,33 @@ export function criarReceptorWebhook(deps = dependenciasPadrao) {
 
     /* 3. PROCESSAR a partir da linha, inline. Inline, e não depois do
        200, para preservar a ordem que a Asaas garante em `SEQUENTIALLY`
-       (ela só manda o próximo depois do nosso 200). A resposta continua
-       rápida: o que é lento (rede para o contratante) está na outbox. */
+       (ela só manda o próximo depois do nosso 200). O que é lento (rede
+       para o contratante) está na outbox; a conferência na Asaas
+       (SEC-007) tem teto — passado `tetoDeRespostaMs`, o 200 sai e o
+       processamento termina em segundo plano (C1-06). */
     let desfecho = { resultado: 'erro', detalhe: 'não reivindicada' };
     const linha = await deps.inbox.reivindicarProcessamento(registro.id).catch(() => null);
-    if (linha) desfecho = await processarLinhaDaInbox(linha, corpo, deps);
-
-    auditar(deps, { evento, rota, resultado: desfecho.resultado, detalhe: desfecho.detalhe, referencia, campos, statusMapeado: mapearStatusPayment(evento) });
+    if (linha) {
+      const auditarDesfecho = (d) => auditar(deps, { evento, rota, resultado: d.resultado, detalhe: d.detalhe, referencia, campos, statusMapeado: mapearStatusPayment(evento) });
+      /* A promessa tem dono do começo ao fim: se passar do teto, é ela
+         quem audita quando terminar; se lançar (o banco recusando
+         `marcarFalha`), a linha fica `processando` e o arrendamento da
+         inbox a devolve ao worker. */
+      const processamento = processarLinhaDaInbox(linha, corpo, deps)
+        .catch((erro) => ({ resultado: 'erro', detalhe: `falha ao registrar o desfecho: ${erro.message}` }));
+      let temporizador;
+      const teto = new Promise((ok) => { temporizador = setTimeout(() => ok(null), tetoDeRespostaMs); temporizador.unref?.(); });
+      const noPrazo = await Promise.race([processamento, teto]);
+      clearTimeout(temporizador);
+      if (noPrazo) {
+        auditarDesfecho(noPrazo);
+      } else {
+        console.warn(`[webhook/asaas] processamento de ${evento} passou de ${tetoDeRespostaMs} ms — respondendo 200 e terminando em segundo plano`);
+        void processamento.then(auditarDesfecho);
+      }
+    } else {
+      auditar(deps, { evento, rota, resultado: desfecho.resultado, detalhe: desfecho.detalhe, referencia, campos, statusMapeado: mapearStatusPayment(evento) });
+    }
 
     /* 4. 200 — o evento está guardado; se o processamento falhou, a
        inbox e o worker cuidam. Nunca mais "erro vira 200 e some". */
@@ -693,15 +724,26 @@ function auditar(deps, { evento, rota, resultado, detalhe, referencia, campos, s
 
 export const receberWebhookAsaas = criarReceptorWebhook();
 
+/** Quanto uma passada da inbox pode durar antes de deixar o resto para o
+ *  próximo tique (C1-07): bem abaixo do atraso que o `/api/saude` acusa
+ *  (3 × 60 s + 2 min). */
+export const ORCAMENTO_DA_PASSADA_DA_INBOX_MS = 120_000;
+
 /**
  * O WORKER da inbox — uma passada. Lê as linhas com tentativa vencida
  * (em ordem de recebimento), reivindica e reprocessa a partir do corpo
  * mínimo. Chamado pelo `setInterval` em `server.js` e pelo autoteste.
  */
-export async function reprocessarInbox(deps = dependenciasPadrao) {
+export async function reprocessarInbox(deps = dependenciasPadrao, { orcamentoMs = ORCAMENTO_DA_PASSADA_DA_INBOX_MS, relogio = () => Date.now() } = {}) {
   const relatorio = { examinadas: 0, processadas: 0, falhas: 0 };
   const pendentes = await deps.inbox.listarParaReprocessar();
+  const inicio = relogio();
   for (const candidata of pendentes) {
+    /* Orçamento da passada (C1-07): com a Asaas lenta, 50 linhas × 20 s
+       passariam do limite de atraso do `/api/saude` — 503 por culpa de
+       terceiro — e seguravam a passada seguinte. O que sobra fica para o
+       próximo tique, na mesma ordem. */
+    if (relogio() - inicio >= orcamentoMs) { relatorio.adiadas = pendentes.length - relatorio.examinadas; break; }
     const linha = await deps.inbox.reivindicarProcessamento(candidata.id).catch(() => null);
     if (!linha) continue;
     relatorio.examinadas += 1;
@@ -737,16 +779,29 @@ const EVENTO_QUE_LEVA_A = {
   pendente: 'PAYMENT_RECEIVED_IN_CASH_UNDONE'
 };
 
-export async function reconciliarDivergenciasUmaVez(deps = dependenciasPadrao) {
+/** A cobrança que a reconciliação não conseguiu resolver sai da frente
+ *  por um tempo (C1-11): a lista vem em ordem fixa (a mais antiga
+ *  primeiro), e vinte sem solução — charge de outra conta, sem caminho
+ *  permitido, Asaas sem estado — tomavam o lote de toda passada por até
+ *  14 dias, com as resolvíveis esperando atrás. Em memória de propósito:
+ *  é só prioridade; reiniciar o processo apenas as traz de volta. */
+const RECONCILIACAO_ADIADAS_ATE = new Map();
+const HORA_MS = 60 * 60_000;
+
+export async function reconciliarDivergenciasUmaVez(deps = dependenciasPadrao, { adiadasAte = RECONCILIACAO_ADIADAS_ATE, agora = () => Date.now(), lote = 20, adiarPorMs = HORA_MS } = {}) {
   const relatorio = { examinadas: 0, corrigidas: 0, iguais: 0, semCaminho: 0, falhas: 0 };
-  const candidatas = await deps.listarCandidatasADivergencia();
+  const agoraMs = agora();
+  const candidatas = (await deps.listarCandidatasADivergencia())
+    .filter(({ chargeId }) => !(adiadasAte.get(chargeId) > agoraMs))
+    .slice(0, lote);
+  const adiar = (chargeId) => adiadasAte.set(chargeId, agoraMs + adiarPorMs);
   for (const { chargeId, linhasDaInbox = [] } of candidatas) {
     relatorio.examinadas += 1;
     try {
       const cobranca = await deps.buscarCobranca(chargeId);
-      if (!cobranca) continue; // charge que não é nosso: o alerta do evento já existe
+      if (!cobranca) { adiar(chargeId); continue; } // charge que não é nosso: o alerta do evento já existe
       const naAsaas = await deps.estadoNaAsaas(chargeId, { alvo: null, comEstornos: true });
-      if (!naAsaas?.existe || !naAsaas.estado) continue; // sem verdade para seguir: fica para um humano
+      if (!naAsaas?.existe || !naAsaas.estado) { adiar(chargeId); continue; } // sem verdade para seguir: fica para um humano
       /* Mesmo estado, mais dinheiro devolvido: um SEGUNDO estorno parcial
          cujo evento se perdeu. O status não muda — o acumulado muda, e é
          ele que o contratante precisa ouvir. */
@@ -759,6 +814,7 @@ export async function reconciliarDivergenciasUmaVez(deps = dependenciasPadrao) {
         const caminho = caminhoDeTransicoes(cobranca.status, naAsaas.estado);
         if (!caminho) {
           relatorio.semCaminho += 1;
+          adiar(chargeId);
           await deps.registrarErro(
             new Error(`reconciliação: ${chargeId} está "${cobranca.status}" aqui e "${naAsaas.estado}" na Asaas, e não há transição permitida entre os dois — conferir à mão`),
             { contexto: 'webhookController.reconciliarDivergencias', rota: 'worker/reconciliacao', metodo: 'WORKER' }
@@ -773,8 +829,10 @@ export async function reconciliarDivergenciasUmaVez(deps = dependenciasPadrao) {
         relatorio.iguais += 1;
       }
       if (linhasDaInbox.length) await deps.inbox.marcarReconciladas(linhasDaInbox);
+      adiadasAte.delete(chargeId);
     } catch (erro) {
       relatorio.falhas += 1;
+      adiar(chargeId);
       console.error(`[reconciliacao] ${chargeId}:`, erro.message);
     }
   }
@@ -842,9 +900,15 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
      (`CONSTRAINTS.md` §2.4) e o evento real nunca foi medido — risco
      aceito, registrado no relatório da Estação 6. */
   if (evento === ATIVOU) {
-    if (cobranca.status !== 'pendente') return;
-    const ativou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: 'pendente', para: 'confirmado', ocorridoEm });
-    if (!ativou) return;
+    /* Já `confirmado`: pode ser a refeitura de uma passagem que gravou a
+       transição e morreu antes da assinatura ou do aviso (C1-09). Os dois
+       são idempotentes — `upsert`, e a chave do fato na outbox — e são
+       refeitos; o que a CAS impede é o `pendente → confirmado` duas vezes. */
+    if (cobranca.status !== 'pendente' && cobranca.status !== 'confirmado') return;
+    if (cobranca.status === 'pendente') {
+      const ativou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: 'pendente', para: 'confirmado', ocorridoEm });
+      if (!ativou) return;
+    }
     await deps.upsertAssinatura({
       id: autorizacaoId,
       contratanteId: cobranca.contratante_id,
@@ -858,9 +922,12 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
   }
 
   if (ENCERROU.includes(evento)) {
-    if (cobranca.status !== 'pendente' && cobranca.status !== 'confirmado') return;
-    const encerrou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: cobranca.status, para: 'cancelado', ocorridoEm });
-    if (!encerrou) return;
+    // Já `cancelado`: refeitura de um aviso que não chegou a ser enfileirado (C1-09) — a chave do fato deduplica.
+    if (!['pendente', 'confirmado', 'cancelado'].includes(cobranca.status)) return;
+    if (cobranca.status !== 'cancelado') {
+      const encerrou = await deps.aplicarTransicaoPorCheckoutId(autorizacaoId, { de: cobranca.status, para: 'cancelado', ocorridoEm });
+      if (!encerrou) return;
+    }
     return notificarAssinatura(cobranca, { evento: 'cancelada', assinaturaId: autorizacaoId, chargeId: null, statusFinanceiro: 'cancelado', ocorridoEm }, deps);
   }
 }
@@ -905,7 +972,15 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
      Divergir é banco corrompido ou vínculo trocado: nada se aplica. */
   if (cobranca) {
     const ref = payment?.externalReference;
-    if (cobranca.id && typeof ref === 'string' && /^reserva-[0-9a-f-]{36}$/i.test(ref) && ref !== `reserva-${cobranca.id}`) {
+    /* Ciclo de assinatura já amarrado: TODO ciclo leva a referência da
+       1ª reserva (a da assinatura), e a linha do ciclo 2+ tem id próprio.
+       Ali quem identifica é a ASSINATURA — comparar a referência lançava
+       para sempre a partir do 2º ciclo (C1-02). */
+    const cicloAmarrado = Boolean(cobranca.asaas_subscription_id && payment?.subscription);
+    if (cicloAmarrado && payment.subscription !== cobranca.asaas_subscription_id) {
+      throw new Error(`vínculo inconsistente: ${chargeId} está na linha da assinatura ${cobranca.asaas_subscription_id}, mas a Asaas diz ${payment.subscription}; conferir`);
+    }
+    if (!cicloAmarrado && cobranca.id && typeof ref === 'string' && /^reserva-[0-9a-f-]{36}$/i.test(ref) && ref !== `reserva-${cobranca.id}`) {
       throw new Error(`vínculo inconsistente: ${chargeId} está na linha ${cobranca.id}, mas a Asaas diz referência ${ref}; conferir`);
     }
     if (cobranca.asaas_checkout_id && payment?.checkoutSession && payment.checkoutSession !== cobranca.asaas_checkout_id) {
@@ -1060,11 +1135,19 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     statusGravado === 'confirmado'
     && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
     && payment?.subscription
-    && !(await deps.buscarAssinaturaPorId(payment.subscription))
   ) {
-    await amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps);
-    cobranca = { ...cobranca, asaas_subscription_id: payment.subscription };
-    primeiraConfirmacaoDaAssinatura = true;
+    if (!(await deps.buscarAssinaturaPorId(payment.subscription))) {
+      await amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps);
+      cobranca = { ...cobranca, asaas_subscription_id: payment.subscription };
+      primeiraConfirmacaoDaAssinatura = true;
+    } else {
+      /* C1-03: a nova já está gravada — mas a refeitura que chega aqui
+         pode ser a de uma passagem que morreu ENTRE gravar a nova e
+         cancelar a antiga. Pular isto deixava as duas cobrando. O
+         encerramento é idempotente (a antiga já cancelada não recebe
+         outro DELETE), e só a linha da renovação tem a antiga. */
+      await encerrarAssinaturaSubstituida(cobranca, payment.subscription, deps);
+    }
   }
 
   /* SEC-011: o PRIMEIRO ciclo de uma assinatura nova falhou (cartão
@@ -1917,6 +2000,16 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
   assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0, 'refeitura: a assinatura antiga que já está cancelada não recebe um segundo DELETE');
+  // C1-03: a refeitura depois de a NOVA já estar gravada (crash ou falha entre o upsert e
+  // o cancelamento da antiga) ainda cancela a antiga — o portão "a nova não existe" pulava
+  // tudo, e o pagador ficava com as duas assinaturas cobrando.
+  deps = depsFalsas({
+    buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real', substitui_assinatura_id: 'sub_velha' },
+    buscarAssinaturaPorId: (id) => ({ id, status: 'ativa' })
+  });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
+  assert.deepEqual(deps.chamou('cancelarAssinaturaNaAsaas').map((c) => c.args[0]), ['sub_velha'], 'C1-03: a refeitura com a nova já gravada cancela a antiga que ainda está ativa');
+  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'e não reescreve a nova, que já existe');
   // um evento NÃO-confirmado chegando primeiro vincula o charge, mas NÃO ativa nem cancela nada
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga' } });
   await processarWebhook({ event: 'PAYMENT_AWAITING_RISK_ANALYSIS', payment: { id: 'pay_risco', subscription: 'sub_nova', checkoutSession: 'chk_real' } }, deps);
@@ -2114,6 +2207,49 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(a.auditoria.resultado, 'tratado');
   assert.equal(a.auditoria.rota, 'payment');
   assert.equal(a.auditoria.referenciaId, 'pay_1');
+
+  // C1-11: as que a reconciliação não resolve saem da frente — as outras chegam a ser vistas
+  {
+    const lista = Array.from({ length: 25 }, (_, i) => ({ chargeId: `pay_r${i}`, linhasDaInbox: [] }));
+    const vistas = [];
+    const espiao = depsFalsas({ listarCandidatasADivergencia: () => lista, buscarCobranca: (id) => { vistas.push(id); return null; } });
+    const memoria = new Map();
+    let t = 0;
+    await reconciliarDivergenciasUmaVez(espiao, { adiadasAte: memoria, agora: () => t, lote: 20 });
+    await reconciliarDivergenciasUmaVez(espiao, { adiadasAte: memoria, agora: () => t, lote: 20 });
+    assert.equal(new Set(vistas).size, 25, 'C1-11: em duas passadas, TODAS as 25 candidatas foram examinadas (antes, as mesmas 20 sempre)');
+    t = 2 * 60 * 60_000;
+    vistas.length = 0;
+    await reconciliarDivergenciasUmaVez(espiao, { adiadasAte: memoria, agora: () => t, lote: 20 });
+    assert.equal(vistas.length, 20, 'e passado o adiamento, as adiadas voltam a ser examinadas');
+  }
+
+  // C1-07: a passada da inbox tem orçamento — o que sobra fica para o próximo tique
+  {
+    let t = 0;
+    const lidas = [];
+    const espiao = depsFalsas({ buscarCobranca: cobrancaPix, inbox: { ...inboxOk, listarParaReprocessar: () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }], reivindicarProcessamento: (id) => { lidas.push(id); t += 70_000; return { id, tentativas: 0, corpo_minimo: { id: `evt_${id}`, event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } } }; } } });
+    const r = await reprocessarInbox(espiao, { orcamentoMs: 120_000, relogio: () => t });
+    assert.deepEqual(lidas, ['a', 'b'], 'C1-07: passado o orçamento, a passada para de reivindicar');
+    assert.equal(r.adiadas, 1, 'e diz quantas ficaram para o próximo tique');
+  }
+
+  // C1-06: a Asaas lenta não segura a resposta além do teto — e o processamento termina mesmo assim
+  {
+    const espiao = depsFalsas({ buscarCobranca: cobrancaPix, inbox: inboxOk, estadoNaAsaas: () => new Promise((ok) => setTimeout(() => ok({ existe: true, pagamento: { id: 'pay_1', status: 'RECEIVED', value: cobrancaPix.valor_cobrado }, estado: 'confirmado', valorEstornado: null }), 300)) });
+    const receptor = criarReceptorWebhook(espiao, { tetoDeRespostaMs: 50 });
+    const res = { _status: null, status(c) { this._status = c; return this; }, json() { return this; } };
+    const avisoOriginal = console.warn; const logOriginal = console.log; console.warn = () => {}; console.log = () => {};
+    const inicio = Date.now();
+    try { await receptor({ body: { id: 'evt_lento', event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_1' } }, get: () => undefined, ip: '203.0.113.7' }, res); } finally { console.warn = avisoOriginal; console.log = logOriginal; }
+    const levou = Date.now() - inicio;
+    assert.equal(res._status, 200, 'C1-06: responde 200 mesmo com a Asaas lenta');
+    assert.ok(levou < 250, `C1-06: e responde no teto, não quando a Asaas responde (${levou} ms)`);
+    assert.equal(espiao.chamou('inbox.marcarProcessado').length, 0, 'controle: no momento do 200 o processamento ainda não terminou');
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(espiao.chamou('inbox.marcarProcessado').length, 1, `C1-06: o processamento em segundo plano termina e marca a linha (falhas: ${JSON.stringify(espiao.chamou('inbox.marcarFalha').map((c) => c.args[2]))})`);
+    assert.equal(espiao.chamou('registrarAuditoria').at(-1)?.args[0].resultado, 'tratado', 'e a auditoria registra o desfecho real, quando ele chega');
+  }
 
   // C-01: erro no processamento → 200 (está guardado) + linha `falhou` + auditoria `erro`
   a = await receber({ id: 'evt_2', event: 'CHECKOUT_PAID', checkout: { id: 'chk_erro' } }, { buscarCobrancaPorCheckoutId: () => { throw new Error('banco fora do ar'); }, inbox: inboxOk });

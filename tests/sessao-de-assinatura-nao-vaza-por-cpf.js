@@ -130,4 +130,34 @@ const banco = JSON.parse(readFileSync(arquivo, 'utf8')).tabelas;
 const vivas = banco.cobrancas.filter((c) => c.status === 'pendente');
 igual(vivas.length, 1, 'uma reserva viva só, do começo ao fim');
 
+/* ---- C1-05 (ciclo adversarial 1): a corrida entre substituir e reservar de novo ----
+   Depois de cancelar a sessão alheia, a função reserva de novo. Se no
+   meio disso OUTRA pessoa (a vítima voltando) abriu a sessão dela, a
+   segunda reserva a encontra — e a primeira versão a devolvia como
+   `reaproveitada` sem perguntar de quem era. */
+{
+  process.env.SUPABASE_URL ??= 'http://127.0.0.1:0'; process.env.SUPABASE_SERVICE_KEY ??= 'teste';
+  process.env.ASAAS_API_KEY ??= 'chave-de-teste'; process.env.ASAAS_AMBIENTE ??= 'sandbox';
+  const { abrirSessaoComReserva, sessaoDaAssinaturaServe } = await import('../src/controllers/asaasCheckoutController.js');
+  const daVitima = (id) => ({ id: `r_${id}`, asaas_checkout_id: id, email: VITIMA.email, telefone: VITIMA.telefone, valor_cobrado: 50, ciclo: 'MONTHLY', sessao_concluida_em: null, obsoleta_desde: null });
+  const respostas = [{ reservada: false, existente: daVitima('chk_antiga') }, { reservada: false, existente: daVitima('chk_nova_da_vitima') }];
+  const deps = {
+    reservarCobrancaPopup: async () => respostas.shift(),
+    cancelarSessaoDeCheckout: async () => ({ status: 'CANCELED' }),
+    aplicarTransicaoPorCheckoutId: async () => true,
+    liberarReservaCobranca: async () => true,
+    foiRecusaLimpaDaAsaas: () => false,
+    registrarErro: async () => {}
+  };
+  const pedido = { valor: 50, ciclo: 'MONTHLY', email: ATACANTE.email, telefone: ATACANTE.telefone };
+  const r = await abrirSessaoComReserva({
+    reserva: {}, contexto: 'assinatura',
+    criarSessao: async () => { throw new Error('não devia criar'); }, completar: async () => {},
+    sessaoServe: (e) => sessaoDaAssinaturaServe(e, pedido),
+    doMesmoPagador: (e) => sessaoDaAssinaturaServe(e, pedido)
+  }, deps);
+  ok(r.asaasCheckoutId !== 'chk_nova_da_vitima', `C1-05: a sessão que a vítima abriu durante a substituição não sai para quem pediu (veio ${r.tipo}/${r.asaasCheckoutId})`);
+  igual(r.tipo, 'em_andamento', 'quem pediu recebe "em andamento", sem id');
+}
+
 console.log(`sessao-de-assinatura-nao-vaza-por-cpf: ${checagens} checagens OK`);

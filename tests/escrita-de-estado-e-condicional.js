@@ -94,6 +94,13 @@ const consultar = `
   ok(Boolean(banco.cobrancas[0].confirmado_em), 'com o carimbo de confirmação');
 }
 
+/* ── C1-10: a conciliação pela tela tem o mesmo binding de valor do webhook ── */
+{
+  const { saida, banco } = await rodar({ tabelas: { cobrancas: [linha({ valor_cobrado: 60, valor_cheio: 60 })] }, codigo: asaas(false) + consultar });
+  igual(banco.cobrancas[0].status, 'pendente', 'C1-10: pago na Asaas por 50 e cobrado aqui por 60 — a consulta NÃO confirma sozinha');
+  igual(saida.status, 'pendente', 'e a tela não diz "pago"');
+}
+
 /* ── SEC-022: o estorno que chegou no meio NÃO é apagado ────────────── */
 {
   const { saida, banco } = await rodar({ tabelas: { cobrancas: [linha()] }, codigo: asaas(true) + consultar });
@@ -152,6 +159,87 @@ const consultar = `
   const criadas = (banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'criada');
   igual(criadas.length, 1, 'SEC-020: a reentrega do mesmo ACTIVATED não repete o aviso `criada` ao contratante');
   igual((banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'cancelada').length, 0, 'e o CANCELLED sobre um estorno não avisa `cancelada`');
+}
+
+/* ── C1-09: a refeitura depois de a transição já ter sido gravada ──────
+   A passagem que gravou `pendente → confirmado` e morreu antes de criar a
+   assinatura e o aviso deixava a linha `confirmado` e mais nada: a
+   refeitura via "não está pendente" e saía. */
+{
+  const autorizacao = (id, status) => ({ ...linha({ id, metodo_pagamento: 'assinatura_pix', status, charge_id: null, asaas_checkout_id: id, plano_id: 'plano_pro', documento: '11144477735', ciclo: 'MONTHLY' }) });
+  const ev = (id, tipo, n) => ({ id: `evt_${id}_${n}`, event: tipo, dateCreated: '2026-09-25 10:00:00', authorization: { id } });
+  const { saida, banco } = await rodar({
+    tabelas: { cobrancas: [autorizacao('aut_meio_ativada', 'confirmado'), autorizacao('aut_meio_encerrada', 'cancelado')] },
+    codigo: `
+      globalThis.fetch = async () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+      const wc = await import('./src/controllers/webhookController.js');
+      const r = [];
+      for (const corpo of ${JSON.stringify([
+        ev('aut_meio_ativada', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED', 1),
+        ev('aut_meio_ativada', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED', 2),
+        ev('aut_meio_encerrada', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED', 1)
+      ])}) {
+        const res = { _s: null, status(c) { this._s = c; return this; }, json() { return this; } };
+        await wc.receberWebhookAsaas({ body: corpo, get: () => undefined, ip: '52.67.12.206' }, res);
+        r.push(res._s);
+      }
+      await new Promise((x) => setTimeout(x, 200));
+      console.log(JSON.stringify(r));
+    `
+  });
+  ok(saida.every((x) => x === 200), 'o receptor aceitou os três');
+  ok((banco.assinaturas ?? []).some((a) => a.id === 'aut_meio_ativada'), 'C1-09: a refeitura sobre `confirmado` cria a assinatura que ficou faltando');
+  igual((banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'criada').length, 1, 'C1-09: e manda o `criada` — uma vez só, mesmo com duas entregas');
+  igual((banco.outbox_notificacoes ?? []).filter((o) => o.evento === 'cancelada').length, 1, 'C1-09: o encerramento que não chegou a avisar avisa na refeitura');
+  igual(Object.fromEntries(banco.cobrancas.map((c) => [c.id, c.status])), { aut_meio_ativada: 'confirmado', aut_meio_encerrada: 'cancelado' }, 'e nenhum status se move');
+}
+
+/* ---- C1-08: a guarda do estorno, na função REAL contra o banco falso ----
+   "Só grava sobre status estornável, e o valor estornado só sobe" (SEC-022)
+   era provada numa CÓPIA escrita à mão da função — e o banco falso nem
+   poderia prová-la: comparava `lt` como texto. */
+{
+  const { saida, banco } = await rodar({
+    tabelas: { cobrancas: [
+      linha({ id: 'e-sobe', charge_id: 'pay_sobe', status: 'estornado_parcialmente', valor_estornado: 5 }),
+      linha({ id: 'e-desce', charge_id: 'pay_desce', status: 'estornado_parcialmente', valor_estornado: 30 }),
+      linha({ id: 'e-nulo', charge_id: 'pay_nulo', status: 'confirmado', valor_estornado: null }),
+      linha({ id: 'e-pendente', charge_id: 'pay_pend', status: 'pendente', valor_estornado: null })
+    ] },
+    codigo: `
+      const { registrarEstorno } = await import('./src/services/cobrancaService.js');
+      const r = {};
+      r.sobe = await registrarEstorno('pay_sobe', { status: 'estornado_parcialmente', valorEstornado: 30 });
+      r.desce = await registrarEstorno('pay_desce', { status: 'estornado_parcialmente', valorEstornado: 5 });
+      r.nulo = await registrarEstorno('pay_nulo', { status: 'estornado_parcialmente', valorEstornado: 20 });
+      r.pendente = await registrarEstorno('pay_pend', { status: 'estornado', valorEstornado: 50 });
+      console.log(JSON.stringify(r));
+    `
+  });
+  igual(saida, { sobe: true, desce: false, nulo: true, pendente: false }, 'SEC-022/C1-08: sobe de 5 para 30 grava; de 30 para 5 não; sobre nulo grava; sobre `pendente` nunca');
+  const v = Object.fromEntries(banco.cobrancas.map((c) => [c.id, [c.status, c.valor_estornado]]));
+  igual(v['e-sobe'], ['estornado_parcialmente', 30], 'o valor subiu');
+  igual(v['e-desce'], ['estornado_parcialmente', 30], 'o valor NÃO desceu');
+  igual(v['e-pendente'], ['pendente', null], 'e o não-estornável ficou intocado');
+}
+
+/* ---- C1-12: o banco falso responde como o PostgREST onde isso decide teste ---- */
+{
+  const { saida } = await rodar({
+    tabelas: { cobrancas: [linha({ id: 'f1', charge_id: 'pay_f1', status: 'confirmado' }), linha({ id: 'f2', charge_id: 'pay_f2', status: 'cancelado', pedido_id: 'ped_1' })] },
+    codigo: `
+      const { supabase } = await import('./src/config/supabase.js');
+      const duas = await supabase.from('cobrancas').select('*').eq('pedido_id', 'ped_1').maybeSingle();
+      const naoIn = await supabase.from('cobrancas').select('id').or('status.not.in.(pendente,cancelado)');
+      const dup = await supabase.from('cobrancas').update({ charge_id: 'pay_f1' }).eq('id', 'f2').select('id');
+      const proj = await supabase.from('cobrancas').update({ atualizado_em: 'x' }).eq('id', 'f1').select('id');
+      console.log(JSON.stringify({ duas: duas.error?.code ?? null, naoIn: naoIn.data.map((l) => l.id), dup: dup.error?.code ?? null, proj: proj.data }));
+    `
+  });
+  igual(saida.duas, 'PGRST116', 'maybeSingle com duas linhas é erro, não "a primeira"');
+  igual(saida.naoIn, ['f1'], '`status.not.in.(…)` dentro de .or() é entendido, não lido como coluna `status.not`');
+  igual(saida.dup, '23505', 'o UPDATE também respeita o índice único');
+  igual(saida.proj, [{ id: 'f1' }], "`update().select('id')` devolve só o id");
 }
 
 console.log(`escrita-de-estado-e-condicional: ${checagens} checagens OK`);

@@ -53,14 +53,25 @@ function valorDe(texto) {
   return texto;
 }
 
+/* Ordem como a do Postgres: número com número compara como NÚMERO
+   (`5 < 30`); o resto — datas ISO, texto — como texto. A primeira versão
+   comparava tudo como texto, e `'5' < '30'` é falso: a guarda "o valor
+   estornado só sobe" não podia ser exercitada aqui (C1-08). */
+const numero = (v) => (typeof v === 'number' ? v : typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : null);
+function ordem(a, b) {
+  const [x, y] = [numero(a), numero(b)];
+  if (x !== null && y !== null) return x < y ? -1 : x > y ? 1 : 0;
+  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+}
 function compara(a, op, b) {
+  const presente = a !== null && a !== undefined;
   switch (op) {
     case 'eq': return a === b || String(a) === String(b);
     case 'neq': return !(a === b || String(a) === String(b));
-    case 'lt': return a !== null && a !== undefined && String(a) < String(b);
-    case 'lte': return a !== null && a !== undefined && String(a) <= String(b);
-    case 'gt': return a !== null && a !== undefined && String(a) > String(b);
-    case 'gte': return a !== null && a !== undefined && String(a) >= String(b);
+    case 'lt': return presente && ordem(a, b) < 0;
+    case 'lte': return presente && ordem(a, b) <= 0;
+    case 'gt': return presente && ordem(a, b) > 0;
+    case 'gte': return presente && ordem(a, b) >= 0;
     case 'is': return b === null ? (a === null || a === undefined) : a === b;
     case 'like': return new RegExp('^' + String(b).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$').test(String(a ?? ''));
     default: throw new Error(`operador não suportado: ${op}`);
@@ -91,9 +102,14 @@ function avaliaItem(item, linha) {
     if (atual) itens.push(atual);
     return itens.every((i) => avaliaItem(i, linha));
   }
-  const mi = item.match(/^([\w.]+)\.in\.\((.*)\)$/);
+  /* `coluna.not.<op>.<valor>` nega o resto — a primeira versão lia
+     `status.not.in.(…)` como a coluna `status.not`, que não existe, e
+     avaliava falso calado (C1-12). Coluna é só `\w+`. */
+  const mn = item.match(/^(\w+)\.not\.(.+)$/);
+  if (mn) return !avaliaItem(`${mn[1]}.${mn[2]}`, linha);
+  const mi = item.match(/^(\w+)\.in\.\((.*)\)$/);
   if (mi) return mi[2].split(',').map((v) => valorDe(v.trim())).some((v) => compara(linha[mi[1]], 'eq', v));
-  const mo = item.match(/^([\w.]+)\.(\w+)\.(.*)$/);
+  const mo = item.match(/^(\w+)\.(\w+)\.(.*)$/);
   if (!mo) throw new Error(`filtro or não entendido: ${item}`);
   return compara(linha[mo[1]], mo[2], valorDe(mo[3]));
 }
@@ -105,7 +121,7 @@ class Consulta {
   }
   select(colunas = '*', opcoes = {}) {
     if (this.modo === 'select') { this.colunas = colunas; this.contar = opcoes.count === 'exact'; this.soCabecalho = Boolean(opcoes.head); }
-    else this.retornar = true;
+    else { this.retornar = true; this.colunas = colunas; } // `update().select('id')` devolve só `id`, como no PostgREST
     return this;
   }
   insert(corpo) { this.modo = 'insert'; this.corpo = corpo; return this; }
@@ -189,6 +205,22 @@ class Consulta {
       data = this.retornar ? (this.um ? novas[0] : novas.map((l) => this.projeta(l))) : null;
     } else if (this.modo === 'update') {
       const alvo = linhas.filter(casa);
+      /* Índice único vale no UPDATE também (C1-12): gravar num `charge_id`
+         que outra linha já tem é `23505` no Postgres, e nada é escrito. */
+      for (const l of alvo) {
+        const depois = { ...l, ...this.corpo };
+        for (const indice of UNICAS[this.tabela] ?? []) {
+          const chave = Array.isArray(indice) ? indice : indice.colunas;
+          const onde = Array.isArray(indice) ? () => true : indice.onde;
+          if (!onde(depois) || !chave.every((k) => depois[k] !== undefined && depois[k] !== null)) continue;
+          // Só a violação que ESTE update introduz: chave mexida, ou a linha entrando na condição do índice parcial.
+          const mexeu = chave.some((k) => k in this.corpo && this.corpo[k] !== l[k]) || !onde(l);
+          if (!mexeu) continue;
+          if (linhas.some((o) => o !== l && onde(o) && chave.every((k) => o[k] === depois[k]))) {
+            return { data: null, error: { code: '23505', message: `duplicate key (${chave.join(',')})` }, count: null };
+          }
+        }
+      }
       for (const l of alvo) Object.assign(l, this.corpo);
       data = this.retornar ? alvo.map((l) => this.projeta(l)) : null;
       ({ data, error } = this.moldar(data, error));
@@ -206,8 +238,8 @@ class Consulta {
       if (this.teto != null) sel = sel.slice(0, this.teto);
       if (this.contar) count = sel.length;
       data = this.soCabecalho ? null : sel.map((l) => this.projeta(l));
-      if (this.um === 'maybe') data = data?.[0] ?? null;
-      if (this.um === 'single') { if (!data || data.length !== 1) error = { code: 'PGRST116', message: 'esperava uma linha' }; data = data?.[0] ?? null; }
+      // `maybeSingle` com DUAS linhas é erro no PostgREST, não "a primeira" (C1-12).
+      if (this.um) ({ data, error } = this.moldar(data, error));
     }
     if (this.modo !== 'select') gravar(estado);
     return { data, error, count };

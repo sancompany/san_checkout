@@ -54,7 +54,7 @@ import {
 } from '../services/asaasService.js';
 import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
-import { VERSAO_WEBHOOK } from './webhookController.js';
+import { VERSAO_WEBHOOK, valorDivergenteDaCobranca } from './webhookController.js';
 
 /** Status locais em que ainda faz sentido mostrar como pagar. */
 /* ⚠️ A MESMA lista existe em `services/metricaService.js`, com o nome
@@ -81,9 +81,14 @@ async function statusAtualizado(cobranca) {
   }
 
   try {
-    const { status: statusAsaas } = await consultarStatus(cobranca.charge_id);
+    const { status: statusAsaas, valor, installment } = await consultarStatus(cobranca.charge_id);
     const confirmado = statusAsaas === 'RECEIVED' || statusAsaas === 'CONFIRMED';
     if (!confirmado) return cobranca.status;
+    /* O mesmo binding de valor do webhook (C1-10): o pago com valor
+       diferente do que cobramos não confirma sozinho — lá ele vira
+       divergência com dono; aqui, a tela do comprador não pode passar
+       por cima disso. */
+    if (valorDivergenteDaCobranca(cobranca, { value: valor, installment })) return cobranca.status;
 
     /* Por CAS sobre o status que se LEU (SEC-022, 25/09/2026): um
        estorno ou chargeback que o webhook gravou entre a leitura e esta

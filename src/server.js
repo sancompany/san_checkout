@@ -18,6 +18,7 @@
 
 import 'dotenv/config';
 import express from 'express';
+import { comRejeicaoTratada } from './utils/rotaSegura.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -49,7 +50,11 @@ import { reconciliarEstornosUmaVez } from './services/estornoService.js';
 import { umaPassadaPorVez, workersAtrasados } from './utils/passadas.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
-const app = express();
+/* Todo handler registrado no `app` (e em todo roteador, por `roteador()`)
+   manda o que lançar para o tratador de erro do fim da pilha — o Express 4
+   não observa a promessa de um handler `async`, e a rejeição sem dono
+   derrubaria o processo (C1-01, `src/utils/rotaSegura.js`). */
+const app = comRejeicaoTratada(express());
 const PORTA = process.env.PORT || 3001;
 
 // Atrás do proxy da hospedagem — precisa disso pra x-forwarded-proto (força

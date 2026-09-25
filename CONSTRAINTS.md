@@ -1010,6 +1010,14 @@ Cobrado por `tests/nenhuma-chamada-de-saida-sem-teto.js`, que varre o
 certo desde o começo) e mesmo assim não foi aplicada nos outros dois.
 Memória não escala.
 
+**Desde 25/09/2026, a resposta à Asaas também tem teto** (C1-06). A
+conferência na Asaas antes de mover dinheiro (SEC-007) voltou a pôr uma
+chamada de rede antes do `200`; passado `TETO_DE_RESPOSTA_DO_WEBHOOK_MS`
+(8 s) o receptor responde e termina em segundo plano, com o evento já na
+inbox e a linha já reivindicada. E as passadas dos workers têm orçamento
+(inbox 120 s, outbox 60 s) — o `/api/saude` acusa worker parado, não
+terceiro lento (C1-07).
+
 ## 2.8 `returnUrl`: o destino é do contratante, e não há exceção (Lei 4)
 
 Escrito em 15/09/2026, quando o `returnUrl` passou a ser honrado.

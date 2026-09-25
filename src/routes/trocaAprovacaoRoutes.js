@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
 import { trocaContexto, trocaAprovar } from '../controllers/trocaAprovacaoController.js';
 import { criarLimitadorConsulta } from '../middlewares/limitadores.js';
 
-const router = Router();
+const router = roteador();
 
 // Limitador por ROTA, não por prefixo — mesmo motivo de
 // `checkoutRoutes.js` (pix/boleto): um `app.use('/api/checkout/troca', ...)`

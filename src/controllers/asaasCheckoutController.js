@@ -184,7 +184,13 @@ export async function abrirSessaoComReserva({ reserva, criarSessao, completar, c
     if (r.existente?.sessao_concluida_em && r.existente.asaas_checkout_id) {
       return { tipo: 'em_processamento', asaasCheckoutId: idParaQuemPede(r.existente) };
     }
-    if (r.existente?.asaas_checkout_id) return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
+    if (r.existente?.asaas_checkout_id) {
+      /* Depois de uma substituição, a segunda reserva pode achar a sessão
+         que OUTRA pessoa abriu no intervalo: só volta se ela serve a quem
+         pede, como na primeira passagem (C1-05). */
+      if (sessaoServe && !sessaoServe(r.existente)) return { tipo: 'em_andamento' };
+      return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
+    }
     return { tipo: 'em_andamento' };
   }
 

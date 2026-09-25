@@ -88,6 +88,7 @@ const SUITES = [
   'tests/sessao-de-assinatura-nao-vaza-por-cpf.js', // NEW-02: com o CPF de alguém, a rota pública entregava a sessão pendente dele — preenchida com nome, e-mail, telefone e endereço
   'tests/filtro-or-so-interpola-o-que-o-servidor-fez.js', // CR-01/JX-01: valor de fora num .or() do PostgREST é filtro, não valor — varre src/ inteiro
   'tests/banco-sem-privilegio-publico.js', // CR-09: a chave PÚBLICA do Supabase tinha tudo nas 12 tabelas, TRUNCATE incluído (INFO-13) — varre as migrations
+  'tests/rota-que-lanca-nao-derruba-o-processo.js', // C1-01: handler async do Express 4 que lança derrubava o processo — um JWT com `alg` objeto bastava, sem login
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
   'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)

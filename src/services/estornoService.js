@@ -135,7 +135,7 @@ export function restanteEstornavel(cobranca, operacoes, excetoId = null) {
   const outras = (operacoes ?? []).filter((o) => o.id !== excetoId);
   const confirmadas = outras.filter((o) => o.estado === 'CONFIRMED').reduce((s, o) => s + Number(o.valor_centavos), 0);
   const emVoo = outras.filter((o) => ESTADOS_EM_ABERTO.includes(o.estado)).reduce((s, o) => s + Number(o.valor_centavos), 0);
-  return { restante: cobrado - Math.max(naCobranca, confirmadas) - emVoo, emVoo, cobrado, jaEstornado: Math.max(naCobranca, confirmadas) };
+  return { restante: cobrado - Math.max(naCobranca, confirmadas) - emVoo, emVoo, cobrado, confirmadas, jaEstornado: Math.max(naCobranca, confirmadas) };
 }
 
 function mesmoPedido(op, { cobrancaId, total, valorCentavos }) {
@@ -226,7 +226,15 @@ export async function reconciliarOperacao(op, deps = dependenciasPadrao) {
     return confirmada ?? op;
   }
 
-  if (delta === 0 && idadeMin >= MINUTOS_ATE_PROVAR_AUSENCIA) {
+  /* Ausência só se prova se o que a Asaas estornou ALÉM das nossas
+     operações confirmadas não cobre esta. `valor_estornado` da cobrança
+     não serve de base: o webhook DESTE estorno pode já tê-lo gravado, e
+     aí "Asaas − conhecido" dá zero com o estorno feito — a repetição
+     devolveria o dinheiro duas vezes (C1-04). Cobrindo, fica em aberto e
+     chama um humano (abaixo): travado é melhor que estornado em dobro. */
+  const alemDasConfirmadas = totalNaAsaas - (conhecido?.confirmadas ?? 0);
+  const podeSerEsta = alemDasConfirmadas >= Number(op.valor_centavos);
+  if (delta === 0 && !podeSerEsta && idadeMin >= MINUTOS_ATE_PROVAR_AUSENCIA) {
     return (await deps.transitar(op.id, ESTADOS_EM_ABERTO, {
       estado: 'FAILED_RETRYABLE', chamando_em: null,
       ultimo_erro: `reconciliado: nenhum estorno com o marcador nem valor novo na Asaas depois de ${Math.floor(idadeMin)} min`

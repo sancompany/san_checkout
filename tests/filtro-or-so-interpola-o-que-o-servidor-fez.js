@@ -35,7 +35,11 @@ function interpolacoesSeguras(expr, antes) {
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
     const definicao = new RegExp(`const ${e} = [^;\\n]*toISOString\\(\\)`);
     if (definicao.test(antes)) return 'data do servidor (variável)';
-    if (new RegExp(`exigirIdCanonico\\(${e}\\b`).test(antes)) return 'id canônico';
+    /* O guarda tem de estar NA MESMA função: entre ele e o `.or(` não pode
+       começar outra declaração de função (C1-13 — antes valia qualquer
+       `exigirIdCanonico(x` nas 40 linhas de cima). */
+    const guarda = antes.lastIndexOf(`exigirIdCanonico(${e}`);
+    if (guarda >= 0 && !/\n(?:export )?(?:async )?function |\n\S.*=>\s*\{\s*$/m.test(antes.slice(guarda))) return 'id canônico';
   }
   return null;
 }
@@ -43,9 +47,16 @@ function interpolacoesSeguras(expr, antes) {
 let vistas = 0;
 const origens = {};
 for (const arquivo of arquivosJs(join(RAIZ, 'src'))) {
-  const linhas = readFileSync(arquivo, 'utf8').split('\n');
+  // Comentário de bloco sai, preservando as linhas (a continuação de um `/* … */` não começa com `*`).
+  const linhas = readFileSync(arquivo, 'utf8').replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')).split('\n');
   linhas.forEach((linha, i) => {
     if (/^\s*(\*|\/\/)/.test(linha)) return;
+    /* Toda `.or(` tem de ser literal NA LINHA: texto fixo ('…') ou template
+       fechado (`…`). Variável ou template de várias linhas escaparia desta
+       conferência (C1-13) — e é justamente onde o valor de fora entraria. */
+    if (/\.or\(/.test(linha) && !/\.or\((?:'[^']*'|`[^`]*`)\)/.test(linha) && !/indexOf\('\.or\('/.test(linha)) {
+      ok(false, `${relative(RAIZ, arquivo)}:${i + 1} chama .or() com argumento que esta conferência não lê — use texto fixo ou template numa linha só (C1-13)`);
+    }
     const chamada = linha.match(/\.or\(`([^`]*)`\)/);
     if (!chamada) return;
     const antes = linhas.slice(Math.max(0, i - JANELA), i + 1).join('\n');
@@ -63,5 +74,6 @@ ok(vistas >= 10, `controle: a varredura achou as interpolações de .or() (${vis
 ok(interpolacoesSeguras('pedidoId', 'const x = 1;') === null, 'controle: um id cru, sem guarda, é recusado');
 ok(interpolacoesSeguras('requisicao.query.dias', '') === null, 'controle: entrada de requisição é recusada');
 ok(interpolacoesSeguras('chargeId', "exigirIdCanonico(chargeId, 'chargeId');") === 'id canônico', 'controle: o id guardado passa');
+ok(interpolacoesSeguras('chargeId', "exigirIdCanonico(chargeId, 'x');\n}\n\nexport async function outra(chargeId) {\n  return 1;") === null, 'controle: o guarda de OUTRA função não vale para esta (C1-13)');
 
 console.log(`filtro-or-so-interpola-o-que-o-servidor-fez: ${checagens} checagens OK (${vistas} interpolações: ${Object.entries(origens).map(([k, v]) => `${v} ${k}`).join(', ')})`);

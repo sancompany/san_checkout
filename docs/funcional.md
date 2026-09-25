@@ -1170,6 +1170,40 @@ dele e mais dois minutos, e lista quais em `workersAtrasados`. *Violada:* o
 HTTP era `200` com o worker parado — e o monitor de uptime lê o código, não
 o corpo. *Quem vê:* o operador. SEC-031.
 
+**RN-66 · Nenhuma rota derruba o processo.** Todo handler do Express — do
+`app` e de todo roteador (`src/utils/rotaSegura.js`) — manda o que lançar,
+síncrono ou assíncrono, para o tratador de erro do fim da pilha: `500`
+genérico e linha em `erros`. A guarda do Access recusa (`401`) qualquer
+token que ela não consiga julgar. *Violada:* um JWT com `alg` objeto, sem
+login e antes de todo limitador, lançava dentro de um handler `async`, e o
+tratador de `unhandledRejection` encerrava a única instância — checkout,
+webhook e workers juntos. *Quem vê:* todos. C1-01.
+
+**RN-67 · O webhook responde à Asaas no teto, não quando ela responde.** O
+processamento continua inline (a ordem de `SEQUENTIALLY`), mas passado
+`TETO_DE_RESPOSTA_DO_WEBHOOK_MS` (8 s) o `200` sai e o processamento
+termina em segundo plano, com a linha já na inbox. As passadas da inbox
+(120 s) e da outbox (60 s) têm orçamento: o que sobra fica para o próximo
+tique, na mesma ordem. *Violada:* com a Asaas lenta, a conferência de
+SEC-007 segurava o `200` por dezenas de segundos — 15 seguidas pausam a
+fila da conta inteira; e um contratante pendurado deixava o `/api/saude`
+em `503` por culpa dele. *Quem vê:* todos os contratantes. C1-06, C1-07.
+
+**RN-68 · Ciclo de assinatura é identificado pela assinatura.** Todo ciclo
+leva a referência da 1ª reserva; a conferência de vínculo de um ciclo já
+amarrado compara `payment.subscription` com a linha, não a referência. E a
+renovação refeita depois de a nova já estar gravada ainda encerra a antiga
+(idempotente). *Violada:* do 2º ciclo em diante, todo evento lançava
+"vínculo inconsistente" para sempre — o ciclo recusado e depois pago ficava
+`vencido`; e o crash entre gravar a nova e cancelar a antiga deixava as
+duas cobrando. *Quem vê:* o assinante e o contratante. C1-02, C1-03.
+
+**RN-69 · A tela do comprador não confirma o que o webhook não confirmaria.**
+A conciliação pela consulta de status tem o mesmo binding de valor do
+webhook: pago na Asaas com valor diferente do cobrado não vira
+`confirmado` sozinho. *Violada:* o webhook recusava, e a próxima consulta
+da tela confirmava por cima. *Quem vê:* o comprador e o contratante. C1-10.
+
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
 (índice único: pedido+método, ou plano+documento+método) e só então

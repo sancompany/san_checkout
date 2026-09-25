@@ -37,7 +37,7 @@ function urlDasChaves() {
   return doAmbiente;
 }
 
-export function criarExigirAccess({ buscarChaves = null } = {}) {
+export function criarExigirAccess({ buscarChaves = null, verificar = verificarJwtDoAccess } = {}) {
   let buscador = buscarChaves;
   return async function exigirAccess(requisicao, resposta, proximo) {
     const token = requisicao.get('Cf-Access-Jwt-Assertion');
@@ -52,7 +52,15 @@ export function criarExigirAccess({ buscarChaves = null } = {}) {
       return resposta.status(503).json({ erro: 'Não foi possível conferir o acesso administrativo agora. Tente de novo em instantes.' });
     }
 
-    const veredito = verificarJwtDoAccess(token, { jwks, aud: AUD_DO_PAINEL, equipe: EQUIPE_ACCESS });
+    /* Fecha em vez de lançar: qualquer exceção ao julgar o token (que é
+       texto de quem chamou) é recusa, nunca 500 nem processo no chão
+       (C1-01). */
+    let veredito;
+    try {
+      veredito = verificar(token, { jwks, aud: AUD_DO_PAINEL, equipe: EQUIPE_ACCESS });
+    } catch {
+      veredito = { valido: false, motivo: 'exceção ao conferir' };
+    }
     if (!veredito.valido) {
       // O motivo vai para o log; quem chamou recebe a mesma recusa de sempre.
       console.warn(`[admin/access] JWT recusado (${veredito.motivo}) em ${requisicao.method} ${requisicao.baseUrl}${requisicao.path}`);

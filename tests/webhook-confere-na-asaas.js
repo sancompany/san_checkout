@@ -336,6 +336,37 @@ async function rodar({ tabelas = {}, asaas = {}, passos }) {
   igual(r.porCharge('pay_i').status, 'pendente');
 }
 
+/* ── S11b) CICLO 2+ DE ASSINATURA: a referência é a da 1ª reserva, e isso é certo ──
+   C1-02 (ciclo adversarial 1): a linha do ciclo 2 nasce com id próprio
+   (`registrarCicloAssinatura`), e o pagamento dele na Asaas herda a
+   referência da assinatura — `reserva-<id da 1ª>`. A conferência de
+   vínculo exigia `reserva-<id desta linha>` e lançava para sempre: o
+   ciclo pago ficava `vencido`, o estorno e o chargeback nunca entravam. */
+{
+  const primeira = uuid(113); const ciclo2 = uuid(114);
+  const r = await rodar({
+    tabelas: { cobrancas: [
+      linha({ id: primeira, metodo_pagamento: 'assinatura', status: 'confirmado', charge_id: 'pay_c1', asaas_subscription_id: 'sub_s11b' }),
+      linha({ id: ciclo2, metodo_pagamento: 'assinatura', status: 'vencido', charge_id: 'pay_c2', asaas_subscription_id: 'sub_s11b' })
+    ] },
+    asaas: { 'GET /v3/payments/pay_c2': [naAsaas('RECEIVED', { externalReference: `reserva-${primeira}`, subscription: 'sub_s11b' })] },
+    passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_c2', { subscription: 'sub_s11b', externalReference: `reserva-${primeira}` }) }]
+  });
+  igual(r.erroDoPasso(0), null, `C1-02: o evento do ciclo 2 não é "vínculo inconsistente" só por levar a referência da assinatura (${r.erroDoPasso(0)})`);
+  igual(r.porCharge('pay_c2').status, 'confirmado', 'C1-02: o ciclo 2 recusado e depois pago fica pago');
+  igual(r.porCharge('pay_c1').status, 'confirmado', 'e a 1ª cobrança não é tocada');
+}
+/* ── S11c) ...mas o ciclo que a Asaas diz ser de OUTRA assinatura continua barrado ── */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ id: uuid(115), metodo_pagamento: 'assinatura', status: 'vencido', charge_id: 'pay_c3', asaas_subscription_id: 'sub_nossa' })] },
+    asaas: { 'GET /v3/payments/pay_c3': [naAsaas('RECEIVED', { externalReference: `reserva-${uuid(116)}`, subscription: 'sub_outra' })] },
+    passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_c3', { subscription: 'sub_outra' }) }]
+  });
+  ok(/vínculo inconsistente/.test(r.erroDoPasso(0) ?? ''), `S11c: a linha é da assinatura sub_nossa e a Asaas diz sub_outra — nada se aplica (${r.erroDoPasso(0)})`);
+  igual(r.porCharge('pay_c3').status, 'vencido');
+}
+
 /* ── S12) DOIS pagamentos na Asaas para a mesma reserva ───────────────── */
 {
   const r = await rodar({

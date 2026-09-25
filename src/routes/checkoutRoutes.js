@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { roteador } from '../utils/rotaSegura.js';
 import { exigirParametrosCanonicos } from '../middlewares/idsCanonicos.js';
 import { gerarPix, statusPix, gerarBoleto, statusBoleto } from '../controllers/checkoutController.js';
 import { statusPublico, consultarCobranca } from '../controllers/cobrancaConsultaController.js';
@@ -6,7 +6,7 @@ import { criarLimitadorCriacao, criarLimitadorConsulta } from '../middlewares/li
 
 // Todo `:id` de rota passa pelo contrato canônico antes de qualquer handler
 // (SEC-001, `middlewares/idsCanonicos.js`).
-const router = exigirParametrosCanonicos(Router());
+const router = exigirParametrosCanonicos(roteador());
 
 // Limitador por ROTA, não por prefixo: `/pix` e `/boleto` têm uma rota
 // de criação (10/min, força bruta) e uma de polling (o front reconsulta

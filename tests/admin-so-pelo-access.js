@@ -178,6 +178,18 @@ try {
   igual([res._s, passou], [503, false], 'sem as chaves do Access, 503 — "não consegui conferir" nunca vira acesso');
 }
 
+/* ---- C1-01: exceção ao conferir o token é recusa, não 500 nem queda ---- */
+{
+  const exigir = criarExigirAccess({ buscarChaves: async () => ({ keys: [] }), verificar: () => { throw new TypeError('Cannot convert object to primitive value'); } });
+  const res = { _s: null, _j: null, status(c) { this._s = c; return this; }, json(o) { this._j = o; return this; } };
+  let passou = false;
+  const avisoOriginal = console.warn; console.warn = () => {};
+  try {
+    await exigir({ get: () => access.jwt(), method: 'GET', baseUrl: '/api/admin', path: '/x' }, res, () => { passou = true; });
+  } finally { console.warn = avisoOriginal; }
+  igual([res._s, res._j?.acessoRestrito, passou], [401, true, false], 'C1-01: se conferir o JWT lançar, a guarda recusa (401) — nunca deixa passar, nunca lança');
+}
+
 /* ---- a URL das chaves não troca para fora do loopback ----
    Com `CF_ACCESS_CERTS_URL` num https qualquer, quem controlasse aquele
    servidor assinaria os próprios JWTs. Só o servidor local das suítes. */
