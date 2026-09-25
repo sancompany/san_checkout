@@ -331,4 +331,94 @@ const consultar = `
   igual(saida.chargesDepois, ['pay_f1', 'pay_f2'], 'e nenhuma das duas foi gravada');
 }
 
+/* ---- CP3: o filtro de CADA escrita condicional, isolado, na função real ----
+   Achado da passada CP3 por sabotagem: tirar o `.eq('status', …)` (ou o
+   `.eq('mutation_version', …)`) destes escritores deixava a suíte inteira
+   verde. As guardas de cima (quem chama lê antes, o webhook confere na
+   Asaas) escondiam a falta — mas a leitura e a escrita não são atômicas,
+   e o filtro da escrita é a ÚNICA coisa que decide a corrida. Aqui cada
+   escritor recebe exatamente a linha que "mudou entre ler e gravar", ao
+   lado de um controle que tem de passar, para o teste não aprovar um
+   escritor que simplesmente nunca grava. */
+{
+  const futuro = new Date(Date.now() + 3600_000).toISOString();
+  const passado = new Date(Date.now() - 3600_000).toISOString();
+  const intencao = (id, status, expira_em = futuro) => ({ id, assinatura_id: `sub-${id}`, status, expira_em, charge_id: null, tentativas_sweeper: 0 });
+  const { saida, banco } = await rodar({
+    tabelas: {
+      cobrancas: [
+        linha({ id: 'chk-pend', pedido_id: 'ped_chk_1', metodo_pagamento: 'cartao_credito', charge_id: null, asaas_checkout_id: 'chk_pend', status: 'pendente' }),
+        linha({ id: 'chk-est', pedido_id: 'ped_chk_2', metodo_pagamento: 'cartao_credito', charge_id: null, asaas_checkout_id: 'chk_est', status: 'estornado' })
+      ],
+      intencoes_troca_plano: [
+        intencao('ti-pendente', 'PENDING_APPROVAL'),
+        intencao('ti-concluida', 'COMPLETED'),
+        intencao('ti-vencida', 'PENDING_APPROVAL', passado),
+        intencao('ti-desconhecida', 'PAYMENT_UNKNOWN'),
+        intencao('ti-recusada', 'PAYMENT_DECLINED'),
+        intencao('ti-pendente-2', 'PENDING_APPROVAL'),
+        intencao('ti-processando', 'PROCESSING_PAYMENT')
+      ],
+      assinaturas: [{ id: 'as-v3', contratante_id: 'loja', plano_id: 'plano_a', documento: '11144477735', status: 'ativa', valor: 50, ciclo: 'MONTHLY', mutation_version: 3 }],
+      webhook_inbox: [
+        { id: 'in-falhou', impressao_digital: 'd1', status: 'falhou', ultimo_erro: 'esgotado', proxima_tentativa_em: null },
+        { id: 'in-processando', impressao_digital: 'd2', status: 'processando', ultimo_erro: null, proxima_tentativa_em: futuro },
+        { id: 'in-recebido', impressao_digital: 'd3', status: 'recebido', ultimo_erro: null, proxima_tentativa_em: futuro }
+      ]
+    },
+    codigo: `
+      const cs = await import('./src/services/cobrancaService.js');
+      const ti = await import('./src/services/trocaIntencaoService.js');
+      const as = await import('./src/services/assinaturaService.js');
+      const inbox = await import('./src/services/webhookInboxService.js');
+      const id = (l) => (l ? l.id : null);
+      const r = {};
+      r.chkControle = await cs.aplicarTransicaoPorCheckoutId('chk_pend', { de: 'pendente', para: 'confirmado' });
+      r.chkEstornado = await cs.aplicarTransicaoPorCheckoutId('chk_est', { de: 'pendente', para: 'confirmado' });
+      r.reivControle = id(await ti.reivindicarProcessamento('ti-pendente'));
+      r.reivConcluida = id(await ti.reivindicarProcessamento('ti-concluida'));
+      r.reivVencida = id(await ti.reivindicarProcessamento('ti-vencida'));
+      r.confControle = id(await ti.marcarConfirmada('ti-desconhecida'));
+      r.confRecusada = id(await ti.marcarConfirmada('ti-recusada'));
+      r.staleControle = id(await ti.marcarStaleSePendente('ti-pendente-2'));
+      r.staleProcessando = id(await ti.marcarStaleSePendente('ti-processando'));
+      const troca = { planoNovoId: 'plano_b', planoAnteriorId: 'plano_a', valor: 80, ciclo: 'MONTHLY' };
+      r.mvVelho = await as.aplicarTrocaDePlano('as-v3', { ...troca, mutationVersionEsperada: 2 });
+      r.mvCerto = await as.aplicarTrocaDePlano('as-v3', { ...troca, valor: 90, mutationVersionEsperada: 3 });
+      r.reconciladas = await inbox.marcarReconciladas(['in-falhou', 'in-processando', 'in-recebido']);
+      console.log(JSON.stringify(r));
+    `
+  });
+  const st = (tabela) => Object.fromEntries(banco[tabela].map((l) => [l.id, l.status]));
+
+  /* cs-porcheckout-cas: o webhook da pop-up lê `pendente` e grava
+     `confirmado`; um estorno gravado no meio seria apagado sem o filtro. */
+  igual(saida.chkControle, true, 'CP3 controle: `pendente` → `confirmado` pelo checkout id grava');
+  igual([saida.chkEstornado, st('cobrancas')['chk-est']], [false, 'estornado'], 'CP3 cs-porcheckout-cas: aplicarTransicaoPorCheckoutId com `de: pendente` NÃO grava por cima de um estorno que chegou no meio — sem o `.eq(status, de)` o estorno virava `confirmado`');
+
+  /* b2-ti-reiv-*: a reivindicação é a porta da cobrança do acerto. Sem o
+     filtro de status, a intenção CONCLUÍDA volta a PROCESSING_PAYMENT e
+     o acerto é cobrado de novo; sem o de prazo, o link vencido cobra. */
+  igual(saida.reivControle, 'ti-pendente', 'CP3 controle: intenção pendente e no prazo é reivindicada');
+  igual([saida.reivConcluida, st('intencoes_troca_plano')['ti-concluida']], [null, 'COMPLETED'], 'CP3 b2-ti-reiv-status: reivindicarProcessamento recusa intenção que não está PENDING_APPROVAL — a concluída não volta a cobrar o acerto');
+  igual([saida.reivVencida, st('intencoes_troca_plano')['ti-vencida']], [null, 'PENDING_APPROVAL'], 'CP3 b2-ti-reiv-exp: reivindicarProcessamento recusa intenção com `expira_em` no passado — link vencido não cobra');
+
+  /* b2-ti-cas: a transição genérica, nos dois ramos (lista e status único). */
+  igual(saida.confControle, 'ti-desconhecida', 'CP3 controle: PAYMENT_UNKNOWN → PAYMENT_CONFIRMED avança');
+  igual([saida.confRecusada, st('intencoes_troca_plano')['ti-recusada']], [null, 'PAYMENT_DECLINED'], 'CP3 b2-ti-cas: marcarConfirmada (origem em LISTA) não transforma uma recusa em confirmação — o plano seria aplicado sem o acerto pago');
+  igual(saida.staleControle, 'ti-pendente-2', 'CP3 controle: PENDING_APPROVAL → STALE avança');
+  igual([saida.staleProcessando, st('intencoes_troca_plano')['ti-processando']], [null, 'PROCESSING_PAYMENT'], 'CP3 b2-ti-cas: marcarStaleSePendente (origem ÚNICA) não derruba uma intenção que já está cobrando');
+
+  /* b2-as-mv-cas: a cerca de concorrência otimista da troca de plano. */
+  const as = banco.assinaturas.find((a) => a.id === 'as-v3');
+  igual(saida.mvVelho, false, 'CP3 b2-as-mv-cas: aplicarTrocaDePlano com mutation_version VELHO (2, a linha está em 3) recusa — nada de sobrescrever às cegas o que mudou depois do retrato');
+  igual([saida.mvCerto, as.mutation_version, as.valor], [true, 4, 90], 'CP3 controle: com o mutation_version certo grava, e a versão sobe uma vez só (a escrita velha não gravou nada)');
+
+  /* b2-in-reconciladas-falhou: fechar como "reconciliada" só a linha que
+     ESGOTOU. A que está sendo reprocessada agora (ou foi reaberta) seria
+     marcada `processado` e o evento nunca mais seria aplicado. */
+  igual(saida.reconciladas, 1, 'CP3 b2-in-reconciladas-falhou: marcarReconciladas conta só a linha `falhou`');
+  igual(st('webhook_inbox'), { 'in-falhou': 'processado', 'in-processando': 'processando', 'in-recebido': 'recebido' }, 'CP3 b2-in-reconciladas-falhou: a linha em reprocessamento e a reaberta continuam onde estavam — só a esgotada fecha');
+}
+
 console.log(`escrita-de-estado-e-condicional: ${checagens} checagens OK`);

@@ -226,6 +226,62 @@ if (process.argv[1]?.endsWith('accessJwt.js')) {
   ok(decodificarJwt(cabecalhoCru({ alg: 'RS256' })) !== null, 'controle: `kid` ausente continua sendo forma (a recusa é da assinatura)');
   ok(paraOLog({ toString: 0 }) === 'object' && paraOLog('HS256\nforjado') === 'HS256?forjado', 'o motivo de log nunca lança nem quebra linha');
 
+  /* ---- CP3: cada camada SOZINHA ----
+     A lista de recusas acima só olha `valido`, e as camadas se cobrem umas
+     às outras: o `alg` é conferido no veredito E dentro de
+     `assinaturaConfere`, e o `kty` é o que impede uma entrada do JWKS que
+     não é RSA de virar chave RSA pelo `n`/`e` que ela carregar. Tirar
+     qualquer uma dessas checagens deixava a suíte verde (sabotagens CP3
+     jwt-alg, jwt-alg2, jwt-kty, jwt-len) — a outra camada recusava no
+     lugar dela, e o furo só aparecia no dia em que a outra mudasse. Aqui
+     cada uma é provada por um token que SÓ ela recusa, ou chamando a
+     camada de baixo direto. */
+  {
+    const rs256 = decodificarJwt(assinar(cargaBoa));
+    ok(assinaturaConfere(rs256, jwks), 'CP3 controle: a camada de assinatura, chamada direto, aceita o RS256 bem assinado');
+
+    /* jwt-alg2: o cabeçalho diz RS512 (ou `none`), mas a assinatura é
+       RSA-SHA256 válida da chave certa sobre esse cabeçalho. Só o `alg`
+       DENTRO de `assinaturaConfere` recusa — ela é exportada, e quem a
+       chamar sem passar pelo veredito não pode herdar a confusão de
+       algoritmo. */
+    for (const alg of ['RS512', 'none', 'HS256']) {
+      const rotuloFalso = decodificarJwt(assinar(cargaBoa, { cabecalho: { alg, kid: 'kid-teste' } }));
+      ok(rotuloFalso && !assinaturaConfere(rotuloFalso, jwks), `CP3 jwt-alg2: assinaturaConfere recusa sozinha o cabeçalho \`alg: ${alg}\` mesmo com assinatura RS256 válida por baixo`);
+    }
+
+    /* jwt-alg: no veredito, o `alg` é recusado ANTES da assinatura, e o
+       motivo diz isso. Sem esta camada, a recusa ainda viria (da
+       assinatura), mas com o motivo errado no log — e o `alg` do atacante
+       deixaria de ser conferido antes de qualquer trabalho criptográfico. */
+    ok(veredito(`${b64({ alg: 'none', kid: 'kid-teste' })}.${b64(cargaBoa)}.AAAA`).motivo === 'alg none', 'CP3 jwt-alg: o veredito recusa `alg none` pela checagem de alg (motivo `alg none`), não pela de assinatura');
+    ok(veredito(assinar(cargaBoa, { cabecalho: { alg: 'RS512', kid: 'kid-teste' } })).motivo === 'alg RS512', 'CP3 jwt-alg: e o RS512 com assinatura RS256 válida também para no alg');
+
+    /* jwt-kty: uma entrada do JWKS com o `kid` certo e o `n`/`e` da chave
+       que assinou, mas declarada como outra família (EC, oct) ou sem
+       família. `createPublicKey` recebe `kty: 'RSA'` à força — sem o
+       filtro de `kty`, qualquer entrada vira chave RSA. */
+    for (const kty of ['EC', 'oct', undefined]) {
+      const impostora = { ...jwk, kty };
+      ok(!assinaturaConfere(rs256, { keys: [impostora] }), `CP3 jwt-kty: entrada do JWKS com \`kty: ${kty}\` não serve de chave RSA, mesmo com o kid e o n/e certos`);
+    }
+    ok(assinaturaConfere(rs256, { keys: [{ ...jwk, kty: 'EC' }, jwk] }), 'CP3 controle: com a impostora e a RSA de verdade no mesmo JWKS, vale a RSA');
+
+    /* jwt-len: o teto de 8192 caracteres. O token logo ACIMA do teto é
+       válido em tudo o mais — assinado, aud/iss/type/exp certos —, então
+       só o teto o recusa; o logo abaixo passa (controle). Sem o teto, um
+       cabeçalho de requisição de megabytes seria decodificado e
+       verificado em RSA antes do login. */
+    const comEnchimento = (n) => assinar({ ...cargaBoa, enchimento: 'x'.repeat(n) });
+    let baixo = 0; let alto = 8192;
+    while (baixo < alto) { const meio = Math.floor((baixo + alto) / 2); if (comEnchimento(meio).length > 8192) alto = meio; else baixo = meio + 1; }
+    const acima = comEnchimento(baixo); const abaixo = comEnchimento(baixo - 1);
+    ok(acima.length > 8192 && abaixo.length <= 8192, `controle do teste: os dois tokens ficam um de cada lado do teto (${abaixo.length}, ${acima.length})`);
+    ok(decodificarJwt(abaixo) !== null && veredito(abaixo).valido, 'CP3 controle: o token logo abaixo do teto, bem assinado, passa');
+    ok(decodificarJwt(acima) === null, `CP3 jwt-len: decodificarJwt recusa o token de ${acima.length} caracteres (teto 8192)`);
+    ok(veredito(acima).motivo === 'formato', 'CP3 jwt-len: e o veredito recusa por formato um token que, sem o teto, seria VÁLIDO');
+  }
+
   /* ---- o buscador de chaves: cache, rotação e teto ---- */
   let buscas = 0; let relogio = 0;
   const buscador = criarBuscadorDeChaves({
