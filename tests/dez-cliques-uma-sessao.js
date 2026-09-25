@@ -163,8 +163,17 @@ function bancoFalso() {
     buscarCobrancaPendenteDoPedido: async (contratanteId, pedidoId, metodoPagamento) => {
       await ceder();
       const l = linhas.get(`${contratanteId}:${pedidoId}:${metodoPagamento}`);
-      return l ? { charge_id: l.chargeId } : null;
+      return l?.chargeId ? { charge_id: l.chargeId } : null; // como no banco: `charge_id is not null`
     },
+    // A reserva ainda sem chargeId (a 1ª requisição no meio da criação):
+    // conferida pela referência na Asaas, onde AINDA não há nada.
+    buscarReservaPendenteDoPedido: async (contratanteId, pedidoId, metodoPagamento) => {
+      await ceder();
+      const l = linhas.get(`${contratanteId}:${pedidoId}:${metodoPagamento}`);
+      return l && !l.chargeId ? { id: l.id } : null;
+    },
+    listarPagamentosPorReferenciaExterna: async () => { await ceder(); return []; },
+    completarReservaOrfa: async () => { throw new Error('não deve completar nada: não há Pix perdido'); },
     registrarErro: async () => {}
   };
   const { gerarPix } = criarCheckoutController(deps);

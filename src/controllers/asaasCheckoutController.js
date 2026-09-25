@@ -65,6 +65,7 @@ import {
 } from '../utils/validadores.js';
 import { tokenRenovacaoValido } from '../utils/tokenRenovacao.js';
 import { responderErro } from '../utils/erros.js';
+import { dataHoraCivil, hojeCivil } from '../utils/diaCivil.js';
 
 /**
  * Os SETE ciclos que a Asaas aceita — o conjunto inteiro, não o pedaço
@@ -92,6 +93,12 @@ const dependenciasDaReserva = { reservarCobrancaPopup, liberarReservaCobranca, r
 export async function abrirSessaoComReserva({ reserva, criarSessao, completar, contexto }, deps = dependenciasDaReserva) {
   const r = await deps.reservarCobrancaPopup(reserva);
   if (!r.reservada) {
+    // A sessão existente já foi concluída pelo pagador: reabrir a pop-up
+    // dela não serve (a Asaas mostra "pago"), e abrir outra seria uma
+    // segunda cobrança. A tela passa a acompanhar a que já existe.
+    if (r.existente?.sessao_concluida_em && r.existente.asaas_checkout_id) {
+      return { tipo: 'em_processamento', asaasCheckoutId: r.existente.asaas_checkout_id };
+    }
     if (r.existente?.asaas_checkout_id) return { tipo: 'reaproveitada', asaasCheckoutId: r.existente.asaas_checkout_id };
     return { tipo: 'em_andamento' };
   }
@@ -263,6 +270,13 @@ export async function criarCheckoutCartao(requisicao, resposta) {
     if (sessao.tipo === 'em_andamento') {
       return resposta.status(409).json({ erro: 'Já existe uma janela de pagamento sendo aberta para este pedido. Tente novamente em instantes.' });
     }
+    if (sessao.tipo === 'em_processamento') {
+      return resposta.status(409).json({
+        codigo: 'pagamento_em_processamento',
+        asaasCheckoutId: sessao.asaasCheckoutId,
+        erro: 'Você já concluiu este pagamento e ele está em processamento. Aguarde a confirmação — não é preciso pagar de novo.'
+      });
+    }
     if (sessao.tipo === 'criada') void marcarCotacaoUsada(cotacao.id);
 
     resposta.json({
@@ -276,11 +290,6 @@ export async function criarCheckoutCartao(requisicao, resposta) {
   }
 }
 
-function formatarDataHoraAsaas(data) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${data.getFullYear()}-${pad(data.getMonth() + 1)}-${pad(data.getDate())} `
-    + `${pad(data.getHours())}:${pad(data.getMinutes())}:${pad(data.getSeconds())}`;
-}
 
 /**
  * POST /api/checkout/assinatura/:contratanteId/:planoId
@@ -425,7 +434,10 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
           quantity: 1,
           value: valor
         }],
-        subscription: { cycle: ciclo, nextDueDate: formatarDataHoraAsaas(new Date()) },
+        // Relógio de BRASÍLIA, não do processo (que é UTC): montado em UTC,
+        // entre 21h e meia-noite o 1º ciclo virava "amanhã" e o cartão
+        // não era cobrado no ato (primeiro pagamento real, 25/09/2026).
+        subscription: { cycle: ciclo, nextDueDate: dataHoraCivil() },
         customerData: {
           name: nome, email, cpfCnpj: documento, phone: telefone,
           address: endereco, addressNumber: enderecoNumero,
@@ -441,6 +453,13 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     if (sessao.tipo === 'em_andamento') {
       return resposta.status(409).json({ erro: 'Já existe uma janela de pagamento sendo aberta para esta assinatura. Tente novamente em instantes.' });
     }
+    if (sessao.tipo === 'em_processamento') {
+      return resposta.status(409).json({
+        codigo: 'pagamento_em_processamento',
+        asaasCheckoutId: sessao.asaasCheckoutId,
+        erro: 'Você já concluiu este pagamento e ele está em processamento. Aguarde a confirmação — não é preciso pagar de novo.'
+      });
+    }
     if (sessao.tipo === 'criada') void marcarCotacaoUsada(cotacao.id);
 
     resposta.json({
@@ -452,6 +471,27 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
     if (erro.corpoAsaas) console.error('[checkout/assinatura] corpoAsaas:', erro.corpoAsaas);
     responderErro(resposta, erro, 'checkout/assinatura');
   }
+}
+
+/**
+ * O que a tela pode AFIRMAR sobre a sessão — e só isso.
+ *
+ * `CHECKOUT_PAID` (o nome é da Asaas, mantido porque é o vocabulário que
+ * o front já lê) sai APENAS com `status = confirmado`, que só um evento
+ * de PAGAMENTO grava. Sessão concluída sem dinheiro confirmado é
+ * `PROCESSANDO` — até 25/09/2026 ela virava `CHECKOUT_PAID` e a tela
+ * mostrou "Assinatura Ativa ✓" com o cartão sem débito
+ * (`docs/erros/2026-09-25-…-vencimento-utc.md`). Recusa é recusa: sem
+ * ela no mapa, a tela esperava para sempre.
+ */
+export function statusDaSessaoParaTela(cobranca) {
+  if (cobranca.status === 'confirmado') return 'CHECKOUT_PAID';
+  if (cobranca.status === 'recusado') return 'PAGAMENTO_RECUSADO';
+  if (cobranca.status === 'cancelado') return 'CHECKOUT_CANCELED';
+  if (cobranca.status === 'expirado') return 'CHECKOUT_EXPIRED';
+  if (cobranca.status === 'em_analise') return 'PROCESSANDO';
+  if (cobranca.status === 'pendente') return cobranca.sessao_concluida_em ? 'PROCESSANDO' : 'PENDING';
+  return 'PROCESSANDO'; // qualquer outro estado: nunca afirma pago
 }
 
 /**
@@ -468,10 +508,7 @@ export async function consultarStatusCheckout(requisicao, resposta) {
     const cobranca = await buscarCobrancaPorCheckoutId(requisicao.params.asaasCheckoutId);
     if (!cobranca) return resposta.status(404).json({ erro: 'Sessão não encontrada.' });
 
-    // Traduz nosso status interno de volta pro vocabulário que o front
-    // já espera (mesmo nome de evento que a Asaas usa).
-    const mapa = { pendente: 'PENDING', confirmado: 'CHECKOUT_PAID', cancelado: 'CHECKOUT_CANCELED', expirado: 'CHECKOUT_EXPIRED' };
-    resposta.json({ status: mapa[cobranca.status] ?? cobranca.status });
+    resposta.json({ status: statusDaSessaoParaTela(cobranca) });
   } catch (erro) {
     responderErro(resposta, erro, 'asaas-checkout/status');
   }
@@ -552,7 +589,7 @@ export async function criarAssinaturaPixAutomatico(requisicao, resposta) {
       frequencia,
       valor,
       descricao: plano.nome ?? 'Assinatura via SAN & CO. Pay Engine',
-      inicioEm: new Date().toISOString().slice(0, 10)
+      inicioEm: hojeCivil() // dia de Brasília; o processo roda em UTC
     });
 
     await registrarCobrancaPendentePopup({

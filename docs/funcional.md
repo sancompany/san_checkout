@@ -977,6 +977,46 @@ todas as chaves de todos os contratantes — um XSS no admin ou um token
 de sessão vazado levava tudo de uma vez. *Quem vê:* todos os
 contratantes, sem saber. H-08, `tests/segredo-nao-sai-do-admin.js`.
 
+**RN-47 · Sessão concluída não é pagamento.** `CHECKOUT_PAID` diz que o
+pagador terminou a pop-up — cartão digitado, assinatura criada —, não
+que o dinheiro entrou. Ele só carimba `sessao_concluida_em`; a linha
+segue `pendente` até `PAYMENT_CONFIRMED`/`RECEIVED`. A tela recebe
+`PROCESSANDO` e diz **"Pagamento em processamento…"**, fecha a pop-up e
+continua acompanhando; só `confirmado` vira "Pagamento Aprovado ✓" /
+"Assinatura Ativa ✓". Recusa (`PAGAMENTO_RECUSADO`) volta o botão. Quem
+volta à página e clica de novo depois de concluir recebe 409
+`pagamento_em_processamento` e a tela acompanha a MESMA sessão — nunca
+abre outra, e a reserva dessa sessão nunca expira sozinha.
+*Violada:* foi o primeiro pagamento real de assinatura, 25/09/2026 — a
+tela mostrou "Assinatura Ativa ✓" com o 1º ciclo `PENDING` e o cartão
+sem débito, a linha ficou `confirmado`, e a métrica contaria R$ 10,00
+que não entraram; se o cartão fosse recusado no vencimento, a linha
+ficaria `confirmado` para sempre. *Quem vê:* o pagador (sucesso falso),
+o dono (métrica falsa). `tests/sessao-concluida-nao-e-pagamento.js` e
+o autoteste do `webhookController` (seção 16b, payloads reais).
+
+**RN-48 · Pix que existe se recupera; nunca é beco sem saída.** Se o
+Pix foi criado e só o QR falhou, a linha ganha o `chargeId` e o pagador
+na hora, e a resposta é 503 `qr_indisponivel` — o botão vira "Tentar de
+novo", e o próximo clique busca o QR do MESMO Pix. Se a criação ficou
+ambígua (timeout), o clique seguinte confere na Asaas pela referência da
+reserva e, achando, amarra e mostra o QR; não achando, 409
+`cobranca_em_confirmacao`. Nunca cria um segundo Pix. *Violada:* no
+primeiro Pix real (25/09/2026) a conta de produção não tinha chave Pix;
+o pagamento existia, o QR não, e o segundo clique respondia "Já existe
+uma cobrança sendo criada" até o reconciliador passar, 5 minutos depois.
+*Quem vê:* o pagador, preso. Autoteste do `checkoutController` (8b, 8c).
+
+**RN-49 · Toda data que vai para a Asaas é de Brasília.** Vencimento de
+Pix, boleto, acerto de troca, 1º ciclo da assinatura e início do Pix
+Automático saem de `src/utils/diaCivil.js`, nunca do relógio do
+processo, que roda em UTC. *Violada:* entre 21h e meia-noite o "hoje"
+do processo já é amanhã — no primeiro pagamento real de assinatura
+(22:26 de Brasília) o 1º ciclo foi agendado para o dia seguinte e o
+cartão não foi cobrado no ato. *Quem vê:* o pagador (não é cobrado
+quando espera) e o contratante (acesso liberado sem pagamento, se
+confiar na tela). `tests/data-para-asaas-e-de-brasilia.js` varre `src/`.
+
 ---
 
 ## 6. Textos que o sistema diz
@@ -1012,6 +1052,10 @@ suporte@sancocore.com.br".
 | limite de requisições | "Muitas tentativas em pouco tempo. Aguarde um minuto." |
 | rota inexistente | "Rota não encontrada." |
 | erro nosso | "Erro interno. Tente novamente em instantes." |
+| pop-up concluída, dinheiro ainda não confirmado (RN-47) | botão "Pagamento em processamento…" · "Recebemos seu pagamento e estamos aguardando a confirmação da operadora. Não é preciso pagar de novo." |
+| clicou de novo depois de concluir a pop-up | "Você já concluiu este pagamento e ele está em processamento. Aguarde a confirmação — não é preciso pagar de novo." |
+| Pix criado, QR indisponível (RN-48) | "Seu Pix foi criado, mas o QR Code não pôde ser gerado agora. Tente de novo em instantes — é o mesmo Pix, você não será cobrado duas vezes." · botão "Tentar de novo" |
+| tentativa anterior ainda sendo conferida | "Estamos confirmando uma tentativa anterior deste pagamento. Tente de novo em instantes — nada será cobrado duas vezes." |
 
 **Vazios do painel:** "Nenhum contratante cadastrado" / "Cadastre o
 primeiro projeto que vai usar o checkout." · "Nenhuma subconta criada" ·

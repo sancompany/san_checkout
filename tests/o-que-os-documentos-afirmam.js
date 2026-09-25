@@ -72,7 +72,8 @@ const HISTORICOS = [
   'docs/plano-execucao.md', // registro fechado de 10/09 (marcado no topo dele)
   'docs/lacunas-san-checkout-10-09-2026.md',
   'docs/relatorio-seguranca-09-09-2026.md',
-  'docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md' // relatório externo de uma data, gravado verbatim — descreve o mundo daquele commit
+  'docs/CODEX_CHECKOUT_AUDIT_2026-09-24.md', // relatório externo de uma data, gravado verbatim — descreve o mundo daquele commit
+  'docs/CHECKOUT_FINAL_CONSOLIDATION_2026-09-24.md' // relatório de entrega de 24/09: as contagens são as daquele dia
 ];
 
 const AFIRMAM = [

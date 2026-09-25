@@ -18,6 +18,27 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ## Bloqueiam a esteira
 
+### 🟠 Primeiro pagamento real (25/09/2026) · Pix sem QR e assinatura "ativa" sem débito — corrigido em código, falta o dono
+O incidente inteiro, com IDs e linha do tempo:
+`docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`.
+As quatro correções de código (datas de Brasília, `CHECKOUT_PAID` não é
+dinheiro, Pix recuperável, referência dos eventos) estão feitas e
+cobertas por regressão com os payloads reais. O que **só o dono** decide:
+
+- **A assinatura `sub_39mjscz7vl2jwx7g` (R$ 10,00, anual)**: o 1º ciclo
+  `pay_v6f2xr6j98reaxb9` vence em 25/09 e a Asaas deve tentar o cartão
+  nesse dia. Deixar cobrar (é também o primeiro `PAYMENT_CONFIRMED` de
+  assinatura em produção, o que falta para fechar a 6) ou cancelar antes.
+- **O Pix `pay_x9eixae4vkg6ugzg` (R$ 5,00)**: pendente e pagável, agora
+  com QR. Pagar, ou deixar vencer.
+- **Marcar as duas como `e_teste`** (RN-33, mão única): são teste do
+  dono em produção e, sem a marca, entram na métrica de sucesso.
+- **Confirmar a chave Pix**: existe uma `EVP` ativa na conta; às 01:24
+  não existia. Se não foi o dono que criou, conferir no painel.
+
+Só pedir um novo pagamento real depois do deploy desta correção
+conferido no ar.
+
 ### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive

@@ -78,6 +78,11 @@ export async function gerarPix({ contratanteId, pedidoId, dadosPagador, mostrarT
     });
   } catch (erro) {
     if (!erro.tratadoPelaTela) mostrarToast(erro.message || 'Não foi possível gerar o Pix agora.', 'erro');
+    /* O Pix JÁ EXISTE (`qr_indisponivel`) ou uma tentativa anterior está
+       sendo conferida (`cobranca_em_confirmacao`): clicar de novo busca
+       o MESMO Pix — o botão diz isso em vez de parecer um erro sem saída
+       (primeiro Pix real, 25/09/2026). */
+    if (['qr_indisponivel', 'cobranca_em_confirmacao'].includes(erro.corpo?.codigo)) btnGerar.textContent = 'Tentar de novo';
     btnGerar.disabled = false;
   }
 }
