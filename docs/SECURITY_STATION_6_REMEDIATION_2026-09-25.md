@@ -209,6 +209,19 @@ Dois revisores. **Não conta como passada limpa**: achou 1 MEDIUM e 6 LOW que pe
 | C2-L4 | LOW | CR-06 | invólucro sem `head`, `options` e `route()` | **FIXED** `7c0c94d` |
 | C2-L5 | LOW | teste | a prova no `server.js` real não exercitava o invólucro | **FIXED** `7c0c94d` — handler real que rejeita, com exceção injetada |
 
+### 6.4 Na passada limpa #1 (sobre `ccfedc5`) — **não limpa**
+
+Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff inteiro). O de regressões do diff veio **limpo**; o de dinheiro achou um defeito confirmado **na própria correção DIF-01** — a passada não conta, e o contador continua em 0.
+
+| ID | Sev. | Classe | Achado | Status final |
+|---|---|---|---|---|
+| CP1-01 | MEDIUM | CR-05 | a `PAYMENT_REFUND_DENIED` velha, reprocessada (reenfileiramento do admin ou refeitura da inbox) depois de um novo pedido aceito, marcava `estorno_negado` e reabria a operação viva com a Asaas ainda em `REFUND_REQUESTED` — o próximo `/estornar` mandaria o estorno de novo. Reproduzido | **FIXED** `0808a13` — a negativa exige respaldo do provedor: o pagamento de volta a pago |
+| CP1-02 | INFO | CR-08 | assinatura de sessão substituída que a Asaas liquidou vira assinatura ativa; se a substituta também pagou, são duas, sem alerta (a de pedido vira duplicidade pelo pedido) | **FIXED** `0808a13` — chama um humano (`erros`) |
+| CP1-03 | INFO | CR-02 | corrida estreita no reconciliador de estorno de boleto: lê `REFUND_REQUESTED`, a negativa é processada, e a operação é marcada `CONFIRMED` — a chave padrão devolve um `200` velho até a próxima negativa | **RISK_ACCEPTED** RES-14 — nenhum dinheiro sai; exige a negativa no intervalo de uma leitura |
+| CP1-04 | INFO | CR-08 | pop-up de assinatura nova cancelada pelo pagador que a Asaas ainda liquidasse mandaria `cancelada` e depois `criada` | **RISK_ACCEPTED** RES-15 — antes o pagamento sumia calado, o que era pior; exige a Asaas liquidar sessão que ela deu como cancelada |
+| CP1-05 | INFO | CR-02 | com a escrita do novo pedido na nossa linha falhando depois da Asaas aceitar, a regra "negado não conta" do restante deixaria de fora um pedido vivo | **RISK_ACCEPTED** RES-16 — exige falha de banco num instante exato e novo pedido dentro da janela; a Asaas tende a recusar o segundo pedido de estorno de boleto |
+| CP1-06 | INFO | CR-02 | até o `reabrirEstornosNegados` rodar, a chave padrão do total ainda devolve o `200` antigo | **RISK_ACCEPTED** RES-17 — a refeitura da inbox fecha; a chave nova já funciona no intervalo (teste 7e) |
+
 ## 7. Correções
 
 Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os de código:
@@ -434,6 +447,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | 1 | `8be71d3`…`8c96576` | 4 (dinheiro; admin/Access; webhook/crash/workers; tenant/entrada/testes) | 3 HIGH, 6 MEDIUM, 6 LOW (C1-01…C1-15) | 0 |
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 | auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
+| passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado; crash/auth/tenant; regressões do diff — este **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido | 0 |
 
 ## 14. Riscos residuais
 
@@ -443,4 +457,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 95 = FIXED 70 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 11 + EXTERNAL_PENDING 5
+TOTAL_LEDGER = 101 = FIXED 72 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 15 + EXTERNAL_PENDING 5
