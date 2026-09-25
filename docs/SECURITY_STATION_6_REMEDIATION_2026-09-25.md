@@ -326,6 +326,10 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | FP4B-4 | INFO | CR-13 | os `.catch((erro) => … erro.message)` dos workers lançariam com uma rejeição nula | **RISK_ACCEPTED** RES-67 — nada alcançável rejeita com `null`; mesma família do FP1B-2 |
 | FP4C-2 | INFO | doc | a regra dos 5 min e da chave canônica não estava na RN-23 | **FIXED** — RN-23 revista |
 | FP4C-3 | INFO | teste | o banco falso devolve o instante no texto em que foi gravado, não no do PostgREST — cego a esta classe | **RISK_ACCEPTED** RES-68 — a regressão do FP4A-1 grava o formato do PostgREST explicitamente; normalizar o banco falso inteiro mexeria em comparações de todas as suítes |
+| FP5A-1 | LOW | CR-08 | ciclo de assinatura com baixa manual em dinheiro, desfeita e paga de novo: o `pendente` de assinatura é silencioso e a reconfirmação sai como um segundo `cobranca_confirmada` do mesmo `chargeId` — o contratante que credita por `eventoId` credita dois períodos. Anterior à remediação | **RISK_ACCEPTED** RES-69 — exige baixa em dinheiro e desfazê-la no painel num ciclo de cartão; o `API.md` passa a mandar creditar o ciclo uma vez por `chargeId` |
+| FP5A-2 | INFO | CR-05 | evento sem `dateCreated` que aplica um "de novo" não grava carimbo, e a retentativa montaria outra chave | **RISK_ACCEPTED** RES-70 — a Asaas e todo evento sintético sempre mandam `dateCreated`, e a inbox o guarda |
+| FP5A-3 | INFO | CR-05 | a passada sintética que falha entre a transição e a outbox, com a linha da inbox já esgotada, deixa o reconciliador vendo os dois lados iguais | **DUPLICATE** de FP1RA-5 (RES-26/RES-27 no ledger original) |
+| FP5A-4 | INFO | doc | o comentário dizia que só o webhook escreve `status_evento_em`; `aplicarTransicaoPorCheckoutId` também escreve | **FIXED** — comentário corrigido |
 
 ## 7. Correções
 
@@ -596,6 +600,12 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 
 **Critério revisto pelo dono (25/09/2026, depois da #4):** auth/infra e migrations/diff **congeladas** — voltaram limpas em todas as passadas desde a #1 no domínio delas (o único achado da #4 nas duas é o do dinheiro, em arquivos que não são de autenticação nem de schema). Depois de um MEDIUM corrigido, não se rodam mais três auditores completos: regressão e sabotagem específicas, `npm run check` e **uma** auditoria de dinheiro incremental sobre os arquivos alterados e a família do achado. O fechamento não exige um número de passadas limpas; exige zero Critical/High/bloqueador conhecidos, as regressões verdes, as sabotagens pegas e uma auditoria de dinheiro limpa depois da última correção substantiva.
 
+| Auditoria | Sobre | Revisor | Achados que reiniciam | Resultado |
+|---|---|---|---|---|
+| dinheiro incremental (a única que o critério revisto pede) | `d2fdcbd` — os arquivos alterados desde `5303359` e a família do achado | 1, com todo instante regravado no formato do PostgREST, e 50 rodadas concorrentes dos três escritores (webhook, consulta de status, reconciliador) sobre uma reconfirmação | nenhum | **LIMPA** — FP5A-1 (LOW) e três INFO no ledger |
+
+**Critério de convergência atingido em 25/09/2026:** zero Critical, High, bloqueador financeiro, bypass de autenticação, acesso entre tenants, cobrança ou estorno dobrado, perda permanente de evento financeiro ou cobrança órfã conhecidos; `npm run check` verde; as regressões de todos os achados verdes e as sabotagens pegas; uma auditoria de dinheiro limpa depois da última correção substantiva; auth/infra e migrations/diff limpas e congeladas. **Código congelado** a partir daqui.
+
 ## 14. Riscos residuais
 
 Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceitou, com a justificativa que está escrita lá (quando o ledger só traz o número, vai a descrição do achado). **RES-03 não existe** — o número foi pulado quando o ledger foi montado, e nenhum achado o cita.
@@ -678,4 +688,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 201 = FIXED 109 + FALSE_POSITIVE 3 + DUPLICATE 16 + RISK_ACCEPTED 66 + EXTERNAL_PENDING 7
+TOTAL_LEDGER = 205 = FIXED 110 + FALSE_POSITIVE 3 + DUPLICATE 17 + RISK_ACCEPTED 68 + EXTERNAL_PENDING 7

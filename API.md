@@ -751,7 +751,7 @@ teste que separa os dois; não teste "tem `tipo`".
 | `evento` | Quando chega |
 |---|---|
 | `criada` | Assinatura criada e **primeira cobrança paga**. Desde 24/09/2026 sai no evento de PAGAMENTO, com `chargeId` e `assinaturaId` preenchidos (antes saía no evento de sessão, sem os dois) |
-| `cobranca_confirmada` | Um ciclo foi cobrado com sucesso |
+| `cobranca_confirmada` | Um ciclo foi cobrado com sucesso. **Credite o ciclo uma vez por `chargeId`**, não por `eventoId`: se uma baixa manual em dinheiro de um ciclo for desfeita no painel da Asaas e o ciclo for pago de novo, chega um segundo `cobranca_confirmada` do MESMO `chargeId` (com `eventoId` novo, porque é um fato novo) — e é o mesmo período |
 | `cobranca_falhou` | Um ciclo não entrou — cartão recusado ou cobrança vencida. **Mande o link de renovação** (seção 7.3) |
 | `cobranca_estornada` | Um ciclo foi estornado (total ou parcial — olhe `statusFinanceiro`/`estornoParcial`) |
 | `cobranca_contestada` | Chargeback num ciclo — **suspenda o acesso** |

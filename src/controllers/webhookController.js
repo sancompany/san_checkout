@@ -168,7 +168,7 @@ const dependenciasPadrao = {
        (FP3A-1): a passada que aplicou a transição e morreu antes da outbox
        deixava a retentativa sem `aplicada`, e o segundo aviso se perdia
        para sempre. Agora vale também quando o momento gravado do estado
-       atual (`status_evento_em`, que só a transição do webhook escreve) é
+       atual (`status_evento_em`, que só as transições condicionais escrevem) é
        posterior ao aviso que já existe — com folga de 5 min, porque os
        relógios são de lados diferentes. A chave do "de novo" leva esse
        momento gravado, então a retentativa cai na MESMA linha. */
