@@ -18,6 +18,19 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ## Bloqueiam a esteira
 
+### 🔴 Estação 6 · baseline de segurança (25/09/2026) — 2 HIGH, 5 bloqueadores, nada corrigido ainda
+Relatório completo: `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md`
+(auditado `43635c4`, o mesmo SHA em produção). É a baseline **antes** de
+qualquer correção, para a auditoria adversarial independente (Codex):
+nenhum achado foi corrigido nesta fase, de propósito. Bloqueadores para
+fechar a estação: SEC-001 (caminho arbitrário no pull autenticado do
+contratante, com a resposta devolvida a anônimo), SEC-002 (estorno
+parcial repetido devolve o dinheiro duas vezes), SEC-003 (`pedidoId` não
+canônico contorna RN-04/RN-04.1/RN-51), SEC-004 (reaproveitamento de
+Pix/boleto antes da guarda de pedido pago) e SEC-006 (outbox segue
+redirect sem revalidar). Ordem combinada com o dono: Codex audita →
+achados voltam → só então se corrige → fecha a estação.
+
 ### 🟠 Primeiro pagamento real (25/09/2026) · Pix sem QR e assinatura "ativa" sem débito — corrigido em código, falta o dono
 O incidente inteiro, com IDs e linha do tempo:
 `docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`.
