@@ -367,7 +367,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `.github/workflows/seguranca.yml` | +18 −3 | SECURITY_FIX | CI: permissions de leitura, ferramentas fixadas por hash, Dependabot com cooldown (SEC-034) |
 | `.gitleaksignore` | +11 −0 | SECURITY_FIX | impressões digitais das chaves de MENTIRA dos testes e do token meta público (CI da PR) |
 | `.ia/HANDOFF.md` | +1 −1 | DOCUMENTATION | contagem de suítes |
-| `API.md` | +141 −23 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
+| `API.md` | +142 −24 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `CLAUDE.md` | +1 −1 | DOCUMENTATION | contagem de suítes (63 → 82) |
 | `CONSTRAINTS.md` | +85 −7 | DOCUMENTATION | comportamento novo documentado onde o integrador/operador lê |
 | `README.md` | +1 −1 | DOCUMENTATION | contagem de suítes (63 → 82) |
@@ -375,9 +375,9 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `docs/CHECKOUT_CONSOLIDATION_STATE.md` | +1 −1 | DOCUMENTATION | tira um fragmento de sufixo de chave do documento (INFO-12) |
 | `docs/SECURITY_STATION_6_BASELINE_2026-09-25.md` | +553 −0 | DOCUMENTATION | evidência imutável: baseline pré-correção (hash travado) |
 | `docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md` | +91 −0 | DOCUMENTATION | evidência imutável: revisão do Jules (hash travado) |
-| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +663 −0 | DOCUMENTATION | este relatório |
+| `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md` | +691 −0 | DOCUMENTATION | este relatório |
 | `docs/TESTES.md` | +31 −0 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
-| `docs/funcional.md` | +301 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
+| `docs/funcional.md` | +310 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `docs/pendencias.md` | +71 −3 | DOCUMENTATION | regras novas (RN-61…RN-69), pendências, passo a passo de teste |
 | `functions/api/admin/[[caminho]].js` | +71 −0 | SECURITY_FIX | Pages Function: o painel fala com a API atrás do Access (SEC-015) |
 | `package-lock.json` | +12 −12 | SECURITY_FIX | express 4.22.3 / body-parser / qs 6.16.0 (SEC-033), sem --force |
@@ -403,7 +403,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `src/controllers/refundController.js` | +148 −375 | CORRECTNESS_FIX | estorno delegado à operação durável (SEC-002); só avisa se a rota gravou (FP2RA-2) — o grosso da remoção (-375) é a lógica antiga movida para estornoService |
 | `src/controllers/trocaAprovacaoController.js` | +10 −2 | SECURITY_FIX | token da troca só texto e só UUID; handlers com try/catch (CP2-11) |
 | `src/controllers/trocaPlanoController.js` | +51 −12 | RECOVERY | uma troca em voo, aviso com dono (SEC-010/013) |
-| `src/controllers/webhookController.js` | +1053 −95 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2, FP1RA-1/2, FP2A-1 — uma passada por charge, FP3A-1 — o "de novo" pelo que está gravado) |
+| `src/controllers/webhookController.js` | +1060 −95 | SECURITY_FIX | confere na Asaas antes de mover dinheiro, ordem, reconciliador dirigido, ciclos, teto de resposta, alertas humanos antes da transição, reserva sem linha (SEC-007/008/019, JULES-004, C1-02/03/06/09/11, C2-L1/L2, CP3-05, FP1A-4, FP1B-2, FP1RA-1/2, FP2A-1 — uma passada por charge, FP3A-1 — o "de novo" pelo que está gravado) |
 | `src/middlewares/exigirAccess.js` | +74 −0 | SECURITY_FIX | guarda do Access em /api/admin, fecha em 401/503 (SEC-015, C1-01) |
 | `src/middlewares/idsCanonicos.js` | +37 −0 | SECURITY_FIX | guarda canônica dos parâmetros de id (SEC-001/003/017) |
 | `src/routes/adminRoutes.js` | +15 −5 | SECURITY_FIX | Access antes de toda rota do admin (SEC-015); roteador com dono (C1-01) |
@@ -445,7 +445,7 @@ Gerada por script sobre `git diff --numstat`, que **falha** se algum arquivo fic
 | `tests/banco-sem-privilegio-publico.js` | +70 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/ci-so-le-e-fixa-o-que-roda.js` | +63 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/erro-da-asaas-nao-vaza.js` | +116 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
-| `tests/escrita-de-estado-e-condicional.js` | +547 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
+| `tests/escrita-de-estado-e-condicional.js` | +554 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/estorno-repetido-nao-devolve-duas-vezes.js` | +971 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/executar.js` | +19 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
 | `tests/filtro-or-so-interpola-o-que-o-servidor-fez.js` | +79 −0 | TEST | regressão de classe, com sabotagem (ver §8 e §9) |
@@ -645,8 +645,8 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 | RES-23 | CP1-12 | cada linha é reivindicada por CAS; sem efeito duplicado |
 | RES-24 | CP1-13 | limitador por IP e a borda da Northflank; sem derrubar o processo (medido) |
 | RES-25 | CP1-14 | limitado pelo rate limit e pelo expurgo diário |
-| RES-26 | CP2-02 | exige o webhook esgotar ANTES da consulta confirmar; o esgotamento já vira `erros` para um humano |
-| RES-27 | CP2-03 | a linha esgotada da inbox já está em `erros` |
+| RES-26 | CP2-02, FP5A-3 | exige o webhook esgotar ANTES da consulta confirmar; o esgotamento já vira `erros` para um humano |
+| RES-27 | CP2-03, FP5A-3 | a linha esgotada da inbox já está em `erros` |
 | RES-28 | CP2-04 | (o achado) o segundo `estorno_solicitado` depois de uma negativa não gera webhook ao contratante (a chave do fato deduplica); a resposta síncrona 200 avisa |
 | RES-29 | CP2-05 | exige as duas coisas no intervalo de uma chamada à Asaas |
 | RES-30 | CP2-06 | termina em `erros` para um humano; o comportamento da Asaas para cartão/Pix não foi medido |
@@ -683,6 +683,13 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 | RES-61 | FP3B-2 | o log do `chamarAsaas` já imprime o mesmo texto; nunca vai à resposta |
 | RES-62 | FP3B-3 | no máximo um pedido a mais a cada 10 s por navegador; comportamento, não segurança |
 | RES-63 | FP3C-4 | a chamada seguinte já vem certa; nada se perde |
+| RES-64 | FP4A-2 | a folga existe porque os relógios são de lados diferentes; reconfirmação exige ação humana na Asaas (baixa desfeita) ou uma disputa resolvida, e as duas levam mais que isso |
+| RES-65 | FP4B-2 | exige Access e sessão de admin; o processo segue de pé |
+| RES-66 | FP4B-3 | exige o token; a Asaas nunca manda esse formato |
+| RES-67 | FP4B-4 | nada alcançável rejeita com `null`; mesma família do FP1B-2 |
+| RES-68 | FP4C-3 | a regressão do FP4A-1 grava o formato do PostgREST explicitamente; normalizar o banco falso inteiro mexeria em comparações de todas as suítes |
+| RES-69 | FP5A-1 | exige baixa em dinheiro e desfazê-la no painel num ciclo de cartão; o `API.md` passa a mandar creditar o ciclo uma vez por `chargeId` |
+| RES-70 | FP5A-2 | a Asaas e todo evento sintético sempre mandam `dateCreated`, e a inbox o guarda |
 
 ## 15. Cobertura do fechamento
 
