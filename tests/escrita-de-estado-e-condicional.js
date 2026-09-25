@@ -220,7 +220,9 @@ const consultar = `
       cobrancas: [linha({ id: 'b-negado', metodo_pagamento: 'boleto', status: 'estorno_solicitado', charge_id: 'pay_negado' })],
       estornos: [
         { id: 'op-negada', cobranca_id: 'b-negado', contratante_id: 'loja', charge_id: 'pay_negado', chave_idempotencia: 'total-b-negado', valor_centavos: 5000, total: true, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm1' },
-        { id: 'op-de-outra', cobranca_id: 'outra', contratante_id: 'loja', charge_id: 'pay_x', chave_idempotencia: 'k', valor_centavos: 100, total: false, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm2' }
+        { id: 'op-de-outra', cobranca_id: 'outra', contratante_id: 'loja', charge_id: 'pay_x', chave_idempotencia: 'k', valor_centavos: 100, total: false, estado: 'CONFIRMED', status_resultado: 'estorno_solicitado', marcador: 'm2' },
+        /* CP2-10: um estorno que DE FATO devolveu dinheiro, na MESMA cobrança */
+        { id: 'op-que-devolveu', cobranca_id: 'b-negado', contratante_id: 'loja', charge_id: 'pay_negado', chave_idempotencia: 'parcial-30', valor_centavos: 3000, total: false, estado: 'CONFIRMED', status_resultado: 'estornado_parcialmente', marcador: 'm4' }
       ]
     },
     codigo: `
@@ -240,6 +242,7 @@ const consultar = `
   igual(banco.cobrancas[0].status, 'estorno_negado', 'controle: a negativa foi aplicada');
   igual(op('op-negada').estado, 'FAILED_RETRYABLE', 'D-1: a operação do pedido negado reabre — a mesma chave pode pedir de novo');
   igual(op('op-de-outra').estado, 'CONFIRMED', 'e a de outra cobrança não é tocada');
+  igual(op('op-que-devolveu').estado, 'CONFIRMED', 'CP2-10: e o estorno que DEVOLVEU dinheiro, na mesma cobrança, nunca é reaberto — reabrir mandaria o valor de novo');
 }
 
 /* ── CP1-01: a negativa VELHA não reabre o pedido que está vivo na Asaas ──

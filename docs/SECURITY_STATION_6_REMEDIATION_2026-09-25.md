@@ -243,6 +243,11 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP2-07 | LOW | doc | RN-56 e RN-71 não diziam que a negativa de estorno exige respaldo da Asaas (mudança do `0808a13`) | **FIXED** — `docs/funcional.md` |
 | CP2-08 | LOW | doc | `API.md` §5.4 dizia "a mesma chave devolve o resultado gravado" sem a exceção do estorno de boleto negado | **FIXED** — `API.md` §5.4 |
 | CP2-09 | INFO | CR-02 | a suposição de que a Asaas devolve o boleto a `RECEIVED` depois de negar o estorno não foi medida | **EXTERNAL_PENDING** EP-10 — `docs/pendencias.md`; medir no primeiro estorno de boleto negado |
+| CP2-10 | LOW | teste | o filtro de `status_resultado` em `reabrirEstornosNegados` não era protegido por teste: tirá-lo passava as 82 suítes, e reabriria um estorno parcial que DE FATO devolveu dinheiro na mesma cobrança | **FIXED** — o caso D-1 ganhou a operação que devolveu, na mesma cobrança; sabotagem pega |
+| CP2-11 | INFO | CR-14 | `/troca/contexto` e `/troca/aprovar` com token objeto lançavam no `.test` (502 + linha em `erros`) | **FIXED** — só texto; autoteste nas duas rotas, sabotagem pega |
+| CP2-12 | INFO | teste | o `catch` síncrono do invólucro é redundante no Express 4 (que já pega o síncrono), por isso tirá-lo não reprova | **RISK_ACCEPTED** RES-31 — cinto e suspensório de propósito; o assíncrono, que é o que importa, é provado |
+| CP2-13 | INFO | teste | a conferência de cobertura não vê `import { Router as R0 }` | **DUPLICATE** de CP1-10 |
+| CP2-14 | INFO | CR-05 | dois eventos sem `id` e corpo mínimo idêntico são deduplicados como um | **RISK_ACCEPTED** RES-32 — a Asaas sempre manda `id` |
 
 ## 7. Correções
 
@@ -470,7 +475,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 | auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
 | passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado — **não limpo**; crash/auth/tenant com ~51 mil requisições hostis e 14 sabotagens — **limpo**; regressões do diff — **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido; 12 INFO classificados | 0 |
-| passada limpa #1 (2ª tentativa) | `d9adebe` | 3 (dinheiro/estado — **não limpo**; regressões do diff — **não limpo**, 2 de documentação; crash/auth/tenant — ver abaixo) | 1 LOW de código (CP2-01), 2 LOW de documentação (CP2-07/08); 6 INFO classificados | 0 |
+| passada limpa #1 (2ª tentativa) | `d9adebe` | 3 (dinheiro/estado — **não limpo**; regressões do diff — **não limpo**, 2 de documentação; crash/auth/tenant com 24 sabotagens e sondas no `server.js` real — **não limpo**, 1 lacuna de teste) | 1 LOW de código (CP2-01), 2 LOW de documentação (CP2-07/08), 1 LOW de teste (CP2-10); INFO classificados | 0 |
 
 ## 14. Riscos residuais
 
@@ -480,4 +485,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 118 = FIXED 75 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 28 + EXTERNAL_PENDING 6
+TOTAL_LEDGER = 123 = FIXED 77 + FALSE_POSITIVE 3 + DUPLICATE 7 + RISK_ACCEPTED 30 + EXTERNAL_PENDING 6
