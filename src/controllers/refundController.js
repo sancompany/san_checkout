@@ -203,9 +203,10 @@ export function criarRefundController(deps = dependenciasPadrao) {
          também recebe o webhook correspondente"). Mesma chave do fato:
          quando o PAYMENT_REFUNDED da Asaas chegar, cai na mesma linha da
          outbox e ninguém ouve duas vezes. Só quando ESTA chamada estornou
-         (`efeito`) — a repetição devolve o gravado e não reavisa. Falha
+         (`efeito`) E gravou a linha — se o webhook gravou antes, o aviso é
+         dele (FP2RA-2) — e a repetição devolve o gravado e não reavisa. Falha
          aqui não desfaz o estorno (já aconteceu do lado de lá): vira Lei 8. */
-      if (r.efeito) {
+      if (r.efeito?.gravouNaCobranca) {
         try {
           await deps.notificarFatoDePedido(contratante, { ...cobranca, cotacao_id: cobranca.cotacao_id ?? null }, {
             chargeId: cobranca.charge_id,

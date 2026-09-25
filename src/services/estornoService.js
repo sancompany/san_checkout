@@ -441,10 +441,14 @@ export async function executarEstorno({ contratante, cobranca, chave, valorCenta
     const confirmada = await deps.transitar(op.id, ['CALLING_PROVIDER'], {
       estado: 'CONFIRMED', chamando_em: null, status_resultado: statusLocal, valor_estornado_depois: valorEstornadoDepois
     });
-    await gancho.registrarNaCobranca(cobranca.charge_id, { status: statusLocal, valorEstornado: assincrono ? undefined : valorEstornadoDepois });
+    const gravouNaCobranca = await gancho.registrarNaCobranca(cobranca.charge_id, { status: statusLocal, valorEstornado: assincrono ? undefined : valorEstornadoDepois });
 
     const final = confirmada ?? { ...op, estado: 'CONFIRMED', status_resultado: statusLocal, valor_estornado_depois: valorEstornadoDepois };
-    return { ...respostaDaOperacao(final), efeito: { statusLocal, valorEstornadoDepois, assincrono } };
+    /* `gravouNaCobranca` (FP2RA-2): se o `PAYMENT_REFUNDED` do webhook
+       gravou a linha antes desta escrita, quem avisa é ele (aplicou a
+       transição) — avisar daqui também dava ao contratante um segundo
+       `estornado` com `eventoId` novo. */
+    return { ...respostaDaOperacao(final), efeito: { statusLocal, valorEstornadoDepois, assincrono, gravouNaCobranca: gravouNaCobranca !== false } };
   } catch (erro) {
     // Falha ANTES de ir à Asaas (banco): nada saiu, o arrendamento volta.
     if (!chamou) await gancho.liberar(cobranca.charge_id).catch(() => {});

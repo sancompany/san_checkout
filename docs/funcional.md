@@ -1223,6 +1223,14 @@ A conciliação pela consulta de status tem o mesmo binding de valor do
 webhook: pago na Asaas com valor diferente do cobrado não vira
 `confirmado` sozinho. *Violada:* o webhook recusava, e a próxima consulta
 da tela confirmava por cima. *Quem vê:* o comprador e o contratante. C1-10.
+E a confirmação que a tela descobre **entra pelo webhook** (FP2RA-1,
+25/09/2026): a consulta dispara o mesmo processamento de um
+`PAYMENT_CONFIRMED` (fila do charge, respaldo na Asaas, UPDATE
+condicional, aviso ao contratante), em vez de gravar a transição sozinha.
+*Violada:* numa reconfirmação (baixa desfeita e paga de novo), a tela
+gravava `confirmado` sem aviso, e o webhook seguinte achava tudo já feito
+— o contratante, que tinha ouvido "trate como não pago", nunca ouvia o
+pago de novo.
 
 **RN-70 · Cobrança substituída que a Asaas liquidou vale.** Substituir um
 Pix/boleto ou uma pop-up desatualizada grava a antiga como `cancelado`; se

@@ -946,4 +946,26 @@ async function noBancoFalso({ tabelas, asaas = {}, codigo }) {
   igual([saida.primeira[9], saida.depoisDeLiberar], [true, true], 'controle: arrendamento vencido (6 min) ou liberado volta a poder');
 }
 
+/* ======= FP2RA-2: o webhook gravou antes — o aviso é dele, não da rota ======= */
+/* O PAYMENT_REFUNDED chega e é aplicado enquanto a rota ainda espera a
+   resposta da Asaas. A escrita da rota perde o CAS; se ela avisasse mesmo
+   assim, o contratante ouvia um segundo `estornado` com `eventoId` novo
+   (o webhook, que APLICOU a transição, re-chaveia o fato). */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.duranteChamada = async () => { const c = m.cobrancas.get('c1'); c.status = 'estornado'; c.valor_estornado = 100; };
+  const r = await m.estornar({ pedidoId: 'ped_1' });
+  igual(r.codigo, 200, 'FP2RA-2: o estorno total responde normalmente');
+  igual(m.asaas.chamadas.length, 1, 'e a Asaas foi chamada uma vez');
+  igual(m.avisos.length, 0, 'FP2RA-2: a rota NÃO avisa — o webhook que gravou antes é quem avisa');
+}
+/* controle: sem o webhook no meio, a rota avisa (uma vez) */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  await m.estornar({ pedidoId: 'ped_1' });
+  igual(m.avisos.length, 1, 'controle: a rota que gravou avisa o contratante');
+}
+
 console.log(`estorno-repetido-nao-devolve-duas-vezes: ${checagens} checagens OK`);

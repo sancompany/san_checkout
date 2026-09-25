@@ -38,7 +38,7 @@ import {
   buscarCobrancaPorPedido,
   buscarUltimaCobrancaDaAssinatura,
   buscarCobrancaPorSubscriptionId,
-  aplicarTransicao
+  buscarCobranca
 } from '../services/cobrancaService.js';
 import {
   buscarAssinaturaAtiva,
@@ -54,7 +54,7 @@ import {
 } from '../services/asaasService.js';
 import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
-import { VERSAO_WEBHOOK, valorDivergenteDaCobranca } from './webhookController.js';
+import { VERSAO_WEBHOOK, valorDivergenteDaCobranca, processarWebhook } from './webhookController.js';
 
 /** Status locais em que ainda faz sentido mostrar como pagar. */
 /* ⚠️ A MESMA lista existe em `services/metricaService.js`, com o nome
@@ -90,12 +90,23 @@ async function statusAtualizado(cobranca) {
        por cima disso. */
     if (valorDivergenteDaCobranca(cobranca, { value: valor, installment })) return cobranca.status;
 
-    /* Por CAS sobre o status que se LEU (SEC-022, 25/09/2026): um
-       estorno ou chargeback que o webhook gravou entre a leitura e esta
-       escrita não é apagado por um `confirmado` atrasado. Perdeu a
-       corrida, vale o que está no banco. */
-    const gravou = await aplicarTransicao(cobranca.charge_id, { de: cobranca.status, para: 'confirmado' });
-    return gravou ? 'confirmado' : cobranca.status;
+    /* A confirmação que esta consulta descobriu entra pelo MESMO caminho
+       do webhook (FP2RA-1, 25/09/2026), como um evento sintético — o que o
+       reconciliador já faz. Antes esta rota gravava a transição sozinha,
+       sem aviso e fora da fila do charge: numa RECONFIRMAÇÃO (baixa
+       desfeita, pago de novo), o `PAYMENT_RECEIVED` que chegava depois
+       achava o status já no alvo e a chave do fato já usada — e o
+       contratante, que tinha ouvido "trate como não pago", nunca ouvia o
+       pago de novo. Pelo webhook: a fila por charge, o respaldo na Asaas,
+       o UPDATE condicional (SEC-022: o estorno gravado no meio não é
+       apagado) e o aviso, com a chave certa. */
+    try {
+      await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: cobranca.charge_id }, dateCreated: new Date().toISOString() });
+    } catch (erro) {
+      console.error(`[consulta] a confirmação de ${cobranca.charge_id} não se aplicou agora (${erro.message}); o webhook e o reconciliador seguem com ela`);
+    }
+    const relida = await buscarCobranca(cobranca.charge_id);
+    return relida?.status ?? cobranca.status;
   } catch (erro) {
     console.error(`[consulta] falha ao reconsultar ${cobranca.charge_id} na Asaas:`, erro.message);
     return cobranca.status;

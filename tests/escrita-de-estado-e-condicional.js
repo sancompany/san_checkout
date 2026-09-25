@@ -421,4 +421,45 @@ const consultar = `
   igual(st('webhook_inbox'), { 'in-falhou': 'processado', 'in-processando': 'processando', 'in-recebido': 'recebido' }, 'CP3 b2-in-reconciladas-falhou: a linha em reprocessamento e a reaberta continuam onde estavam — só a esgotada fecha');
 }
 
+/* ── FP2RA-1: a tela do pagador confirma PELO WEBHOOK, não por fora ────
+   Cobrança confirmada, baixa desfeita (o contratante ouviu "trate como
+   não pago"), paga de novo. Se a tela de status consulta antes do
+   webhook, ela gravava `confirmado` sozinha e sem aviso — e o
+   PAYMENT_RECEIVED seguinte achava o status já no alvo e a chave do fato
+   já usada: a reconfirmação nunca chegava ao contratante. */
+for (const comConsulta of [false, true]) {
+  const { saida, banco } = await rodar({
+    tabelas: { cobrancas: [linha({ charge_id: 'pay_x', status: 'pendente', contratantes: undefined })] },
+    codigo: `
+      let asaasStatus = 'RECEIVED';
+      globalThis.fetch = async (url) => {
+        const u = new URL(String(url));
+        if (u.hostname !== 'api-sandbox.asaas.com') return new Response('{}', { status: 200 });
+        if (u.pathname === '/v3/payments/pay_x/refunds') return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200, headers: { 'content-type': 'application/json' } });
+        if (u.pathname === '/v3/payments/pay_x') return new Response(JSON.stringify({ id: 'pay_x', status: asaasStatus, value: 50, deleted: false, externalReference: 'reserva-7a7a7a7a-0000-4000-8000-000000000001', billingType: 'PIX' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{"errors":[{"description":"fora do roteiro"}]}', { status: 500 });
+      };
+      const wc = await import('./src/controllers/webhookController.js');
+      const { statusPublico } = await import('./src/controllers/cobrancaConsultaController.js');
+      const res = () => ({ _s: 200, _c: null, status(c) { this._s = c; return this; }, json(c) { this._c = c; return this; } });
+      const receber = (id, event, dc) => wc.receberWebhookAsaas({ body: { id, event, dateCreated: dc, payment: { id: 'pay_x' } }, get: () => undefined, ip: '52.67.12.206' }, res());
+      asaasStatus = 'RECEIVED';
+      await receber('evt_1', 'PAYMENT_RECEIVED', '2026-09-25 10:00:00');
+      asaasStatus = 'PENDING';
+      await receber('evt_2', 'PAYMENT_RECEIVED_IN_CASH_UNDONE', '2026-09-25 11:00:00');
+      asaasStatus = 'RECEIVED';
+      let tela = null;
+      if (${comConsulta}) { const r = res(); await statusPublico({ params: { contratanteId: 'loja', pedidoId: 'ped_1' } }, r); tela = r._c?.status; }
+      await receber('evt_3', 'PAYMENT_RECEIVED', '2026-09-25 12:00:00');
+      await new Promise((ok) => setTimeout(ok, 200));
+      console.log(JSON.stringify({ tela }));
+    `
+  });
+  const chaves = (banco.outbox_notificacoes ?? []).map((o) => o.chave_idempotencia);
+  igual(banco.cobrancas[0].status, 'confirmado', `FP2RA-1 (${comConsulta ? 'com' : 'sem'} a tela no meio): termina confirmada`);
+  igual(chaves.filter((c) => c.startsWith('pedido|pay_x|confirmado')).length, 2, `FP2RA-1 (${comConsulta ? 'com' : 'sem'} a tela no meio): o contratante ouve a confirmação E a reconfirmação (${JSON.stringify(chaves)})`);
+  igual(chaves.filter((c) => c === 'pedido|pay_x|pendente').length, 1, 'e a baixa desfeita no meio');
+  if (comConsulta) igual(saida.tela, 'confirmado', 'FP2RA-1: e a tela do pagador mostra pago');
+}
+
 console.log(`escrita-de-estado-e-condicional: ${checagens} checagens OK`);
