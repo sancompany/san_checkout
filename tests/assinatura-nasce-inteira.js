@@ -147,6 +147,44 @@ const avisos = (banco, evento) => (banco.outbox_notificacoes ?? []).filter((o) =
   ok(!(r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.assinaturaDesconhecida'), 'sem alarme de assinatura desconhecida');
 }
 
+/* ── D) CP3-05: o alerta sobrevive à falha DEPOIS da transição ─────── */
+/* A sessão substituída (`cancelado`) que a Asaas liquidou chama um
+   humano. Se a amarração lança depois de a transição estar gravada, a
+   retentativa chega como reentrega — e o alerta, que dependia de
+   "transição aplicada NESTA passada", nunca saía. */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linhaDaPopup({ status: 'cancelado' })] },
+    falhas: { 'assinaturas.upsert': 1 },
+    asaas: { 'GET /v3/payments/pay_a': pagamento('pay_a', 'CONFIRMED', { checkoutSession: 'chk_a' }) },
+    passos: [{ receber: evento('evt_d1', 'PAYMENT_CONFIRMED', 'pay_a') }, { reprocessar: true }]
+  });
+  igual(r.banco.cobrancas[0].status, 'confirmado', 'CP3-05: a sessão substituída paga é aplicada');
+  igual(r.banco.assinaturas.map((a) => a.id), ['sub_a'], 'CP3-05: e a assinatura nasce na refeitura');
+  ok((r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.assinaturaSubstituidaPaga'), 'CP3-05: e um humano é chamado MESMO com a primeira passada morrendo depois da transição');
+}
+/* controle: a sessão que não foi substituída não chama ninguém */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linhaDaPopup()] },
+    falhas: { 'assinaturas.upsert': 1 },
+    asaas: { 'GET /v3/payments/pay_a': pagamento('pay_a', 'CONFIRMED', { checkoutSession: 'chk_a' }) },
+    passos: [{ receber: evento('evt_d2', 'PAYMENT_CONFIRMED', 'pay_a') }, { reprocessar: true }]
+  });
+  ok(!(r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.assinaturaSubstituidaPaga'), 'controle: sessão pendente paga não é "substituída"');
+}
+/* SEC-011 pelo mesmo caminho: a leitura da assinatura falha uma vez */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linhaDaPopup({ sessao_concluida_em: new Date(Date.now() - 3000_000).toISOString() })] },
+    falhas: { 'assinaturas.select': 1 },
+    asaas: { 'GET /v3/payments/pay_c1': pagamento('pay_c1', 'PENDING', { checkoutSession: 'chk_a' }) },
+    passos: [{ receber: evento('evt_d3', 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'pay_c1') }, { reprocessar: true }]
+  });
+  igual(r.banco.cobrancas[0].status, 'recusado', 'CP3-05: o 1º ciclo recusado é aplicado');
+  ok((r.banco.erros ?? []).some((e) => e.contexto === 'webhookController.primeiroCicloFalhou'), 'CP3-05: e o humano é chamado mesmo com a leitura da assinatura falhando uma vez');
+}
+
 /* ── C) o vínculo do charge à sessão é CAS ─────────────────────────── */
 {
   const r = await rodar({

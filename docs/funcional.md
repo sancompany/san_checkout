@@ -1213,7 +1213,12 @@ o pagamento é aplicado (`cancelado → confirmado`, só com o respaldo da
 Asaas, SEC-007) e vira duplicidade (RN-52) se o pedido já estava pago.
 *Violada:* `cancelado` não tinha saída; o evento esbarrava oito vezes e o
 reconciliador não achava caminho — dinheiro recebido, contratante nunca
-avisado. *Quem vê:* o contratante. D-3.
+avisado. Sessão de **assinatura** substituída (`cancelado`, ou `expirado`
+por ter travado 65 min) que a Asaas liquida não tem pedido para acusar a
+duplicidade: vira assinatura ativa **e** chama um humano (`erros`,
+`assinaturaSubstituidaPaga`, RUNBOOK §6.3), porque se a substituta também
+pagou são duas cobrando o mesmo cartão. *Quem vê:* o contratante e o
+operador. D-3, CP1-02, CP2-01.
 
 **RN-71 · Estorno negado pode ser pedido de novo.** O estorno de boleto
 confirmado como pedido e depois negado pela Asaas (`PAYMENT_REFUND_DENIED`)

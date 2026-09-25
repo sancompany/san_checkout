@@ -133,23 +133,23 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 
 ## 3. Classes de causa raiz — correção
 
-Cada classe foi corrigida **na raiz**, com busca transversal pelo resto do código antes de fechar, e uma suíte de classe que varre o `src/` inteiro em vez de confiar em memória.
+As contagens de checagens NÃO ficam neste relatório: cada suíte imprime a sua quando roda (`npm test`), e um número copiado aqui envelheceria no próximo commit — envelheceu três vezes nesta rodada. Cada classe foi corrigida **na raiz**, com busca transversal pelo resto do código antes de fechar, e uma suíte de classe que varre o `src/` inteiro em vez de confiar em memória.
 
 | Classe | Correção na raiz | Suíte de classe | Commit |
 |---|---|---|---|
-| CR-01 identificador não canônico | `exigirParametrosCanonicos` em todo roteador + `segmentoAsaas` em todo caminho de saída; front com `encodeURIComponent` | `identificador-canonico-em-toda-fronteira` (2180), `filtro-or-so-interpola-o-que-o-servidor-fez` | `a5d552e`, `baa3a88` |
-| CR-02 efeito financeiro sem identidade durável | estorno como operação durável (tabela `estornos`, 0018); acerto de troca procurado pela referência `troca:<id>`; uma troca em voo (0019) | `estorno-repetido-nao-devolve-duas-vezes` (108), `acerto-de-troca-nunca-fica-orfao` | `69b5228`, `5475d69`, `baa3a88` |
-| CR-03 instrumento entregue sem reconferir | reaproveitar só se ainda é o do pedido, pelo preço da tela; linha representativa determinística | `instrumento-obsoleto-nunca-volta` (46) | `d651f62` |
+| CR-01 identificador não canônico | `exigirParametrosCanonicos` em todo roteador + `segmentoAsaas` em todo caminho de saída; front com `encodeURIComponent` | `identificador-canonico-em-toda-fronteira`, `filtro-or-so-interpola-o-que-o-servidor-fez` | `a5d552e`, `baa3a88` |
+| CR-02 efeito financeiro sem identidade durável | estorno como operação durável (tabela `estornos`, 0018); acerto de troca procurado pela referência `troca:<id>`; uma troca em voo (0019) | `estorno-repetido-nao-devolve-duas-vezes`, `acerto-de-troca-nunca-fica-orfao` | `69b5228`, `5475d69`, `baa3a88` |
+| CR-03 instrumento entregue sem reconferir | reaproveitar só se ainda é o do pedido, pelo preço da tela; linha representativa determinística | `instrumento-obsoleto-nunca-volta` | `d651f62` |
 | CR-04 saída sem revalidação no envio | `redirect: 'error'`/manual em toda saída; destino revalidado no envio | `saida-nunca-segue-redirecionamento`, `nenhuma-chamada-de-saida-sem-teto` | `c8f4e20` |
-| CR-05 estado do corpo do evento / ordem | o provedor decide: `GET /v3/payments/{id}` antes de mover dinheiro; transição fora de ordem lança e é reaplicada; reconciliador dirigido | `webhook-confere-na-asaas` (85) | `af6f597`, `baa3a88` |
+| CR-05 estado do corpo do evento / ordem | o provedor decide: `GET /v3/payments/{id}` antes de mover dinheiro; transição fora de ordem lança e é reaplicada; reconciliador dirigido | `webhook-confere-na-asaas` | `af6f597`, `baa3a88` |
 | CR-06 efeito assíncrono sem dono | promessa com dono em todo `src/`; **todo handler do Express com dono** (`rotaSegura.js`) | `nenhuma-promessa-sem-dono`, `rota-que-lanca-nao-derruba-o-processo` | `5475d69`, `baa3a88` |
-| CR-07 escrita fora da CAS | toda transição por `aplicarTransicao`/CAS; escrita incondicional removida; delete condicional | `escrita-de-estado-e-condicional` (28) | `8be71d3`, `baa3a88` |
+| CR-07 escrita fora da CAS | toda transição por `aplicarTransicao`/CAS; escrita incondicional removida; delete condicional | `escrita-de-estado-e-condicional` | `8be71d3`, `baa3a88` |
 | CR-08 ciclo de vida da assinatura | uma assinatura viva por plano; vínculo no 1º evento; ciclo identificado pela assinatura | `uma-assinatura-viva-por-plano`, `assinatura-nasce-inteira` | `5475d69`, `baa3a88` |
-| CR-09 fronteira administrativa | JWT do Access na origem (RS256, aud, iss, exp) + Pages Function; segredo nunca em log/resposta; grants públicos revogados (0020) | `admin-so-pelo-access` (73), `segredo-nao-sai-do-admin`, `banco-sem-privilegio-publico` | `8be71d3`, `baa3a88` |
+| CR-09 fronteira administrativa | JWT do Access na origem (RS256, aud, iss, exp) + Pages Function; segredo nunca em log/resposta; grants públicos revogados (0020) | `admin-so-pelo-access`, `segredo-nao-sai-do-admin`, `banco-sem-privilegio-publico` | `8be71d3`, `baa3a88` |
 | CR-10 multi-tenant | refutado por classificação das 142 consultas | teste da irmã (única frágil) | — |
 | CR-11 borda | `/api/saude` 503 com worker parado; orçamento nas passadas; teto de resposta do webhook | `rotas-http`, autotestes de `passadas.js`, `webhookController` | `8be71d3`, `baa3a88` |
-| CR-12 dado pessoal em log | corpo cru fora do log; erro da Asaas redigido | `erro-da-asaas-nao-vaza` (16) | `8be71d3` |
-| CR-13 dependências e CI | versões corrigidas; CI só leitura, ferramentas fixadas por hash, Dependabot com cooldown | `ci-so-le-e-fixa-o-que-roda` (19) | `8be71d3`, `8c96576` |
+| CR-12 dado pessoal em log | corpo cru fora do log; erro da Asaas redigido | `erro-da-asaas-nao-vaza` | `8be71d3` |
+| CR-13 dependências e CI | versões corrigidas; CI só leitura, ferramentas fixadas por hash, Dependabot com cooldown | `ci-so-le-e-fixa-o-que-roda` | `8be71d3`, `8c96576` |
 | CR-14 tipo na fronteira | validadores só aceitam texto ou número finito | autoteste de `validadores.js` | `8be71d3` |
 | CR-15 dependência sem teto | cliente Supabase com 20 s | `nenhuma-chamada-de-saida-sem-teto` | `8be71d3` |
 
@@ -248,10 +248,18 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP2-12 | INFO | teste | o `catch` síncrono do invólucro é redundante no Express 4 (que já pega o síncrono), por isso tirá-lo não reprova | **RISK_ACCEPTED** RES-31 — cinto e suspensório de propósito; o assíncrono, que é o que importa, é provado |
 | CP2-13 | INFO | teste | a conferência de cobertura não vê `import { Router as R0 }` | **DUPLICATE** de CP1-10 |
 | CP2-14 | INFO | CR-05 | dois eventos sem `id` e corpo mínimo idêntico são deduplicados como um | **RISK_ACCEPTED** RES-32 — a Asaas sempre manda `id` |
+| CP3-01 | LOW | doc | o alerta `assinaturaSubstituidaPaga` (duas assinaturas cobrando o mesmo cartão) não tinha primeira ação no RUNBOOK nem frase no RN-70 | **FIXED** — RUNBOOK §6.3 e RN-70 |
+| CP3-02 | LOW | doc | o próprio relatório contradizia o HEAD: contagens de checagens da §3 velhas e a §7 com "doze commits" e sem os commits dos ciclos | **FIXED** — a §3 deixou de copiar contagens (cada suíte imprime a sua); a §7 lista os 24 commits e todos os que mudam código |
+| CP3-03 | INFO | CR-08 | o alerta de assinatura substituída também dispararia para uma linha de Pix Automático `cancelado` que recebesse um pagamento tardio | **RISK_ACCEPTED** RES-33 — método desligado nesta conta (`CONSTRAINTS.md` §2.4) e a linha é achada pelo id da autorização; falso positivo seria só um alerta a mais |
+| CP3-04 | INFO | doc | ~20 contextos novos de `erros` (reconciliador "sem caminho", `semRespaldo`, órfãos do sweeper) sem linha própria na tabela do RUNBOOK §6.3 | **RISK_ACCEPTED** RES-34 — cada mensagem já diz o que conferir; a tabela não se propõe completa |
+| CP3-05 | LOW | CR-08 | os dois alertas que chamam um humano (`assinaturaSubstituidaPaga`, CP1-02/CP2-01; `primeiroCicloFalhou`, SEC-011) só saíam com a transição aplicada NA MESMA passada: uma escrita que lançasse entre a transição e o alerta (`upsertAssinatura`, `buscarAssinaturaPorId`) fazia a retentativa chegar como reentrega e o alerta nunca sair — duas assinaturas cobrando sem ninguém saber (invariante 10) | **FIXED** — os dois alertas saem ANTES da transição (repetir é inofensivo: `erros` agrega); regressão com falha injetada nos dois caminhos em `tests/assinatura-nasce-inteira.js`, 2 sabotagens pegas |
+| CP3-06 | INFO | CR-02 | se `reabrirEstornosNegados` lança depois de `estorno_negado` gravado e uma confirmação da mesma cobrança entra antes da retentativa, a negativa repetida é ignorada como obsoleta e a operação fica CONFIRMED (o sintoma do DIF-01) | **RISK_ACCEPTED** RES-35 — exige falha num instante exato mais uma confirmação depois de negativa que a Asaas não foi medida mandando; a operação presa aparece pelo 409 e pelo RUNBOOK §6.3 |
+| CP3-07 | INFO | CR-05 | desde o D-3, uma linha `cancelado`/`expirado` que recebe recusa de cartão ou reprovação de risco lança "falta o estado anterior" até a inbox esgotar e virar `erros` | **RISK_ACCEPTED** RES-36 — ruído, nenhum dinheiro; a mesma lógica existia antes do D-3 |
+| CP3-08 | INFO | CR-08 | o alerta de sessão substituída também sai para uma sessão de assinatura só expirada localmente, sem substituta, e paga tarde | **RISK_ACCEPTED** RES-37 — alarme a mais, nunca a menos; o humano confere e encerra |
 
 ## 7. Correções
 
-Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os de código:
+24 commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4` (PR #50): 3 de evidência (baseline, relatório do Jules e o merge dele, sem alteração), 1 do ledger antes do código, e os demais de correção e de registro. Lista completa: `git log --reverse 43635c4..HEAD`. Os que mudam código:
 
 | Commit | Escopo |
 |---|---|
@@ -264,6 +272,12 @@ Doze commits na branch `claude/nifty-meitner-4ffp9s` sobre `43635c4`, PR #50. Os
 | `8be71d3` | CR-07/09/11/12/13/14/15 — Access na origem, segredos, CAS, NEW-01/02 |
 | `8c96576` | CI — chaves de mentira, cooldown no Dependabot (achado do semgrep da própria PR) |
 | `baa3a88` | ciclo adversarial 1 — C1-01…C1-15 |
+| `ba36881` | ciclo adversarial 2 — C2-M1, C2-L1, C2-L2 |
+| `7c0c94d` | ciclo 2, segundo revisor — C2-L2b…C2-L5; evidências imutáveis por hash |
+| `ccfedc5` | auditoria do diff — DIF-01, DIF-03, DIF-04 (+ documentação DIF-05…07) |
+| `0808a13` | passada limpa #1 — CP1-01, CP1-02 |
+| `1b6a5b7` | passada limpa #1, 2ª tentativa — CP2-01 |
+| `6ebc923` | passada limpa #1, 2ª tentativa — CP2-10, CP2-11 |
 
 Migrations: **0018** (estornos) e **0019** (uma troca em voo) aplicadas em produção; **0020** (grants públicos) escrita e testada, aplicação pendente (EP-02).
 
@@ -427,7 +441,11 @@ Protocolo por correção: verde → sabotar a correção → **vermelho pela ass
 | CR-07/09/11–15 + NEW | 50 | 50 | 4 (H1, H9, H11, N5) |
 | CI (Dependabot) | 1 | 1 | — |
 | Ciclo 1 (C1-01…C1-15) | 24 | 24 | 2 (camada do decodificador sem prova própria; teste do buscador que pegava a sabotagem por travar, não por asserção) |
-| **Total** | **164** | **164** | **10**, todas fechadas |
+| Ciclo 2 (C2-*) | 6 | 6 | 1 (a sabotagem do L5 mirava o `app` com o handler no roteador — refeita no `roteador`) |
+| Auditoria do diff (DIF-*) | 4 | 4 | — |
+| Relatórios imutáveis e contador do ledger | 3 | 3 | — |
+| Passadas limpas (CP1-01, CP1-02, CP2-01, CP2-10, CP2-11, CP3-05 ×2) | 7 | 7 | CP2-10 era, ela mesma, uma lacuna (achada pelo auditor) |
+| **Total** | **184** | **184** | **12**, todas fechadas |
 
 ## 10. Validações externas
 
@@ -485,4 +503,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 123 = FIXED 77 + FALSE_POSITIVE 3 + DUPLICATE 7 + RISK_ACCEPTED 30 + EXTERNAL_PENDING 6
+TOTAL_LEDGER = 131 = FIXED 80 + FALSE_POSITIVE 3 + DUPLICATE 7 + RISK_ACCEPTED 35 + EXTERNAL_PENDING 6

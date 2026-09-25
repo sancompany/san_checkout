@@ -1105,6 +1105,43 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     return;
   }
   if (!mesmoStatus) {
+    /* CP3-05: os dois alertas que chamam um humano saem ANTES da
+       transição. Depois dela, nada na linha lembra o estado de onde ela
+       veio — e uma escrita que lança entre a transição e o alerta (a
+       amarração da assinatura, uma leitura) fazia a retentativa chegar
+       como reentrega (`mesmoStatus`) e o alerta nunca sair: duas
+       assinaturas cobrando, ou um 1º ciclo recusado, sem ninguém saber.
+       Antes da escrita, o alerta que lança impede a transição e a inbox
+       refaz os dois; repetir o alerta é inofensivo (`erros` agrega por
+       impressão digital). */
+    if (novoStatus === 'confirmado' && ['cancelado', 'expirado'].includes(cobranca.status) && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
+      /* CP1-I1/CP2-01: assinatura de sessão SUBSTITUÍDA que a Asaas
+         liquidou mesmo assim — trocada por outro preço (`cancelado`,
+         RN-70) ou por ter travado 65 min (`expirado`, a reserva abre
+         outra). A de pedido vira duplicidade pelo pedido; a de assinatura
+         não tem pedido — se a sessão que a substituiu também pagou, são
+         duas assinaturas cobrando. Um humano confere. */
+      await deps.registrarErro(
+        new Error(`a sessão de assinatura ${cobranca.asaas_checkout_id ?? cobranca.id} tinha sido substituída e foi paga mesmo assim (${chargeId}): conferir se a que a substituiu também pagou — seriam duas assinaturas do mesmo plano cobrando`),
+        { contexto: 'webhookController.assinaturaSubstituidaPaga', rota: 'webhook/asaas', metodo: 'POST' }
+      );
+    }
+    if (
+      ['recusado', 'vencido'].includes(novoStatus)
+      && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
+      && cobranca.asaas_checkout_id && payment?.subscription
+      && !(await deps.buscarAssinaturaPorId(payment.subscription))
+    ) {
+      /* SEC-011: o PRIMEIRO ciclo de uma assinatura nova falhou (cartão
+         recusado, vencido). A assinatura continua viva na Asaas — ela
+         tenta o ciclo seguinte —, e o pagador que assinar de novo fica
+         com DUAS. Nada aqui a cancela sozinho (o comportamento da Asaas
+         depois da recusa ainda não foi medido); um humano é chamado. */
+      await deps.registrarErro(
+        new Error(`o 1º ciclo da assinatura ${payment.subscription} ficou "${novoStatus}" (${chargeId}): ela continua ativa na Asaas e vai tentar de novo; se o pagador assinar outra vez, serão duas — cancelar esta na Asaas se não for mais valer`),
+        { contexto: 'webhookController.primeiroCicloFalhou', rota: 'webhook/asaas', metodo: 'POST' }
+      );
+    }
     const gravou = await deps.aplicarTransicao(chargeId, { de: cobranca.status, para: novoStatus, ocorridoEm: carimbo, valorEstornado });
     if (!gravou) {
       /* Outro evento venceu a corrida entre a leitura e a escrita. LANÇA:
@@ -1170,38 +1207,9 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     }
   }
 
-  /* SEC-011: o PRIMEIRO ciclo de uma assinatura nova falhou (cartão
-     recusado, vencido). A assinatura continua viva na Asaas — ela tenta
-     o ciclo seguinte —, e o pagador que assinar de novo fica com DUAS.
-     Nada aqui a cancela sozinho (o comportamento da Asaas depois da
-     recusa ainda não foi medido); um humano é chamado. */
-  if (
-    ['recusado', 'vencido'].includes(statusGravado) && aplicada
-    && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
-    && cobranca.asaas_checkout_id && payment?.subscription
-    && !(await deps.buscarAssinaturaPorId(payment.subscription))
-  ) {
-    await deps.registrarErro(
-      new Error(`o 1º ciclo da assinatura ${payment.subscription} ficou "${statusGravado}" (${chargeId}): ela continua ativa na Asaas e vai tentar de novo; se o pagador assinar outra vez, serão duas — cancelar esta na Asaas se não for mais valer`),
-      { contexto: 'webhookController.primeiroCicloFalhou', rota: 'webhook/asaas', metodo: 'POST' }
-    );
-  }
-
   /* Estorno NEGADO (D-1): a operação que o registrou como pedido reabre, e
      a mesma chave pode pedir de novo. Também na reentrega — é idempotente. */
   if (statusGravado === 'estorno_negado' && cobranca.id) await deps.reabrirEstornosNegados(cobranca.id);
-
-  /* CP1-I1/CP2-01: assinatura de sessão SUBSTITUÍDA que a Asaas liquidou
-     mesmo assim — trocada por outro preço (`cancelado`, RN-70) ou por ter
-     travado 65 min (`expirado`, a reserva abre outra). A de pedido vira duplicidade pelo pedido; a de
-     assinatura não tem pedido — se a sessão que a substituiu também
-     pagou, são duas assinaturas cobrando. Um humano confere. */
-  if (aplicada && statusGravado === 'confirmado' && ['cancelado', 'expirado'].includes(cobranca.status) && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)) {
-    await deps.registrarErro(
-      new Error(`a sessão de assinatura ${cobranca.asaas_checkout_id ?? cobranca.id} tinha sido substituída e foi paga mesmo assim (${chargeId}): conferir se a que a substituiu também pagou — seriam duas assinaturas do mesmo plano cobrando`),
-      { contexto: 'webhookController.assinaturaSubstituidaPaga', rota: 'webhook/asaas', metodo: 'POST' }
-    );
-  }
 
   const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
 
