@@ -252,13 +252,21 @@ const consultar = `
       const naoIn = await supabase.from('cobrancas').select('id').or('status.not.in.(pendente,cancelado)');
       const dup = await supabase.from('cobrancas').update({ charge_id: 'pay_f1' }).eq('id', 'f2').select('id');
       const proj = await supabase.from('cobrancas').update({ atualizado_em: 'x' }).eq('id', 'f1').select('id');
-      console.log(JSON.stringify({ duas: duas.error?.code ?? null, naoIn: naoIn.data.map((l) => l.id), dup: dup.error?.code ?? null, proj: proj.data }));
+      const umaSo = await supabase.from('cobrancas').update({ ciclo: 'MUDOU' }).eq('pedido_id', 'ped_1').select('id').maybeSingle();
+      const juntas = await supabase.from('cobrancas').update({ charge_id: 'pay_igual' }).eq('pedido_id', 'ped_1').select('id');
+      const { readFileSync } = await import('node:fs');
+      const depois = JSON.parse(readFileSync(process.env.BANCO_FALSO_ARQUIVO, 'utf8')).tabelas.cobrancas;
+      console.log(JSON.stringify({ duas: duas.error?.code ?? null, naoIn: naoIn.data.map((l) => l.id), dup: dup.error?.code ?? null, proj: proj.data,
+        umaSo: umaSo.error?.code ?? null, gravouMesmoAssim: depois.some((l) => l.ciclo === 'MUDOU'), juntas: juntas.error?.code ?? null, chargesDepois: depois.map((l) => l.charge_id).sort() }));
     `
   });
   igual(saida.duas, 'PGRST116', 'maybeSingle com duas linhas é erro, não "a primeira"');
   igual(saida.naoIn, ['f1'], '`status.not.in.(…)` dentro de .or() é entendido, não lido como coluna `status.not`');
   igual(saida.dup, '23505', 'o UPDATE também respeita o índice único');
   igual(saida.proj, [{ id: 'f1' }], "`update().select('id')` devolve só o id");
+  igual([saida.umaSo, saida.gravouMesmoAssim], ['PGRST116', false], 'C2-L2b: maybeSingle numa escrita que casa duas linhas é erro E nada é gravado (a transação volta)');
+  igual(saida.juntas, '23505', 'C2-L3b: duas linhas do MESMO update indo para a mesma chave única também violam');
+  igual(saida.chargesDepois, ['pay_f1', 'pay_f2'], 'e nenhuma das duas foi gravada');
 }
 
 console.log(`escrita-de-estado-e-condicional: ${checagens} checagens OK`);

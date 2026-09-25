@@ -22,7 +22,7 @@
  */
 import { Router } from 'express';
 
-const METODOS = ['use', 'all', 'get', 'post', 'put', 'patch', 'delete'];
+const METODOS = ['use', 'all', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
 
 function envolver(handler) {
   if (Array.isArray(handler)) return handler.map(envolver);
@@ -40,8 +40,15 @@ function envolver(handler) {
 
 export function comRejeicaoTratada(alvo) {
   for (const metodo of METODOS) {
+    if (typeof alvo[metodo] !== 'function') continue; // o `Route` não tem `use`
     const original = alvo[metodo].bind(alvo);
     alvo[metodo] = (...argumentos) => original(...argumentos.map(envolver));
+  }
+  /* `router.route('/x').get(…)` registra no objeto `Route`, não no
+     roteador — sem isto, o handler dele escaparia (C2-L4). */
+  if (typeof alvo.route === 'function') {
+    const rota = alvo.route.bind(alvo);
+    alvo.route = (...argumentos) => comRejeicaoTratada(rota(...argumentos));
   }
   return alvo;
 }

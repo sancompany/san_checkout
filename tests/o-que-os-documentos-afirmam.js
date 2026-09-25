@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 let checagens = 0;
@@ -278,5 +279,23 @@ for (const rel of vivos) {
   }
 }
 igual(quebrados, [], 'documento vivo aponta para arquivo que não existe');
+
+/* ---- As duas evidências da Estação 6 são IMUTÁVEIS ----
+   A baseline de segurança (Claude, antes de qualquer correção, `5ff3e93`)
+   e a revisão independente (Jules, `591f5d7`, PR #49) são o que a
+   remediação tem de responder. Reescrever uma delas depois apagaria o
+   ponto de partida — o hash é o do commit original, conferido em
+   25/09/2026. O resultado pós-correção mora em outro arquivo, o
+   `SECURITY_STATION_6_REMEDIATION_2026-09-25.md`. */
+const IMUTAVEIS = {
+  'docs/SECURITY_STATION_6_BASELINE_2026-09-25.md': '23c8e6d472daced104e85157d9ee2028743401daf3bb9975ab14458c86795112',
+  'docs/SECURITY_STATION_6_JULES_REVIEW_2026-09-25.md': 'e72670cf11c5c82c7c42570acadfaaf7138c20a45c64e8f665d3c23be6920af1'
+};
+for (const [arquivo, hash] of Object.entries(IMUTAVEIS)) {
+  const caminho = join(RAIZ, arquivo);
+  ok(existsSync(caminho), `${arquivo} existe`);
+  ok(createHash('sha256').update(readFileSync(caminho)).digest('hex') === hash, `${arquivo} é o do commit original — evidência não se reescreve`);
+}
+ok(existsSync(join(RAIZ, 'docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md')), 'e o resultado pós-correção existe à parte');
 
 console.log(`o-que-os-documentos-afirmam: ${checagens} checagens OK (${suites.length} suítes, ${naTabela.length} skills)`);

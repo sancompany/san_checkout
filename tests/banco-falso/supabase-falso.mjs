@@ -174,6 +174,14 @@ class Consulta {
     let data = null; let error = null; let count = null;
 
     const chaveDaFalha = `${this.tabela}.${this.modo}`;
+    /* `lancar`: o cliente LANÇA em vez de devolver `{ error }` — o que um
+       bug de biblioteca ou um `TypeError` no nosso código faria. Serve para
+       provar que handler que rejeita não derruba o `server.js` (C2-L5). */
+    if (estado.lancar?.[chaveDaFalha] > 0) {
+      estado.lancar[chaveDaFalha] -= 1;
+      gravar(estado);
+      throw new TypeError(`exceção injetada em ${chaveDaFalha}`);
+    }
     if (estado.falhas?.[chaveDaFalha] > 0) {
       estado.falhas[chaveDaFalha] -= 1;
       gravar(estado);
@@ -205,10 +213,20 @@ class Consulta {
       data = this.retornar ? (this.um ? novas[0] : novas.map((l) => this.projeta(l))) : null;
     } else if (this.modo === 'update') {
       const alvo = linhas.filter(casa);
+      /* `single`/`maybeSingle` numa escrita que casa MAIS de uma linha: o
+         PostgREST responde erro e a transação volta — nada é gravado
+         (C2-L2b). A primeira versão gravava e depois devolvia o erro. */
+      if (this.um && this.retornar && alvo.length > 1) {
+        return { data: null, error: { code: 'PGRST116', message: 'mais de uma linha' }, count: null };
+      }
       /* Índice único vale no UPDATE também (C1-12): gravar num `charge_id`
-         que outra linha já tem é `23505` no Postgres, e nada é escrito. */
+         que outra linha já tem é `23505` no Postgres, e nada é escrito.
+         A comparação é contra o estado FINAL de todas as linhas — duas
+         linhas do mesmo update indo para a mesma chave também violam
+         (C2-L3b). */
+      const final = new Map(linhas.map((l) => [l, alvo.includes(l) ? { ...l, ...this.corpo } : l]));
       for (const l of alvo) {
-        const depois = { ...l, ...this.corpo };
+        const depois = final.get(l);
         for (const indice of UNICAS[this.tabela] ?? []) {
           const chave = Array.isArray(indice) ? indice : indice.colunas;
           const onde = Array.isArray(indice) ? () => true : indice.onde;
@@ -216,7 +234,7 @@ class Consulta {
           // Só a violação que ESTE update introduz: chave mexida, ou a linha entrando na condição do índice parcial.
           const mexeu = chave.some((k) => k in this.corpo && this.corpo[k] !== l[k]) || !onde(l);
           if (!mexeu) continue;
-          if (linhas.some((o) => o !== l && onde(o) && chave.every((k) => o[k] === depois[k]))) {
+          if ([...final.entries()].some(([o, fo]) => o !== l && onde(fo) && chave.every((k) => fo[k] === depois[k]))) {
             return { data: null, error: { code: '23505', message: `duplicate key (${chave.join(',')})` }, count: null };
           }
         }

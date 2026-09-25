@@ -33,7 +33,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { arquivosJs } from './ajudantes.js';
@@ -43,10 +44,10 @@ let checagens = 0;
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 
-async function filho(codigo) {
-  const p = spawn(process.execPath, ['--input-type=module', '-e', codigo], {
+async function filho(codigo, { importar = null, ...extra } = {}) {
+  const p = spawn(process.execPath, [...(importar ? ['--import', importar] : []), '--input-type=module', '-e', codigo], {
     cwd: RAIZ,
-    env: { ...process.env, CHECKOUT_SEM_LISTEN: '1', SUPABASE_URL: 'http://127.0.0.1:1', SUPABASE_SERVICE_KEY: 'teste', ASAAS_API_KEY: 'chave-de-teste', ASAAS_AMBIENTE: 'sandbox' }
+    env: { ...process.env, CHECKOUT_SEM_LISTEN: '1', SUPABASE_URL: 'http://127.0.0.1:1', SUPABASE_SERVICE_KEY: 'teste', ASAAS_API_KEY: 'chave-de-teste', ASAAS_AMBIENTE: 'sandbox', ...extra }
   });
   let stdout = ''; let stderr = '';
   p.stdout.on('data', (c) => { stdout += c; });
@@ -93,6 +94,38 @@ const logDoAccess = (real.resultado?.avisos ?? []).filter((l) => l.includes('[ad
 ok(logDoAccess.length >= 3 && logDoAccess.every((l) => !l.includes('\n')), 'o motivo da recusa não injeta linha no log (o alg não é interpolado cru)');
 ok(logDoAccess.every((l) => !/JWT aceito/.test(l)), 'e o texto do atacante não aparece no log como se fosse nosso');
 
+/* ---- 1b. o INVÓLUCRO no server.js real, não só o decodificador (C2-L5) ----
+   A parte 1 passa com a correção do decodificador sozinha — o JWT
+   venenoso nunca chega a lançar. Aqui um handler DE VERDADE rejeita: a
+   listagem do admin não tem `try`, e o cliente do banco (o falso, com
+   exceção injetada) LANÇA no meio dela. Sem o invólucro, é
+   `unhandledRejection` e o processo morre. */
+const pasta = mkdtempSync(join(tmpdir(), 'rota-que-lanca-'));
+const banco = join(pasta, 'banco.json');
+writeFileSync(banco, JSON.stringify({ tabelas: { contratantes: [] }, lancar: { 'contratantes.select': 1 } }));
+const realRejeita = await filho(`
+  const { gerarHashSenha } = await import('./src/utils/senhaAdmin.js');
+  process.env.CHECKOUT_ADMIN_USER = 'op'; process.env.CHECKOUT_ADMIN_PASS_HASH = await gerarHashSenha('senha-do-teste');
+  const { subirAccessDeTeste } = await import('./tests/access-de-teste.js');
+  const access = await subirAccessDeTeste();
+  console.error = () => {};
+  const { app } = await import('./src/server.js');
+  const servidor = app.listen(0);
+  await new Promise((r) => servidor.once('listening', r));
+  const base = 'http://127.0.0.1:' + servidor.address().port;
+  const h = { 'content-type': 'application/json', 'cf-access-jwt-assertion': access.jwt() };
+  const login = await fetch(base + '/api/admin/sessao', { method: 'POST', headers: h, body: JSON.stringify({ usuario: 'op', senha: 'senha-do-teste' }) }).then((r) => r.json());
+  const lista = await fetch(base + '/api/admin/contratantes', { headers: { ...h, 'x-admin-token': login.token } });
+  await new Promise((r) => setTimeout(r, 100));
+  const depois = await fetch(base + '/api/admin/contratantes', { headers: { ...h, 'x-admin-token': login.token } });
+  servidor.close();
+  console.log(JSON.stringify({ lista: lista.status, corpo: await lista.json().catch(() => null), depois: depois.status }));
+  process.exit(0);
+`, { BANCO_FALSO_ARQUIVO: banco, importar: './tests/banco-falso/loader.mjs' });
+ok(realRejeita.status === 0 && realRejeita.resultado, `C2-L5: o server.js real sobrevive a um handler que rejeita (saiu ${realRejeita.status}; ${realRejeita.stderr.split('\n').find((l) => /unhandled|morrer|encerrar/i.test(l)) ?? ''})`);
+igual([realRejeita.resultado?.lista, realRejeita.resultado?.corpo?.erro], [500, 'Erro interno. Tente novamente em instantes.'], 'C2-L5: a rejeição vira o 500 genérico do tratador de erro');
+igual(realRejeita.resultado?.depois, 200, 'e o pedido seguinte é atendido — o processo continua de pé');
+
 /* ---- 2. a classe: handler que lança, dos três jeitos ---- */
 const classe = await filho(`
   process.on('unhandledRejection', () => { console.log(JSON.stringify({ morreu: 'unhandledRejection' })); process.exit(1); });
@@ -105,6 +138,7 @@ const classe = await filho(`
   r.get('/sync', () => { throw new TypeError('lançou síncrono'); });
   r.get('/depois-de-responder', async (_q, res) => { res.json({ ok: 1 }); throw new Error('lançou depois de responder'); });
   r.get('/ok', async (_q, res) => { res.json({ ok: true }); });
+  r.route('/pela-rota').get(async () => { throw new TypeError('lançou num handler de route()'); });
   app.use('/x', r);
   app.get('/no-app', async () => { throw new Error('no app'); });
   const vistos = [];
@@ -112,15 +146,15 @@ const classe = await filho(`
   const s = app.listen(0); await new Promise((ok) => s.once('listening', ok));
   const base = 'http://127.0.0.1:' + s.address().port;
   const st = {};
-  for (const c of ['/x/async', '/x/sync', '/x/depois-de-responder', '/x/ok', '/no-app']) st[c] = (await fetch(base + c)).status;
+  for (const c of ['/x/async', '/x/sync', '/x/depois-de-responder', '/x/ok', '/x/pela-rota', '/no-app']) st[c] = (await fetch(base + c)).status;
   await new Promise((ok) => setTimeout(ok, 50));
   s.close();
   console.log(JSON.stringify({ st, vistos, get: app.get('env') !== undefined }));
   process.exit(0);
 `);
 ok(classe.status === 0 && classe.resultado && !classe.resultado.morreu, `a classe: nenhum dos handlers derruba o processo (${JSON.stringify(classe.resultado)})`);
-igual(classe.resultado?.st, { '/x/async': 500, '/x/sync': 500, '/x/depois-de-responder': 200, '/x/ok': 200, '/no-app': 500 }, 'o que lança vira 500 do tratador; o que já respondeu segue respondido; o que não lança é intocado (controle)');
-igual(classe.resultado?.vistos, ['lançou depois do await', 'lançou síncrono', 'lançou depois de responder', 'no app'], 'e TODA exceção chega ao tratador de erro — nenhuma some');
+igual(classe.resultado?.st, { '/x/async': 500, '/x/sync': 500, '/x/depois-de-responder': 200, '/x/ok': 200, '/x/pela-rota': 500, '/no-app': 500 }, 'o que lança vira 500 do tratador — inclusive o registrado por route() (C2-L4); o que já respondeu segue respondido; o que não lança é intocado (controle)');
+igual(classe.resultado?.vistos, ['lançou depois do await', 'lançou síncrono', 'lançou depois de responder', 'lançou num handler de route()', 'no app'], 'e TODA exceção chega ao tratador de erro — nenhuma some');
 ok(classe.resultado?.get === true, 'controle: `app.get(nome)` de uma configuração continua lendo a configuração');
 
 /* ---- 3. a cobertura: nada em src/ monta roteador ou app sem a proteção ---- */
