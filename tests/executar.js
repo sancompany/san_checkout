@@ -37,6 +37,7 @@ const SUITES = [
   'src/services/transicoesFinanceiras.js', // a máquina de estados: CONFIRMED atrasado nunca desfaz um estorno (C-03)
   'src/services/webhookInboxService.js',   // a inbox: corpo mínimo sem pessoa, idempotência por id do evento (C-01)
   'src/services/outboxService.js',         // a outbox: entrega assinada, id único, recuo finito (H-01)
+  'src/utils/passadas.js',                 // uma passada de worker por vez: o tique seguinte não atropela a anterior (SEC-023)
   'src/services/cotacaoService.js',        // a cotação: o retrato do preço mostrado, comparado em centavos (C-02)
   'src/services/reconciliacaoService.js',  // reserva órfã que virou cobrança na Asaas é completada, nunca liberada (H-06)
   'src/services/irmasObsoletasService.js', // irmã de pedido pago: lê a Asaas antes de excluir, nunca exclui o que está pago (RN-51)
@@ -73,6 +74,7 @@ const SUITES = [
   'tests/pull-nao-segue-para-onde-quiser.js', // a resposta do contratante não pode virar o alvo (SSRF) nem encher a memória
   'tests/saida-nunca-segue-redirecionamento.js', // CR-04: a outbox seguia 307 levando CPF e assinatura para dentro (SEC-006/021)
   'tests/identificador-canonico-em-toda-fronteira.js', // CR-01: `../` e `%2F` num id viravam outro caminho autenticado (SEC-001/003/017/026)
+  'tests/webhook-confere-na-asaas.js', // CR-05: o corpo do evento confirmava dinheiro; estorno antes da confirmação era descartado (SEC-007/008/019, JULES-004)
   'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas

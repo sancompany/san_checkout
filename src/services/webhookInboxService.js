@@ -189,23 +189,97 @@ const FOLGA_INLINE_S = 60;
 export const MINUTOS_DE_ARRENDAMENTO_INBOX = 5;
 
 /**
- * Reivindica a linha para processar (CAS: sai de `recebido`/`falhou`, ou
- * de um `processando` cujo arrendamento venceu). `proxima_tentativa_em`
- * faz o papel do arrendamento enquanto a linha está `processando`.
- * Devolve a linha quando esta chamada é a dona; `null` quando outra já
- * pegou ou a linha não está mais pendente.
+ * Reivindica a linha para processar (CAS). Sai de:
+ *   - `recebido` — linha nova (o processamento inline do receptor) ou
+ *     devolvida à fila de propósito; a qualquer hora;
+ *   - `falhou` — SÓ quando o recuo venceu (`proxima_tentativa_em` ≤
+ *     agora). Sem esta condição (SEC-023), duas passadas do worker que
+ *     listaram a mesma linha se atropelavam: a primeira falhava e agendava
+ *     o recuo, a segunda — com a lista velha na mão — reivindicava na hora
+ *     e queimava a tentativa seguinte sem recuo nenhum. Linha esgotada
+ *     (`proxima_tentativa_em` nulo) nunca é reivindicada: `null ≤ agora`
+ *     é falso no Postgres;
+ *   - `processando` cujo arrendamento venceu (o processo morreu no meio).
+ * `proxima_tentativa_em` faz o papel do arrendamento enquanto a linha está
+ * `processando`. Devolve a linha quando esta chamada é a dona; `null`
+ * quando outra já pegou ou a linha não está pendente.
  */
 export async function reivindicarProcessamento(id, agora = new Date()) {
   const arrendamento = new Date(agora.getTime() + MINUTOS_DE_ARRENDAMENTO_INBOX * 60_000).toISOString();
+  const instante = agora.toISOString();
   const { data, error } = await supabase
     .from('webhook_inbox')
     .update({ status: 'processando', proxima_tentativa_em: arrendamento })
     .eq('id', id)
-    .or(`status.in.(recebido,falhou),and(status.eq.processando,proxima_tentativa_em.lte.${agora.toISOString()})`)
+    .or(`status.eq.recebido,and(status.eq.falhou,proxima_tentativa_em.lte.${instante}),and(status.eq.processando,proxima_tentativa_em.lte.${instante})`)
     .select('*');
 
   if (error) throw error;
   return Array.isArray(data) && data.length === 1 ? data[0] : null;
+}
+
+/**
+ * A REENTREGA de um evento que FALHOU (SEC-024, 25/09/2026). A Asaas só
+ * reenvia o mesmo `id` quando o nosso `200` não chegou — ou quando o
+ * operador manda reenviar pelo painel dela, que é exatamente o gesto de
+ * quem viu um evento sem efeito e quer recuperá-lo. Até aqui as duas
+ * caíam em "duplicado, 200" e a linha `falhou` (esgotada ou no recuo)
+ * seguia morta. Agora a reentrega devolve a linha à fila com as
+ * tentativas zeradas; quem processa é o receptor, inline, na mesma
+ * requisição. Linha `processado`/`ignorado`/`processando` não é tocada:
+ * reprocessar o que deu certo não recupera nada.
+ * `true` quando reabriu.
+ */
+export async function reabrirSeFalhou(id) {
+  if (!id) return false;
+  const { data, error } = await supabase
+    .from('webhook_inbox')
+    .update({ status: 'recebido', tentativas: 0, proxima_tentativa_em: new Date(Date.now() + FOLGA_INLINE_S * 1000).toISOString() })
+    .eq('id', id)
+    .eq('status', 'falhou')
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
+}
+
+/**
+ * Os eventos de PAGAMENTO que esgotaram as tentativas — o sinal mais
+ * forte de que uma cobrança divergiu da Asaas (JULES-004). Só os dos
+ * últimos 14 dias: esgotado mais velho que isso já passou por um humano
+ * (está em `erros` desde o dia em que esgotou).
+ */
+export async function listarEsgotadasDePagamento({ dias = 14, limite = 50 } = {}) {
+  const corte = new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('webhook_inbox')
+    .select('id, referencia_id')
+    .eq('status', 'falhou')
+    .is('proxima_tentativa_em', null)
+    .eq('referencia_tipo', 'payment')
+    .like('tipo_evento', 'PAYMENT_%')
+    .gte('recebido_em', corte)
+    .order('recebido_em', { ascending: true })
+    .limit(limite);
+  if (error) throw error;
+  return (data ?? []).filter((l) => l.referencia_id).map((l) => ({ id: l.id, chargeId: l.referencia_id }));
+}
+
+/**
+ * Fecha as linhas esgotadas cuja cobrança o reconciliador acabou de pôr
+ * de acordo com a Asaas. Viram `processado` com a nota no `ultimo_erro` —
+ * o evento em si nunca foi aplicado, e o painel precisa mostrar isso.
+ */
+export async function marcarReconciladas(ids) {
+  const lista = (Array.isArray(ids) ? ids : []).filter(Boolean);
+  if (lista.length === 0) return 0;
+  const { data, error } = await supabase
+    .from('webhook_inbox')
+    .update({ status: 'processado', processado_em: new Date().toISOString(), proxima_tentativa_em: null, ultimo_erro: 'esgotado; cobrança reconciliada pelo estado da Asaas (reconciliador dirigido)' })
+    .in('id', lista)
+    .eq('status', 'falhou')
+    .select('id');
+  if (error) throw error;
+  return Array.isArray(data) ? data.length : 0;
 }
 
 export async function marcarProcessado(id) {
@@ -280,7 +354,8 @@ export async function reenfileirarPorReferencia(referenciaId) {
   if (!referenciaId) return 0;
   const { data, error } = await supabase
     .from('webhook_inbox')
-    .update({ status: 'recebido', proxima_tentativa_em: new Date().toISOString(), ultimo_erro: null })
+    // tentativas zeradas: devolver à fila com o contador cheio esgotava na 1ª falha (SEC-024)
+    .update({ status: 'recebido', tentativas: 0, proxima_tentativa_em: new Date().toISOString(), ultimo_erro: null })
     .eq('referencia_id', referenciaId)
     .in('status', ['processado', 'ignorado', 'falhou'])
     .select('id');
@@ -299,11 +374,14 @@ export async function resumoInbox() {
 }
 
 /** Reenvio administrativo: volta a linha (mesmo id, mesmo corpo) para a
- *  fila. Só faz sentido para `falhou`/`ignorado`. */
+ *  fila, com as tentativas ZERADAS (SEC-024). Sem zerar, a linha que
+ *  esgotou as oito voltava com `tentativas = 8`, e a primeira falha do
+ *  reprocessamento caía além do fim da tabela de recuos: esgotava na hora,
+ *  e o reenvio do painel era uma tentativa só, não uma fila nova. */
 export async function reenfileirar(id) {
   const { data, error } = await supabase
     .from('webhook_inbox')
-    .update({ status: 'recebido', proxima_tentativa_em: new Date().toISOString(), ultimo_erro: null })
+    .update({ status: 'recebido', tentativas: 0, proxima_tentativa_em: new Date().toISOString(), ultimo_erro: null })
     .eq('id', id)
     .in('status', ['falhou', 'ignorado', 'processado'])
     .select('id');

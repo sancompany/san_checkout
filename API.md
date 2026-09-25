@@ -849,6 +849,20 @@ reenviados ao endereço do `Location`. Se o seu webhook mudou de lugar,
 peça ao operador para cadastrar o endereço novo. O destino também é
 reconferido a cada envio (https, host público), não só no cadastro.
 
+**Todo fato de pagamento foi conferido na Asaas antes de chegar a você**
+(desde 25/09/2026, SEC-007): o checkout só anuncia `confirmado`,
+estorno ou contestação que a Asaas mostra na própria cobrança — o evento
+dela, sozinho, não basta. Duas consequências que você pode notar:
+
+- um aviso pode chegar **alguns minutos depois** do evento da Asaas
+  quando ele chegou fora de ordem (um estorno antes da confirmação) — o
+  checkout espera o estado anterior e anuncia os dois, na ordem em que
+  aconteceram;
+- quando um evento da Asaas se perdeu, o checkout reconcilia a cobrança
+  pelo estado dela e anuncia **a história inteira** (por exemplo
+  `confirmado` e depois `estornado`), com os mesmos `eventoId` que os
+  eventos teriam gerado — deduplicar pelo `eventoId` continua bastando.
+
 Consequências práticas:
 
 - **Reiniciar o checkout não perde aviso.** O que está na fila

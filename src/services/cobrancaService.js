@@ -536,15 +536,22 @@ export async function buscarCobrancaPorCheckoutId(asaasCheckoutId) {
  * depois, com o pagamento feito).
  */
 export async function vincularSessaoAReserva(reservaId, { asaasCheckoutId = null, chargeId = null } = {}) {
-  const { data, error } = await supabase
+  let consulta = supabase
     .from('cobrancas')
     .update({
       ...(asaasCheckoutId ? { asaas_checkout_id: asaasCheckoutId } : {}),
       ...(chargeId ? { charge_id: chargeId } : {}),
       atualizado_em: new Date().toISOString()
     })
-    .eq('id', reservaId)
-    .select('id');
+    .eq('id', reservaId);
+  /* CAS (25/09/2026): só amarra o que ainda está VAZIO. O chamador leu a
+     linha sem vínculo, mas entre a leitura e esta escrita o reconciliador
+     de reservas (ou outra entrega do mesmo evento) pode ter amarrado —
+     e um update incondicional trocava o `charge_id` de uma linha já
+     vinculada. `false` aqui é "outro chegou antes": o chamador relê. */
+  if (chargeId) consulta = consulta.is('charge_id', null);
+  if (asaasCheckoutId) consulta = consulta.is('asaas_checkout_id', null);
+  const { data, error } = await consulta.select('id');
   if (error) throw error;
   return Array.isArray(data) && data.length === 1;
 }
@@ -901,6 +908,36 @@ export async function buscarCobrancasDoPedido(contratanteId, pedidoId) {
     .not('charge_id', 'is', null)
     .order('criado_em', { ascending: false })
     .limit(50);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * As cobranças PARADAS num estado que só a Asaas tira delas — o sinal
+ * de que o evento que devia tirá-las se perdeu (JULES-004). Não é
+ * varredura: só três formas, cada uma com prazo muito além do normal.
+ *
+ *   - `em_analise` há mais de 1 dia (a análise de risco da Asaas decide em
+ *     horas; parada, o `PAYMENT_CONFIRMED`/`REPROVED` não chegou);
+ *   - `estorno_solicitado` há mais de 3 dias (o estorno de boleto espera
+ *     o pagador informar a conta; o `PAYMENT_REFUNDED` pode não ter vindo);
+ *   - `pendente` com a sessão da pop-up CONCLUÍDA há mais de 1 dia (o
+ *     cartão foi digitado; o dinheiro confirmou ou recusou, e não soubemos).
+ *
+ * Só linha com `charge_id` — o reconciliador pergunta pela cobrança. As
+ * mais antigas primeiro, com teto: cada uma custa um `GET` na Asaas.
+ */
+export async function listarCobrancasParadas({ limite = 20 } = {}) {
+  const agora = Date.now();
+  const haUmDia = new Date(agora - 24 * 3600 * 1000).toISOString();
+  const haTresDias = new Date(agora - 3 * 24 * 3600 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('charge_id, status, atualizado_em')
+    .not('charge_id', 'is', null)
+    .or(`and(status.eq.em_analise,atualizado_em.lt.${haUmDia}),and(status.eq.estorno_solicitado,atualizado_em.lt.${haTresDias}),and(status.eq.pendente,sessao_concluida_em.lt.${haUmDia})`)
+    .order('atualizado_em', { ascending: true })
+    .limit(limite);
   if (error) throw error;
   return data ?? [];
 }

@@ -234,9 +234,23 @@ dela, cada item com o caminho de fechamento:
   mapeando-o para `cancelado`, ou com o reconciliador reconferindo
   `pendente` com `charge_id` velho.
 - **M-01 (token de webhook da Asaas é bearer estático)**: a Asaas não
-  oferece assinatura de corpo; o que existe é o token + a idempotência
-  pelo `id` do evento na inbox + a máquina de estados. É o teto do
-  provedor, registrado, não um furo nosso a fechar.
+  oferece assinatura de corpo. ⚠️ **Corrigido em 25/09/2026:** esta
+  linha dizia que token + inbox + máquina de estados eram "o teto do
+  provedor", e não eram — a Asaas publica a lista oficial de IPs de
+  origem, e o `GET /v3/payments/{id}` sempre existiu para conferir o
+  evento. Desde a Estação 6 (SEC-007, RN-56) todo `PAYMENT_*` é
+  conferido na Asaas antes de valer, e o vínculo e o valor vêm dela: com
+  o token vazado, um evento forjado não move mais dinheiro. **Falta
+  medir** a origem real das entregas como este processo a vê atrás do
+  proxy da Northflank (o log de ingress não está habilitado na conta):
+  o IP vai no log `[webhook/asaas] evento:` da próxima entrega natural;
+  batendo com a lista, ligar `ASAAS_WEBHOOK_IP_ESTRITO=1` no Northflank.
+  Até lá, entrega de fora da lista com token válido vira linha em
+  `erros`, e o que um evento forjado ainda consegue é só o que não é
+  dinheiro — carimbar `CHECKOUT_PAID` numa sessão aberta (a tela diz
+  "processando" e a reserva não expira), encerrar uma sessão pendente
+  com `CHECKOUT_CANCELED` (não há `GET` de sessão documentado para
+  conferir), e alertas de conta falsos.
 - **AUD-004 (ordem dos webhooks)**: FECHADO por medição em 24/09 —
   `GET /v3/webhooks` responde `sendType: SEQUENTIALLY`. A inbox processa
   inline e em ordem de recebimento por isso.

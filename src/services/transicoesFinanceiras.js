@@ -81,6 +81,37 @@ export function transicaoPermitida(de, para) {
 }
 
 /**
+ * O caminho MAIS CURTO de `de` até `para` andando só por transições
+ * permitidas — `[]` quando já está lá, `null` quando não há caminho.
+ *
+ * É o que o reconciliador dirigido (JULES-004, `webhookController`) usa
+ * para levar uma cobrança ao estado que a Asaas diz quando os eventos do
+ * meio se perderam: de `pendente` a `estornado` o caminho é
+ * `confirmado → estornado` — a mesma sequência que os eventos teriam
+ * gravado —, nunca um salto que a matriz recusaria.
+ */
+export function caminhoDeTransicoes(de, para) {
+  if (de === para) return [];
+  if (!TRANSICOES[de] || !STATUS_FINANCEIROS.includes(para)) return null;
+  const anterior = new Map([[de, null]]);
+  const fila = [de];
+  while (fila.length) {
+    const atual = fila.shift();
+    for (const proximo of TRANSICOES[atual] ?? []) {
+      if (anterior.has(proximo)) continue;
+      anterior.set(proximo, atual);
+      if (proximo === para) {
+        const caminho = [];
+        for (let passo = para; passo !== de; passo = anterior.get(passo)) caminho.unshift(passo);
+        return caminho;
+      }
+      fila.push(proximo);
+    }
+  }
+  return null;
+}
+
+/**
  * Decide o que fazer com um evento sobre uma cobrança.
  *
  * @param {{ status: string, status_evento_em?: string|null }} cobranca — linha atual

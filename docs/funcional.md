@@ -1014,6 +1014,61 @@ cobrança a `confirmado`; um `CHECKOUT_PAID` reprocessado no painel
 fazia o mesmo. *Quem vê:* o contratante, que libera de novo o que foi
 devolvido. C-03.
 
+**RN-56 · O evento de pagamento diz "olhe"; quem diz o que aconteceu é
+a Asaas.** Todo `PAYMENT_*` tratado pergunta `GET /v3/payments/{id}`
+antes de mexer em dinheiro. A cobrança tem de existir nesta conta (404 →
+nada aplicado, linha em `erros`); o vínculo (`externalReference`,
+`checkoutSession`, assinatura, parcelamento) e o valor vêm da resposta
+DELA, nunca do corpo; e a linha achada pelo `charge_id` tem de ser a que
+a Asaas reconhece (referência ou sessão diferente → nada aplicado).
+Transição que move dinheiro exige respaldo: `confirmado` só com a
+cobrança paga lá (ou num estado que implica que foi paga), estorno só
+com o estorno lá, contestação só com a contestação lá; sem respaldo o
+evento é tentado de novo pela inbox e, esgotado, vira `erros`. Não
+conseguir perguntar também é tentar de novo — nunca "confirmado".
+Confirmação de valor diferente do cobrado (pedido avulso sem parcela)
+não confirma sozinha. A ordem: um evento que aponta para trás de um
+estado que a Asaas confirma é histórico e se ignora (a liquidação D+30
+de um cartão em disputa não tira a cobrança de `chargeback`); um evento
+cuja transição ainda não se aplica, com a Asaas À FRENTE do estado
+local, é estado anterior faltando — lança, e a inbox o reaplica depois
+do que falta, em vez de descartá-lo como obsoleto. Com a Asaas já no
+estado que o evento aponta, o carimbo não o descarta; carimbo no futuro
+vale "agora", e o gravado nunca anda para trás. Um segundo pagamento
+na Asaas com a referência de uma reserva já paga é denunciado em
+`erros` (RN-52), nunca ignorado. A origem é conferida contra a lista
+oficial de IPs da Asaas: fora dela, com token válido, vira `erros`; a
+recusa (`403`) só com `ASAAS_WEBHOOK_IP_ESTRITO=1`, porque a origem real
+das entregas atrás do proxy ainda não foi medida. *Violada:* com o token
+do webhook vazado, um `PAYMENT_CONFIRMED` com um `payment.id` real
+confirmava a cobrança sem pagamento e avisava o contratante; um
+`PAYMENT_REFUNDED` chegando antes da confirmação era descartado e a
+cobrança ficava paga com o dinheiro devolvido. *Quem vê:* o contratante
+(libera o que não foi pago; mantém o acesso de quem foi reembolsado) e o
+dono (a métrica conta dinheiro que não existe). SEC-007, SEC-008,
+SEC-019 da Estação 6.
+
+**RN-57 · Divergência com a Asaas tem dono, e ele é dirigido.** O
+reconciliador de divergências (a cada 15 min) olha só as cobranças com
+SINAL — evento de pagamento que esgotou a inbox nos últimos 14 dias,
+`em_analise` parada há mais de 1 dia, `estorno_solicitado` há mais de 3,
+`pendente` com a sessão da pop-up concluída há mais de 1 —, no máximo 20
+por passada, e nunca varre a base. Para cada uma, leva a cobrança ao
+estado da Asaas pelos passos que a máquina permite, cada passo pelo
+mesmo processamento de um evento de verdade (os avisos ao contratante
+contam a história inteira: pago, depois estornado); o segundo estorno
+parcial perdido entra pelo acumulado. Sem caminho permitido, nada é
+forçado e um humano é chamado em `erros`. A reentrega, pela Asaas, de um
+evento que FALHOU reabre a linha com as tentativas zeradas e a processa
+na hora — é o gesto de quem reenviou pelo painel dela; o reenvio pelo
+nosso painel também zera as tentativas; e nenhuma linha em recuo é
+reivindicada antes da hora (a passada seguinte do worker não queima a
+tentativa). *Violada:* um `PAYMENT_CONFIRMED` que esgotasse as oito
+tentativas deixava a cobrança `pendente` para sempre, com o dinheiro na
+conta; um estorno de boleto cujo evento não veio ficava
+`estorno_solicitado` para sempre. *Quem vê:* o comprador, o contratante
+e o dono, sem sintoma nenhum. JULES-004, SEC-023, SEC-024.
+
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
 (índice único: pedido+método, ou plano+documento+método) e só então

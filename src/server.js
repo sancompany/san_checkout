@@ -39,12 +39,13 @@ import rotasAdmin from './routes/adminRoutes.js';
 import rotasWebhook from './routes/webhookRoutes.js';
 import { expurgarDadoPessoal } from './services/expurgoService.js';
 import { varrerUmaVez as varrerIntencoesDeTroca } from './services/trocaSweeperService.js';
-import { reprocessarInbox } from './controllers/webhookController.js';
+import { reprocessarInbox, reconciliarDivergenciasUmaVez } from './controllers/webhookController.js';
 import { expurgarInbox, resumoInbox } from './services/webhookInboxService.js';
 import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from './services/outboxService.js';
 import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
 import { cancelarIrmasUmaVez } from './services/irmasObsoletasService.js';
 import { reconciliarEstornosUmaVez } from './services/estornoService.js';
+import { umaPassadaPorVez } from './utils/passadas.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
 const app = express();
@@ -274,7 +275,8 @@ app.get('/api/saude', async (_req, resposta) => {
 });
 
 /** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
-const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null, estornos: null };
+const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null, estornos: null, divergencias: null };
+
 
 // ---------------------------------------------------------------------
 // FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
@@ -500,14 +502,14 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      intenção em `PAYMENT_UNKNOWN` ficaria presa até alguém olhar.
      Nunca cria cobrança nova; só reconsulta e avança por CAS. */
   const UM_MINUTO_MS = 60 * 1000;
-  const rodarVarreduraDeTroca = () => varrerIntencoesDeTroca()
+  const rodarVarreduraDeTroca = umaPassadaPorVez(() => varrerIntencoesDeTroca()
     .then((relatorio) => {
       ultimaRodadaDosWorkers.trocaDePlano = Date.now();
       if (relatorio.avancadas > 0 || relatorio.escaladas > 0) {
         console.log(`[troca-de-plano] varredura: ${relatorio.avancadas} avançada(s), ${relatorio.escaladas} escalonada(s) para reconciliação.`);
       }
     })
-    .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message));
+    .catch((erro) => console.error('[troca-de-plano] varredura falhou:', erro.message)));
 
   rodarVarreduraDeTroca();
   setInterval(rodarVarreduraDeTroca, UM_MINUTO_MS).unref();
@@ -523,21 +525,21 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
        (H-01) — sobrevive a reinício porque lê do banco;
      - reconciliador (5 min): completa reserva órfã que virou cobrança na
        Asaas e libera a que nunca virou nada (H-06). */
-  const rodarInbox = () => reprocessarInbox()
+  const rodarInbox = umaPassadaPorVez(() => reprocessarInbox()
     .then((r) => { ultimaRodadaDosWorkers.inbox = Date.now(); if (r.examinadas > 0) console.log(`[inbox] reprocessamento: ${r.processadas} ok, ${r.falhas} falha(s).`); })
-    .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message));
+    .catch((erro) => console.error('[inbox] reprocessamento falhou:', erro.message)));
   rodarInbox();
   setInterval(rodarInbox, UM_MINUTO_MS).unref();
 
-  const rodarOutbox = () => enviarOutbox()
+  const rodarOutbox = umaPassadaPorVez(() => enviarOutbox()
     .then((r) => { ultimaRodadaDosWorkers.outbox = Date.now(); if (r.examinadas > 0) console.log(`[outbox] ${r.enviadas} enviada(s), ${r.falhas} falha(s), ${r.abandonadas} abandonada(s).`); })
-    .catch((erro) => console.error('[outbox] envio falhou:', erro.message));
+    .catch((erro) => console.error('[outbox] envio falhou:', erro.message)));
   rodarOutbox();
   setInterval(rodarOutbox, 30 * 1000).unref();
 
-  const rodarReconciliador = () => reconciliarReservas()
+  const rodarReconciliador = umaPassadaPorVez(() => reconciliarReservas()
     .then((r) => { ultimaRodadaDosWorkers.reconciliador = Date.now(); if (r.examinadas > 0) console.log(`[reconciliador] ${r.completadas} completada(s), ${r.liberadas} liberada(s), ${r.aguardando} aguardando.`); })
-    .catch((erro) => console.error('[reconciliador] falhou:', erro.message));
+    .catch((erro) => console.error('[reconciliador] falhou:', erro.message)));
   rodarReconciliador();
   setInterval(rodarReconciliador, 5 * UM_MINUTO_MS).unref();
 
@@ -547,12 +549,12 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      ESTADO (a liquidação pode ter vindo da consulta de status ou do
      reconciliador, não do webhook) e refaz o que falhou, com recuo e
      teto gravados na linha. */
-  const rodarCanceladorDeIrmas = () => cancelarIrmasUmaVez()
+  const rodarCanceladorDeIrmas = umaPassadaPorVez(() => cancelarIrmasUmaVez()
     .then((r) => {
       ultimaRodadaDosWorkers.canceladorDeIrmas = Date.now();
       if (r.marcadas > 0 || r.tentadas > 0) console.log(`[irmas] ${r.marcadas} marcada(s), ${r.canceladas} cancelada(s), ${r.aguardando} aguardando, ${r.falhas} falha(s), ${r.esgotadas} esgotada(s).`);
     })
-    .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message));
+    .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message)));
   rodarCanceladorDeIrmas();
   setInterval(rodarCanceladorDeIrmas, UM_MINUTO_MS).unref();
 
@@ -562,14 +564,31 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
      `GET /v3/payments/{id}/refunds` — NUNCA chamando o estorno de novo.
      Sem ele, uma operação em CALLING_PROVIDER de um processo morto só se
      resolveria quando o contratante repetisse a chamada. */
-  const rodarReconciliadorDeEstornos = () => reconciliarEstornosUmaVez()
+  const rodarReconciliadorDeEstornos = umaPassadaPorVez(() => reconciliarEstornosUmaVez()
     .then((r) => {
       ultimaRodadaDosWorkers.estornos = Date.now();
       if (r.examinadas > 0) console.log(`[estornos] ${r.confirmadas} confirmada(s), ${r.liberadas} provada(s) sem estorno, ${r.aguardando} aguardando, ${r.falhas} falha(s).`);
     })
-    .catch((erro) => console.error('[estornos] reconciliador falhou:', erro.message));
+    .catch((erro) => console.error('[estornos] reconciliador falhou:', erro.message)));
   rodarReconciliadorDeEstornos();
   setInterval(rodarReconciliadorDeEstornos, 2 * UM_MINUTO_MS).unref();
+
+  /* O RECONCILIADOR DIRIGIDO (JULES-004, 25/09/2026, 15 min): a cobrança
+     que EXISTE e divergiu da Asaas porque um evento se perdeu — o
+     `PAYMENT_CONFIRMED` que esgotou a inbox, o `PAYMENT_REFUNDED` de
+     boleto que nunca veio. Só olha as que têm sinal (evento de pagamento
+     esgotado; estado de passagem parado muito além do normal), no máximo
+     20 por passada, e leva cada uma ao estado da Asaas pelos passos que a
+     máquina de estados permite, cada passo pelo mesmo processamento de um
+     webhook de verdade. Nunca varre a base. */
+  const rodarReconciliadorDeDivergencias = umaPassadaPorVez(() => reconciliarDivergenciasUmaVez()
+    .then((r) => {
+      ultimaRodadaDosWorkers.divergencias = Date.now();
+      if (r.corrigidas > 0 || r.semCaminho > 0 || r.falhas > 0) console.log(`[divergencias] ${r.examinadas} examinada(s), ${r.corrigidas} corrigida(s), ${r.iguais} igual(is), ${r.semCaminho} sem caminho, ${r.falhas} falha(s).`);
+    })
+    .catch((erro) => console.error('[divergencias] reconciliador falhou:', erro.message)));
+  rodarReconciliadorDeDivergencias();
+  setInterval(rodarReconciliadorDeDivergencias, 15 * UM_MINUTO_MS).unref();
 
   /* Expurgos diários das tabelas novas: inbox/outbox já processadas
      (90 dias — o payload da outbox leva o documento do pagador, Lei 10)

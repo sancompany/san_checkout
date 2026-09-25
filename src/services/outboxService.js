@@ -99,14 +99,21 @@ export async function enfileirarNotificacao({ contratanteId, url, tipo, evento, 
 }
 
 /** Reivindica uma linha para envio (CAS). `null` quando outra instância
- *  pegou, ou a linha não está mais pendente. */
+ *  pegou, ou a linha não está mais pendente.
+ *
+ *  `pendente`/`falhou` só com o recuo VENCIDO (SEC-023): a condição de
+ *  tempo estava só na listagem do worker, e uma passada que listou a linha
+ *  antes de outra falhar e agendar o recuo reivindicava assim mesmo —
+ *  segunda tentativa na hora, contador queimado, contratante martelado.
+ *  Quem precisa enviar já (enfileirar, reenvio do painel) grava
+ *  `proxima_tentativa_em = agora` antes de chamar, então passa. */
 export async function reivindicarEnvio(id, agora = new Date()) {
   const limite = new Date(agora.getTime() - MINUTOS_DE_ARRENDAMENTO * 60_000).toISOString();
   const { data, error } = await supabase
     .from('outbox_notificacoes')
     .update({ status: 'enviando', enviando_em: agora.toISOString() })
     .eq('id', id)
-    .or(`status.in.(pendente,falhou),and(status.eq.enviando,enviando_em.lt.${limite})`)
+    .or(`and(status.eq.pendente,proxima_tentativa_em.lte.${agora.toISOString()}),and(status.eq.falhou,proxima_tentativa_em.lte.${agora.toISOString()}),and(status.eq.enviando,enviando_em.lt.${limite})`)
     .select('*');
   if (error) throw error;
   return Array.isArray(data) && data.length === 1 ? data[0] : null;

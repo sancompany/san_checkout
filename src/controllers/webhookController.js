@@ -68,10 +68,11 @@ import {
   atualizarSubscriptionIdDaCobranca,
   buscarCobrancaPorSubscriptionId,
   registrarCicloAssinatura,
-  atualizarSituacaoSubconta
+  atualizarSituacaoSubconta,
+  listarCobrancasParadas
 } from '../services/cobrancaService.js';
 import { upsertAssinatura, atualizarStatusAssinatura, buscarAssinaturaPorId } from '../services/assinaturaService.js';
-import { cancelarAssinatura as cancelarAssinaturaNaAsaas } from '../services/asaasService.js';
+import { cancelarAssinatura as cancelarAssinaturaNaAsaas, lerPagamentoNaAsaas, listarEstornosDaCobranca } from '../services/asaasService.js';
 import {
   registrarEventoWebhook,
   registrarRejeicaoWebhook,
@@ -84,10 +85,13 @@ import {
   marcarProcessado,
   marcarIgnorado,
   marcarFalha as marcarFalhaNaInbox,
-  listarParaReprocessar
+  listarParaReprocessar,
+  marcarReconciladas,
+  reabrirSeFalhou,
+  listarEsgotadasDePagamento
 } from '../services/webhookInboxService.js';
 import { enfileirarNotificacao, tentarAgora } from '../services/outboxService.js';
-import { decidirTransicao } from '../services/transicoesFinanceiras.js';
+import { decidirTransicao, caminhoDeTransicoes } from '../services/transicoesFinanceiras.js';
 import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from '../services/pedidoService.js';
 import { compararSeguro } from '../utils/validadores.js';
 import { somarReais, emCentavos } from '../utils/dinheiro.js';
@@ -166,14 +170,22 @@ const dependenciasPadrao = {
     return { id, nova };
   },
   registrarAuditoria: (dados) => registrarEventoWebhook(dados),
-  inbox: { registrarNaInbox, reivindicarProcessamento, marcarProcessado, marcarIgnorado, marcarFalha: marcarFalhaNaInbox, listarParaReprocessar },
+  /** A cobrança como a Asaas a vê agora (SEC-007). O `contexto` (evento,
+   *  alvo) só decide se vale buscar a lista de estornos — quem manda é o
+   *  `chargeId`. */
+  estadoNaAsaas: (chargeId, contexto) => estadoDaCobrancaNaAsaas(chargeId, contexto),
+  inbox: { registrarNaInbox, reivindicarProcessamento, marcarProcessado, marcarIgnorado, marcarFalha: marcarFalhaNaInbox, listarParaReprocessar, marcarReconciladas, reabrirSeFalhou },
+  /** JULES-004: as cobranças com SINAL de divergência (evento esgotado na
+   *  inbox, estado de passagem parado). Nunca todas. */
+  listarCandidatasADivergencia: () => listarCandidatasADivergencia(),
   /** O acerto de uma troca de plano ainda sem `cobrancas` — resolve
    *  pela intenção. `true` quando encontrou. */
-  avancarIntencaoDeTrocaPorChargeId: async (chargeId, evento) => {
+  avancarIntencaoDeTrocaPorChargeId: async (chargeId, evento, statusNaAsaas = null) => {
     const intencao = await buscarIntencaoPorChargeId(chargeId);
     if (!intencao) return false;
 
-    const veredito = classificarPagamentoDoAcerto({ evento });
+    // O status da ASAAS primeiro (SEC-007): o evento sozinho não paga nada.
+    const veredito = classificarPagamentoDoAcerto({ status: statusNaAsaas, evento });
     if (veredito === 'PAID') {
       const confirmada = await marcarIntencaoConfirmada(intencao.id);
       if (confirmada) {
@@ -187,6 +199,20 @@ const dependenciasPadrao = {
   }
 };
 
+/** As duas fontes de sinal de divergência, uma lista só por `chargeId`. */
+async function listarCandidatasADivergencia() {
+  const porCharge = new Map();
+  for (const { chargeId, id } of await listarEsgotadasDePagamento()) {
+    const atual = porCharge.get(chargeId) ?? { chargeId, linhasDaInbox: [] };
+    atual.linhasDaInbox.push(id);
+    porCharge.set(chargeId, atual);
+  }
+  for (const { charge_id: chargeId } of await listarCobrancasParadas()) {
+    if (!porCharge.has(chargeId)) porCharge.set(chargeId, { chargeId, linhasDaInbox: [] });
+  }
+  return [...porCharge.values()].slice(0, 20);
+}
+
 /* ------------------------------------------------------------------
    Guarda de origem
 ------------------------------------------------------------------ */
@@ -197,8 +223,10 @@ const dependenciasPadrao = {
  * `asaas-access-token` (doc oficial: "Se o Webhook estiver configurado
  * com authToken, o valor será enviado no header asaas-access-token").
  * Fail-closed: sem env configurada, recusa tudo. Não existe assinatura
- * de corpo nem allowlist de IP no contrato da Asaas (M-01) — a defesa
- * complementar é a inbox (idempotência por `id`) e a máquina de estados.
+ * de corpo no contrato da Asaas (M-01); existem a lista oficial de IPs
+ * de origem (conferida abaixo) e o `GET /v3/payments/{id}`, que é o que
+ * de fato impede um evento forjado de mover dinheiro (RN-56): o token
+ * só abre a porta, quem decide é a Asaas.
  */
 export function verificarWebhookAsaas(requisicao, resposta, proximo) {
   const { ASAAS_WEBHOOK_TOKEN } = process.env;
@@ -210,12 +238,49 @@ export function verificarWebhookAsaas(requisicao, resposta, proximo) {
     registrarRejeicaoWebhook({ ip: ipDaRequisicao(requisicao), tinhaToken: Boolean(requisicao.get('asaas-access-token')), motivo: 'token inválido' });
     return resposta.status(401).json({ erro: 'Token de webhook inválido.' });
   }
+  /* A ORIGEM, o segundo mecanismo oficial (SEC-007). Com token certo e IP
+     fora da lista, o token vazou ou a lista mudou — os dois precisam de
+     alguém olhando. Recusar só com `ASAAS_WEBHOOK_IP_ESTRITO=1`: a origem
+     REAL das entregas, como este processo a vê atrás do proxy da
+     Northflank, ainda não foi medida (o log de ingress não está
+     habilitado nesta conta; a primeira entrega depois deste deploy é a
+     medida — o IP vai no log do receptor). Recusar antes de medir era
+     arriscar pausar a fila da Asaas (15 falhas) por um palpite; o que
+     move dinheiro já não depende disto, porque todo `PAYMENT_*` é
+     conferido na Asaas antes de valer. */
+  const ip = ipDaRequisicao(requisicao);
+  if (!origemOficialDaAsaas(ip)) {
+    if (process.env.ASAAS_WEBHOOK_IP_ESTRITO === '1') {
+      registrarRejeicaoWebhook({ ip, tinhaToken: true, motivo: 'token válido, IP fora da lista oficial da Asaas' });
+      return resposta.status(403).json({ erro: 'Origem do webhook não reconhecida.' });
+    }
+    registrarErro(
+      new Error(`webhook com token válido vindo de ${ip ?? 'IP desconhecido'}, fora da lista oficial da Asaas — token vazado, ou a lista mudou; conferir antes de ligar ASAAS_WEBHOOK_IP_ESTRITO`),
+      { contexto: 'webhookController.origem', rota: 'webhook/asaas', metodo: 'POST' }
+    )?.catch?.(() => {});
+  }
   proximo();
 }
 
+/** Os IPs de onde a Asaas envia webhook (doc oficial "Webhooks — IPs
+ *  oficiais", lida em 25/09/2026). `ASAAS_WEBHOOK_IPS` (lista separada por
+ *  vírgula) substitui a lista sem deploy, se a Asaas anunciar mudança. */
+export const IPS_OFICIAIS_DA_ASAAS = ['52.67.12.206', '18.230.8.159', '54.94.136.112', '54.94.183.101'];
+
+export function origemOficialDaAsaas(ip) {
+  if (typeof ip !== 'string' || !ip) return false;
+  const lista = process.env.ASAAS_WEBHOOK_IPS
+    ? process.env.ASAAS_WEBHOOK_IPS.split(',').map((s) => s.trim()).filter(Boolean)
+    : IPS_OFICIAIS_DA_ASAAS;
+  return lista.includes(ip.replace(/^::ffff:/i, ''));
+}
+
+/** O IP de quem conectou, como o Express o resolve com `trust proxy` — o
+ *  mesmo que o limitador usa (medido em 25/09/2026: um `X-Forwarded-For`
+ *  forjado não muda o balde). O primeiro item do `X-Forwarded-For`, que
+ *  era lido aqui, é o que o CLIENTE escreve: servia de diagnóstico e não
+ *  pode servir de decisão. */
 function ipDaRequisicao(requisicao) {
-  const encaminhado = requisicao.get?.('x-forwarded-for');
-  if (encaminhado) return String(encaminhado).split(',')[0].trim();
   return requisicao.ip ?? null;
 }
 
@@ -302,6 +367,169 @@ export function valorEstornadoDoPayment(payment) {
 }
 
 /* ------------------------------------------------------------------
+   A ASAAS COMO FONTE DA VERDADE (SEC-007/SEC-008/SEC-019, 25/09/2026)
+
+   Até aqui o evento era aplicado pelo que o CORPO dizia: o status saía do
+   nome do evento, o vínculo de `externalReference`/`checkoutSession`/
+   `subscription` e o valor do ciclo saíam do payload, e o carimbo do
+   `dateCreated`. O único portão era o token estático do header — vazado
+   ele, um evento novo com um `payment.id` real confirmava cobrança sem
+   pagamento, e um carimbo no futuro congelava a máquina de estados.
+
+   Agora todo `PAYMENT_*` pergunta à Asaas (`GET /v3/payments/{id}`) antes
+   de mexer em dinheiro, e o que é do provedor vem do provedor:
+
+     - a cobrança tem de EXISTIR nesta conta (404 = não é nossa);
+     - todo vínculo usa os campos DELA, nunca os do corpo;
+     - transição que move dinheiro exige RESPALDO: `confirmado` só com a
+       cobrança paga (ou num estado que implica que foi paga), estorno
+       só com o estorno lá, contestação só com a contestação lá;
+     - o estado local que JÁ é o da Asaas não é mexido por evento
+       histórico (a confirmação D+30 de um cartão em disputa não tira a
+       cobrança de `chargeback` — SEC-019);
+     - "transição não permitida" com a Asaas À FRENTE do estado local é
+       estado anterior faltando, não evento descartável: LANÇA, e a inbox
+       tenta de novo (SEC-008). Com a Asaas IGUAL ao local, é obsoleto
+       provado e se ignora;
+     - carimbo no futuro vale "agora".
+------------------------------------------------------------------ */
+
+/** Status de cobrança da Asaas (os 14 da doc "Recuperar uma única
+ *  cobrança", lida em 25/09/2026) → o status local que ele IMPLICA. */
+export function estadoLocalDaAsaas(pagamento, valorEstornado = null) {
+  if (!pagamento || pagamento.deleted) return null;
+  switch (pagamento.status) {
+    case 'PENDING': return 'pendente';
+    case 'AWAITING_RISK_ANALYSIS': return 'em_analise';
+    case 'CONFIRMED': case 'RECEIVED': case 'RECEIVED_IN_CASH':
+      return valorEstornado && emCentavos(valorEstornado) > 0 ? 'estornado_parcialmente' : 'confirmado';
+    case 'OVERDUE': return 'vencido';
+    case 'REFUNDED': return 'estornado';
+    case 'REFUND_REQUESTED': case 'REFUND_IN_PROGRESS': return 'estorno_solicitado';
+    case 'CHARGEBACK_REQUESTED': case 'CHARGEBACK_DISPUTE': case 'AWAITING_CHARGEBACK_REVERSAL': return 'chargeback';
+    default: return null; // DUNNING_*, ou status novo: não se presume nada
+  }
+}
+
+/** Para cada alvo que MOVE DINHEIRO, os estados da Asaas que o
+ *  respaldam — o próprio, ou um posterior que implica que ele aconteceu. */
+const RESPALDO_DO_PROVEDOR = {
+  confirmado: ['confirmado', 'estornado_parcialmente', 'estorno_solicitado', 'estornado', 'chargeback'],
+  estornado_parcialmente: ['estornado_parcialmente', 'estorno_solicitado', 'estornado'],
+  estorno_solicitado: ['estorno_solicitado', 'estornado_parcialmente', 'estornado'],
+  estornado: ['estornado'],
+  chargeback: ['chargeback', 'estornado'],
+  pendente: ['pendente', 'vencido'] // baixa desfeita: o dinheiro saiu de novo
+};
+export const ALVOS_QUE_MOVEM_DINHEIRO = Object.keys(RESPALDO_DO_PROVEDOR);
+
+/** O alvo do evento tem respaldo no estado atual da Asaas? Alvos
+ *  informativos (em análise, recusado, vencido, estorno negado) só
+ *  precisam de a cobrança existir e ser nossa. */
+export function respaldoDoProvedor(alvo, estadoDaAsaas) {
+  if (!ALVOS_QUE_MOVEM_DINHEIRO.includes(alvo)) return true;
+  return Boolean(estadoDaAsaas) && RESPALDO_DO_PROVEDOR[alvo].includes(estadoDaAsaas);
+}
+
+/** Onde cada estado fica na história de uma cobrança — pendente, depois
+ *  as passagens, o pago, e o que acontece com o pago. Só a ORDEM importa. */
+const POSICAO_NA_HISTORIA = {
+  pendente: 0, em_analise: 1, recusado: 1, vencido: 1, expirado: 1,
+  confirmado: 2, estorno_solicitado: 3, estorno_negado: 3, estornado_parcialmente: 4,
+  chargeback: 5, estornado: 6, cancelado: 7, cancelado_por_outro_pagamento: 7
+};
+
+/**
+ * O que fazer com um evento, olhando a Asaas:
+ *
+ *  - `historico`: o estado local JÁ É o da Asaas e o evento aponta para
+ *    um ponto ANTERIOR da história (reentrega, reprocessamento, a
+ *    liquidação D+30 de um cartão em disputa — SEC-019). Obsoleto provado:
+ *    ignora, sem barulho.
+ *  - `sem_respaldo`: o alvo move dinheiro e a Asaas não o mostra. Lança —
+ *    evento prematuro é tentado de novo; forjado esgota e vira `erros`.
+ *  - `seguir`: a máquina de estados decide.
+ */
+export function veredictoDaAsaas(statusLocal, alvo, estadoDaAsaas) {
+  if (estadoDaAsaas && estadoDaAsaas === statusLocal && alvo !== statusLocal
+      && (POSICAO_NA_HISTORIA[alvo] ?? 99) < (POSICAO_NA_HISTORIA[statusLocal] ?? -1)) {
+    return 'historico';
+  }
+  if (!respaldoDoProvedor(alvo, estadoDaAsaas)) return 'sem_respaldo';
+  return 'seguir';
+}
+
+/** O mais recente de dois carimbos ISO (qualquer um pode faltar). */
+function oMaisRecente(a, b) {
+  const ta = a ? new Date(a).getTime() : NaN;
+  const tb = b ? new Date(b).getTime() : NaN;
+  if (Number.isNaN(ta)) return Number.isNaN(tb) ? null : b;
+  if (Number.isNaN(tb)) return a;
+  return tb > ta ? b : a;
+}
+
+/** Carimbo do evento no futuro (relógio da Asaas adiantado, ou corpo
+ *  forjado) vale "agora" — senão todo evento legítimo depois dele
+ *  pareceria "mais antigo" e seria ignorado (SEC-007). */
+export function carimboAtePresente(ocorridoEm, agora = Date.now()) {
+  if (!ocorridoEm) return ocorridoEm;
+  const t = new Date(ocorridoEm).getTime();
+  if (Number.isNaN(t)) return null;
+  return t > agora + 2 * 60_000 ? new Date(agora).toISOString() : ocorridoEm;
+}
+
+const ALVOS_DE_ESTORNO = ['estornado', 'estornado_parcialmente', 'estorno_solicitado', 'estorno_negado'];
+const ESTADOS_LOCAIS_COM_ESTORNO = ALVOS_DE_ESTORNO;
+
+/** O estado da cobrança na Asaas, com o valor estornado DELA. A lista de
+ *  estornos só é buscada à parte quando o `GET` não a trouxe e ela decide
+ *  alguma coisa: o evento é de estorno, a cobrança está `REFUNDED`, ou
+ *  quem pergunta é o reconciliador (`comEstornos`), que precisa ver um
+ *  estorno PARCIAL — a cobrança parcialmente estornada continua
+ *  `RECEIVED`/`CONFIRMED` no status. */
+export async function estadoDaCobrancaNaAsaas(chargeId, { alvo = null, comEstornos = false } = {}) {
+  const pagamento = await lerPagamentoNaAsaas(chargeId);
+  if (!pagamento) return { existe: false, pagamento: null, estado: null, valorEstornado: null };
+  let estornos = pagamento.refunds;
+  const precisaDaLista = ALVOS_DE_ESTORNO.includes(alvo) || pagamento.status === 'REFUNDED'
+    || (comEstornos && ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(pagamento.status));
+  if (!Array.isArray(estornos) && precisaDaLista) {
+    estornos = await listarEstornosDaCobranca(chargeId);
+  }
+  const valorEstornado = Array.isArray(estornos) ? valorEstornadoDoPayment({ refunds: estornos }) : null;
+  return { existe: true, pagamento, estado: estadoLocalDaAsaas(pagamento, valorEstornado), valorEstornado };
+}
+
+/** Os campos que decidem vínculo e valor, vindos do PROVEDOR. O corpo do
+ *  evento fica só com o que a Asaas não devolve no GET. */
+function comOQueAAsaasDiz(paymentDoCorpo, pagamento) {
+  if (!pagamento) return paymentDoCorpo;
+  return {
+    ...paymentDoCorpo,
+    id: pagamento.id ?? paymentDoCorpo?.id,
+    status: pagamento.status,
+    value: pagamento.value,
+    externalReference: pagamento.externalReference,
+    checkoutSession: pagamento.checkoutSession,
+    subscription: pagamento.subscription,
+    installment: pagamento.installment,
+    ...(Array.isArray(pagamento.refunds) ? { refunds: pagamento.refunds } : {})
+  };
+}
+
+/** Confirmação de um valor diferente do que cobramos não confirma sozinha
+ *  (binding de valor): pedido avulso sem parcelamento, valor conhecido dos
+ *  dois lados, centavos diferentes. Assinatura (o preço pode ter mudado
+ *  no painel, RN-34) e parcelamento (o `value` é o da parcela) ficam fora. */
+export function valorDivergenteDaCobranca(cobranca, pagamento) {
+  if (METODOS_DE_ASSINATURA.includes(cobranca?.metodo_pagamento)) return false;
+  if (pagamento?.installment) return false;
+  const nosso = emCentavos(cobranca?.valor_cobrado);
+  const deles = emCentavos(pagamento?.value);
+  return nosso != null && deles != null && nosso !== deles;
+}
+
+/* ------------------------------------------------------------------
    O receptor: inbox → 200 → processa
 ------------------------------------------------------------------ */
 
@@ -311,7 +539,7 @@ export function valorEstornadoDoPayment(payment) {
  * ser reaproveitada em rota.
  */
 export async function processarWebhook(corpo, deps = dependenciasPadrao) {
-  const ocorridoEm = ocorridoEmDoEvento(corpo);
+  const ocorridoEm = carimboAtePresente(ocorridoEmDoEvento(corpo));
   switch (classificarEvento(corpo?.event)) {
     case 'checkout': return processarEventoCheckout(corpo, deps, ocorridoEm);
     case 'payment': return processarEventoPayment(corpo, deps, ocorridoEm);
@@ -362,7 +590,8 @@ export function criarReceptorWebhook(deps = dependenciasPadrao) {
     const rota = classificarEvento(evento);
     const referencia = extrairReferencia(corpo);
     const campos = redigirPayload(corpo);
-    console.log('[webhook/asaas] evento:', JSON.stringify({ evento, rota, referencia, id: corpo?.id ?? null, campos }));
+    // `ip`: o servidor da Asaas, não uma pessoa — é a medida da origem real (SEC-007).
+    console.log('[webhook/asaas] evento:', JSON.stringify({ evento, rota, referencia, id: corpo?.id ?? null, ip: requisicao.ip ?? null, campos }));
 
     /* 1. PERSISTIR. É a única coisa que pode devolver não-2xx: sem
        banco não há como guardar, e a reentrega da Asaas é o mecanismo
@@ -380,10 +609,20 @@ export function criarReceptorWebhook(deps = dependenciasPadrao) {
     /* 2. REENTREGA (mesmo `id`): já está guardado — e talvez já
        processado. 200 sem tocar em nada. A doc da Asaas manda
        exatamente isto ("não repita a regra de negócio quando o evento já
-       tiver sido processado"). */
+       tiver sido processado").
+       A exceção é a linha que FALHOU (SEC-024): reenviar um evento pelo
+       painel da Asaas é o gesto de quem viu que ele não teve efeito, e
+       responder "duplicado" deixava a linha esgotada morta. Ela volta à
+       fila com as tentativas zeradas e é processada agora, inline. */
     if (registro.duplicado) {
-      auditar(deps, { evento, rota, resultado: 'duplicado', detalhe: 'reentrega do mesmo id', referencia, campos, statusMapeado: mapearStatusPayment(evento) });
-      return resposta.status(200).json({ recebido: true, duplicado: true });
+      const reaberta = await deps.inbox.reabrirSeFalhou(registro.id).catch((erro) => {
+        console.error('[webhook/asaas] não consegui reabrir a linha que falhou:', erro.message);
+        return false;
+      });
+      if (!reaberta) {
+        auditar(deps, { evento, rota, resultado: 'duplicado', detalhe: 'reentrega do mesmo id', referencia, campos, statusMapeado: mapearStatusPayment(evento) });
+        return resposta.status(200).json({ recebido: true, duplicado: true });
+      }
     }
 
     /* 3. PROCESSAR a partir da linha, inline. Inline, e não depois do
@@ -432,6 +671,76 @@ export async function reprocessarInbox(deps = dependenciasPadrao) {
     relatorio.examinadas += 1;
     const desfecho = await processarLinhaDaInbox(linha, linha.corpo_minimo, deps);
     if (desfecho.resultado === 'erro') relatorio.falhas += 1; else relatorio.processadas += 1;
+  }
+  return relatorio;
+}
+
+/**
+ * O RECONCILIADOR DIRIGIDO (JULES-004, 25/09/2026).
+ *
+ * O reconciliador de reservas (H-06) só olha reserva sem `charge_id`.
+ * Ficava de fora a cobrança que EXISTE e divergiu da Asaas porque os
+ * eventos do meio se perderam: o `PAYMENT_CONFIRMED` que esgotou as oito
+ * tentativas da inbox, o estorno de boleto cujo `PAYMENT_REFUNDED` nunca
+ * veio. Divergência assim ficava para sempre, calada.
+ *
+ * DIRIGIDO, não varredura: só olha as cobranças que têm SINAL de
+ * divergência — evento de pagamento esgotado na inbox, ou estado de
+ * passagem parado há tempo demais (`em_analise` > 1 dia,
+ * `estorno_solicitado` > 3 dias). Para cada uma, pergunta à Asaas, acha o
+ * caminho permitido do estado local até o dela (`caminhoDeTransicoes`) e
+ * passa CADA passo pelo `processarEventoPayment` como evento sintético —
+ * que confere de novo na Asaas e roda o mesmo rabo de sempre (irmãs,
+ * vínculo de assinatura, aviso ao contratante com a chave do fato). O
+ * reconciliador nunca grava estado por um atalho próprio.
+ */
+const EVENTO_QUE_LEVA_A = {
+  confirmado: 'PAYMENT_RECEIVED', estornado: 'PAYMENT_REFUNDED', estornado_parcialmente: 'PAYMENT_PARTIALLY_REFUNDED',
+  estorno_solicitado: 'PAYMENT_REFUND_IN_PROGRESS', estorno_negado: 'PAYMENT_REFUND_DENIED', chargeback: 'PAYMENT_CHARGEBACK_REQUESTED',
+  vencido: 'PAYMENT_OVERDUE', em_analise: 'PAYMENT_AWAITING_RISK_ANALYSIS', recusado: 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED',
+  pendente: 'PAYMENT_RECEIVED_IN_CASH_UNDONE'
+};
+
+export async function reconciliarDivergenciasUmaVez(deps = dependenciasPadrao) {
+  const relatorio = { examinadas: 0, corrigidas: 0, iguais: 0, semCaminho: 0, falhas: 0 };
+  const candidatas = await deps.listarCandidatasADivergencia();
+  for (const { chargeId, linhasDaInbox = [] } of candidatas) {
+    relatorio.examinadas += 1;
+    try {
+      const cobranca = await deps.buscarCobranca(chargeId);
+      if (!cobranca) continue; // charge que não é nosso: o alerta do evento já existe
+      const naAsaas = await deps.estadoNaAsaas(chargeId, { alvo: null, comEstornos: true });
+      if (!naAsaas?.existe || !naAsaas.estado) continue; // sem verdade para seguir: fica para um humano
+      /* Mesmo estado, mais dinheiro devolvido: um SEGUNDO estorno parcial
+         cujo evento se perdeu. O status não muda — o acumulado muda, e é
+         ele que o contratante precisa ouvir. */
+      const parcialAvancou = naAsaas.estado === 'estornado_parcialmente' && cobranca.status === 'estornado_parcialmente'
+        && (emCentavos(naAsaas.valorEstornado) ?? 0) > (emCentavos(cobranca.valor_estornado) ?? 0);
+      if (parcialAvancou) {
+        await processarWebhook({ event: EVENTO_QUE_LEVA_A.estornado_parcialmente, payment: { id: chargeId }, dateCreated: new Date().toISOString() }, deps);
+        relatorio.corrigidas += 1;
+      } else if (naAsaas.estado !== cobranca.status) {
+        const caminho = caminhoDeTransicoes(cobranca.status, naAsaas.estado);
+        if (!caminho) {
+          relatorio.semCaminho += 1;
+          await deps.registrarErro(
+            new Error(`reconciliação: ${chargeId} está "${cobranca.status}" aqui e "${naAsaas.estado}" na Asaas, e não há transição permitida entre os dois — conferir à mão`),
+            { contexto: 'webhookController.reconciliarDivergencias', rota: 'worker/reconciliacao', metodo: 'WORKER' }
+          );
+          continue;
+        }
+        for (const passo of caminho) {
+          await processarWebhook({ event: EVENTO_QUE_LEVA_A[passo], payment: { id: chargeId }, dateCreated: new Date().toISOString() }, deps);
+        }
+        relatorio.corrigidas += 1;
+      } else {
+        relatorio.iguais += 1;
+      }
+      if (linhasDaInbox.length) await deps.inbox.marcarReconciladas(linhasDaInbox);
+    } catch (erro) {
+      relatorio.falhas += 1;
+      console.error(`[reconciliacao] ${chargeId}:`, erro.message);
+    }
   }
   return relatorio;
 }
@@ -514,14 +823,47 @@ async function processarAutorizacaoPixAutomatico(corpo, deps = dependenciasPadra
 
 async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorridoEm = null) {
   const evento = corpo?.event;
-  const payment = corpo?.payment;
-  const chargeId = payment?.id;
+  const chargeId = corpo?.payment?.id;
   if (!chargeId) return;
 
   const novoStatus = mapearStatusPayment(evento);
   if (!novoStatus) return;
 
+  /* A linha LOCAL pelo charge (nada do corpo decide qual): o estado dela
+     diz se a lista de estornos da Asaas tem de vir junto — uma cobrança
+     parcialmente estornada continua `RECEIVED` no status, e sem a lista
+     ela pareceria "confirmado" e um evento histórico sobre ela viraria
+     alarme falso de estado faltando. */
   let cobranca = await deps.buscarCobranca(chargeId);
+
+  /* SEC-007: a cobrança como a ASAAS a vê, antes de qualquer vínculo ou
+     escrita. Falha ao perguntar LANÇA (a inbox tenta de novo) — "não
+     consegui conferir" nunca vira "confirmado". */
+  const naAsaas = await deps.estadoNaAsaas(chargeId, {
+    evento, alvo: novoStatus, payment: corpo.payment, comEstornos: ESTADOS_LOCAIS_COM_ESTORNO.includes(cobranca?.status)
+  });
+  if (!naAsaas?.existe) {
+    await deps.registrarErro(
+      new Error(`webhook ${evento} sobre ${chargeId}, que NÃO existe nesta conta da Asaas — evento de outra integração ou forjado (token do webhook vazado?). Nada foi aplicado.`),
+      { contexto: 'webhookController.semRespaldo', rota: 'webhook/asaas', metodo: 'POST' }
+    );
+    return;
+  }
+  // Daqui para baixo, vínculo e valor vêm do PROVEDOR, nunca do corpo.
+  const payment = comOQueAAsaasDiz(corpo.payment, naAsaas.pagamento);
+
+  /* INTEGRIDADE DO VÍNCULO: a linha achada pelo `charge_id` tem de ser a
+     que a Asaas diz — mesma reserva (`reserva-<id>`) e mesma sessão.
+     Divergir é banco corrompido ou vínculo trocado: nada se aplica. */
+  if (cobranca) {
+    const ref = payment?.externalReference;
+    if (cobranca.id && typeof ref === 'string' && /^reserva-[0-9a-f-]{36}$/i.test(ref) && ref !== `reserva-${cobranca.id}`) {
+      throw new Error(`vínculo inconsistente: ${chargeId} está na linha ${cobranca.id}, mas a Asaas diz referência ${ref}; conferir`);
+    }
+    if (cobranca.asaas_checkout_id && payment?.checkoutSession && payment.checkoutSession !== cobranca.asaas_checkout_id) {
+      throw new Error(`vínculo inconsistente: ${chargeId} está na sessão ${cobranca.asaas_checkout_id}, mas a Asaas diz ${payment.checkoutSession}; conferir`);
+    }
+  }
 
   /* Primeira cobrança de um pop-up: o `charge_id` só existe AQUI
      (`payment.checkoutSession` aponta para a sessão — medido em 15/09).
@@ -537,14 +879,27 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
   if (!cobranca && typeof payment?.externalReference === 'string' && payment.externalReference.startsWith('reserva-')) {
     const reserva = await deps.buscarCobrancaPorReferenciaExterna(payment.externalReference);
     if (reserva && !reserva.charge_id) {
-      await deps.vincularSessaoAReserva(reserva.id, { chargeId });
+      const vinculou = await deps.vincularSessaoAReserva(reserva.id, { chargeId });
+      if (!vinculou) throw new Error(`a reserva ${reserva.id} foi amarrada por outro caminho enquanto este evento de ${chargeId} a lia; reprocessar`);
       cobranca = { ...reserva, charge_id: chargeId };
+    } else if (reserva && !payment.subscription && !payment.installment) {
+      /* A NOSSA referência numa cobrança que não é a da linha: a Asaas
+         tem DOIS pagamentos para a mesma reserva (a linha já está com
+         outro `charge_id`). Ciclo de assinatura e parcela compartilham a
+         referência de propósito e ficam fora. Não é evento de outra
+         integração — é dinheiro deste pedido sem linha, e um humano
+         precisa decidir o estorno (RN-52). */
+      await deps.registrarErro(
+        new Error(`pagamento ${chargeId} (${evento}) leva a referência ${payment.externalReference}, cuja linha já está com ${reserva.charge_id} — dois pagamentos na Asaas para a mesma reserva; conferir e estornar um`),
+        { contexto: 'webhookController.duplicidadeDeReserva', rota: 'webhook/asaas', metodo: 'POST' }
+      );
+      return;
     }
   }
 
   if (!cobranca) {
     // O ACERTO de uma troca ainda sem `cobrancas`: resolve pela intenção.
-    const avancou = await deps.avancarIntencaoDeTrocaPorChargeId(chargeId, evento);
+    const avancou = await deps.avancarIntencaoDeTrocaPorChargeId(chargeId, evento, naAsaas.pagamento?.status ?? null);
     if (avancou) return;
 
     // Charge desconhecido: só interessa se for ciclo novo de assinatura.
@@ -553,12 +908,42 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
     if (!cobranca) return;
   }
 
-  /* A MÁQUINA DE ESTADOS (C-03). */
-  const valorEstornado = ['estornado', 'estornado_parcialmente'].includes(novoStatus) ? valorEstornadoDoPayment(payment) : undefined;
+  /* BINDING DE VALOR: uma confirmação de valor diferente do que cobramos
+     não confirma sozinha — alguém mexeu na cobrança na Asaas, ou o
+     evento não é desta linha. Lança: esgotadas as tentativas, vira
+     `erros` para um humano decidir. */
+  if (novoStatus === 'confirmado' && valorDivergenteDaCobranca(cobranca, payment)) {
+    throw new Error(`confirmação de ${chargeId} com valor ${payment.value} na Asaas, e a cobrança local é de ${cobranca.valor_cobrado} — não confirmada sozinha; conferir`);
+  }
+
+  /* O EVENTO CONTRA A ASAAS (SEC-007/SEC-019). */
+  const veredicto = veredictoDaAsaas(cobranca.status, novoStatus, naAsaas.estado);
+  if (veredicto === 'historico') {
+    console.log(`[webhook/pagamento] ${chargeId}: ${evento} é histórico — a Asaas diz "${naAsaas.estado}", que já é o estado local; ignorado`);
+    return;
+  }
+  if (veredicto === 'sem_respaldo') {
+    throw new Error(`evento ${evento} de ${chargeId} sem respaldo na Asaas (lá: ${naAsaas.pagamento?.status ?? 'desconhecido'}${naAsaas.pagamento?.deleted ? ', removida' : ''}) — nada aplicado; reprocessar`);
+  }
+
+  /* A MÁQUINA DE ESTADOS (C-03). O valor estornado é o da ASAAS. */
+  const valorEstornado = ['estornado', 'estornado_parcialmente'].includes(novoStatus)
+    ? (naAsaas.valorEstornado ?? valorEstornadoDoPayment(payment))
+    : undefined;
   let statusGravado = novoStatus;
   let aplicada = false;
 
-  const decisao = decidirTransicao(cobranca, novoStatus, ocorridoEm);
+  /* O carimbo só decide ORDEM quando a Asaas não decide por ele. Com a
+     Asaas JÁ no estado que o evento aponta, o evento é o presente — não um
+     passado atrasado —, e um `dateCreated` alguns segundos atrás do
+     relógio que gravou o estado atual (o do evento sintético do
+     reconciliador, ou um relógio da Asaas adiantado) não pode descartá-lo:
+     era o mesmo furo do SEC-008 por outra porta, "obsoleto" dito por
+     carimbo com o provedor mostrando o contrário. O carimbo gravado nunca
+     anda para trás. */
+  const aAsaasConfirmaOAlvo = naAsaas.estado === novoStatus;
+  const carimbo = aAsaasConfirmaOAlvo ? oMaisRecente(cobranca.status_evento_em, ocorridoEm) : ocorridoEm;
+  const decisao = decidirTransicao(cobranca, novoStatus, aAsaasConfirmaOAlvo ? null : ocorridoEm);
   /* Um SEGUNDO estorno parcial chega com o MESMO status e um acumulado
      maior — "mesmo status" aqui não é reentrega, é dinheiro novo saindo.
      Só o valor avança; se não avançou, é reentrega de verdade. */
@@ -568,11 +953,21 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
   const mesmoStatus = cobranca.status === novoStatus && !segundoParcial;
 
   if (decisao.acao === 'ignorar' && !segundoParcial && !mesmoStatus) {
-    console.log(`[webhook/pagamento] ${chargeId}: ${decisao.motivo} — ignorado`);
+    /* SEC-008 — OBSOLETO PROVADO × TEMPORARIAMENTE INAPLICÁVEL. A
+       transição não é permitida a partir do estado local. Se a Asaas está
+       À FRENTE dele (outro estado, e o alvo tem respaldo lá), falta um
+       estado anterior — tipicamente a confirmação que falhou e está no
+       recuo da inbox. Descartar este evento como "processado" deixava a
+       cobrança paga com o dinheiro devolvido. LANÇA: a inbox tenta de
+       novo, a anterior entra primeiro, e esgotado vira `erros`. */
+    if (naAsaas.estado && naAsaas.estado !== cobranca.status && /não é permitida/.test(decisao.motivo ?? '')) {
+      throw new Error(`transição ${cobranca.status} → ${novoStatus} de ${chargeId} ainda não se aplica: a Asaas já está em "${naAsaas.estado}" e falta o estado anterior; reprocessar`);
+    }
+    console.log(`[webhook/pagamento] ${chargeId}: ${decisao.motivo} — obsoleto, ignorado`);
     return;
   }
   if (!mesmoStatus) {
-    const gravou = await deps.aplicarTransicao(chargeId, { de: cobranca.status, para: novoStatus, ocorridoEm, valorEstornado });
+    const gravou = await deps.aplicarTransicao(chargeId, { de: cobranca.status, para: novoStatus, ocorridoEm: carimbo, valorEstornado });
     if (!gravou) {
       /* Outro evento venceu a corrida entre a leitura e a escrita. LANÇA:
          a inbox marca `falhou`, relê a linha no reprocessamento e decide
@@ -592,7 +987,7 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
      precisa ouvir isso — mesmo que a Asaas tenha chamado de "parcial". */
   if (novoStatus === 'estornado_parcialmente' && valorEstornado !== null && emCentavos(valorEstornado) >= emCentavos(cobranca.valor_cobrado ?? 0) && emCentavos(cobranca.valor_cobrado ?? 0) > 0) {
     statusGravado = 'estornado';
-    await deps.aplicarTransicao(chargeId, { de: 'estornado_parcialmente', para: 'estornado', ocorridoEm, valorEstornado });
+    await deps.aplicarTransicao(chargeId, { de: 'estornado_parcialmente', para: 'estornado', ocorridoEm: carimbo, valorEstornado });
     aplicada = true;
   }
 
@@ -720,7 +1115,8 @@ async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPa
     cobranca = await deps.buscarCobrancaPorReferenciaExterna(payment.externalReference);
     if (cobranca && !cobranca.asaas_checkout_id) {
       if (cobranca.charge_id) return null; // reserva já completada por outro caminho
-      await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId, chargeId: payment.id });
+      const vinculou = await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId, chargeId: payment.id });
+      if (!vinculou) throw new Error(`a reserva ${cobranca.id} foi amarrada por outro caminho enquanto o evento de ${payment.id} a lia; reprocessar`);
       return { ...cobranca, asaas_checkout_id: asaasCheckoutId, charge_id: payment.id };
     }
   }
@@ -793,7 +1189,8 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao, ocorrid
     // não casaria nada (revisão de 24/09/2026).
     cobranca = await deps.buscarCobrancaPorReferenciaExterna(corpo.checkout.externalReference);
     if (cobranca && !cobranca.asaas_checkout_id) {
-      await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId });
+      const vinculou = await deps.vincularSessaoAReserva(cobranca.id, { asaasCheckoutId });
+      if (!vinculou) throw new Error(`a reserva ${cobranca.id} foi amarrada a outra sessão enquanto o evento de ${asaasCheckoutId} a lia; reprocessar`);
       cobranca = { ...cobranca, asaas_checkout_id: asaasCheckoutId };
     }
   }
@@ -1031,10 +1428,10 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
 
   // --- Guarda de token ---
   const tokenOriginal = process.env.ASAAS_WEBHOOK_TOKEN;
-  function rodarGuarda({ token, header }) {
+  function rodarGuarda({ token, header, ip = '52.67.12.206' }) {
     if (token === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
     else process.env.ASAAS_WEBHOOK_TOKEN = token;
-    const req = { get: (nome) => (nome === 'asaas-access-token' ? header : undefined) };
+    const req = { ip, get: (nome) => (nome === 'asaas-access-token' ? header : undefined) };
     const res = { _status: null, _json: null, status(c) { this._status = c; return this; }, json(o) { this._json = o; return this; } };
     let chamouProximo = false;
     verificarWebhookAsaas(req, res, () => { chamouProximo = true; });
@@ -1048,6 +1445,31 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(r.status, 401, 'header ausente com token configurado: 401');
   r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo' });
   assert.equal(r.chamouProximo, true, 'token certo passa adiante');
+  // SEC-007: a lista oficial de IPs — observa por padrão, recusa só com a chave ligada
+  for (const oficial of IPS_OFICIAIS_DA_ASAAS) assert.ok(origemOficialDaAsaas(oficial), `IP oficial ${oficial} reconhecido`);
+  assert.ok(origemOficialDaAsaas('::ffff:52.67.12.206'), 'o mesmo IP na forma IPv4-mapeada do socket');
+  for (const outro of ['203.0.113.7', '52.67.12.20', '52.67.12.2060', '', null, undefined]) assert.ok(!origemOficialDaAsaas(outro), `origem ${outro} não é da Asaas`);
+  const estritoOriginal = process.env.ASAAS_WEBHOOK_IP_ESTRITO;
+  const errosAntes = console.error;
+  console.error = () => {};
+  try {
+    delete process.env.ASAAS_WEBHOOK_IP_ESTRITO;
+    r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '203.0.113.7' });
+    assert.equal(r.chamouProximo, true, 'IP fora da lista, modo observação: passa (e fica em erros) — a origem real ainda não foi medida');
+    process.env.ASAAS_WEBHOOK_IP_ESTRITO = '1';
+    r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '203.0.113.7' });
+    assert.equal(r.status, 403, 'modo estrito: token certo de IP fora da lista é recusado');
+    assert.equal(r.chamouProximo, false);
+    r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '18.230.8.159' });
+    assert.equal(r.chamouProximo, true, 'modo estrito: IP oficial com token certo passa (controle positivo)');
+    process.env.ASAAS_WEBHOOK_IPS = '198.51.100.9';
+    assert.ok(origemOficialDaAsaas('198.51.100.9') && !origemOficialDaAsaas('52.67.12.206'), 'ASAAS_WEBHOOK_IPS substitui a lista sem deploy');
+    delete process.env.ASAAS_WEBHOOK_IPS;
+    await new Promise((fim) => setTimeout(fim, 100)); // o registro em `erros` do modo observação termina (sem banco aqui) antes de o log voltar
+  } finally {
+    console.error = errosAntes;
+    if (estritoOriginal === undefined) delete process.env.ASAAS_WEBHOOK_IP_ESTRITO; else process.env.ASAAS_WEBHOOK_IP_ESTRITO = estritoOriginal;
+  }
   if (tokenOriginal === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN; else process.env.ASAAS_WEBHOOK_TOKEN = tokenOriginal;
 
   // --- Mapa evento → status ---
@@ -1104,6 +1526,11 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(pa.cicloCanonico, 'trimestral');
 
   /* --- Dublês --- */
+  const STATUS_ASAAS_QUE_O_ALVO_IMPLICA = {
+    confirmado: 'RECEIVED', estornado: 'REFUNDED', estornado_parcialmente: 'RECEIVED', estorno_solicitado: 'REFUND_IN_PROGRESS',
+    estorno_negado: 'RECEIVED', vencido: 'OVERDUE', em_analise: 'AWAITING_RISK_ANALYSIS', recusado: 'PENDING',
+    chargeback: 'CHARGEBACK_REQUESTED', pendente: 'PENDING'
+  };
   function depsFalsas(retornos = {}) {
     const chamadas = [];
     const deps = {};
@@ -1117,7 +1544,28 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     }
     // aplicarTransicao devolve true por padrão (a escrita venceu)
     if (!('aplicarTransicao' in retornos)) deps.aplicarTransicao = async (...args) => { chamadas.push({ nome: 'aplicarTransicao', args }); return true; };
+    /* A ASAAS HONESTA por padrão (SEC-007): a cobrança existe, e o status
+       dela é o que o evento implica — ou o que o cenário diz
+       (`statusNaAsaas`), quando a verdade não é o evento (evento
+       atrasado, forjado, fora de ordem). O corpo do evento dá os campos
+       de vínculo; `naAsaas` sobrescreve qualquer um deles. */
+    if (!('estadoNaAsaas' in retornos)) {
+      deps.estadoNaAsaas = async (chargeId, { alvo, payment } = {}) => {
+        chamadas.push({ nome: 'estadoNaAsaas', args: [chargeId, alvo] });
+        const status = retornos.statusNaAsaas ?? STATUS_ASAAS_QUE_O_ALVO_IMPLICA[alvo] ?? 'PENDING';
+        const pagamento = {
+          id: chargeId, status, value: payment?.value ?? null, deleted: false,
+          externalReference: payment?.externalReference ?? null, checkoutSession: payment?.checkoutSession ?? null,
+          subscription: payment?.subscription ?? null, installment: payment?.installment ?? null,
+          refunds: payment?.refunds ?? null, ...(retornos.naAsaas ?? {})
+        };
+        const valorEstornado = valorEstornadoDoPayment(pagamento);
+        return { existe: true, pagamento, estado: estadoLocalDaAsaas(pagamento, valorEstornado), valorEstornado };
+      };
+    }
     if (!('aplicarTransicaoPorCheckoutId' in retornos)) deps.aplicarTransicaoPorCheckoutId = async (...args) => { chamadas.push({ nome: 'aplicarTransicaoPorCheckoutId', args }); return true; };
+    // o vínculo da reserva é CAS desde 25/09: por padrão, a escrita venceu
+    if (!('vincularSessaoAReserva' in retornos)) deps.vincularSessaoAReserva = async (...args) => { chamadas.push({ nome: 'vincularSessaoAReserva', args }); return true; };
     deps.inbox = {};
     for (const nome of Object.keys(dependenciasPadrao.inbox)) {
       deps.inbox[nome] = async (...args) => {
@@ -1160,15 +1608,16 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(n[0].payload.versao, 2);
 
   // 3. C-03: CONFIRMED atrasado depois de REFUNDED não regride
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado', status_evento_em: '2026-09-24T12:00:00Z' } });
+  // A Asaas diz REFUNDED (é a verdade de hoje); o CONFIRMED é o passado chegando atrasado.
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado', status_evento_em: '2026-09-24T12:00:00Z' }, statusNaAsaas: 'REFUNDED' });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', dateCreated: '2026-09-24 08:00:00', payment: { id: 'pay_1' } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').length, 0, 'C-03: estornado não volta a confirmado');
   assert.equal(deps.notificados().length, 0, 'e o contratante não recebe um "confirmado" falso');
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'chargeback' } });
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'chargeback' }, statusNaAsaas: 'CHARGEBACK_REQUESTED' });
   await processarWebhook({ event: 'PAYMENT_RECEIVED_IN_CASH_UNDONE', payment: { id: 'pay_1' } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').length, 0, 'C-03: chargeback não vira pendente');
   // CASH_UNDONE mais antigo que o CONFIRMED gravado também não
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', status_evento_em: '2026-09-24T12:00:00Z' } });
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', status_evento_em: '2026-09-24T12:00:00Z' }, statusNaAsaas: 'RECEIVED' });
   await processarWebhook({ event: 'PAYMENT_RECEIVED_IN_CASH_UNDONE', dateCreated: '2026-09-24T11:00:00Z', payment: { id: 'pay_1' } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').length, 0, 'C-03: evento mais antigo que o status gravado não regride');
   // mas a sequência legítima confirmado → estornado passa e notifica
@@ -1198,10 +1647,17 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1', refunds: [{ status: 'DONE', value: 60 }, { status: 'DONE', value: 40 }] } }, deps);
   assert.equal(deps.chamou('aplicarTransicao').at(-1).args[1].para, 'estornado', 'parcial que soma o total é estorno total');
   assert.equal(deps.notificados()[0].payload.status, 'estornado');
-  // parcial sem lista de refunds: não inventa valor
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', valor_cobrado: 100 } });
+  // parcial sem lista no CORPO: o valor vem da ASAAS (SEC-007), nunca inventado
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', valor_cobrado: 100 }, naAsaas: { refunds: [{ status: 'DONE', value: 30 }] } });
   await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1' } }, deps);
-  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].valorEstornado, null, 'sem refunds no payload, valorEstornado é null — nunca 0');
+  assert.equal(deps.chamou('aplicarTransicao')[0].args[1].valorEstornado, 30, 'sem refunds no payload, o valor estornado é o que a Asaas lista');
+  // e sem estorno NENHUM na Asaas, o "parcial" não tem respaldo: lança, nada gravado
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'confirmado', valor_cobrado: 100 } });
+  await assert.rejects(
+    () => processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1' } }, deps),
+    /sem respaldo na Asaas/, 'estorno parcial sem estorno na Asaas é recusado (a inbox tenta de novo; forjado esgota em erros)'
+  );
+  assert.equal(deps.chamou('aplicarTransicao').length, 0, 'e nada foi gravado');
   // SEGUNDO parcial: mesmo status, acumulado maior — grava e notifica com chave própria
   deps = depsFalsas({ buscarCobranca: { ...cobrancaPix, status: 'estornado_parcialmente', valor_cobrado: 100, valor_estornado: 30 } });
   await processarWebhook({ event: 'PAYMENT_PARTIALLY_REFUNDED', payment: { id: 'pay_1', refunds: [{ status: 'DONE', value: 30 }, { status: 'DONE', value: 20 }] } }, deps);
@@ -1273,7 +1729,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   // 10. acerto de troca: intenção primeiro
   deps = depsFalsas({ buscarCobranca: null, avancarIntencaoDeTrocaPorChargeId: true });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_acerto_1' } }, deps);
-  assert.deepEqual(deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args, ['pay_acerto_1', 'PAYMENT_CONFIRMED']);
+  assert.deepEqual(deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args, ['pay_acerto_1', 'PAYMENT_CONFIRMED', 'RECEIVED'], 'o acerto é classificado com o status DA ASAAS junto (SEC-007)');
   assert.equal(deps.chamou('registrarCicloAssinatura').length, 0);
 
   // 11. H-03: estorno do ACERTO avisa troca_revertida
@@ -1483,7 +1939,8 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   for (const [evento, esperado] of CASOS_DE_ROTA) assert.equal(classificarEvento(evento), esperado, `rota de ${evento}`);
   for (const [evento, rota] of CASOS_DE_ROTA.filter(([, r]) => r !== null)) {
     const espiao = depsFalsas({ buscarCobranca: cobrancaPix, buscarCobrancaPorCheckoutId: cobrancaPix });
-    await processarWebhook({ event: evento, payment: { id: 'pay_1' }, checkout: { id: 'chk_1' }, account: { id: 'acc_1' } }, espiao);
+    // Lançar depois de perguntar à Asaas (estorno sem respaldo) também é "fazer algo".
+    await processarWebhook({ event: evento, payment: { id: 'pay_1' }, checkout: { id: 'chk_1' }, account: { id: 'acc_1' } }, espiao).catch(() => {});
     assert.ok(espiao.chamadas.length > 0 || obterAlertasChaveApi().length > 0, `${evento} foi classificado como ${rota} mas não fez nada`);
   }
 

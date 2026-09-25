@@ -612,6 +612,37 @@ export async function consultarPagamento(chargeId) {
 }
 
 /**
+ * A cobrança como a ASAAS a vê agora — `GET /v3/payments/{id}` —, para o
+ * webhook conferir o evento contra o provedor antes de aplicar uma
+ * transição financeira (SEC-007, 25/09/2026). `null` quando a cobrança
+ * não existe nesta conta (404): um evento sobre ela não é nosso, ou é
+ * forjado. Qualquer outra falha LANÇA — a inbox tenta de novo; "não
+ * consegui perguntar" nunca vira "a Asaas confirmou".
+ *
+ * Só os campos que a conferência lê: nada do pagador.
+ */
+export async function lerPagamentoNaAsaas(chargeId) {
+  let p;
+  try {
+    p = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}`, { method: 'GET' });
+  } catch (erro) {
+    if (erro.status === 404) return null;
+    throw erro;
+  }
+  return {
+    id: p?.id ?? null,
+    status: p?.status ?? null,
+    value: p?.value ?? null,
+    deleted: p?.deleted === true,
+    externalReference: p?.externalReference ?? null,
+    checkoutSession: p?.checkoutSession ?? null,
+    subscription: p?.subscription ?? null,
+    installment: p?.installment ?? null,
+    refunds: Array.isArray(p?.refunds) ? p.refunds.map((r) => ({ status: r?.status ?? null, value: r?.value ?? null })) : null
+  };
+}
+
+/**
  * `DELETE /v3/payments/{id}` — torna a cobrança indisponível para
  * pagamento (doc oficial "Excluir cobrança", lida em 25/09/2026: "A
  * remoção não representa estorno, reembolso ou devolução de valores já

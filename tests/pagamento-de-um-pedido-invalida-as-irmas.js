@@ -133,6 +133,10 @@ async function rodar({ cobrancas, asaas = {}, passos }) {
 }
 
 const PENDENTE = { status: 200, corpo: { id: 'x', status: 'PENDING', deleted: false } };
+/* Desde 25/09/2026 (SEC-007) todo `PAYMENT_*` é conferido na Asaas antes
+   de valer: a cobrança que o evento diz paga tem de estar paga lá. É a
+   primeira chamada de cada webhook destas cenas, e aparece nas listas. */
+const PAGO_NA_ASAAS = { status: 200, corpo: { status: 'CONFIRMED', deleted: false } };
 const EXCLUIDA = { status: 200, corpo: { id: 'x', deleted: true } };
 const CANCELADA = { status: 200, corpo: { id: 'chk', status: 'CANCELED' } };
 const destrutivas = (chamadas) => chamadas.filter((c) => c.startsWith('DELETE') || c.endsWith('/cancel'));
@@ -148,13 +152,13 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ contratante_id: 'outra_loja', metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_outra_loja' }),
       linha({ pedido_id: 'ped_2', metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_outro_pedido' })
     ],
-    asaas: { 'GET /v3/payments/pay_pix': [PENDENTE], 'DELETE /v3/payments/pay_pix': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_pix': [PENDENTE], 'DELETE /v3/payments/pay_pix': [EXCLUIDA] },
     passos: [{ webhook: evento('PAYMENT_CONFIRMED', 'pay_cartao') }, { esperar: 100 }]
   });
   igual(r.porCharge('pay_cartao').status, 'confirmado', 'A: o cartão fica pago');
   igual(r.porCharge('pay_pix').status, 'cancelado_por_outro_pagamento', 'A: o Pix deixa de ser pagável — sem ninguém rodar nada além do webhook');
   igual(r.porCharge('pay_pix').obsoleta_por_charge_id, 'pay_cartao', 'A: e diz quem o tornou obsoleto');
-  igual(r.chamadas, ['GET /v3/payments/pay_pix', 'DELETE /v3/payments/pay_pix'], 'A: leu a Asaas ANTES de excluir, e só o Pix deste pedido');
+  igual(r.chamadas, ['GET /v3/payments/pay_cartao', 'GET /v3/payments/pay_pix', 'DELETE /v3/payments/pay_pix'], 'A: a conferência do webhook (SEC-007); depois o cancelador leu a Asaas ANTES de excluir, e só o Pix deste pedido');
   igual(r.porCharge('pay_outra_loja').status, 'pendente', 'A: o mesmo pedidoId de OUTRO contratante não é tocado');
   igual(r.porCharge('pay_outra_loja').obsoleta_desde ?? null, null);
   igual(r.porCharge('pay_outro_pedido').status, 'pendente', 'A: outro pedido da mesma loja não é tocado');
@@ -174,7 +178,7 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
   ];
   let r = await rodar({
     cobrancas,
-    asaas: { 'GET /v3/payments/pay_boleto': [PENDENTE], 'DELETE /v3/payments/pay_boleto': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_boleto': [PENDENTE], 'DELETE /v3/payments/pay_boleto': [EXCLUIDA] },
     passos: [{ webhook: evento('PAYMENT_CONFIRMED', 'pay_cartao') }, { esperar: 100 }]
   });
   igual(r.porCharge('pay_boleto').status, 'cancelado_por_outro_pagamento', 'B: o boleto é excluído na Asaas');
@@ -182,7 +186,7 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
   // boleto VENCIDO (a Asaas ainda aceita pagar com juros) também sai
   r = await rodar({
     cobrancas: [{ ...cobrancas[0], status: 'vencido' }, cobrancas[1]],
-    asaas: { 'GET /v3/payments/pay_boleto': [{ status: 200, corpo: { status: 'OVERDUE', deleted: false } }], 'DELETE /v3/payments/pay_boleto': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_boleto': [{ status: 200, corpo: { status: 'OVERDUE', deleted: false } }], 'DELETE /v3/payments/pay_boleto': [EXCLUIDA] },
     passos: [{ webhook: evento('PAYMENT_CONFIRMED', 'pay_cartao') }, { esperar: 100 }]
   });
   igual(r.porCharge('pay_boleto').status, 'cancelado_por_outro_pagamento', 'B: boleto vencido também — ele ainda pode ser pago');
@@ -190,7 +194,7 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
   // a Asaas NÃO deixa excluir: o boleto não vira "cancelado" por palpite
   r = await rodar({
     cobrancas,
-    asaas: { 'GET /v3/payments/pay_boleto': [PENDENTE], 'DELETE /v3/payments/pay_boleto': [{ status: 400, corpo: { errors: [{ code: 'invalid_action', description: 'Não é possível remover esta cobrança.' }] } }] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_boleto': [PENDENTE], 'DELETE /v3/payments/pay_boleto': [{ status: 400, corpo: { errors: [{ code: 'invalid_action', description: 'Não é possível remover esta cobrança.' }] } }] },
     passos: [{ webhook: evento('PAYMENT_CONFIRMED', 'pay_cartao') }, { esperar: 100 }]
   });
   const boleto = r.porCharge('pay_boleto');
@@ -209,12 +213,12 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', asaas_checkout_id: 'chk_aberta', criado_em: agoraMenos(5) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
-    asaas: { 'POST /v3/checkouts/chk_aberta/cancel': [CANCELADA] },
+    asaas: { 'GET /v3/payments/pay_pix': [PAGO_NA_ASAAS], 'POST /v3/checkouts/chk_aberta/cancel': [CANCELADA] },
     passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_pix') }, { esperar: 100 }]
   });
   igual(r.porCharge('pay_pix').status, 'confirmado');
   igual(r.porCharge('chk_aberta').status, 'cancelado_por_outro_pagamento', 'C: a sessão da pop-up deixa de ser válida');
-  igual(r.chamadas, ['POST /v3/checkouts/chk_aberta/cancel']);
+  igual(r.chamadas, ['GET /v3/payments/pay_pix', 'POST /v3/checkouts/chk_aberta/cancel'], 'C: a conferência do webhook, e o encerramento da sessão');
 
   // pop-up com o cartão RECUSADO (a sessão ainda aceita outro cartão): sessão encerrada, tentativa excluída
   const rr = await rodar({
@@ -222,11 +226,11 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'recusado', asaas_checkout_id: 'chk_recusada', charge_id: 'pay_recusado', criado_em: agoraMenos(5) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
-    asaas: { 'POST /v3/checkouts/chk_recusada/cancel': [CANCELADA], 'GET /v3/payments/pay_recusado': [PENDENTE], 'DELETE /v3/payments/pay_recusado': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_pix': [PAGO_NA_ASAAS], 'POST /v3/checkouts/chk_recusada/cancel': [CANCELADA], 'GET /v3/payments/pay_recusado': [PENDENTE], 'DELETE /v3/payments/pay_recusado': [EXCLUIDA] },
     passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_pix') }, { esperar: 100 }]
   });
   igual(rr.porCharge('chk_recusada').status, 'cancelado_por_outro_pagamento', 'C: pop-up recusada não aceita mais um segundo cartão');
-  igual(rr.chamadas[0], 'POST /v3/checkouts/chk_recusada/cancel', 'C: a SESSÃO primeiro — é por ela que o comprador tentaria de novo');
+  igual(rr.chamadas.filter((c) => c !== 'GET /v3/payments/pay_pix')[0], 'POST /v3/checkouts/chk_recusada/cancel', 'C: a SESSÃO primeiro — é por ela que o comprador tentaria de novo');
 
   // um CHECKOUT_CANCELED atrasado depois disso não troca o motivo nem avisa ninguém
   r = await rodar({
@@ -241,7 +245,7 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', asaas_checkout_id: 'chk_c', charge_id: 'pay_cartao', sessao_concluida_em: agoraMenos(2) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
-    asaas: { 'GET /v3/payments/pay_cartao': [PENDENTE], 'DELETE /v3/payments/pay_cartao': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_pix': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_cartao': [PENDENTE], 'DELETE /v3/payments/pay_cartao': [EXCLUIDA] },
     passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_pix') }, { esperar: 100 }]
   });
   igual(r.porCharge('pay_cartao').status, 'cancelado_por_outro_pagamento', 'C: cartão ainda não capturado deixa de ser cobrável');
@@ -253,7 +257,7 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', asaas_checkout_id: 'chk_c', charge_id: 'pay_cartao', sessao_concluida_em: agoraMenos(2) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
-    asaas: { 'GET /v3/payments/pay_cartao': [{ status: 200, corpo: { status: 'CONFIRMED', deleted: false } }] },
+    asaas: { 'GET /v3/payments/pay_pix': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_cartao': [{ status: 200, corpo: { status: 'CONFIRMED', deleted: false } }] },
     passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_pix') }, { esperar: 100 }]
   });
   igual(destrutivas(r.chamadas), [], 'NUNCA se cancela cobrança que a Asaas diz paga');
@@ -265,9 +269,10 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', asaas_checkout_id: 'chk_c', sessao_concluida_em: agoraMenos(1) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
+    asaas: { 'GET /v3/payments/pay_pix': [PAGO_NA_ASAAS] },
     passos: [{ webhook: evento('PAYMENT_RECEIVED', 'pay_pix') }, { esperar: 100 }]
   });
-  igual(r.chamadas, [], 'pop-up concluída sem id de pagamento: nenhuma chamada à Asaas');
+  igual(r.chamadas, ['GET /v3/payments/pay_pix'], 'pop-up concluída sem id de pagamento: nenhuma chamada do CANCELADOR à Asaas (só a conferência do webhook)');
   igual(r.porCharge('chk_c').status, 'pendente');
   ok(r.porCharge('chk_c').obsoleta_desde, 'mas fica marcada — quando o id chegar, o cancelador resolve');
 
@@ -277,10 +282,11 @@ const avisos = (banco, chargeId) => (banco.outbox_notificacoes ?? []).filter((o)
       linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', charge_id: 'pay_cartao', asaas_checkout_id: 'chk_c', sessao_concluida_em: agoraMenos(1) }),
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix' })
     ],
+    asaas: { 'GET /v3/payments/pay_cartao': [{ status: 200, corpo: { status: 'AWAITING_RISK_ANALYSIS', deleted: false } }] },
     passos: [{ webhook: evento('PAYMENT_AWAITING_RISK_ANALYSIS', 'pay_cartao') }, { cancelar: true }]
   });
   igual(r.porCharge('pay_pix').obsoleta_desde ?? null, null, 'cartão em análise não torna o Pix obsoleto');
-  igual(r.chamadas, []);
+  igual(r.chamadas, ['GET /v3/payments/pay_cartao'], 'e só a conferência do webhook sai');
 }
 
 /* ── D) duas confirmações quase simultâneas ──────────────────────── */
@@ -327,7 +333,7 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
   const cartao = evento('PAYMENT_CONFIRMED', 'pay_cartao');
   let r = await rodar({
     cobrancas,
-    asaas: { 'GET /v3/payments/pay_pix': [PENDENTE, EXCLUIDA], 'DELETE /v3/payments/pay_pix': [EXCLUIDA] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_pix': [PENDENTE, EXCLUIDA], 'DELETE /v3/payments/pay_pix': [EXCLUIDA] },
     passos: [{ webhook: cartao }, { webhook: cartao }, { webhook: { ...cartao, event: 'PAYMENT_RECEIVED', id: 'evt_rec' } }, { esperar: 100 }, { cancelar: true }, { vencer: true }, { cancelar: true }]
   });
   igual(destrutivas(r.chamadas), ['DELETE /v3/payments/pay_pix'], 'E: um DELETE só, por mais que o evento se repita e o cancelador passe');
@@ -337,7 +343,7 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
   // a resposta do DELETE se perdeu (timeout) mas a Asaas excluiu: a próxima tentativa LÊ e só grava
   r = await rodar({
     cobrancas,
-    asaas: { 'GET /v3/payments/pay_pix': [PENDENTE, EXCLUIDA], 'DELETE /v3/payments/pay_pix': [{ timeout: true }] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_pix': [PENDENTE, EXCLUIDA], 'DELETE /v3/payments/pay_pix': [{ timeout: true }] },
     passos: [{ webhook: cartao }, { esperar: 100 }, { vencer: true }, { cancelar: true }, { vencer: true }, { cancelar: true }]
   });
   igual(destrutivas(r.chamadas), ['DELETE /v3/payments/pay_pix'], 'E: DELETE ambíguo não é repetido — a releitura mostra que já foi');
@@ -365,14 +371,14 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
   for (let i = 0; i < MAX_TENTATIVAS + 3; i += 1) passadas.push({ vencer: true }, { cancelar: true });
   const r = await rodar({
     cobrancas,
-    asaas: { 'GET /v3/payments/pay_pix': [{ status: 503, corpo: { errors: [{ description: 'Serviço indisponível' }] } }] },
+    asaas: { 'GET /v3/payments/pay_cartao': [PAGO_NA_ASAAS], 'GET /v3/payments/pay_pix': [{ status: 503, corpo: { errors: [{ description: 'Serviço indisponível' }] } }] },
     passos: [{ webhook: evento('PAYMENT_CONFIRMED', 'pay_cartao') }, { esperar: 100 }, ...passadas]
   });
   igual(r.porCharge('pay_cartao').status, 'confirmado', 'F: o pedido continua pago');
   const pix = r.porCharge('pay_pix');
   igual(pix.status, 'pendente', 'F: a irmã não vira "cancelada" sem a Asaas confirmar');
   igual(pix.cancelamento_tentativas, MAX_TENTATIVAS, `F: tenta ${MAX_TENTATIVAS} vezes e PARA — não chama para sempre`);
-  igual(r.chamadas.length, MAX_TENTATIVAS, 'F: uma chamada por tentativa, nenhuma a mais depois do teto');
+  igual(r.chamadas.filter((c) => c.includes('pay_pix')).length, MAX_TENTATIVAS, 'F: uma chamada por tentativa, nenhuma a mais depois do teto');
   igual(pix.cancelamento_proxima_em, null, 'F: esgotada, sai da fila');
   ok(/Serviço indisponível/.test(pix.cancelamento_ultimo_erro), 'F: com o último motivo gravado');
   const esgotado = (r.banco.erros ?? []).filter((e) => /ESGOTADO/.test(e.mensagem));
@@ -391,7 +397,8 @@ for (const ordem of ['paralelo', 'pix-antes', 'cartao-antes']) {
       linha({ metodo_pagamento: 'pix', status: 'pendente', charge_id: 'pay_pix', obsoleta_desde: agoraMenos(1), obsoleta_por_charge_id: 'pay_cartao', cancelamento_proxima_em: agoraMenos(1) }),
       linha({ metodo_pagamento: 'cartao_credito', status: 'confirmado', charge_id: 'pay_cartao', asaas_checkout_id: 'chk_cartao' })
     ],
-    asaas: { 'GET /v3/payments/pay_pix': [PENDENTE], 'DELETE /v3/payments/pay_pix': [{ ...EXCLUIDA, atraso: 150 }] },
+    // a 1ª leitura é do cancelador (ainda PENDING); a 2ª, da conferência do webhook (já pago)
+    asaas: { 'GET /v3/payments/pay_pix': [PENDENTE, PAGO_NA_ASAAS], 'DELETE /v3/payments/pay_pix': [{ ...EXCLUIDA, atraso: 150 }] },
     passos: [{ juntos: evento('PAYMENT_RECEIVED', 'pay_pix') }]
   });
   igual(r.porCharge('pay_pix').status, 'confirmado', 'o pagamento que chegou no meio do cancelamento vale — nunca vira "cancelada" por cima');
