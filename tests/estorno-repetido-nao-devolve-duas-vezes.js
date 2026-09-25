@@ -21,7 +21,10 @@
  * do cobrado.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,7 +32,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:0';
 process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? 'teste';
 
 const { criarRefundController } = await import('../src/controllers/refundController.js');
-const { executarEstorno, reconciliarEstornosUmaVez, ESTADOS_EM_ABERTO, MINUTOS_ATE_PROVAR_AUSENCIA, MINUTOS_ATE_ALERTAR } = await import('../src/services/estornoService.js');
+const { executarEstorno, reconciliarEstornosUmaVez, restanteEstornavel, ESTADOS_EM_ABERTO, MINUTOS_ATE_PROVAR_AUSENCIA, MINUTOS_ATE_ALERTAR } = await import('../src/services/estornoService.js');
 const { foiRecusaLimpaDaAsaas } = await import('../src/services/asaasService.js');
 const { STATUS_ESTORNAVEIS } = await import('../src/services/cobrancaService.js');
 
@@ -586,6 +589,361 @@ function mundo() {
   const semLeitura = await m4.estornar({ pedidoId: 'ped_1' });
   igual(semLeitura.codigo, 502, 'sem conseguir conferir na Asaas, 502 — "não sei se é parcelado" nunca vira "não é"');
   igual([m4.asaas.chamadas.length, m4.cobrancas.get('c4').estornando_em], [0, null], 'nada estornado, arrendamento de volta');
+}
+
+/* ===== 15. A ARITMÉTICA DO RESTANTE, peça por peça (CP3-11) =====
+   Cada termo de `restanteEstornavel` tinha um motivo escrito no
+   comentário e nenhuma checagem: trocar qualquer um por uma versão mais
+   "simples" passava as suítes. Aqui, a conta direta — e, em seguida, o
+   cenário em que cada termo errado faz a Asaas ser chamada de novo.
+   O `excetoId` fica de fora de propósito: nos dois chamadores a própria
+   operação no banco está em FAILED_RETRYABLE (execução) ou em aberto
+   (reconciliação, que só lê `confirmadas`/`jaEstornado`) — nenhum dos
+   dois estados entra nesses termos. Só com um snapshot velho de uma
+   operação já CONFIRMED ela contaria, e aí toda escrita da reconciliação
+   perde o CAS (21a); tirá-lo não muda dinheiro nem estado. */
+{
+  const cob = (extras = {}) => ({ valor_cobrado: 100, valor_estornado: null, status: 'confirmado', ...extras });
+  const op = (extras) => ({ id: 'op', estado: 'CONFIRMED', status_resultado: 'estornado_parcialmente', valor_centavos: 3000, ...extras });
+
+  /* O já estornado é o MAIOR entre a cobrança e o registro de operações. */
+  igual(restanteEstornavel(cob(), [op({})]).restante, 7000,
+    'CP3-11: a gravação na cobrança se perdeu (valor_estornado nulo) e a operação CONFIRMED de R$ 30 ainda conta — restante R$ 70, não R$ 100');
+  igual(restanteEstornavel(cob({ valor_estornado: 20, status: 'estornado_parcialmente' }), []).restante, 8000,
+    'CP3-11: estorno de R$ 20 feito no painel (só a cobrança sabe dele) conta — restante R$ 80, não R$ 100');
+  igual(restanteEstornavel(cob({ valor_estornado: 30, status: 'estornado_parcialmente' }), [op({})]).restante, 7000,
+    'controle: cobrança e operação dizendo o mesmo R$ 30 não somam duas vezes');
+
+  /* Só o PEDIDO de boleto negado deixa de contar — e só com a cobrança negada. */
+  const pedidoBoleto = op({ status_resultado: 'estorno_solicitado', valor_centavos: 10000 });
+  igual(restanteEstornavel(cob({ status: 'estorno_negado' }), [pedidoBoleto]).restante, 10000,
+    'controle (D-1): negada a cobrança, o pedido de boleto que a Asaas negou não devolveu nada — restante R$ 100');
+  igual(restanteEstornavel(cob(), [pedidoBoleto]).restante, 0,
+    'CP3-11: com a cobrança NÃO negada, o pedido de boleto aceito conta como devolvido — restante R$ 0');
+  igual(restanteEstornavel(cob({ status: 'estorno_negado' }), [op({})]).restante, 7000,
+    'CP3-11: negada a cobrança, um parcial que DEVOLVEU (estornado_parcialmente) continua contando — só o `estorno_solicitado` é excluído');
+  const reabertaAmbigua = op({ estado: 'UNKNOWN_PROVIDER_RESULT', status_resultado: 'estorno_solicitado', valor_centavos: 10000 });
+  const r = restanteEstornavel(cob({ status: 'estorno_negado' }), [reabertaAmbigua]);
+  igual([r.restante, r.emVoo], [0, 10000],
+    'CP3-11: negada a cobrança, a NOVA tentativa ambígua (UNKNOWN, com o `estorno_solicitado` velho) conta como em voo — só o CONFIRMED negado sai da conta');
+}
+
+/* ===== 15a. Os mesmos termos, no caminho de verdade: a Asaas não é chamada de novo ===== */
+{
+  /* A gravação na cobrança falhou depois de a Asaas estornar R$ 30: só o
+     registro de operações sabe. Um parcial de R$ 80 não cabe. */
+  const m = mundo();
+  m.cobranca('c1');
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  Object.assign(m.cobrancas.get('c1'), { status: 'confirmado', valor_estornado: null });
+  const b = await m.estornar({ pedidoId: 'ped_1', valor: 80, chaveIdempotencia: 'estorno-B' });
+  igual([b.codigo, m.asaas.chamadas.length], [400, 1],
+    `CP3-11: com a gravação da cobrança perdida, o registro de operações ainda segura o restante — 80 > 70 é recusado SEM chamar a Asaas (veio ${b.codigo}, ${m.asaas.chamadas.length} chamadas)`);
+  /* O mesmo, com a cobrança em `estorno_negado` (a Asaas negou OUTRO pedido):
+     a negativa só tira da conta o `estorno_solicitado`, nunca o parcial de
+     R$ 30 que devolveu dinheiro. */
+  m.cobrancas.get('c1').status = 'estorno_negado';
+  const bNegada = await m.estornar({ pedidoId: 'ped_1', valor: 80, chaveIdempotencia: 'estorno-B2' });
+  igual([bNegada.codigo, m.asaas.chamadas.length], [400, 1],
+    `CP3-11: cobrança negada, o parcial que devolveu continua contando — 80 > 70 é recusado SEM chamar a Asaas (veio ${bNegada.codigo}, ${m.asaas.chamadas.length} chamadas)`);
+
+  /* Estorno de R$ 20 feito no painel e gravado pelo webhook: só a cobrança
+     sabe. Com A (30) sem resposta, um parcial de 60 só caberia se a conta
+     esquecesse um dos dois: 100 − 20 − 30 = 50. (A pré-conferência do
+     controlador vê só os 20 da cobrança e deixa passar; quem segura é o
+     serviço.) */
+  const n = mundo();
+  n.cobranca('c1', { valor_estornado: 20, status: 'estornado_parcialmente' });
+  n.asaas.refunds.set('pay_c1', [{ value: 20, status: 'DONE', description: 'estorno manual no painel', dateCreated: '2026-09-25T11:00:00Z' }]);
+  n.asaas.roteiro.push('timeout_antes');
+  await n.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  n.avancar(6); // o arrendamento da cobrança venceu; A continua sem resposta
+  const excede = await n.estornar({ pedidoId: 'ped_1', valor: 60, chaveIdempotencia: 'estorno-B' });
+  igual([excede.corpo?.codigo, n.asaas.chamadas.length], ['estorno_anterior_em_reconciliacao', 1],
+    `CP3-11: o estorno do painel (só na cobrança) E o em voo contam — 60 > 50 espera, SEM chamar a Asaas (veio ${excede.codigo} ${excede.corpo?.codigo ?? excede.corpo?.erro}, ${n.asaas.chamadas.length} chamadas)`);
+
+  /* Boleto: a Asaas aceitou o pedido, a gravação na cobrança se perdeu
+     (continua `confirmado`). Uma chave nova do total NÃO pede de novo. */
+  const b2 = mundo();
+  b2.cobranca('c1', { metodo_pagamento: 'boleto' });
+  await b2.estornar({ pedidoId: 'ped_1' });
+  Object.assign(b2.cobrancas.get('c1'), { status: 'confirmado', estornando_em: null });
+  const denovo = await b2.estornar({ pedidoId: 'ped_1', chaveIdempotencia: 'outra-chave-do-total' });
+  igual([denovo.codigo, b2.asaas.chamadas.length], [400, 1],
+    `CP3-11: pedido de boleto aceito e cobrança não negada — o pedido conta como devolvido e o boleto não é pedido duas vezes (veio ${denovo.codigo}, ${b2.asaas.chamadas.length} chamadas)`);
+
+  /* Boleto negado, reaberto, e a nova tentativa ficou AMBÍGUA (UNKNOWN com
+     o `estorno_solicitado` velho). Uma chave nova não pode pedir por cima. */
+  const b3 = mundo();
+  b3.cobranca('c1', { metodo_pagamento: 'boleto' });
+  await b3.estornar({ pedidoId: 'ped_1' });
+  b3.cobrancas.get('c1').status = 'estorno_negado';
+  b3.asaas.statusPagamento.set('pay_c1', 'RECEIVED');
+  for (const o of b3.estornos.values()) Object.assign(o, { estado: 'FAILED_RETRYABLE' }); // o que `reabrirEstornosNegados` faz
+  b3.asaas.roteiro.push('timeout_depois');
+  const ambigua = await b3.estornar({ pedidoId: 'ped_1' });
+  igual([ambigua.codigo, [...b3.estornos.values()][0].estado, [...b3.estornos.values()][0].status_resultado], [504, 'UNKNOWN_PROVIDER_RESULT', 'estorno_solicitado'],
+    'controle: a nova tentativa do boleto negado ficou ambígua, ainda com o `estorno_solicitado` da primeira');
+  b3.avancar(6); // o arrendamento da cobrança venceu; a operação continua sem resposta
+  const porCima = await b3.estornar({ pedidoId: 'ped_1', chaveIdempotencia: 'total-com-outra-chave' });
+  igual([porCima.corpo?.codigo, b3.asaas.chamadas.length], ['estorno_anterior_em_reconciliacao', 2],
+    `CP3-11: a tentativa ambígua conta como em voo — a chave nova espera, e o boleto não é pedido uma terceira vez (veio ${porCima.codigo} ${porCima.corpo?.codigo ?? porCima.corpo?.erro}, ${b3.asaas.chamadas.length} chamadas)`);
+}
+
+/* ===== 16. O "não cabe" DEFINITIVO fecha a chave de vez (FAILED_FINAL) =====
+   O D-4 (7f) provou o lado provisório; o definitivo não tinha checagem.
+   Sem nada em voo, a chave que não cabe mais vira FAILED_FINAL e a
+   repetição responde `estorno_impossivel` sem nem disputar o
+   arrendamento — em vez de reavaliar a cada repetição.
+   A gravação de B na cobrança se perde (como quando `registrarNaCobranca`
+   lança depois de a Asaas estornar): a pré-conferência do controlador,
+   que lê a cobrança, deixa A passar, e é o registro de operações, no
+   serviço, que diz que não cabe. */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('recusa');
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' }); // recusa limpa → FAILED_RETRYABLE
+  await m.estornar({ pedidoId: 'ped_1', valor: 80, chaveIdempotencia: 'estorno-B' }); // restante agora R$ 20
+  Object.assign(m.cobrancas.get('c1'), { status: 'confirmado', valor_estornado: null }); // a gravação de B se perdeu
+  const a = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  igual(a.codigo, 400, `a repetição de A (30) não cabe nos R$ 20 que sobraram (veio ${a.codigo} ${a.corpo?.erro ?? a.corpo?.codigo})`);
+  const opA = [...m.estornos.values()].find((o) => o.chave_idempotencia === 'estorno-A');
+  igual(opA.estado, 'FAILED_FINAL', 'CP3-11: sem nada em voo, o "não cabe" é definitivo e a operação de A é FECHADA (FAILED_FINAL)');
+  const r = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  igual([r.codigo, r.corpo?.codigo], [409, 'estorno_impossivel'],
+    `CP3-11: fechada, a repetição de A responde 409 estorno_impossivel com o motivo gravado (veio ${r.codigo} ${r.corpo?.codigo ?? r.corpo?.erro})`);
+  ok(/não comporta/.test(r.corpo?.erro ?? ''), 'e o motivo é o gravado na operação');
+  igual([m.asaas.chamadas.length, m.cobrancas.get('c1').estornando_em], [2, null], 'e a Asaas não é chamada, nem a cobrança fica presa');
+}
+
+/* ===== 17. BOLETO: ausência só depois do prazo, mesmo com a Asaas atrasada (CP3-11) =====
+   O estorno de boleto é um pedido assíncrono. A Asaas aceitou, a
+   resposta se perdeu, e o status do pagamento ainda não mudou para
+   REFUND_REQUESTED. Antes dos 15 minutos, "o status não mudou" NÃO é
+   prova de que o pedido não existe: liberar a repetição cedo pediria o
+   estorno do mesmo boleto duas vezes. */
+{
+  const m = mundo();
+  m.cobranca('c1', { metodo_pagamento: 'boleto' });
+  m.asaas.roteiro.push('timeout_depois');
+  igual((await m.estornar({ pedidoId: 'ped_1' })).codigo, 504, 'o pedido do boleto foi aceito e a resposta se perdeu');
+  m.asaas.statusPagamento.set('pay_c1', 'RECEIVED'); // a Asaas ainda não refletiu o pedido
+  m.avancar(6); // o arrendamento da cobrança (5 min) venceu; ainda dentro dos 15 min
+  const cedo = await m.estornar({ pedidoId: 'ped_1' });
+  igual([cedo.corpo?.codigo, m.asaas.chamadas.length], ['estorno_em_reconciliacao', 1],
+    `CP3-11: antes do prazo de ausência, o boleto NÃO é pedido de novo (veio ${cedo.codigo} ${cedo.corpo?.codigo ?? cedo.corpo?.erro}, ${m.asaas.chamadas.length} chamadas)`);
+  igual([...m.estornos.values()][0].estado, 'UNKNOWN_PROVIDER_RESULT', 'e a operação continua em aberto');
+  m.asaas.statusPagamento.set('pay_c1', 'REFUND_REQUESTED'); // a Asaas refletiu
+  const depois = await m.estornar({ pedidoId: 'ped_1' });
+  igual([depois.codigo, depois.corpo?.repetido, depois.corpo?.status, m.asaas.chamadas.length], [200, true, 'estorno_solicitado', 1],
+    'controle: refletido o pedido, a reconciliação confirma sem chamar de novo');
+}
+
+/* ===== 18. A PROVA PELO VALOR só vale com UMA operação em aberto (CP3-11) =====
+   Duas operações de R$ 30 sem resposta, um estorno de R$ 30 na Asaas sem
+   marcador: o delta bate com as DUAS, e qualquer uma que se declarasse
+   "provada" deixaria a outra ser provada ausente e repetida — o dinheiro
+   atribuído à operação errada. Fica em aberto e chama um humano. */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('timeout_depois');
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' }); // estornou, sem resposta
+  m.avancar(6);
+  m.asaas.roteiro.push('timeout_antes');
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-B' }); // NÃO estornou, sem resposta
+  for (const r of m.asaas.refunds.get('pay_c1')) r.description = null; // o marcador não volta
+  m.avancar(MINUTOS_ATE_PROVAR_AUSENCIA + 1);
+  await reconciliarEstornosUmaVez(m.depsServico);
+  const estados = [...m.estornos.values()].map((o) => o.estado);
+  igual(estados, ['UNKNOWN_PROVIDER_RESULT', 'UNKNOWN_PROVIDER_RESULT'],
+    `CP3-11: com duas em aberto, o delta de R$ 30 não prova nenhuma das duas (ficaram ${estados.join(', ')})`);
+  m.avancar(MINUTOS_ATE_ALERTAR);
+  await reconciliarEstornosUmaVez(m.depsServico);
+  ok(m.erros.filter((e) => /não permite decidir/.test(e)).length >= 2, 'e as duas chamam um humano');
+}
+
+/* ===== 19. ESTORNO CANCELADO na Asaas não é estorno feito (CP3-11) =====
+   O NOSSO estorno aparece na lista com o marcador, mas CANCELLED: o
+   dinheiro não saiu. Contá-lo confirmaria a operação e o contratante
+   receberia "estornado" de um estorno que não aconteceu. */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('timeout_depois');
+  await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  for (const r of m.asaas.refunds.get('pay_c1')) r.status = 'CANCELLED';
+  m.avancar(MINUTOS_ATE_PROVAR_AUSENCIA + 1);
+  await reconciliarEstornosUmaVez(m.depsServico);
+  igual([...m.estornos.values()][0].estado, 'FAILED_RETRYABLE',
+    `CP3-11: o estorno com o marcador mas CANCELLED não confirma a operação — provado ausente (ficou ${[...m.estornos.values()][0].estado})`);
+  const repetida = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  igual([repetida.codigo, repetida.corpo?.repetido ?? false, m.totalNaAsaas('pay_c1')], [200, false, 3000],
+    'e a mesma chave estorna de verdade — o contratante não recebe "estornado" de um cancelado');
+}
+
+/* ===== 20. O ARRENDAMENTO DA CHAMADA EM CURSO: o worker não decide por ela (CP3-11) =====
+   Enquanto a requisição viva espera a Asaas, aparece na lista um estorno
+   de R$ 30 feito no painel (o webhook dele ainda não chegou). O delta
+   bate com a operação em curso, e sem o arrendamento o worker a
+   "provaria" pelo valor. A Asaas então RECUSA o nosso — e a operação
+   ficaria CONFIRMED: a repetição responderia "estornado" de um estorno
+   que não aconteceu. */
+{
+  const m = mundo();
+  m.cobranca('c1');
+  m.asaas.roteiro.push('recusa');
+  let passada = null;
+  m.asaas.duranteChamada = async () => {
+    m.asaas.duranteChamada = null;
+    m.asaas.refunds.set('pay_c1', [{ value: 30, status: 'DONE', description: 'estorno manual no painel', dateCreated: '2026-09-25T12:00:00Z' }]);
+    passada = await reconciliarEstornosUmaVez(m.depsServico);
+  };
+  const r = await m.estornar({ pedidoId: 'ped_1', valor: 30, chaveIdempotencia: 'estorno-A' });
+  igual(r.codigo, 400, 'a Asaas recusou o nosso estorno');
+  igual([passada?.confirmadas, passada?.aguardando], [0, 1], 'CP3-11: o worker, no meio da chamada viva, não decide por ela');
+  igual([...m.estornos.values()][0].estado, 'FAILED_RETRYABLE',
+    `CP3-11: recusado, o nosso estorno fica FAILED_RETRYABLE — não CONFIRMED pelo valor do estorno do painel (ficou ${[...m.estornos.values()][0].estado})`);
+}
+
+/* ===== 21. O BANCO DE VERDADE (CP3-09, CP3-10, CP3-11) =====
+   Os blocos acima usam um dublê de `transitar`, de `reabrirEstornosNegados`
+   e do arrendamento da cobrança — então as consultas reais podiam perder a
+   condição que as torna seguras sem nenhuma suíte ver. Aqui rodam as
+   funções REAIS de `estornoService`/`cobrancaService` num processo filho,
+   sobre o banco falso (`tests/banco-falso/`), com a Asaas trocada por um
+   `fetch` roteirizado. */
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
+const COB = '00000000-0000-4000-8000-000000000001';
+const OP = '00000000-0000-4000-8000-0000000000aa';
+const minutosAtras = (min) => new Date(Date.now() - min * 60_000).toISOString();
+const cobrancaReal = (extras = {}) => ({ id: COB, contratante_id: 'loja', pedido_id: 'ped_1', charge_id: 'pay_1', metodo_pagamento: 'pix', status: 'confirmado', valor_cobrado: 100, valor_estornado: null, estornando_em: null, ...extras });
+
+async function noBancoFalso({ tabelas, asaas = {}, codigo }) {
+  const pasta = mkdtempSync(join(tmpdir(), 'estorno-banco-'));
+  const arquivo = join(pasta, 'banco.json');
+  writeFileSync(arquivo, JSON.stringify({ tabelas: { contratantes: [{ id: 'loja', api_key: 'k' }], estornos: [], ...tabelas } }));
+  const programa = `
+    const chamadas = [];
+    globalThis.fetch = async (url, opcoes = {}) => {
+      const u = new URL(String(url));
+      const chave = (opcoes.method ?? 'GET') + ' ' + u.pathname;
+      chamadas.push(chave);
+      const resp = ${JSON.stringify(asaas)}[chave] ?? { status: 500, corpo: { errors: [{ description: 'fora do roteiro: ' + chave }] } };
+      return new Response(JSON.stringify(resp.corpo), { status: resp.status, headers: { 'content-type': 'application/json' } });
+    };
+    const es = await import('./src/services/estornoService.js');
+    const cs = await import('./src/services/cobrancaService.js');
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const ler = () => JSON.parse(readFileSync(process.env.BANCO_FALSO_ARQUIVO, 'utf8')).tabelas;
+    const mexer = (fn) => { const e = JSON.parse(readFileSync(process.env.BANCO_FALSO_ARQUIVO, 'utf8')); fn(e.tabelas); writeFileSync(process.env.BANCO_FALSO_ARQUIVO, JSON.stringify(e)); };
+    const gancho = { reivindicar: cs.reivindicarEstorno, liberar: cs.liberarEstorno, registrarNaCobranca: cs.registrarEstorno };
+    const saida = {};
+    ${codigo}
+    saida.chamadas = chamadas;
+    console.log(JSON.stringify(saida));
+  `;
+  const filho = spawn(process.execPath, ['--import', './tests/banco-falso/loader.mjs', '--input-type=module', '-e', programa], {
+    cwd: RAIZ,
+    env: { ...process.env, SUPABASE_URL: 'http://127.0.0.1:0', SUPABASE_SERVICE_KEY: 'teste', ASAAS_API_KEY: 'chave-de-teste', ASAAS_AMBIENTE: 'sandbox', BANCO_FALSO_ARQUIVO: arquivo }
+  });
+  let stdout = ''; let stderr = '';
+  filho.stdout.on('data', (c) => { stdout += c; });
+  filho.stderr.on('data', (c) => { stderr += c; });
+  const [status] = await once(filho, 'close');
+  if (status !== 0) throw new Error(`processo filho falhou:\n${stderr}`);
+  return { saida: JSON.parse(stdout.trim().split('\n').pop()), banco: JSON.parse(readFileSync(arquivo, 'utf8')).tabelas };
+}
+
+/* 21a. CP3-09 — o CAS de `transitar`. O reconciliador leu a operação em
+   UNKNOWN; antes de ele escrever, uma repetição da mesma chave a provou
+   CONFIRMED (R$ 30 devolvidos). A lista da Asaas, lida por ele, ainda
+   veio sem o marcador, e o snapshot velho diz "ausência provada". Sem a
+   condição de estado no UPDATE, a escrita dele desfazia o CONFIRMED — e a
+   repetição seguinte da mesma chave estornava R$ 30 DE NOVO. */
+{
+  const confirmada = { id: OP, cobranca_id: COB, contratante_id: 'loja', charge_id: 'pay_1', chave_idempotencia: 'A', valor_centavos: 3000, total: false, estado: 'CONFIRMED', status_resultado: 'estornado_parcialmente', valor_estornado_depois: 30, marcador: 'san-estorno:' + OP, tentativas: 1, chamando_em: null, ultimo_erro: null, criado_em: minutosAtras(30), atualizado_em: minutosAtras(1) };
+  const { saida, banco } = await noBancoFalso({
+    tabelas: { cobrancas: [cobrancaReal()], estornos: [confirmada] },
+    asaas: { 'GET /v3/payments/pay_1/refunds': { status: 200, corpo: { data: [], hasMore: false } }, 'POST /v3/payments/pay_1/refund': { status: 200, corpo: { status: 'REFUNDED' } } },
+    codigo: `
+      const velho = { ...ler().estornos[0], estado: 'UNKNOWN_PROVIDER_RESULT', status_resultado: null, chamando_em: new Date(Date.now() - 30 * 60_000).toISOString() };
+      saida.reconciliada = (await es.reconciliarOperacao(velho)).estado;
+      saida.depoisDoReconciliador = ler().estornos[0].estado;
+      const r = await es.executarEstorno({ contratante: { id: 'loja' }, cobranca: ler().cobrancas[0], chave: 'A', valorCentavos: 3000 }, gancho);
+      saida.repeticao = [r.http, r.corpo.repetido ?? false];
+    `
+  });
+  igual(saida.depoisDoReconciliador, 'CONFIRMED',
+    `CP3-09: o reconciliador com o snapshot velho NÃO sobrescreve a operação já CONFIRMED no banco (ficou ${saida.depoisDoReconciliador})`);
+  igual(saida.repeticao, [200, true], 'CP3-09: a repetição da mesma chave devolve o estorno gravado');
+  igual(saida.chamadas.filter((c) => c.startsWith('POST')).length, 0, 'CP3-09: e a Asaas NÃO recebe um segundo estorno de R$ 30');
+  igual(banco.estornos[0].estado, 'CONFIRMED', 'e o registro termina CONFIRMED');
+
+  /* controle: a MESMA escrita, com a operação de fato em aberto no banco, passa */
+  const aberta = { ...confirmada, estado: 'UNKNOWN_PROVIDER_RESULT', status_resultado: null, valor_estornado_depois: null, chamando_em: minutosAtras(30) };
+  const controle = await noBancoFalso({
+    tabelas: { cobrancas: [cobrancaReal()], estornos: [aberta] },
+    asaas: { 'GET /v3/payments/pay_1/refunds': { status: 200, corpo: { data: [], hasMore: false } } },
+    codigo: `saida.reconciliada = (await es.reconciliarOperacao(ler().estornos[0])).estado;`
+  });
+  igual([controle.saida.reconciliada, controle.banco.estornos[0].estado], ['FAILED_RETRYABLE', 'FAILED_RETRYABLE'],
+    'controle: com a operação em aberto no banco, a ausência provada é gravada — o CAS não é uma escrita que nunca acontece');
+}
+
+/* 21b. CP3-10 — `reabrirEstornosNegados` só reabre o pedido CONFIRMED. Boleto:
+   pedido aceito, NEGADO, reaberto; a nova tentativa ficou AMBÍGUA (UNKNOWN,
+   com o `estorno_solicitado` velho). A negativa velha chega de novo
+   (reentrega). Reabrir a ambígua liberaria a mesma chave para pedir por cima
+   de um estorno que pode ter acontecido. */
+{
+  const COB2 = '00000000-0000-4000-8000-000000000002';
+  const opBoleto = (id, cobrancaId, extras) => ({ id, cobranca_id: cobrancaId, contratante_id: 'loja', charge_id: cobrancaId === COB ? 'pay_1' : 'pay_2', chave_idempotencia: 'total-' + cobrancaId, valor_centavos: 10000, total: true, status_resultado: 'estorno_solicitado', marcador: 'san-estorno:' + id, tentativas: 1, chamando_em: null, criado_em: minutosAtras(60), atualizado_em: minutosAtras(1), ...extras });
+  const { saida, banco } = await noBancoFalso({
+    tabelas: {
+      cobrancas: [cobrancaReal({ metodo_pagamento: 'boleto', status: 'estorno_negado' }), cobrancaReal({ id: COB2, charge_id: 'pay_2', metodo_pagamento: 'boleto', status: 'estorno_negado' })],
+      estornos: [
+        opBoleto(OP, COB, { estado: 'UNKNOWN_PROVIDER_RESULT', tentativas: 2, chamando_em: minutosAtras(1) }),
+        opBoleto('00000000-0000-4000-8000-0000000000bb', COB2, { estado: 'CONFIRMED' })
+      ]
+    },
+    codigo: `
+      saida.ambigua = await es.reabrirEstornosNegados('${COB}');
+      saida.confirmada = await es.reabrirEstornosNegados('${COB2}');
+    `
+  });
+  const porId = Object.fromEntries(banco.estornos.map((o) => [o.cobranca_id, o.estado]));
+  igual([saida.ambigua, porId[COB]], [0, 'UNKNOWN_PROVIDER_RESULT'],
+    `CP3-10: a negativa NÃO reabre a tentativa ambígua, que pode ter estornado (reabriu ${saida.ambigua}, ficou ${porId[COB]})`);
+  igual([saida.confirmada, porId[COB2]], [1, 'FAILED_RETRYABLE'], 'controle: o pedido CONFIRMED que a Asaas negou é reaberto');
+}
+
+/* 21c. O arrendamento REAL da cobrança (`reivindicarEstorno`): só de um
+   estado estornável, e um de cada vez. O dublê do `mundo()` imita as duas
+   condições; aqui se prova que a consulta de verdade ainda as tem. */
+{
+  const linhas = [
+    ['confirmado', null], ['estornado_parcialmente', null], ['estorno_negado', null],
+    ['pendente', null], ['estornado', null], ['estorno_solicitado', null], ['chargeback', null], ['cancelado', null],
+    ['confirmado', minutosAtras(1)], ['confirmado', minutosAtras(6)]
+  ].map(([status, estornando_em], i) => cobrancaReal({ id: `00000000-0000-4000-8000-1000000000${String(i).padStart(2, '0')}`, charge_id: `pay_${i}`, status, estornando_em }));
+  const { saida } = await noBancoFalso({
+    tabelas: { cobrancas: linhas },
+    codigo: `
+      saida.primeira = [];
+      for (let i = 0; i < ${linhas.length}; i += 1) saida.primeira.push(await cs.reivindicarEstorno('pay_' + i));
+      saida.segunda = await cs.reivindicarEstorno('pay_0');
+      await cs.liberarEstorno('pay_0');
+      saida.depoisDeLiberar = await cs.reivindicarEstorno('pay_0');
+    `
+  });
+  igual(saida.primeira.slice(0, 3), [true, true, true], 'controle: confirmado, estornado_parcialmente e estorno_negado são estornáveis');
+  igual(saida.primeira.slice(3, 8), [false, false, false, false, false],
+    `CP3-11: pendente, estornado, estorno_solicitado, chargeback e cancelado NÃO são reivindicáveis para estorno (veio ${JSON.stringify(saida.primeira.slice(3, 8))})`);
+  igual(saida.primeira[8], false, 'CP3-11: com o arrendamento de outro estorno vivo (1 min), a cobrança NÃO é reivindicada');
+  igual(saida.segunda, false, 'CP3-11: e a segunda reivindicação seguida da MESMA cobrança perde — um estorno de cada vez');
+  igual([saida.primeira[9], saida.depoisDeLiberar], [true, true], 'controle: arrendamento vencido (6 min) ou liberado volta a poder');
 }
 
 console.log(`estorno-repetido-nao-devolve-duas-vezes: ${checagens} checagens OK`);
