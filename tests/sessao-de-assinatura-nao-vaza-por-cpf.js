@@ -36,7 +36,7 @@ let checagens = 0;
 const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 
-const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja-0123456789', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
+const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
 const DOCUMENTO = '11144477735';
 const VITIMA = { nome: 'Maria Teste', email: 'maria@exemplo.com', telefone: '16987654321' };
 const ATACANTE = { nome: 'Outra Pessoa', email: 'atacante@exemplo.net', telefone: '11912345678' };

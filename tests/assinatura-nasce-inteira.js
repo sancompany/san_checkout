@@ -36,7 +36,7 @@ let checagens = 0;
 const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 
-const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja-0123456789', webhook_url: 'https://loja.exemplo/hook', metodos_habilitados: null };
+const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja', webhook_url: 'https://loja.exemplo/hook', metodos_habilitados: null };
 const linhaDaPopup = (extra = {}) => ({
   id: '5e5e5e5e-0000-4000-8000-000000000001', contratante_id: 'loja', plano_id: 'plano_pro', documento: '11144477735',
   metodo_pagamento: 'assinatura', status: 'pendente', charge_id: null, asaas_checkout_id: 'chk_a', asaas_subscription_id: null,

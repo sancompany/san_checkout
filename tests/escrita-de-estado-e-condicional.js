@@ -36,7 +36,7 @@ let checagens = 0;
 const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 
-const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja-0123456789', webhook_url: 'https://loja.exemplo/hook', metodos_habilitados: null, arquivado_em: null };
+const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja', webhook_url: 'https://loja.exemplo/hook', metodos_habilitados: null, arquivado_em: null };
 const linha = (extra = {}) => ({
   id: '7a7a7a7a-0000-4000-8000-000000000001', contratante_id: 'loja', pedido_id: 'ped_1', metodo_pagamento: 'pix', status: 'pendente',
   charge_id: 'pay_1', asaas_checkout_id: null, valor_cobrado: 50, valor_cheio: 50, ambiente: 'sandbox', e_teste: false,
@@ -82,7 +82,7 @@ const asaas = (estornarNoMeio) => `
 const consultar = `
   const { consultarCobranca } = await import('./src/controllers/cobrancaConsultaController.js');
   const res = { _s: 200, _j: null, status(c) { this._s = c; return this; }, json(o) { this._j = o; return this; } };
-  await consultarCobranca({ params: { contratanteId: 'loja', pedidoId: 'ped_1' }, get: (h) => (h.toLowerCase() === 'x-checkout-key' ? 'segredo-da-loja-0123456789' : undefined) }, res);
+  await consultarCobranca({ params: { contratanteId: 'loja', pedidoId: 'ped_1' }, get: (h) => (h.toLowerCase() === 'x-checkout-key' ? 'segredo-da-loja' : undefined) }, res);
   console.log(JSON.stringify({ http: res._s, status: res._j?.status }));
 `;
 

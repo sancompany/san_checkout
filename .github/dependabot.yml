@@ -4,6 +4,10 @@
 # ficam fixadas por SHA (ci.yml, seguranca.yml); é por isso que o aviso
 # importa: SHA fixo não se atualiza sozinho, nem quando a versão fixada
 # ganha uma correção de segurança.
+#
+# `cooldown`: versão publicada há menos de 7 dias não vira proposta. Pacote
+# sequestrado costuma ser descoberto e retirado nesses primeiros dias; quem
+# atualiza no dia da publicação é quem instala o malicioso.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -11,8 +15,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7

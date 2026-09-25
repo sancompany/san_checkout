@@ -37,7 +37,7 @@ const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 
 const INTENCAO = '7a1c0de0-0000-4000-8000-000000000001';
-const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja-0123456789', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
+const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
 
 function mundoInicial() {
   return {

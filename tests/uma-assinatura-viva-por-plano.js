@@ -29,7 +29,7 @@ let checagens = 0;
 const igual = (a, b, m) => { assert.deepEqual(a, b, m); checagens += 1; };
 const ok = (c, m) => { assert.ok(c, m); checagens += 1; };
 
-const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja-0123456789', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
+const LOJA = { id: 'loja', nome: 'Loja', api_key: 'segredo-da-loja', webhook_url: 'https://loja.exemplo/hook', api_base_url: 'https://loja.exemplo/api', metodos_habilitados: null };
 const DOCUMENTO = '11144477735';
 const assinatura = (extra) => ({ id: 'sub_viva', contratante_id: 'loja', plano_id: 'plano_pro', documento: DOCUMENTO, valor: 50, ciclo: 'MONTHLY', status: 'ativa', mutation_version: 1, criado_em: new Date(Date.now() - 864e5).toISOString(), ...extra });
 

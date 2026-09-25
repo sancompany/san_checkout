@@ -57,5 +57,7 @@ ok(conteineres >= 1 && downloads >= 1, `controle: e o contêiner (${conteineres}
 ok(existsSync(join(RAIZ, '.github/dependabot.yml')), 'o Dependabot existe — SHA fixo não se atualiza sozinho, nem quando a versão fixada ganha correção de segurança');
 const dependabot = readFileSync(join(RAIZ, '.github/dependabot.yml'), 'utf8');
 ok(/package-ecosystem:\s*npm/.test(dependabot) && /package-ecosystem:\s*github-actions/.test(dependabot), 'e cobre as dependências do npm e as ações do GitHub');
+const blocos = dependabot.split(/\n\s*- package-ecosystem:/).slice(1);
+ok(blocos.length >= 2 && blocos.every((b) => /cooldown:\s*\n\s*default-days:\s*([7-9]|[1-9]\d+)\b/.test(b)), 'e cada ecossistema espera 7 dias antes de propor versão nova (cooldown) — o pacote sequestrado costuma cair nesses dias');
 
 console.log(`ci-so-le-e-fixa-o-que-roda: ${checagens} checagens OK (${acoes} ações, ${conteineres} contêiner, ${downloads} download)`);
