@@ -571,4 +571,62 @@ async function rodar({ tabelas = {}, asaas = {}, passos }) {
   igual(r.erroDoPasso(1), null, 'o RECEIVED atrasado não vira alarme de estado faltando');
 }
 
+/* ── CP3-09) O RESPALDO DO PROVEDOR, pelo receptor de verdade ─────────
+   A tabela é fixada célula por célula no autoteste do controlador; aqui,
+   o efeito dela no dinheiro: com o token vazado, cada evento forjado
+   abaixo chega com um `payment.id` real e a Asaas dizendo OUTRA coisa.
+   Nenhum pode mudar o status nem avisar o contratante. Antes, só o caso
+   "Asaas em PENDING" era exercitado — as sabotagens destes passavam. */
+{
+  const forjados = [
+    ['confirmado com a Asaas em OVERDUE', 'boleto', 'pendente', 'PAYMENT_CONFIRMED', naAsaas('OVERDUE')],
+    ['confirmado com a Asaas em análise de risco', 'cartao_credito', 'pendente', 'PAYMENT_CONFIRMED', naAsaas('AWAITING_RISK_ANALYSIS')],
+    ['confirmado de uma cobrança REMOVIDA na Asaas', 'pix', 'pendente', 'PAYMENT_CONFIRMED', naAsaas('PENDING', { deleted: true })],
+    ['chargeback com a Asaas dizendo pago', 'cartao_credito', 'confirmado', 'PAYMENT_CHARGEBACK_REQUESTED', naAsaas('RECEIVED')],
+    ['baixa desfeita com a Asaas dizendo pago', 'pix', 'confirmado', 'PAYMENT_RECEIVED_IN_CASH_UNDONE', naAsaas('RECEIVED')],
+    ['estorno em andamento com a Asaas dizendo pago', 'boleto', 'confirmado', 'PAYMENT_REFUND_IN_PROGRESS', naAsaas('RECEIVED')]
+  ];
+  for (const [nome, metodo, antes, tipo, asaas] of forjados) {
+    const charge = `pay_forjado_${(seq += 1)}`;
+    const r = await rodar({
+      tabelas: { cobrancas: [linha({ metodo_pagamento: metodo, status: antes, charge_id: charge })] },
+      asaas: { [`GET /v3/payments/${charge}`]: [asaas] },
+      passos: [{ receber: evento(tipo, charge) }]
+    });
+    igual(r.porCharge(charge).status, antes, `CP3-09: ${nome} — o status não muda`);
+    igual(r.avisos(charge).length, 0, `CP3-09: ${nome} — o contratante não ouve nada`);
+  }
+  /* controle positivo: o MESMO evento, com a Asaas concordando, aplica —
+     senão os casos acima passariam por um receptor que recusa tudo. */
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ metodo_pagamento: 'cartao_credito', status: 'confirmado', charge_id: 'pay_cb_real' })] },
+    asaas: { 'GET /v3/payments/pay_cb_real': [naAsaas('CHARGEBACK_REQUESTED')] },
+    passos: [{ receber: evento('PAYMENT_CHARGEBACK_REQUESTED', 'pay_cb_real') }]
+  });
+  igual(r.porCharge('pay_cb_real').status, 'chargeback', 'controle: chargeback com a Asaas em disputa aplica');
+}
+
+/* O estorno TOTAL não se aplica sobre um parcial que a Asaas ainda diz
+   parcial: `estornado` é terminal, e a cobrança nunca mais sairia dele. */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ metodo_pagamento: 'pix', status: 'estornado_parcialmente', valor_estornado: 3, charge_id: 'pay_total_forjado' })] },
+    asaas: { 'GET /v3/payments/pay_total_forjado': [naAsaas('RECEIVED', { refunds: [{ status: 'DONE', value: 3 }] })] },
+    passos: [{ receber: evento('PAYMENT_REFUNDED', 'pay_total_forjado') }]
+  });
+  igual(r.porCharge('pay_total_forjado').status, 'estornado_parcialmente', 'CP3-09: PAYMENT_REFUNDED com a Asaas em parcial não vira estorno total (terminal)');
+}
+
+/* A SESSÃO de pop-up que a Asaas diz é a da linha — ou nada se aplica.
+   Tirar a comparação deixava um pagamento de outra sessão confirmar esta. */
+{
+  const r = await rodar({
+    tabelas: { cobrancas: [linha({ metodo_pagamento: 'cartao_credito', status: 'pendente', charge_id: 'pay_outra_sessao', asaas_checkout_id: 'sess_nossa' })] },
+    asaas: { 'GET /v3/payments/pay_outra_sessao': [naAsaas('RECEIVED', { checkoutSession: 'sess_outra' })] },
+    passos: [{ receber: evento('PAYMENT_CONFIRMED', 'pay_outra_sessao') }]
+  });
+  igual(r.porCharge('pay_outra_sessao').status, 'pendente', 'CP3-09: sessão divergente não confirma');
+  igual(r.avisos('pay_outra_sessao').length, 0, 'CP3-09: e não avisa ninguém');
+}
+
 console.log(`webhook-confere-na-asaas: ${checagens} checagens OK`);

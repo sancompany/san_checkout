@@ -1662,10 +1662,11 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
 
   // --- Guarda de token ---
   const tokenOriginal = process.env.ASAAS_WEBHOOK_TOKEN;
-  function rodarGuarda({ token, header, ip = '52.67.12.206' }) {
+  function rodarGuarda({ token, header, ip = '52.67.12.206', xff }) {
     if (token === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN;
     else process.env.ASAAS_WEBHOOK_TOKEN = token;
-    const req = { ip, get: (nome) => (nome === 'asaas-access-token' ? header : undefined) };
+    const cabecalhos = { 'asaas-access-token': header, 'x-forwarded-for': xff };
+    const req = { ip, get: (nome) => cabecalhos[String(nome).toLowerCase()] };
     const res = { _status: null, _json: null, status(c) { this._status = c; return this; }, json(o) { this._json = o; return this; } };
     let chamouProximo = false;
     verificarWebhookAsaas(req, res, () => { chamouProximo = true; });
@@ -1696,6 +1697,13 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     assert.equal(r.chamouProximo, false);
     r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '18.230.8.159' });
     assert.equal(r.chamouProximo, true, 'modo estrito: IP oficial com token certo passa (controle positivo)');
+    /* CP3-13: a origem é a que o Express resolve (`req.ip`, com `trust
+       proxy`), nunca o primeiro item do `X-Forwarded-For`, que o cliente
+       escreve. Lê-lo deixava qualquer um "ser" a Asaas no modo estrito. */
+    r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '203.0.113.7', xff: '18.230.8.159' });
+    assert.equal(r.status, 403, 'CP3-13: modo estrito com X-Forwarded-For forjado para um IP oficial continua recusado — vale o req.ip');
+    r = rodarGuarda({ token: 'segredo-certo', header: 'segredo-certo', ip: '18.230.8.159', xff: '203.0.113.7' });
+    assert.equal(r.chamouProximo, true, 'CP3-13: e o inverso passa — o cabeçalho não decide nada (controle positivo)');
     process.env.ASAAS_WEBHOOK_IPS = '198.51.100.9';
     assert.ok(origemOficialDaAsaas('198.51.100.9') && !origemOficialDaAsaas('52.67.12.206'), 'ASAAS_WEBHOOK_IPS substitui a lista sem deploy');
     delete process.env.ASAAS_WEBHOOK_IPS;
@@ -1705,6 +1713,43 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     if (estritoOriginal === undefined) delete process.env.ASAAS_WEBHOOK_IP_ESTRITO; else process.env.ASAAS_WEBHOOK_IP_ESTRITO = estritoOriginal;
   }
   if (tokenOriginal === undefined) delete process.env.ASAAS_WEBHOOK_TOKEN; else process.env.ASAAS_WEBHOOK_TOKEN = tokenOriginal;
+
+  /* CP3-09: o RESPALDO DO PROVEDOR, célula por célula. É ele quem impede
+     um evento forjado (token vazado) de mover dinheiro: um
+     `PAYMENT_CONFIRMED` com a Asaas dizendo OVERDUE, um chargeback com
+     ela dizendo RECEIVED. Só o caso "Asaas em PENDING" era testado —
+     acrescentar `vencido` ao respaldo de `confirmado`, apagar a linha de
+     `chargeback` ou trocar o `Boolean(estado) &&` por `!estado ||`
+     passava as 82 suítes. A tabela esperada está escrita aqui, à parte da
+     de produção: mudar uma célula é mudar as duas, de propósito. */
+  const RESPALDO_ESPERADO = {
+    confirmado: ['confirmado', 'estornado_parcialmente', 'estorno_solicitado', 'estornado', 'chargeback'],
+    estornado_parcialmente: ['estornado_parcialmente', 'estorno_solicitado', 'estornado'],
+    estorno_solicitado: ['estorno_solicitado', 'estornado_parcialmente', 'estornado'],
+    estornado: ['estornado'],
+    chargeback: ['chargeback', 'estornado'],
+    pendente: ['pendente', 'vencido'],
+    estorno_negado: ['confirmado', 'estornado_parcialmente']
+  };
+  const ESTADOS_DA_ASAAS = [...Object.keys(POSICAO_NA_HISTORIA), null, undefined, '', 'desconhecido'];
+  assert.deepEqual([...ALVOS_QUE_MOVEM_DINHEIRO].sort(), Object.keys(RESPALDO_ESPERADO).sort(), 'CP3-09: os alvos que movem dinheiro são exatamente os decididos');
+  for (const alvo of Object.keys(POSICAO_NA_HISTORIA)) {
+    for (const estado of ESTADOS_DA_ASAAS) {
+      const esperado = RESPALDO_ESPERADO[alvo] ? RESPALDO_ESPERADO[alvo].includes(estado) : true;
+      assert.equal(respaldoDoProvedor(alvo, estado), esperado, `CP3-09: respaldo de "${alvo}" com a Asaas em ${JSON.stringify(estado)} deveria ser ${esperado}`);
+    }
+  }
+
+  /* CP3-09 (b2): o binding de valor não vale para assinatura nem para
+     parcelamento. Tirar a isenção da assinatura recusaria a confirmação
+     legítima de um ciclo cujo preço mudou no painel (RN-34) — mais
+     restrito, e ainda assim errado: dinheiro recebido virando "divergente". */
+  assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: 'pix', valor_cobrado: 50 }, { value: 60 }), true, 'pedido avulso com valor diferente: divergente');
+  assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: 'pix', valor_cobrado: 50 }, { value: 50 }), false, 'controle: mesmo valor não diverge');
+  for (const metodo of METODOS_DE_ASSINATURA) {
+    assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: metodo, valor_cobrado: 50 }, { value: 60 }), false, `CP3-09: ${metodo} com preço mudado no painel NÃO é divergência (RN-34)`);
+  }
+  assert.equal(valorDivergenteDaCobranca({ metodo_pagamento: 'cartao_credito', valor_cobrado: 60 }, { value: 20, installment: 'ins_1' }), false, 'CP3-09: parcela (value da parcela) não é divergência');
 
   // --- Mapa evento → status ---
   assert.equal(mapearStatusPayment('PAYMENT_CONFIRMED'), 'confirmado');

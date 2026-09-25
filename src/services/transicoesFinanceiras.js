@@ -167,6 +167,29 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   for (const t of STATUS_TERMINAIS) assert.deepEqual(TRANSICOES[t], [], `terminal ${t} não pode ter saída`);
   assert.deepEqual(TRANSICOES.expirado, ['confirmado'], 'expirado (prazo LOCAL) ainda aceita a confirmação tardia da pop-up — e só ela');
 
+  /* CP3-14: a matriz INTEIRA, fixada. As checagens acima só provam que ela
+     cita status que existem — acrescentar uma saída (um `estorno_negado →
+     pendente`, um `estornado_parcialmente → confirmado`) passava as 82
+     suítes. Cada saída desta tabela é uma decisão sobre dinheiro; mudar
+     uma é mudar esta cópia junto, de propósito, e com o motivo escrito. */
+  const MATRIZ_DECIDIDA = {
+    pendente: ['em_analise', 'confirmado', 'recusado', 'vencido', 'cancelado', 'expirado', 'cancelado_por_outro_pagamento'],
+    em_analise: ['confirmado', 'recusado', 'pendente'],
+    confirmado: ['estorno_solicitado', 'estornado_parcialmente', 'estornado', 'chargeback', 'pendente'],
+    recusado: ['confirmado', 'em_analise', 'cancelado_por_outro_pagamento'],
+    vencido: ['confirmado', 'pendente', 'cancelado_por_outro_pagamento'],
+    cancelado: ['confirmado'],
+    expirado: ['confirmado'],
+    estorno_solicitado: ['estornado', 'estornado_parcialmente', 'estorno_negado', 'chargeback'],
+    estorno_negado: ['confirmado', 'estorno_solicitado', 'estornado', 'estornado_parcialmente', 'chargeback'],
+    estornado_parcialmente: ['estornado', 'estorno_solicitado', 'chargeback'],
+    estornado: [],
+    chargeback: ['confirmado', 'estornado'],
+    cancelado_por_outro_pagamento: ['confirmado']
+  };
+  const ordenada = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v].sort()]).sort(([a], [b]) => a.localeCompare(b)));
+  assert.deepEqual(ordenada(TRANSICOES), ordenada(MATRIZ_DECIDIDA), 'CP3-14: a matriz de transições é exatamente a decidida — nenhuma saída a mais, nenhuma a menos');
+
   // o caminho do reconciliador dirigido (JULES-004): só por transições permitidas, o mais curto
   assert.deepEqual(caminhoDeTransicoes('pendente', 'estornado'), ['confirmado', 'estornado'], 'pendente → estornado passa por confirmado: foi pago antes de ser devolvido');
   assert.deepEqual(caminhoDeTransicoes('pendente', 'confirmado'), ['confirmado']);
