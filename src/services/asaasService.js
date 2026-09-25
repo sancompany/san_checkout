@@ -701,18 +701,44 @@ export async function recuperarCobrancaBoleto(chargeId) {
  * @param {string} chargeId
  * @param {{ metodoPagamento?: string, valor?: number|null }} [opcoes]
  */
-export async function estornarCobranca(chargeId, { metodoPagamento, valor = null } = {}) {
+export async function estornarCobranca(chargeId, { metodoPagamento, valor = null, descricao = null } = {}) {
   const assincrono = metodoPagamento === 'boleto';
   const caminho = assincrono
     ? `/v3/payments/${segmentoAsaas(chargeId)}/bankSlip/refund`
     : `/v3/payments/${segmentoAsaas(chargeId)}/refund`;
 
+  /* `description` leva o MARCADOR da operação (`estornoService`): é o que
+     volta em `GET /v3/payments/{id}/refunds` e permite decidir, depois de
+     uma resposta perdida, se ESTE estorno aconteceu — sem chamar de novo
+     (SEC-002). A Asaas documenta o campo no pedido e na listagem. */
   const resultado = await chamarAsaas(caminho, {
     method: 'POST',
-    body: JSON.stringify(valor != null ? { value: valor } : {})
+    body: JSON.stringify({
+      ...(valor != null ? { value: valor } : {}),
+      ...(descricao ? { description: descricao } : {})
+    })
   });
 
   return { status: resultado.status, assincrono };
+}
+
+/**
+ * `GET /v3/payments/{id}/refunds` — os estornos de uma cobrança, com
+ * `value`, `status` e `description` de cada um (doc oficial "Listar
+ * estornos de uma cobrança", lida em 25/09/2026; nenhum `id` por item).
+ * É a fonte da reconciliação de um estorno cuja resposta se perdeu
+ * (`estornoService.reconciliarOperacao`). Lê até 100 — uma cobrança com
+ * mais estornos que isso não existe neste modelo (o parcial exige valor
+ * mínimo), e a função pagina se `hasMore` vier verdadeiro.
+ */
+export async function listarEstornosDaCobranca(chargeId) {
+  const itens = [];
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const pagina = await chamarAsaas(`/v3/payments/${segmentoAsaas(chargeId)}/refunds?limit=100&offset=${encodeURIComponent(offset)}`, { method: 'GET' });
+    itens.push(...(Array.isArray(pagina?.data) ? pagina.data : []));
+    if (!pagina?.hasMore) break;
+  }
+  return itens;
 }
 
 /**

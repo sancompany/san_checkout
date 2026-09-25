@@ -1135,23 +1135,53 @@ POST {BASE}/api/checkout/estornar
 X-Checkout-Key: {sua chave}
 Content-Type: application/json
 
-{ "pedidoId": "550e8400-...", "valor": 30.00 }
+{ "pedidoId": "550e8400-...", "valor": 30.00, "chaveIdempotencia": "estorno-7f3a9c" }
 ```
 
-`valor` é **opcional**: sem ele, estorna tudo (o que ainda não foi
-devolvido); com ele, devolve só aquela parte — **estorno parcial**,
-desde 24/09/2026. O `valor` é em reais, tem de ser maior que zero e
-não pode passar do que ainda falta estornar.
+| Campo | Obrigatório | O que é |
+|---|---|---|
+| `pedidoId` | sim | O pedido cujo pagamento se devolve |
+| `valor` | não | Em reais. Sem ele, estorna **tudo** o que ainda não foi devolvido; com ele, só aquela parte — **estorno parcial** (desde 24/09/2026). Maior que zero e até o que ainda falta estornar |
+| `chaveIdempotencia` | **sim no parcial**; não no total | Um valor seu, **único por estorno** (só letras sem acento, números, `-` e `_`, até 128). Se precisar tentar de novo, repita a **mesma** chave |
+| `chargeId` | só quando o pedido tem **duas cobranças pagas** | Qual delas devolver (ver o `409 mais_de_uma_cobranca_paga` abaixo) |
+
+**A chave de idempotência — por que ela existe (desde 25/09/2026).**
+Dois estornos parciais de R$ 30 podem ser legítimos, e a repetição de um
+estorno cuja resposta se perdeu também é "R$ 30 de novo". Só quem pede
+sabe qual das duas é, e por isso a chave é sua:
+
+- **a mesma chave é o mesmo estorno.** Repetir devolve o resultado
+  gravado da primeira vez (`"repetido": true`) e **não** devolve dinheiro
+  de novo — mesmo que a primeira resposta tenha se perdido no caminho;
+- **chave nova é estorno novo.** Para um segundo parcial legítimo, gere
+  outra chave;
+- a mesma chave com **outro pedido** (outro `pedidoId`/`chargeId` ou outro
+  `valor`) é recusada com `409 chave_idempotencia_reutilizada` — nunca
+  reinterpretada.
+
+No estorno **total** a chave é opcional: sem ela, o Checkout usa uma
+derivada da cobrança (um total só acontece uma vez), e repetir devolve o
+resultado gravado.
+
+**Numa falha de rede sua, repita a MESMA chamada, com a mesma chave.**
+Até 25/09/2026 este parágrafo mandava "tentar de novo depois de alguns
+segundos" sem chave nenhuma — e era exatamente isso que devolvia o
+dinheiro duas vezes (achado SEC-002 da Estação 6). Se a Asaas não tiver
+respondido ao Checkout, a repetição **não** chama o estorno de novo: o
+Checkout confere na própria Asaas se aquele estorno aconteceu e só então
+responde. Enquanto isso não se decide, a resposta é `409
+estorno_em_reconciliacao` — repita mais tarde, com a mesma chave.
 
 **Resposta 200:**
 
 ```json
-{ "chargeId": "pay_8392017465", "status": "estornado_parcialmente", "valorEstornado": 30.00, "estornoParcial": true }
+{ "chargeId": "pay_8392017465", "status": "estornado_parcialmente", "valorEstornado": 30.00, "estornoParcial": true, "operacaoId": "4f0c…" }
 ```
 
 - Estorno parcial deixa a cobrança em `estornado_parcialmente`, com
   `valorEstornado` acumulando; pode ser chamado de novo até completar —
   quando completa, o status vira `estornado`. A conta é em centavos.
+- Uma repetição com a mesma chave traz também `"repetido": true`.
 - **Boleto continua tudo-ou-nada**: `valor` num boleto responde `400`
   (o estorno de boleto na Asaas é assíncrono e não documenta valor
   parcial; não foi medido).
@@ -1166,24 +1196,38 @@ caso a resposta vem com `"status": "estorno_solicitado"`, e o
 `"estornado"` chega por webhook depois, quando ele concluir. É um estado
 intermediário real, não erro.
 
+**Qual cobrança é estornada.** A que **pagou** o pedido — não a mais
+recente. Um pedido pode ter uma pop-up de cartão abandonada depois de um
+Pix pago, e até 25/09/2026 o `/estornar` escolhia a linha mais recente e
+respondia `409` sobre um pedido pago (SEC-005). Se o pedido tem **duas**
+cobranças pagas (a duplicidade do RN-52, avisada com
+`pagamentoDuplicado: true`), o Checkout não escolhe por você: responde
+`409 mais_de_uma_cobranca_paga` com os `chargeIds`, e você repete com o
+`chargeId` da que quer devolver.
+
 | Código | Significa |
 |---|---|
-| `200` | Estorno executado ou solicitado |
-| `400` | `pedidoId` ausente; `valor` inválido, maior que o restante estornável, ou em boleto |
+| `200` | Estorno executado ou solicitado — ou a repetição de um que já foi (`"repetido": true`) |
+| `400` | `pedidoId` ausente; `valor` inválido, maior que o restante estornável, ou em boleto; `chaveIdempotencia` ausente num parcial (`codigo: "chave_idempotencia_obrigatoria"`) ou fora do formato; `chargeId` fora do formato |
 | `401` | Chave ausente ou inválida |
-| `404` | Nenhuma cobrança encontrada para esse pedido |
+| `404` | Nenhuma cobrança encontrada para esse pedido (ou o `chargeId` não é deste pedido) |
 | `409` | Esta cobrança não pode ser estornada agora — não confirmou ainda, já foi estornada por inteiro, ou um estorno já está em andamento (inclusive duas chamadas simultâneas para o mesmo pedido: só uma ganha). `estorno_negado` volta a ser estornável |
-| `502` | A Asaas recusou o estorno — a mensagem traz o motivo dela |
+| `409 chave_idempotencia_reutilizada` | A chave já foi usada num estorno diferente |
+| `409 estorno_em_reconciliacao` | Um estorno com esta chave está em curso ou sem confirmação da Asaas — repita mais tarde, com a mesma chave; ele **não** será repetido às cegas |
+| `409 estorno_anterior_em_reconciliacao` | Um estorno anterior desta cobrança ainda não tem confirmação da Asaas, e o valor pedido só caberia se ele não tivesse acontecido — o restante só é conhecido depois dele |
+| `409 mais_de_uma_cobranca_paga` | Duas cobranças pagas no pedido: informe o `chargeId` |
+| `502`/`504` | A Asaas recusou (a mensagem traz o motivo dela) ou não respondeu a tempo — repita com a **mesma** chave |
 
 > **Desde 22/09/2026, só uma cobrança `confirmado` (ou, desde 24/09,
-> `estornado_parcialmente`/`estorno_negado`) pode ser estornada — e cada
-> pedido de estorno, uma vez só.** Antes disso a rota não checava o estado da cobrança
-> nenhum antes de chamar a Asaas — duas chamadas simultâneas para o
-> mesmo pedido podiam as duas tentar estornar (achado de auditoria
-> externa, `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
-> Repetir a chamada depois de um `409` sem que nada tenha mudado do
-> lado da cobrança não adianta — espere o estado dela mudar (ou, numa
-> falha de rede sua, tente de novo depois de alguns segundos).
+> `estornado_parcialmente`/`estorno_negado`) pode ser estornada.** Antes
+> disso a rota não checava o estado da cobrança nenhum antes de chamar a
+> Asaas — duas chamadas simultâneas para o mesmo pedido podiam as duas
+> tentar estornar (achado de auditoria externa,
+> `docs/erros/2026-09-22-estorno-nao-checava-status-nem-tinha-guarda-de-corrida.md`).
+> **Desde 25/09/2026, cada pedido de estorno é uma operação durável**,
+> gravada antes de chamar a Asaas e identificada pela chave de
+> idempotência — o que fecha o caso que a guarda de 22/09 não fechava: a
+> repetição SEQUENCIAL depois de uma resposta perdida.
 
 ---
 

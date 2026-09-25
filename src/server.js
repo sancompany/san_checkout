@@ -44,6 +44,7 @@ import { expurgarInbox, resumoInbox } from './services/webhookInboxService.js';
 import { enviarPendentes as enviarOutbox, expurgarOutbox, resumoOutbox } from './services/outboxService.js';
 import { reconciliarUmaVez as reconciliarReservas } from './services/reconciliacaoService.js';
 import { cancelarIrmasUmaVez } from './services/irmasObsoletasService.js';
+import { reconciliarEstornosUmaVez } from './services/estornoService.js';
 import { expurgarCotacoes } from './services/cotacaoService.js';
 
 const app = express();
@@ -273,7 +274,7 @@ app.get('/api/saude', async (_req, resposta) => {
 });
 
 /** Quando cada worker rodou pela última vez — exposto em `/api/saude`. */
-const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null };
+const ultimaRodadaDosWorkers = { inbox: null, outbox: null, reconciliador: null, trocaDePlano: null, canceladorDeIrmas: null, estornos: null };
 
 // ---------------------------------------------------------------------
 // FIM DA PILHA: 404 e erro. Precisam ser os ÚLTIMOS `app.use`, depois de
@@ -554,6 +555,21 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
     .catch((erro) => console.error('[irmas] cancelador falhou:', erro.message));
   rodarCanceladorDeIrmas();
   setInterval(rodarCanceladorDeIrmas, UM_MINUTO_MS).unref();
+
+  /* O RECONCILIADOR DE ESTORNOS (SEC-002, 25/09/2026, 2 min): decide as
+     operações de estorno cuja resposta da Asaas se perdeu (timeout, 5xx,
+     processo que morreu no meio) pelo marcador em
+     `GET /v3/payments/{id}/refunds` — NUNCA chamando o estorno de novo.
+     Sem ele, uma operação em CALLING_PROVIDER de um processo morto só se
+     resolveria quando o contratante repetisse a chamada. */
+  const rodarReconciliadorDeEstornos = () => reconciliarEstornosUmaVez()
+    .then((r) => {
+      ultimaRodadaDosWorkers.estornos = Date.now();
+      if (r.examinadas > 0) console.log(`[estornos] ${r.confirmadas} confirmada(s), ${r.liberadas} provada(s) sem estorno, ${r.aguardando} aguardando, ${r.falhas} falha(s).`);
+    })
+    .catch((erro) => console.error('[estornos] reconciliador falhou:', erro.message));
+  rodarReconciliadorDeEstornos();
+  setInterval(rodarReconciliadorDeEstornos, 2 * UM_MINUTO_MS).unref();
 
   /* Expurgos diários das tabelas novas: inbox/outbox já processadas
      (90 dias — o payload da outbox leva o documento do pagador, Lei 10)

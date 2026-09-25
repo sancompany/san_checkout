@@ -864,6 +864,25 @@ export async function buscarCobrancaPorPedido(contratanteId, pedidoId) {
   return data;
 }
 
+/**
+ * TODAS as cobranças de um pedido (com `charge_id`), mais recente primeiro.
+ * É de onde o `/estornar` escolhe a que PAGOU — não a mais recente, que
+ * pode ser uma pop-up abandonada ou uma irmã cancelada (SEC-005).
+ */
+export async function buscarCobrancasDoPedido(contratanteId, pedidoId) {
+  exigirIdCanonico(pedidoId, 'pedidoId');
+  const { data, error } = await supabase
+    .from('cobrancas')
+    .select('*')
+    .eq('contratante_id', contratanteId)
+    .eq('pedido_id', pedidoId)
+    .not('charge_id', 'is', null)
+    .order('criado_em', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function atualizarStatusCobranca(chargeId, status) {
   const { error } = await supabase
     .from('cobrancas')
@@ -949,25 +968,44 @@ export async function reivindicarEstorno(chargeId) {
 export const STATUS_ESTORNAVEIS = ['confirmado', 'estornado_parcialmente', 'estorno_negado'];
 
 /**
- * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`):
- * status novo + `valor_estornado` acumulado. O arrendamento é liberado
- * junto, porque num estorno PARCIAL a linha continua estornável e o
- * próximo pedido precisa poder reivindicar sem esperar os 5 minutos.
+ * Grava o resultado de um estorno pedido POR NÓS (`POST /estornar`, ou a
+ * reconciliação dele): status novo + `valor_estornado` acumulado. O
+ * arrendamento é liberado junto (por padrão), porque num estorno PARCIAL
+ * a linha continua estornável e o próximo pedido precisa poder
+ * reivindicar sem esperar os 5 minutos.
+ *
+ * CAS desde 25/09/2026 (SEC-022): só grava por cima de um estado de onde
+ * o NOSSO estorno podia estar em curso, e só AUMENTA o valor estornado.
+ * Antes o `update` era incondicional — um `chargeback` (ou o estorno
+ * total da própria Asaas) que chegasse pelo webhook no meio da chamada
+ * era apagado pela resposta atrasada. Quem chegou antes vence; aqui só o
+ * arrendamento volta.
+ *
+ * @returns {Promise<boolean>} `true` quando gravou
  */
-export async function registrarEstorno(chargeId, { status, valorEstornado }) {
-  const { error } = await supabase
+export async function registrarEstorno(chargeId, { status, valorEstornado }, { liberarArrendamento = true } = {}) {
+  let consulta = supabase
     .from('cobrancas')
     .update({
       ...camposDeStatus(status),
       ...(valorEstornado != null ? { valor_estornado: valorEstornado } : {}),
-      estornando_em: null
+      ...(liberarArrendamento ? { estornando_em: null } : {})
     })
-    .eq('charge_id', chargeId);
+    .eq('charge_id', chargeId)
+    .in('status', [...STATUS_ESTORNAVEIS, 'estorno_solicitado']);
+  if (valorEstornado != null) {
+    // Número calculado aqui dentro (`dinheiro.js`), nunca texto de fora.
+    consulta = consulta.or(`valor_estornado.is.null,valor_estornado.lt.${Number(valorEstornado)}`);
+  }
+  const { data, error } = await consulta.select('id');
 
   if (error) {
     console.error('[cobrancaService.registrarEstorno]', error.message);
     throw error;
   }
+  const gravou = Array.isArray(data) && data.length === 1;
+  if (!gravou && liberarArrendamento) await liberarEstorno(chargeId);
+  return gravou;
 }
 
 /** Devolve o arrendamento sem estornar nada — usada quando a Asaas

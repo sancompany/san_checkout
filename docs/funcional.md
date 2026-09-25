@@ -395,10 +395,45 @@ ficam como estão — `confirmado`, dinheiro real —, as duas linhas ganham
 contratante leva `pagamentoDuplicado: true` e `duplicadoCom`, e o
 operador recebe uma linha em `erros` ("PAGAMENTO DUPLICADO"). Nada é
 estornado sozinho: um dos dois é devolvido pelo fluxo de estorno de
-sempre (`POST /api/checkout/estornar`, que estorna a mais recente, ou o
-painel da Asaas). *Violada:* um segundo pagamento sumiria da conta ou
+sempre (`POST /api/checkout/estornar` com o `chargeId` da que deve
+voltar — sem ele, a rota responde `409 mais_de_uma_cobranca_paga` e
+lista os dois — ou o painel da Asaas). *Violada:* um segundo pagamento sumiria da conta ou
 seria gravado como cancelado. *Quem vê:* o contratante, que precisa
 devolver um; o operador, no painel de erros.
+
+**RN-53 · Cada estorno é uma operação durável, e a mesma chave é o
+mesmo estorno.** Desde 25/09/2026 (SEC-002, Estação 6): `POST /estornar`
+grava a operação em `estornos` (migration 0018) ANTES de chamar a Asaas,
+identificada pela `chaveIdempotencia` do contratante — obrigatória no
+parcial, derivada da cobrança no total. Repetir a mesma chave devolve o
+resultado gravado e nunca estorna de novo; a mesma chave com outro valor
+ou outra cobrança é recusada. Resposta perdida (timeout, 5xx, queda do
+processo) deixa a operação em `UNKNOWN_PROVIDER_RESULT`, e só a
+reconciliação decide — pelo marcador que viaja na `description` do
+estorno e volta em `GET /v3/payments/{id}/refunds` (ou pelo delta exato
+do valor, com uma operação em aberto só); ausência só vale como prova
+depois de 15 minutos, e o worker de 2 minutos nunca chama o estorno. O
+que está em voo conta como estornado na conta do restante, então o
+acumulado nunca passa do cobrado. E a cobrança estornada é a que PAGOU,
+não a mais recente (SEC-005). *Violada:* cobrança de R$ 100, parcial de
+R$ 30 com a resposta perdida, o contratante repete e a Asaas devolve
+R$ 60. *Quem vê:* o contratante, que perde o dinheiro; o pagador, que
+recebe a mais.
+
+**RN-54 · Identificador que atravessa fronteira tem uma grafia só.**
+Desde 25/09/2026 (SEC-001/SEC-003, Estação 6): `pedidoId`, `planoId`,
+`contratanteId` e os ids da Asaas que chegam por URL ou corpo só aceitam
+letras sem acento, números, `-` e `_` (até 128) — o resto é `400`, nunca
+normalizado. Antes, `%2F`/`%3F` decodificados pelo Express e `..`
+resolvido pela `URL` faziam um `pedidoId` adulterado virar outro caminho
+de uma requisição autenticada com a chave do contratante (o Checkout
+virava proxy de leitura da API dele), e `./ped_1` era o mesmo pedido no
+contratante e outra chave no nosso banco — escapando das guardas de
+pagamento duplicado (RN-04, RN-04.1, RN-51). As rotas públicas de status
+de Pix/boleto só consultam a Asaas para uma cobrança que é nossa e do
+método da rota. *Violada:* anônimo lia outros recursos da API do
+contratante; o mesmo pedido era pago duas vezes sem detecção. *Quem
+vê:* o contratante; o pagador que pagou duas vezes.
 
 **RN-05 · Método não habilitado não cobra.** O contratante declara quais
 métodos aceita; o backend recusa os demais mesmo que a requisição peça.

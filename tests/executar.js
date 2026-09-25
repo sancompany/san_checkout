@@ -53,6 +53,7 @@ const SUITES = [
   'src/controllers/trocaPlanoController.js', // troca de plano: cobra o acerto ANTES de alterar, e relê o que a Asaas fez
   'src/controllers/checkoutController.js', // Pix/Boleto: reserva ANTES de cobrar — fecha a corrida de cobrança duplicada na Asaas
   'src/controllers/refundController.js', // estorno: reivindica ANTES de chamar a Asaas — fecha a corrida de estorno duplicado
+  'tests/estorno-repetido-nao-devolve-duas-vezes.js', // CR-02: resposta perdida + repetição devolviam o dinheiro duas vezes (SEC-002)
   'src/controllers/assinaturaController.js', // cancelar/pausar/retomar: mesmo arrendamento da troca de plano — fecha a corrida entre as quatro operações
   'tests/valor-vem-do-servidor.js',  // o corpo da requisição nunca dita quanto se cobra
   'tests/sem-consulta-repetida.js',  // nenhuma ida ao banco repetida no caminho do dinheiro

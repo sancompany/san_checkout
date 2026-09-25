@@ -4,7 +4,9 @@
  * Header: X-Checkout-Key (a MESMA chave do contratante, já usada na
  * consulta de pedido — identifica quem está pedindo o estorno e
  * impede um contratante estornar cobrança de outro)
- * Body: { pedidoId, valor? }
+ * Body: { pedidoId, valor?, chaveIdempotencia?, chargeId? } — a chave é
+ * obrigatória no parcial e o que faz a repetição não estornar de novo
+ * (SEC-002, `services/estornoService.js`, `API.md` §5.4)
  *
  * `valor` ausente = estorno TOTAL. `valor` presente = estorno PARCIAL
  * (desde 24/09/2026, H-04): devolve só aquela parte, a cobrança fica
@@ -49,31 +51,37 @@
 
 import { buscarContratantePorChave } from '../services/pedidoService.js';
 import {
-  buscarCobrancaPorPedido,
+  buscarCobrancasDoPedido,
   registrarEstorno,
   reivindicarEstorno,
-  liberarEstorno
+  liberarEstorno,
+  STATUS_ESTORNAVEIS
 } from '../services/cobrancaService.js';
-import { estornarCobranca, foiRecusaLimpaDaAsaas } from '../services/asaasService.js';
+import { executarEstorno } from '../services/estornoService.js';
 import { registrarErro } from '../services/erroService.js';
 import { responderErro } from '../utils/erros.js';
 import { emCentavos, emReais } from '../utils/dinheiro.js';
+import { idCanonico } from '../utils/validadores.js';
 import { notificarFatoDePedido } from './webhookController.js';
 
 const dependenciasPadrao = {
   buscarContratantePorChave,
-  buscarCobrancaPorPedido,
+  buscarCobrancasDoPedido,
   registrarEstorno,
   reivindicarEstorno,
   liberarEstorno,
-  estornarCobranca,
+  executarEstorno,
   registrarErro,
   notificarFatoDePedido
 };
 
 /**
  * Decide o estorno a pedir e o estado em que a cobrança fica depois.
- * Pura, para o autoteste exercitar as bordas em centavos.
+ * Pura, para o autoteste exercitar as bordas em centavos. Desde 25/09/2026
+ * quem EXECUTA é `estornoService.executarEstorno` (que também conta o que
+ * está em voo); esta continua sendo a validação barata, antes de qualquer
+ * arrendamento, dos erros que não dependem de estado: valor inválido,
+ * parcial em boleto, parcial acima do cobrado.
  *
  * @returns {{ erro?: string, valorAsaas: number|null, valorEstornadoDepois: number, statusDepois: 'estornado'|'estornado_parcialmente' }}
  */
@@ -106,89 +114,113 @@ export function planejarEstorno(cobranca, valorPedido) {
   };
 }
 
+/**
+ * QUAL cobrança do pedido se estorna (SEC-005). Até 25/09/2026 era "a
+ * mais recente", e a mais recente pode ser uma pop-up abandonada depois
+ * de o Pix antigo pagar — o `/estornar` respondia 409 sobre um pedido
+ * pago, e o dinheiro real ficava sem caminho de volta pela API.
+ *
+ *  - `chargeId` informado: só vale se for de uma cobrança DESTE pedido
+ *    (e deste contratante — a lista já veio escopada).
+ *  - Sem `chargeId`: a única cobrança estornável do pedido. Duas pagas é a
+ *    duplicidade do RN-52 — escolher sozinho qual devolver seria decidir
+ *    pelo contratante, então a resposta pede o `chargeId` e lista os dois.
+ *  - Nenhuma estornável: a mais recente, para a resposta dizer por quê.
+ */
+export function escolherCobrancaParaEstornar(linhas, chargeId) {
+  const doPedido = (linhas ?? []).filter((l) => l?.charge_id);
+  if (chargeId !== undefined) {
+    const achada = doPedido.find((l) => l.charge_id === chargeId);
+    return achada ? { cobranca: achada } : { http: 404, corpo: { erro: 'Cobrança não encontrada pra esse pedido.' } };
+  }
+  const estornaveis = doPedido.filter((l) => STATUS_ESTORNAVEIS.includes(l.status));
+  if (estornaveis.length === 1) return { cobranca: estornaveis[0] };
+  if (estornaveis.length > 1) {
+    return {
+      http: 409,
+      corpo: {
+        codigo: 'mais_de_uma_cobranca_paga',
+        erro: 'Este pedido tem mais de uma cobrança paga (pagamento duplicado). Informe o chargeId da que deve ser estornada.',
+        chargeIds: estornaveis.map((l) => l.charge_id)
+      }
+    };
+  }
+  const representativa = doPedido.find((l) => l.status !== 'cancelado_por_outro_pagamento') ?? doPedido[0];
+  return representativa ? { cobranca: representativa } : { http: 404, corpo: { erro: 'Cobrança não encontrada pra esse pedido.' } };
+}
+
 export function criarRefundController(deps = dependenciasPadrao) {
   async function estornar(requisicao, resposta) {
     const chave = requisicao.get('X-Checkout-Key');
-    const { pedidoId, valor } = requisicao.body ?? {};
+    const { pedidoId, valor, chaveIdempotencia, chargeId } = requisicao.body ?? {};
 
     if (!chave) return resposta.status(401).json({ erro: 'X-Checkout-Key ausente.' });
     if (!pedidoId) return resposta.status(400).json({ erro: 'pedidoId é obrigatório.' });
+    if (chargeId !== undefined && !idCanonico(chargeId)) return resposta.status(400).json({ erro: 'chargeId inválido.' });
+
+    /* A CHAVE DE IDEMPOTÊNCIA (SEC-002). No PARCIAL ela é obrigatória:
+       dois parciais de R$ 30 podem ser legítimos, e só quem pede sabe se
+       o segundo é outro estorno ou a repetição do primeiro. No TOTAL, sem
+       chave, o servidor usa uma derivada da cobrança — um total só
+       acontece uma vez, então repetir devolve o resultado gravado. */
+    const parcial = valor !== undefined && valor !== null && valor !== '';
+    if (chaveIdempotencia !== undefined && !idCanonico(chaveIdempotencia)) {
+      return resposta.status(400).json({ erro: 'chaveIdempotencia inválida: use só letras sem acento, números, "-" e "_" (até 128 caracteres).' });
+    }
+    if (parcial && chaveIdempotencia === undefined) {
+      return resposta.status(400).json({
+        codigo: 'chave_idempotencia_obrigatoria',
+        erro: 'Estorno parcial exige chaveIdempotencia: um valor único por estorno, que você repete idêntico se precisar tentar de novo. Sem ela não dá para distinguir a repetição de um segundo estorno.'
+      });
+    }
 
     try {
       const contratante = await deps.buscarContratantePorChave(chave);
       if (!contratante) return resposta.status(401).json({ erro: 'Chave inválida.' });
 
-      const cobranca = await deps.buscarCobrancaPorPedido(contratante.id, pedidoId);
-      if (!cobranca) return resposta.status(404).json({ erro: 'Cobrança não encontrada pra esse pedido.' });
+      const escolha = escolherCobrancaParaEstornar(await deps.buscarCobrancasDoPedido(contratante.id, pedidoId), chargeId);
+      if (!escolha.cobranca) return resposta.status(escolha.http).json(escolha.corpo);
+      const { cobranca } = escolha;
 
       const plano = planejarEstorno(cobranca, valor);
       if (plano.erro) return resposta.status(400).json({ erro: plano.erro });
 
-      const reivindicou = await deps.reivindicarEstorno(cobranca.charge_id);
-      if (!reivindicou) {
-        return resposta.status(409).json({
-          erro: 'Esta cobrança não pode ser estornada agora — já foi estornada, ainda não foi ' +
-            'confirmada, ou um estorno já está em andamento.'
-        });
-      }
-
-      let assincrono;
-      try {
-        ({ assincrono } = await deps.estornarCobranca(cobranca.charge_id, {
-          metodoPagamento: cobranca.metodo_pagamento,
-          valor: plano.valorAsaas
-        }));
-      } catch (erroAsaas) {
-        if (foiRecusaLimpaDaAsaas(erroAsaas)) {
-          await deps.liberarEstorno(cobranca.charge_id);
-        } else {
-          await deps.registrarErro(
-            new Error(
-              `estorno: chamada à Asaas falhou de forma AMBÍGUA para o pedido ${pedidoId} ` +
-              `(charge ${cobranca.charge_id}) — NÃO SE SABE se o estorno foi processado do lado de lá. ` +
-              `A reivindicação foi mantida de propósito, pra não abrir espaço pra uma segunda tentativa ` +
-              `estornar de novo o que já pode ter sido estornado: ${erroAsaas.message}`
-            ),
-            { contexto: 'refundController.estornar', rota: 'checkout/estornar', metodo: 'POST' }
-          );
+      const r = await deps.executarEstorno(
+        {
+          contratante,
+          cobranca,
+          chave: chaveIdempotencia ?? `total-${cobranca.id}`,
+          valorCentavos: parcial ? emCentavos(valor) : null
+        },
+        {
+          reivindicar: deps.reivindicarEstorno,
+          liberar: deps.liberarEstorno,
+          registrarNaCobranca: deps.registrarEstorno
         }
-        throw erroAsaas;
-      }
-
-      // `registrarEstorno` libera o arrendamento junto com o status: num
-      // parcial a linha CONTINUA estornável e o próximo pedido precisa
-      // reivindicar sem esperar o prazo. No total/boleto o status sai do
-      // conjunto estornável, e a coluna fica inerte pra sempre.
-      const statusLocal = assincrono ? 'estorno_solicitado' : plano.statusDepois;
-      await deps.registrarEstorno(cobranca.charge_id, {
-        status: statusLocal,
-        valorEstornado: assincrono ? undefined : plano.valorEstornadoDepois
-      });
+      );
 
       /* O webhook que o API.md §5.4 promete ("depois do estorno você
          também recebe o webhook correspondente"). Mesma chave do fato:
          quando o PAYMENT_REFUNDED da Asaas chegar, cai na mesma linha da
-         outbox e ninguém ouve duas vezes. Falha aqui não desfaz o estorno
-         (já aconteceu do lado de lá): vira Lei 8. */
-      try {
-        await deps.notificarFatoDePedido(contratante, { ...cobranca, cotacao_id: cobranca.cotacao_id ?? null }, {
-          chargeId: cobranca.charge_id,
-          statusFinanceiro: statusLocal,
-          valorEstornado: assincrono ? null : plano.valorEstornadoDepois
-        });
-      } catch (erroAviso) {
-        await deps.registrarErro(
-          new Error(`estorno de ${pedidoId} executado, mas o aviso ao contratante não foi enfileirado: ${erroAviso.message}`),
-          { contexto: 'refundController.notificar', rota: 'checkout/estornar', metodo: 'POST' }
-        );
+         outbox e ninguém ouve duas vezes. Só quando ESTA chamada estornou
+         (`efeito`) — a repetição devolve o gravado e não reavisa. Falha
+         aqui não desfaz o estorno (já aconteceu do lado de lá): vira Lei 8. */
+      if (r.efeito) {
+        try {
+          await deps.notificarFatoDePedido(contratante, { ...cobranca, cotacao_id: cobranca.cotacao_id ?? null }, {
+            chargeId: cobranca.charge_id,
+            statusFinanceiro: r.efeito.statusLocal,
+            valorEstornado: r.efeito.assincrono ? null : r.efeito.valorEstornadoDepois
+          });
+        } catch (erroAviso) {
+          await deps.registrarErro(
+            new Error(`estorno de ${pedidoId} executado, mas o aviso ao contratante não foi enfileirado: ${erroAviso.message}`),
+            { contexto: 'refundController.notificar', rota: 'checkout/estornar', metodo: 'POST' }
+          );
+        }
       }
 
-      resposta.json({
-        chargeId: cobranca.charge_id,
-        status: statusLocal,
-        valorEstornado: assincrono ? null : plano.valorEstornadoDepois,
-        estornoParcial: statusLocal === 'estornado_parcialmente'
-      });
+      resposta.status(r.http).json(r.corpo);
     } catch (erro) {
       responderErro(resposta, erro, 'refundController.estornar');
     }
@@ -200,324 +232,64 @@ export function criarRefundController(deps = dependenciasPadrao) {
 export const { estornar } = criarRefundController();
 
 /* ── Autoteste ──────────────────────────────────────────────────────── */
+/* O FLUXO do estorno (repetição, resposta perdida, queda do processo,
+   concorrência, cobrança escolhida) roda contra o serviço real em
+   `tests/estorno-repetido-nao-devolve-duas-vezes.js`. Aqui ficam as
+   duas funções puras e as recusas que acontecem antes de qualquer
+   banco. */
 if (process.argv[1]?.endsWith('refundController.js')) {
   const { strict: assert } = await import('node:assert');
-
-  function costura() {
-    const linhas = new Map(); // charge_id -> { status, estornando_em }
-    const chamadasAsaas = [];
-    const errosRegistrados = [];
-    const avisos = [];
-
-    function fixture(chargeId, status, extras = {}) {
-      linhas.set(chargeId, { status, estornando_em: null, valor_cobrado: 100, valor_estornado: null, metodo_pagamento: 'pix', ...extras });
-    }
-
-    const deps = {
-      buscarContratantePorChave: async (chave) => (chave === 'chave_boa' ? { id: 'c1', webhook_url: 'https://loja.exemplo/hook' } : null),
-
-      buscarCobrancaPorPedido: async (_contratanteId, pedidoId) => {
-        const chargeId = `pay_${pedidoId}`;
-        const linha = linhas.get(chargeId);
-        if (!linha) return null;
-        return { charge_id: chargeId, metodo_pagamento: linha.metodo_pagamento, status: linha.status, valor_cobrado: linha.valor_cobrado, valor_estornado: linha.valor_estornado };
-      },
-
-      reivindicarEstorno: async (chargeId) => {
-        const linha = linhas.get(chargeId);
-        if (!linha || !['confirmado', 'estornado_parcialmente'].includes(linha.status)) return false;
-        if (linha.estornando_em && Date.now() - linha.estornando_em < 5 * 60_000) return false;
-        linha.estornando_em = Date.now();
-        return true;
-      },
-
-      liberarEstorno: async (chargeId) => {
-        const linha = linhas.get(chargeId);
-        if (linha) linha.estornando_em = null;
-      },
-
-      estornarCobranca: async (chargeId, opcoes) => {
-        chamadasAsaas.push({ chargeId, opcoes });
-        const ajuste = deps._ajustes?.[chargeId];
-        if (ajuste?.erro) throw ajuste.erro;
-        const linha = linhas.get(chargeId);
-        linha.status = 'confirmado'; // só muda de verdade em atualizarStatusCobranca
-        return { assincrono: ajuste?.assincrono ?? false };
-      },
-
-      registrarEstorno: async (chargeId, { status, valorEstornado }) => {
-        const linha = linhas.get(chargeId);
-        if (!linha) return;
-        linha.status = status;
-        if (valorEstornado != null) linha.valor_estornado = valorEstornado;
-        linha.estornando_em = null;
-      },
-
-      registrarErro: async (erro) => { errosRegistrados.push(erro.message); },
-
-      notificarFatoDePedido: async (contratante, cobranca, fato) => { avisos.push({ contratante, cobranca, fato }); },
-
-      _ajustes: {}
-    };
-
-    return { deps, linhas, chamadasAsaas, errosRegistrados, avisos, fixture };
-  }
+  let checagens = 0;
+  const conferir = (condicao, mensagem) => { assert.ok(condicao, mensagem); checagens += 1; };
 
   function respostaFalsa() {
-    const r = {
-      codigo: null, corpo: null,
-      status(c) { this.codigo = c; return this; },
-      json(c) { this.corpo = c; return this; }
-    };
-    return r;
+    return { codigo: 200, corpo: null, status(c) { this.codigo = c; return this; }, json(c) { this.corpo = c; return this; } };
   }
+  const requisicao = (chave, body) => ({ get: (h) => (h === 'X-Checkout-Key' ? chave : undefined), body });
+  const semBanco = {
+    ...dependenciasPadrao,
+    buscarContratantePorChave: async () => { throw new Error('não devia ir ao banco'); },
+    buscarCobrancasDoPedido: async () => { throw new Error('não devia ir ao banco'); },
+    executarEstorno: async () => { throw new Error('não devia estornar'); }
+  };
+  const c = criarRefundController(semBanco);
 
-  function requisicaoFalsa({ chave, pedidoId, valor }) {
-    return { get: (h) => (h === 'X-Checkout-Key' ? chave : undefined), body: { pedidoId, ...(valor !== undefined ? { valor } : {}) } };
-  }
-
-  let checagens = 0;
-
-  // 1. Sem chave → 401, sem tocar banco nem Asaas.
-  {
-    const { deps, chamadasAsaas } = costura();
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: undefined, pedidoId: 'p1' }), resposta);
-    assert.equal(resposta.codigo, 401);
-    assert.equal(chamadasAsaas.length, 0);
-    checagens += 1;
-  }
-
-  // 2. Chave inválida → 401.
-  {
-    const { deps } = costura();
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_errada', pedidoId: 'p1' }), resposta);
-    assert.equal(resposta.codigo, 401);
-    checagens += 1;
-  }
-
-  // 3. Sem cobrança pra esse pedido → 404.
-  {
-    const { deps } = costura();
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'inexistente' }), resposta);
-    assert.equal(resposta.codigo, 404);
-    checagens += 1;
-  }
-
-  // 4. Caminho feliz — Pix, síncrono: reivindica, chama a Asaas UMA vez, vira 'estornado'.
-  {
-    const { deps, chamadasAsaas, linhas, fixture } = costura();
-    fixture('pay_p1', 'confirmado');
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p1' }), resposta);
-    assert.equal(resposta.corpo?.status, 'estornado');
-    assert.equal(chamadasAsaas.length, 1);
-    assert.equal(linhas.get('pay_p1').status, 'estornado');
-    checagens += 1;
-  }
-
-  // 5. Boleto, assíncrono: vira 'estorno_solicitado', não 'estornado'.
-  {
-    const { deps, linhas, fixture } = costura();
-    fixture('pay_p2', 'confirmado');
-    deps._ajustes.pay_p2 = { assincrono: true };
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p2' }), resposta);
-    assert.equal(resposta.corpo?.status, 'estorno_solicitado');
-    assert.equal(linhas.get('pay_p2').status, 'estorno_solicitado');
-    checagens += 1;
-  }
-
-  // 6. Cobrança 'pendente' (nunca paga) → reivindicarEstorno recusa → 409, Asaas nunca chamada.
-  {
-    const { deps, chamadasAsaas, fixture } = costura();
-    fixture('pay_p3', 'pendente');
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p3' }), resposta);
-    assert.equal(resposta.codigo, 409);
-    assert.equal(chamadasAsaas.length, 0);
-    checagens += 1;
-  }
-
-  // 7. Cobrança já 'estornado' → 409, Asaas nunca chamada (não estorna duas vezes).
-  {
-    const { deps, chamadasAsaas, fixture } = costura();
-    fixture('pay_p4', 'estornado');
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p4' }), resposta);
-    assert.equal(resposta.codigo, 409);
-    assert.equal(chamadasAsaas.length, 0);
-    checagens += 1;
-  }
-
-  // 8. Corrida real: duas chamadas 'simultâneas' pro mesmo pedido — só uma reivindica,
-  //    só uma chama a Asaas, a outra recebe 409.
-  {
-    const { deps, chamadasAsaas, fixture } = costura();
-    fixture('pay_p5', 'confirmado');
-    const controller = criarRefundController(deps);
-    const resposta1 = respostaFalsa();
-    const resposta2 = respostaFalsa();
-    await Promise.all([
-      controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p5' }), resposta1),
-      controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p5' }), resposta2)
-    ]);
-    const codigos = [resposta1.codigo ?? 200, resposta2.codigo ?? 200].sort();
-    assert.deepEqual(codigos, [200, 409]);
-    assert.equal(chamadasAsaas.length, 1, 'a Asaas só pode ser chamada UMA vez pra mesma cobrança');
-    checagens += 1;
-  }
-
-  // 9. Recusa LIMPA da Asaas (4xx com corpo) → libera a reivindicação, registra erro NÃO.
-  //    A rota nunca lança pra fora — o try/catch responde com responderErro (mesmo padrão
-  //    de checkoutController.js), então o teste confere resposta/estado, não rejeição.
-  {
-    const { deps, linhas, errosRegistrados, fixture } = costura();
-    fixture('pay_p6', 'confirmado');
-    const erro400 = new Error('cobrança já estornada do lado da Asaas');
-    erro400.status = 400;
-    erro400.corpoAsaas = { errors: [{ description: 'já estornada' }] };
-    deps._ajustes.pay_p6 = { erro: erro400 };
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p6' }), resposta);
-    assert.equal(resposta.codigo, 400);
-    assert.equal(linhas.get('pay_p6').status, 'confirmado', 'status não muda numa recusa limpa');
-    assert.equal(linhas.get('pay_p6').estornando_em, null, 'reivindicação liberada — pode tentar de novo');
-    assert.equal(errosRegistrados.length, 0, 'recusa limpa não é ambígua — não precisa de Lei 8 explícita');
-    checagens += 1;
-  }
-
-  // 10. Falha AMBÍGUA da Asaas (timeout) → NÃO libera a reivindicação, registra em Lei 8.
-  {
-    const { deps, linhas, errosRegistrados, fixture } = costura();
-    fixture('pay_p7', 'confirmado');
-    const erroTimeout = new Error('A Asaas não respondeu a tempo. Tente de novo em instantes.');
-    erroTimeout.status = 504;
-    deps._ajustes.pay_p7 = { erro: erroTimeout };
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p7' }), resposta);
-    assert.equal(resposta.codigo, 504);
-    assert.equal(linhas.get('pay_p7').status, 'confirmado', 'status não muda numa falha ambígua');
-    assert.ok(linhas.get('pay_p7').estornando_em, 'reivindicação PERMANECE — não pode tentar de novo sem esperar o prazo');
-    assert.equal(errosRegistrados.length, 1, 'falha ambígua tem que virar Lei 8');
-    checagens += 1;
-  }
-
-  // 11. Falha ambígua com 429 (rate limit, não é recusa limpa) → mesmo tratamento do item 10.
-  {
-    const { deps, linhas, errosRegistrados, fixture } = costura();
-    fixture('pay_p8', 'confirmado');
-    const erro429 = new Error('muitas requisições');
-    erro429.status = 429;
-    erro429.corpoAsaas = { errors: [{ description: 'rate limit' }] };
-    deps._ajustes.pay_p8 = { erro: erro429 };
-    const controller = criarRefundController(deps);
-    const resposta = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p8' }), resposta);
-    assert.equal(resposta.codigo, 429);
-    assert.ok(linhas.get('pay_p8').estornando_em, '429 é ambíguo mesmo com corpo — rate limit não prova recusa');
-    assert.equal(errosRegistrados.length, 1);
-    checagens += 1;
-  }
-
-  // 12. Estorno PARCIAL (H-04): manda `value` à Asaas, acumula em centavos,
-  //     fica `estornado_parcialmente`, e o segundo parcial que completa vira `estornado`.
-  {
-    const { deps, chamadasAsaas, linhas, fixture } = costura();
-    fixture('pay_p9', 'confirmado', { valor_cobrado: 100 });
-    const controller = criarRefundController(deps);
-    const r1 = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p9', valor: 30.1 }), r1);
-    assert.equal(r1.corpo?.status, 'estornado_parcialmente');
-    assert.equal(r1.corpo?.valorEstornado, 30.1);
-    assert.equal(r1.corpo?.estornoParcial, true);
-    assert.equal(chamadasAsaas[0].opcoes.valor, 30.1, 'o valor parcial vai à Asaas como `value`');
-    assert.equal(linhas.get('pay_p9').status, 'estornado_parcialmente');
-    assert.equal(linhas.get('pay_p9').estornando_em, null, 'parcial libera o arrendamento — a linha continua estornável');
-
-    const r2 = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p9', valor: 69.9 }), r2);
-    assert.equal(r2.corpo?.status, 'estornado', '30.10 + 69.90 = 100.00 em centavos — completa, sem ruído de float');
-    assert.equal(r2.corpo?.valorEstornado, 100);
-    assert.equal(chamadasAsaas.length, 2);
-    checagens += 1;
-  }
-
-  // 13. Parcial acima do restante → 400 sem reivindicar nem chamar a Asaas;
-  //     parcial em boleto → 400; valor zero/negativo/texto → 400.
-  {
-    const { deps, chamadasAsaas, linhas, fixture } = costura();
-    fixture('pay_p10', 'estornado_parcialmente', { valor_cobrado: 100, valor_estornado: 80 });
-    fixture('pay_p11', 'confirmado', { metodo_pagamento: 'boleto' });
-    fixture('pay_p12', 'confirmado');
-    const controller = criarRefundController(deps);
-    for (const [pedidoId, valor] of [['p10', 20.01], ['p11', 10], ['p12', 0], ['p12', -5], ['p12', 'dez']]) {
-      const r = respostaFalsa();
-      await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId, valor }), r);
-      assert.equal(r.codigo, 400, `${pedidoId} com valor ${valor} devia dar 400`);
-    }
-    assert.equal(chamadasAsaas.length, 0);
-    assert.equal(linhas.get('pay_p10').estornando_em, null, '400 acontece ANTES de reivindicar');
-    // ...e exatamente o restante passa, completando.
+  for (const [nome, chave, body, esperado] of [
+    ['sem chave', undefined, { pedidoId: 'p1' }, 401],
+    ['sem pedidoId', 'k', {}, 400],
+    ['parcial SEM chaveIdempotencia', 'k', { pedidoId: 'p1', valor: 30 }, 400],
+    ['chaveIdempotencia com barra', 'k', { pedidoId: 'p1', valor: 30, chaveIdempotencia: '../x' }, 400],
+    ['chaveIdempotencia numérica (não converte)', 'k', { pedidoId: 'p1', valor: 30, chaveIdempotencia: 123 }, 400],
+    ['chargeId adulterado', 'k', { pedidoId: 'p1', chargeId: 'pay_1/../x' }, 400]
+  ]) {
     const r = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p10', valor: 20 }), r);
-    assert.equal(r.corpo?.status, 'estornado');
-    checagens += 1;
+    await c.estornar(requisicao(chave, body), r);
+    conferir(r.codigo === esperado, `${nome}: ${esperado}, veio ${r.codigo} ${JSON.stringify(r.corpo)}`);
   }
-
-  // 14. Total depois de um parcial: manda `{}` (sem value) e o acumulado vira o cobrado.
   {
-    const { deps, chamadasAsaas, fixture } = costura();
-    fixture('pay_p13', 'estornado_parcialmente', { valor_cobrado: 50, valor_estornado: 10 });
-    const controller = criarRefundController(deps);
     const r = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p13' }), r);
-    assert.equal(r.corpo?.status, 'estornado');
-    assert.equal(r.corpo?.valorEstornado, 50);
-    assert.equal(chamadasAsaas[0].opcoes.valor, null);
-    checagens += 1;
+    await c.estornar(requisicao('k', { pedidoId: 'p1', valor: 30 }), r);
+    conferir(r.corpo?.codigo === 'chave_idempotencia_obrigatoria', 'o parcial sem chave diz o código e o porquê');
   }
 
-  // 16. O webhook do §5.4 SAI do /estornar — com a chave do fato (a mesma que o PAYMENT_REFUNDED usa)
-  {
-    const { deps, avisos, fixture } = costura();
-    fixture('pay_p14', 'confirmado', { valor_cobrado: 80 });
-    const controller = criarRefundController(deps);
-    const r = respostaFalsa();
-    await controller.estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p14' }), r);
-    assert.equal(avisos.length, 1, 'o contratante é avisado do estorno pedido por ele mesmo');
-    assert.equal(avisos[0].fato.statusFinanceiro, 'estornado');
-    assert.equal(avisos[0].fato.valorEstornado, 80);
-    assert.equal(avisos[0].contratante.webhook_url, 'https://loja.exemplo/hook');
-    // aviso que falha não desfaz o estorno: vira Lei 8 e a resposta continua 200
-    const c2 = costura();
-    c2.fixture('pay_p15', 'confirmado');
-    c2.deps.notificarFatoDePedido = async () => { throw new Error('outbox fora'); };
-    const r2 = respostaFalsa();
-    await criarRefundController(c2.deps).estornar(requisicaoFalsa({ chave: 'chave_boa', pedidoId: 'p15' }), r2);
-    assert.equal(r2.corpo?.status, 'estornado');
-    assert.equal(c2.errosRegistrados.length, 1);
-    checagens += 1;
-  }
+  // escolherCobrancaParaEstornar — SEC-005: a que PAGOU, não a mais recente.
+  const pix = { charge_id: 'pay_pix', status: 'confirmado' };
+  const popupAbandonada = { charge_id: 'pay_pop', status: 'cancelado' };
+  conferir(escolherCobrancaParaEstornar([popupAbandonada, pix]).cobranca === pix, 'a pop-up abandonada mais recente não esconde o Pix pago');
+  const dup = escolherCobrancaParaEstornar([{ charge_id: 'a', status: 'confirmado' }, { charge_id: 'b', status: 'confirmado' }]);
+  conferir(dup.http === 409 && dup.corpo.codigo === 'mais_de_uma_cobranca_paga' && dup.corpo.chargeIds.length === 2, 'duas pagas (RN-52): pede o chargeId, não escolhe sozinho');
+  conferir(escolherCobrancaParaEstornar([{ charge_id: 'a', status: 'confirmado' }, { charge_id: 'b', status: 'confirmado' }], 'b').cobranca.charge_id === 'b', 'com chargeId, a escolhida é a pedida');
+  conferir(escolherCobrancaParaEstornar([pix], 'pay_de_outro_pedido').http === 404, 'chargeId que não é deste pedido: 404');
+  conferir(escolherCobrancaParaEstornar([]).http === 404, 'pedido sem cobrança: 404');
+  conferir(escolherCobrancaParaEstornar([{ charge_id: 'x', status: 'cancelado_por_outro_pagamento' }, { charge_id: 'y', status: 'estornado' }]).cobranca.charge_id === 'y', 'sem estornável: a representativa não é a irmã cancelada');
 
-  // 15. planejarEstorno é puro e conta em centavos.
-  {
-    assert.deepEqual(planejarEstorno({ valor_cobrado: 0.3, valor_estornado: 0.1, metodo_pagamento: 'pix' }, 0.2),
-      { valorAsaas: 0.2, valorEstornadoDepois: 0.3, statusDepois: 'estornado' }, '0.1 + 0.2 = 0.3 (em reais seria 0.30000000000000004)');
-    assert.ok(planejarEstorno({ valor_cobrado: 10, valor_estornado: null, metodo_pagamento: 'pix' }, 10.01).erro);
-    checagens += 1;
-  }
+  // planejarEstorno é puro e conta em centavos.
+  assert.deepEqual(planejarEstorno({ valor_cobrado: 0.3, valor_estornado: 0.1, metodo_pagamento: 'pix' }, 0.2),
+    { valorAsaas: 0.2, valorEstornadoDepois: 0.3, statusDepois: 'estornado' }, '0.1 + 0.2 = 0.3 (em reais seria 0.30000000000000004)');
+  checagens += 1;
+  conferir(Boolean(planejarEstorno({ valor_cobrado: 10, valor_estornado: null, metodo_pagamento: 'pix' }, 10.01).erro), 'acima do cobrado: erro');
+  conferir(Boolean(planejarEstorno({ valor_cobrado: 10, metodo_pagamento: 'boleto' }, 5).erro), 'parcial em boleto: erro');
+  conferir(Boolean(planejarEstorno({ valor_cobrado: 10, metodo_pagamento: 'pix' }, 0).erro), 'zero: erro');
 
   console.log(`refundController: ${checagens} checagens OK`);
 }
