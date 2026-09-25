@@ -46,7 +46,7 @@ import {
 } from '../services/cobrancaService.js';
 import { completarComOQueAAsaasSabe } from '../services/reconciliacaoService.js';
 import {
-  documentoValido, emailValido, nomeValido, telefoneValido,
+  documentoValido, emailValido, nomeValido, telefoneValido, normalizarTelefone,
   normalizarDocumento,
   valorCobradoAceitavel, MENSAGEM_PISO_ASAAS
 } from '../utils/validadores.js';
@@ -253,6 +253,8 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     documento = normalizarDocumento(documento);
     if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
     if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
+    // Uma forma só daqui para baixo: `+55 16 98765-4321` e `16987654321` são o mesmo telefone.
+    if (telefone) telefone = normalizarTelefone(telefone);
 
     try {
       // Antes de criar: esse pedido já tem Pix pendente e pagável? Um
@@ -369,6 +371,8 @@ export function criarCheckoutController(deps = dependenciasPadrao) {
     documento = normalizarDocumento(documento);
     if (!emailValido(email)) return resposta.status(400).json({ erro: 'E-mail inválido.' });
     if (telefone && !telefoneValido(telefone)) return resposta.status(400).json({ erro: 'Telefone inválido.' });
+    // Uma forma só daqui para baixo: `+55 16 98765-4321` e `16987654321` são o mesmo telefone.
+    if (telefone) telefone = normalizarTelefone(telefone);
 
     try {
       // Boleto duplicado é pior que Pix duplicado: o antigo segue pagável

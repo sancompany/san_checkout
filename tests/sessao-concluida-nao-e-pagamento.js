@@ -111,4 +111,17 @@ for (const arquivo of ['public/js/modules/assinaturaCheckoutHandler.js', 'public
   ok(!/ativarRetorno|btn-success|Aprovado|Ativa/.test(processando), `${arquivo}: o estado "processando" não comemora nem manda de volta à loja`);
 }
 
+/* 4. A tela de status pública e a página que a pop-up abre (auditoria de
+      25/09/2026, com o cartão real "aguardando confirmação da operadora") */
+{
+  const consulta = readFileSync(join(RAIZ, 'src/controllers/cobrancaConsultaController.js'), 'utf8');
+  ok(/emProcessamento: status === 'pendente' && Boolean\(cobranca\.sessao_concluida_em\)/.test(consulta), 'a rota de status diz quando a sessão foi concluída sem dinheiro confirmado');
+  const status = readFileSync(join(RAIZ, 'public/js/status.js'), 'utf8');
+  ok(/if \(status === 'pendente' && emProcessamento\) return PROCESSANDO;/.test(status), 'status.html mostra "em processamento", não "aguardando pagamento" (que convida a pagar de novo)');
+  const bloco = status.slice(status.indexOf('const PROCESSANDO'), status.indexOf('function apresentar'));
+  ok(!/Pago|confirmado|Aprovado/.test(bloco) && /operadora/.test(bloco), 'e o texto de processamento não afirma pago');
+  const popup = readFileSync(join(RAIZ, 'public/pagamento-popup-fechar.html'), 'utf8');
+  ok(!/processado|aprovado|conclu[ií]do/i.test(popup.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')), 'a página da pop-up (a mesma no sucesso, cancelamento e expiração) não afirma resultado');
+}
+
 console.log(`sessao-concluida-nao-e-pagamento: ${checagens} checagens OK`);

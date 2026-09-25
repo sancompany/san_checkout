@@ -319,9 +319,28 @@ export const MENSAGEM_PISO_ASAAS =
  * olhar tamanho. Este validador recusa o que a Asaas recusaria, e nada
  * além.
  */
+/**
+ * Telefone brasileiro na forma ÚNICA: DDD + número, só dígitos, sem o
+ * código do país.
+ *
+ * Existe por causa do autopreenchimento do navegador (relatado pelo
+ * dono em 25/09/2026): ele entrega `+55 16 98765-4321`, e cortar os
+ * primeiros 11 dígitos lia `55` como DDD. Regra: tira tudo que não é
+ * dígito; se sobraram 12 ou 13 começando por `55`, o `55` é o país e
+ * sai. O comprimento é o que desfaz a ambiguidade com o DDD 55 (RS):
+ * número nacional com DDD 55 tem 10 ou 11 dígitos, nunca 12 ou 13.
+ *
+ *   16987654321 · (16) 98765-4321 · +55 16 98765-4321 · 55 16 98765-4321
+ *   → todos `16987654321`
+ */
+export function normalizarTelefone(valor) {
+  const digitos = String(valor ?? '').replace(/\D/g, '');
+  return /^55\d{10,11}$/.test(digitos) ? digitos.slice(2) : digitos;
+}
+
 export function telefoneValido(valor) {
   if (!passaNoTeto(valor, TETOS.telefone)) return false;
-  const telefone = String(valor ?? '').replace(/\D/g, '');
+  const telefone = normalizarTelefone(valor);
   if (telefone.length !== 10 && telefone.length !== 11) return false;
 
   if (Number(telefone.slice(0, 2)) < 11) return false;
@@ -461,6 +480,22 @@ if (process.argv[1]?.endsWith('validadores.js')) {
      `telefoneValido('(11) 99999-9999')` — e esse é exatamente o número
      que a Asaas RECUSA. O teste travava o bug no lugar de pegá-lo. */
   assert.ok(telefoneValido('(11) 98765-4321'), 'celular realista passa');
+
+  /* --- TELEFONE COM CÓDIGO DO PAÍS (autopreenchimento, 25/09/2026) ---
+     O navegador preenche `+55 16 98765-4321`; as quatro formas são o
+     MESMO telefone, e o `55` nunca vira DDD. */
+  for (const forma of ['16987654321', '(16) 98765-4321', '+55 16 98765-4321', '55 16 98765-4321', '+55 (16) 98765-4321', ' 16 98765 4321 ', '+55-16-98765-4321']) {
+    assert.equal(normalizarTelefone(forma), '16987654321', `"${forma}" normaliza para o mesmo telefone`);
+    assert.ok(telefoneValido(forma), `"${forma}" é válido`);
+  }
+  assert.equal(normalizarTelefone('+55 16 3333-4444'), '1633334444', 'fixo com +55: 10 dígitos depois do país');
+  assert.equal(normalizarTelefone('5533334444'), '5533334444', 'DDD 55 (RS), fixo nacional com 10 dígitos: o 55 é DDD e FICA');
+  assert.equal(normalizarTelefone('55987654321'), '55987654321', 'DDD 55, celular nacional com 11 dígitos: o 55 é DDD e FICA');
+  assert.equal(normalizarTelefone('+55 55 98765-4321'), '55987654321', 'país + DDD 55: só o primeiro 55 sai');
+  assert.ok(!telefoneValido('+55 16 99999-9999'), 'o exemplo do autopreenchimento com a parte local toda de 9 continua recusado — a Asaas recusa');
+  assert.ok(!telefoneValido('+1 415 555 0100'), 'número estrangeiro não vira brasileiro');
+  assert.ok(!telefoneValido('+55 16 9876'), 'curto demais com +55 continua inválido');
+  assert.ok(!telefoneValido('55 16 98765-43210'), '14 dígitos: não é brasileiro, não é cortado');
   assert.ok(telefoneValido('11988888888'), 'celular com 8 repetidos passa — a Asaas aceita');
   assert.ok(telefoneValido('11911111111'), 'celular com 1 repetidos passa — a Asaas aceita');
   assert.ok(telefoneValido('11999999998'), 'celular quase todo 9 passa');

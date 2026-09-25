@@ -61,6 +61,7 @@ const SUITES = [
   'tests/nenhuma-chamada-de-saida-sem-teto.js', // fetch sem signal espera para sempre: varre src/ inteiro
   'tests/data-para-asaas-e-de-brasilia.js', // vencimento em UTC adiou o 1º ciclo da assinatura real (25/09): varre src/ inteiro
   'tests/sessao-concluida-nao-e-pagamento.js', // CHECKOUT_PAID com o 1º ciclo PENDING virou "Assinatura Ativa" (25/09)
+  'tests/telefone-com-codigo-do-pais.js', // autopreenchimento +55 virava DDD 55: front e servidor com a mesma regra (25/09)
   'tests/assinatura-pausada-continua-cancelavel.js', // pausar não pode ser porta de mão única
   'tests/renovacao-exige-token-nao-so-documento.js', // renovar não pode confiar só no documento do body
   'tests/piso-de-valor-recusa-antes-de-cobrar.js', // a Asaas recusa abaixo de R$ 5,00: recusar aqui, não no clique
