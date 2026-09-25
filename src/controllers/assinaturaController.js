@@ -61,6 +61,7 @@ import {
 import { notificarAssinaturaCancelada } from './webhookController.js';
 import { documentoValido, normalizarDocumento } from '../utils/validadores.js';
 import { responderErro } from '../utils/erros.js';
+import { registrarErro } from '../services/erroService.js';
 
 const dependenciasPadrao = {
   buscarContratantePorChave,
@@ -70,8 +71,26 @@ const dependenciasPadrao = {
   liberarTroca,
   cancelarAssinaturaNaAsaas,
   alterarStatusAssinatura,
-  notificarAssinaturaCancelada
+  notificarAssinaturaCancelada,
+  registrarErro
 };
+
+/**
+ * Depois que a ASAAS já fez (cancelou, pausou, retomou), nada daqui pode
+ * transformar o sucesso em erro para quem chamou — repetir a chamada
+ * repetiria a operação na Asaas. O que falhar localmente (o registro, o
+ * aviso) vira `erros` com o que falta fazer; a conciliação por pull
+ * (`API.md` §5.3) corrige o status local. Até 25/09/2026 o aviso era
+ * chamado sem `await` nem `catch` (SEC-013) — uma recusa do INSERT na
+ * outbox derrubava o processo pelo tratador de `unhandledRejection`.
+ */
+async function depoisDaAsaas(deps, passo, oQueFalta, contexto) {
+  try {
+    await passo();
+  } catch (erro) {
+    await deps.registrarErro(new Error(`${oQueFalta}: ${erro.message}`), { contexto, rota: '/api/checkout/assinatura', metodo: 'POST' });
+  }
+}
 
 const MENSAGEM_OPERACAO_EM_ANDAMENTO =
   'Já existe outra operação em andamento para esta assinatura (troca de plano, cancelamento, pausa ou retomada). Tente novamente em instantes.';
@@ -124,16 +143,20 @@ export function criarAssinaturaController(deps = dependenciasPadrao) {
       assinaturaIdArrendada = assinatura.id;
 
       await deps.cancelarAssinaturaNaAsaas(assinatura.id);
-      await deps.atualizarStatusAssinatura(assinatura.id, 'cancelada');
+      assinaturaIdArrendada = null; // a Asaas cancelou: daqui em diante nada desfaz, e o catch não devolve nada
 
-      // Fire-and-forget (deps.notificar não espera) — a resposta síncrona
-      // abaixo já confirma pra quem chamou; o webhook é só pra manter o
-      // MESMO canal que os outros dois desfechos de 'cancelada' usam
-      // (API.md §7.4 promete essa seta, e até 16/09/2026 ela não existia).
-      deps.notificarAssinaturaCancelada(contratante, {
+      await depoisDaAsaas(deps, () => deps.atualizarStatusAssinatura(assinatura.id, 'cancelada'),
+        `a assinatura ${assinatura.id} foi CANCELADA na Asaas e o registro local não foi atualizado — a conciliação corrige`,
+        'assinaturaController.cancelarRegistroLocal');
+
+      // O aviso mantém o MESMO canal que os outros desfechos de 'cancelada'
+      // usam (API.md §7.4). Espera só a escrita local na outbox, e com dono.
+      await depoisDaAsaas(deps, () => deps.notificarAssinaturaCancelada(contratante, {
         planoId, documento, assinaturaId: assinatura.id, ciclo: assinatura.ciclo ?? null, valor: assinatura.valor ?? null
-      });
+      }), `a assinatura ${assinatura.id} foi cancelada e o aviso "cancelada" ao contratante NÃO foi enfileirado — reenviar à mão`,
+      'assinaturaController.cancelarAviso');
 
+      await deps.liberarTroca(assinatura.id);
       resposta.json({ assinaturaId: assinatura.id, status: 'cancelada' });
     } catch (erro) {
       /* Cancelar/pausar/retomar nunca cobram nada — ao contrário do
@@ -197,8 +220,16 @@ export function criarAssinaturaController(deps = dependenciasPadrao) {
         assinaturaIdArrendada = assinatura.id;
 
         await deps.alterarStatusAssinatura(assinatura.id, statusAsaas);
-        await deps.atualizarStatusAssinatura(assinatura.id, statusLocal);
+        assinaturaIdArrendada = null; // a Asaas já mudou: o catch não é mais o caminho
 
+        await depoisDaAsaas(deps, () => deps.atualizarStatusAssinatura(assinatura.id, statusLocal),
+          `a assinatura ${assinatura.id} ficou ${statusAsaas} na Asaas e o registro local não virou "${statusLocal}" — a conciliação corrige`,
+          `assinaturaController.${nomeDoHandler}RegistroLocal`);
+
+        /* O arrendamento volta no SUCESSO também (SEC-029): antes só o
+           `catch` devolvia, e cancelar ou trocar de plano logo depois de
+           uma pausa respondia 409 por até 5 minutos. */
+        await deps.liberarTroca(assinatura.id);
         resposta.json({ assinaturaId: assinatura.id, status: statusLocal });
       } catch (erro) {
         // Mesma razão do catch de cancelarAssinatura: nenhuma das duas
@@ -236,6 +267,7 @@ if (process.argv[1]?.endsWith('assinaturaController.js')) {
     const linhas = new Map(); // id -> { status }
     const chamadasAsaas = [];
     const notificacoes = [];
+    const erros = [];
 
     function fixture(id, status) {
       linhas.set(id, { id, status });
@@ -272,10 +304,15 @@ if (process.argv[1]?.endsWith('assinaturaController.js')) {
         if (linha) linha.status = status;
       },
 
-      notificarAssinaturaCancelada: (...args) => { notificacoes.push(args); }
+      notificarAssinaturaCancelada: async (...args) => {
+        notificacoes.push(args);
+        if (ajustes.avisoFalha) throw new Error('outbox recusou o INSERT');
+      },
+
+      registrarErro: async (erro, ctx) => { erros.push({ mensagem: erro.message, ctx }); }
     };
 
-    return { deps, linhas, chamadasAsaas, notificacoes, fixture };
+    return { deps, linhas, chamadasAsaas, notificacoes, fixture, erros };
   }
 
   function respostaFalsa() {
@@ -369,7 +406,8 @@ if (process.argv[1]?.endsWith('assinaturaController.js')) {
       liberarTroca: async () => { arrendada = false; },
       alterarStatusAssinatura: async () => {},
       atualizarStatusAssinatura: async (id, status) => { const l = linhas.get('plano_e'); if (l) l.status = status; },
-      notificarAssinaturaCancelada: () => {}
+      notificarAssinaturaCancelada: async () => {},
+      registrarErro: async () => {}
     };
     const controller = criarAssinaturaController(deps);
     const resposta1 = respostaFalsa();
@@ -415,6 +453,44 @@ if (process.argv[1]?.endsWith('assinaturaController.js')) {
     assert.equal(r3.codigo, 404);
 
     assert.equal(chamadasAsaas.length, 0);
+    checagens += 1;
+  }
+
+  // 8. SEC-029: pausar/retomar com SUCESSO devolvem o arrendamento (antes: 409 por 5 min).
+  for (const [acao, statusInicial] of [['pausarAssinatura', 'ativa'], ['retomarAssinatura', 'pausada']]) {
+    const { deps, fixture } = costura();
+    fixture('plano_h', statusInicial);
+    let liberou = 0;
+    deps.liberarTroca = async () => { liberou += 1; };
+    const resposta = respostaFalsa();
+    await criarAssinaturaController(deps)[acao](requisicaoFalsa({ chave: 'chave_boa', planoId: 'plano_h', documento: CPF_VALIDO }), resposta);
+    assert.equal(resposta.codigo, null, `${acao}: sucesso`);
+    assert.equal(liberou, 1, `SEC-029: ${acao} com sucesso devolve o arrendamento`);
+    checagens += 1;
+  }
+
+  // 9. SEC-013: o aviso que falha depois de a Asaas cancelar não derruba nada nem vira 500.
+  {
+    const { deps, fixture, erros } = costura({ avisoFalha: true });
+    fixture('plano_i', 'ativa');
+    const resposta = respostaFalsa();
+    await criarAssinaturaController(deps).cancelarAssinatura(requisicaoFalsa({ chave: 'chave_boa', planoId: 'plano_i', documento: CPF_VALIDO }), resposta);
+    assert.equal(resposta.corpo?.status, 'cancelada', 'SEC-013: o cancelamento feito na Asaas continua respondendo sucesso');
+    assert.ok(erros.some((e) => /aviso "cancelada"/.test(e.mensagem)), 'e o aviso perdido vira `erros` para reenvio');
+    checagens += 1;
+  }
+
+  // 10. o registro local que falha DEPOIS da Asaas não transforma o sucesso em erro
+  //     (a repetição cancelaria de novo na Asaas) — vira `erros`, e a conciliação corrige.
+  {
+    const { deps, fixture, erros, chamadasAsaas } = costura();
+    fixture('plano_j', 'ativa');
+    deps.atualizarStatusAssinatura = async () => { throw new Error('banco piscou'); };
+    const resposta = respostaFalsa();
+    await criarAssinaturaController(deps).pausarAssinatura(requisicaoFalsa({ chave: 'chave_boa', planoId: 'plano_j', documento: CPF_VALIDO }), resposta);
+    assert.equal(resposta.corpo?.status, 'pausada', 'a pausa feita na Asaas responde sucesso');
+    assert.equal(chamadasAsaas.length, 1, 'a Asaas foi chamada uma vez');
+    assert.ok(erros.some((e) => /conciliação corrige/.test(e.mensagem)), 'e a divergência local vira `erros`');
     checagens += 1;
   }
 

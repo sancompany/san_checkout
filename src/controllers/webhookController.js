@@ -96,7 +96,12 @@ import { METODOS_DE_ASSINATURA, METODO_ACERTO_TROCA } from '../services/pedidoSe
 import { compararSeguro } from '../utils/validadores.js';
 import { somarReais, emCentavos } from '../utils/dinheiro.js';
 import { cicloCanonico } from '../utils/ciclos.js';
-import { buscarIntencaoPorChargeId, marcarConfirmada as marcarIntencaoConfirmada } from '../services/trocaIntencaoService.js';
+import {
+  buscarIntencaoPorChargeId,
+  buscarIntencao,
+  registrarChargeId as registrarChargeIdDaIntencao,
+  marcarConfirmada as marcarIntencaoConfirmada
+} from '../services/trocaIntencaoService.js';
 import { resolverAposClassificacao, retomarAplicacao } from '../services/trocaExecucaoService.js';
 import { classificarPagamentoDoAcerto } from '../services/classificacaoFinanceiraService.js';
 import { registrarErro } from '../services/erroService.js';
@@ -180,17 +185,52 @@ const dependenciasPadrao = {
   listarCandidatasADivergencia: () => listarCandidatasADivergencia(),
   /** O acerto de uma troca de plano ainda sem `cobrancas` — resolve
    *  pela intenção. `true` quando encontrou. */
-  avancarIntencaoDeTrocaPorChargeId: async (chargeId, evento, statusNaAsaas = null) => {
-    const intencao = await buscarIntencaoPorChargeId(chargeId);
-    if (!intencao) return false;
+  avancarIntencaoDeTrocaPorChargeId: async (chargeId, evento, statusNaAsaas = null, referenciaExterna = null) => {
+    let intencao = await buscarIntencaoPorChargeId(chargeId);
+
+    /* A ÓRFÃ (SEC-009, 25/09/2026): o processo morreu entre cobrar e
+       gravar o `charge_id` (ou a cobrança ficou ambígua) — a intenção não
+       conhece este pagamento, mas a Asaas diz a referência dele
+       (`troca:<id>`, gravada na cobrança; aqui já é o valor DELA, não do
+       corpo). Vincula por CAS e segue. Até aqui este evento era
+       descartado: o assinante pagava o acerto e o plano nunca mudava. */
+    if (!intencao) {
+      const intencaoId = /^troca:([0-9a-f-]{36})$/i.exec(referenciaExterna ?? '')?.[1];
+      if (!intencaoId) return false;
+      intencao = await buscarIntencao(intencaoId);
+      if (!intencao) return false;
+      if (intencao.charge_id && intencao.charge_id !== chargeId) {
+        await registrarErro(
+          new Error(`SEGUNDO acerto cobrado para a intenção de troca ${intencao.id}: ${intencao.charge_id} e ${chargeId} (${evento}) — estornar um`),
+          { contexto: 'webhookController.segundoAcerto', rota: 'webhook/asaas', metodo: 'POST' }
+        );
+        return true;
+      }
+      if (!intencao.charge_id) {
+        const vinculou = await registrarChargeIdDaIntencao(intencao.id, chargeId);
+        if (!vinculou) throw new Error(`a intenção ${intencao.id} ganhou outro charge_id enquanto o evento de ${chargeId} a lia; reprocessar`);
+        intencao = { ...intencao, charge_id: chargeId };
+      }
+    }
 
     // O status da ASAAS primeiro (SEC-007): o evento sozinho não paga nada.
     const veredito = classificarPagamentoDoAcerto({ status: statusNaAsaas, evento });
     if (veredito === 'PAID') {
       const confirmada = await marcarIntencaoConfirmada(intencao.id);
       if (confirmada) {
-        retomarAplicacao(confirmada)
-          .catch((erro) => console.error('[webhook/asaas] aplicar troca de plano falhou fora do fluxo:', erro.message));
+        // Fora do fluxo, e com DONO (SEC-013): a falha vira `erros`, nunca promessa solta.
+        retomarAplicacao(confirmada).catch((erro) => registrarErro(
+          new Error(`acerto ${chargeId} pago e a aplicação da troca ${intencao.id} falhou fora do fluxo: ${erro.message} — o sweeper retoma`),
+          { contexto: 'webhookController.aplicarTroca', rota: 'webhook/asaas', metodo: 'POST' }
+        ));
+      } else if (!['PAYMENT_CONFIRMED', 'APPLYING_PLAN', 'COMPLETED'].includes(intencao.status)) {
+        /* Pago na Asaas e a intenção já fechada sem dinheiro (STALE,
+           EXPIRED, recusada) ou em reconciliação: o plano NÃO mudou e o
+           assinante pagou. Nunca calado. */
+        await registrarErro(
+          new Error(`acerto ${chargeId} PAGO na Asaas para a intenção ${intencao.id}, que está "${intencao.status}" — o plano NÃO foi trocado; aplicar à mão ou estornar`),
+          { contexto: 'webhookController.acertoSemTroca', rota: 'webhook/asaas', metodo: 'POST' }
+        );
       }
     } else {
       await resolverAposClassificacao(intencao, veredito);
@@ -899,7 +939,7 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
 
   if (!cobranca) {
     // O ACERTO de uma troca ainda sem `cobrancas`: resolve pela intenção.
-    const avancou = await deps.avancarIntencaoDeTrocaPorChargeId(chargeId, evento, naAsaas.pagamento?.status ?? null);
+    const avancou = await deps.avancarIntencaoDeTrocaPorChargeId(chargeId, evento, naAsaas.pagamento?.status ?? null, payment?.externalReference ?? null);
     if (avancou) return;
 
     // Charge desconhecido: só interessa se for ciclo novo de assinatura.
@@ -998,16 +1038,42 @@ async function processarEventoPayment(corpo, deps = dependenciasPadrao, ocorrido
      `PAYMENT_CONFIRMED` seguinte, achando a linha pelo charge, ativa.
      Antes, qualquer primeiro PAYMENT_* ativava a assinatura e cancelava
      a antiga (renovação) — inclusive um cartão RECUSADO. */
+  /* "Primeira confirmação" é decidida pela AUSÊNCIA da linha em
+     `assinaturas` (SEC-014, 25/09/2026), não por `asaas_subscription_id`
+     já estar na cobrança. Antes, uma falha entre gravar esse vínculo e
+     criar a linha (banco piscando) deixava a retentativa convencida de
+     que já tinha amarrado: cobrança `confirmado`, `criada` enviado, e
+     nenhuma assinatura aqui — cancelar/pausar/consultar respondendo 404
+     enquanto a Asaas seguia cobrando. Toda escrita da amarração lança, e
+     a inbox refaz; `upsert` e a checagem da antiga fazem a refeitura ser
+     idempotente. */
   let primeiraConfirmacaoDaAssinatura = false;
   if (
     statusGravado === 'confirmado'
     && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
     && payment?.subscription
-    && !cobranca.asaas_subscription_id
+    && !(await deps.buscarAssinaturaPorId(payment.subscription))
   ) {
     await amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps);
     cobranca = { ...cobranca, asaas_subscription_id: payment.subscription };
     primeiraConfirmacaoDaAssinatura = true;
+  }
+
+  /* SEC-011: o PRIMEIRO ciclo de uma assinatura nova falhou (cartão
+     recusado, vencido). A assinatura continua viva na Asaas — ela tenta
+     o ciclo seguinte —, e o pagador que assinar de novo fica com DUAS.
+     Nada aqui a cancela sozinho (o comportamento da Asaas depois da
+     recusa ainda não foi medido); um humano é chamado. */
+  if (
+    ['recusado', 'vencido'].includes(statusGravado) && aplicada
+    && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento)
+    && cobranca.asaas_checkout_id && payment?.subscription
+    && !(await deps.buscarAssinaturaPorId(payment.subscription))
+  ) {
+    await deps.registrarErro(
+      new Error(`o 1º ciclo da assinatura ${payment.subscription} ficou "${statusGravado}" (${chargeId}): ela continua ativa na Asaas e vai tentar de novo; se o pagador assinar outra vez, serão duas — cancelar esta na Asaas se não for mais valer`),
+      { contexto: 'webhookController.primeiroCicloFalhou', rota: 'webhook/asaas', metodo: 'POST' }
+    );
   }
 
   const contexto = { chargeId, statusFinanceiro: statusGravado, valorEstornado: valorEstornado ?? cobranca.valor_estornado ?? null, ocorridoEm, aplicada };
@@ -1089,6 +1155,8 @@ async function amarrarAssinaturaACobranca(cobranca, payment, chargeId, deps = de
 async function encerrarAssinaturaSubstituida(cobranca, novaAssinaturaId, deps = dependenciasPadrao) {
   const antigaId = cobranca.substitui_assinatura_id;
   if (!antigaId || antigaId === novaAssinaturaId) return;
+  // Refeitura da amarração (SEC-014): a antiga já encerrada não é cancelada de novo.
+  if ((await deps.buscarAssinaturaPorId(antigaId))?.status === 'cancelada') return;
   try {
     await deps.cancelarAssinaturaNaAsaas(antigaId);
     await deps.atualizarStatusAssinatura(antigaId, 'cancelada');
@@ -1129,7 +1197,18 @@ async function vincularPrimeiraCobrancaDoCheckout(payment, deps = dependenciasPa
   }
   if (cobranca.charge_id) return null; // já vinculada — este é um ciclo, não a primeira
 
-  await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
+  const vinculou = await deps.vincularChargeIdAoCheckout(asaasCheckoutId, payment.id);
+  if (!vinculou) throw new Error(`a sessão ${asaasCheckoutId} ganhou outro charge_id enquanto o evento de ${payment.id} a lia; reprocessar`);
+  /* O id da ASSINATURA fica gravado já no primeiro evento (SEC-011),
+     qualquer que seja o status: um primeiro ciclo recusado deixava a
+     assinatura viva na Asaas sem nenhuma linha daqui apontando para ela,
+     e o ciclo seguinte chegava como "assinatura desconhecida". Quem
+     decide se a assinatura NASCEU continua sendo o primeiro `confirmado`
+     (a linha em `assinaturas`). */
+  if (payment.subscription && METODOS_DE_ASSINATURA.includes(cobranca.metodo_pagamento) && !cobranca.asaas_subscription_id) {
+    await deps.atualizarSubscriptionIdDaCobranca(payment.id, payment.subscription);
+    return { ...cobranca, charge_id: payment.id, asaas_subscription_id: payment.subscription };
+  }
   return { ...cobranca, charge_id: payment.id };
 }
 
@@ -1137,7 +1216,13 @@ async function registrarNovoCicloAssinatura(payment, deps = dependenciasPadrao) 
   const subscriptionId = payment.subscription;
   const modelo = await deps.buscarCobrancaPorSubscriptionId(subscriptionId);
   if (!modelo) {
-    console.error(`[webhook/assinatura] ciclo novo da subscription ${subscriptionId} sem cobrança-modelo local — ignorando (nunca vimos a 1ª cobrança dela?).`);
+    /* Pagamento de assinatura DESTA conta (a Asaas confirmou que existe)
+       sem nenhuma cobrança nossa apontando para ela: dinheiro sem dono.
+       Era só log (SEC-011); agora é `erros`, para alguém decidir. */
+    await deps.registrarErro(
+      new Error(`cobrança ${payment.id} da assinatura ${subscriptionId} chegou sem cobrança-modelo local — assinatura criada fora deste checkout, ou a 1ª cobrança dela nunca foi vista; conferir na Asaas`),
+      { contexto: 'webhookController.assinaturaDesconhecida', rota: 'webhook/asaas', metodo: 'POST' }
+    );
     return null;
   }
 
@@ -1206,9 +1291,13 @@ async function processarEventoCheckout(corpo, deps = dependenciasPadrao, ocorrid
      passa a dizer "processando" (`consultarStatusCheckout`). Nenhum aviso
      sai daqui — nunca saiu. */
   if (evento === 'CHECKOUT_PAID') {
+    /* Só o carimbo. O `charge_id` NÃO é amarrado daqui (25/09/2026): o
+       `CHECKOUT_PAID` real não traz pagamento nenhum (medido em 15/09 e em
+       25/09), e um id tirado do CORPO de um evento que não se confere na
+       Asaas (não há `GET` de sessão documentado) só podia vir de um
+       evento forjado — amarrando um pagamento alheio a esta sessão. Quem
+       amarra é o `PAYMENT_*`, conferido (RN-56). */
     await deps.marcarSessaoConcluida(asaasCheckoutId, ocorridoEm);
-    const chargeId = corpo?.checkout?.payment?.id ?? corpo?.payment?.id ?? null;
-    if (chargeId && !cobranca.charge_id) await deps.vincularChargeIdAoCheckout(asaasCheckoutId, chargeId);
     return;
   }
 
@@ -1566,6 +1655,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     if (!('aplicarTransicaoPorCheckoutId' in retornos)) deps.aplicarTransicaoPorCheckoutId = async (...args) => { chamadas.push({ nome: 'aplicarTransicaoPorCheckoutId', args }); return true; };
     // o vínculo da reserva é CAS desde 25/09: por padrão, a escrita venceu
     if (!('vincularSessaoAReserva' in retornos)) deps.vincularSessaoAReserva = async (...args) => { chamadas.push({ nome: 'vincularSessaoAReserva', args }); return true; };
+    if (!('vincularChargeIdAoCheckout' in retornos)) deps.vincularChargeIdAoCheckout = async (...args) => { chamadas.push({ nome: 'vincularChargeIdAoCheckout', args }); return true; };
     deps.inbox = {};
     for (const nome of Object.keys(dependenciasPadrao.inbox)) {
       deps.inbox[nome] = async (...args) => {
@@ -1688,9 +1778,12 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   // 7. ciclo novo de assinatura → cobranca_confirmada COMPLETO (H-02)
   const modeloAssinatura = { contratante_id: 'c1', plano_id: 'plano_1', documento: '12345678909', metodo_pagamento: 'assinatura', ciclo: 'QUARTERLY', valor_cobrado: 267.3, asaas_subscription_id: 'sub_1', contratantes: contratante };
   let cicloRegistrado = false;
+  // A assinatura JÁ nasceu (linha em `assinaturas`): o ciclo 2 é renovação, não `criada` (SEC-014).
+  const assinaturaExistente = { id: 'sub_1', status: 'ativa', plano_id: 'plano_1', ciclo: 'QUARTERLY' };
   deps = depsFalsas({
     buscarCobranca: () => (cicloRegistrado ? { ...modeloAssinatura, charge_id: 'pay_ciclo2', status: 'pendente' } : null),
     buscarCobrancaPorSubscriptionId: modeloAssinatura,
+    buscarAssinaturaPorId: assinaturaExistente,
     registrarCicloAssinatura: () => { cicloRegistrado = true; return { duplicado: false }; }
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_ciclo2', subscription: 'sub_1', value: 267.3 } }, deps);
@@ -1710,6 +1803,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   deps = depsFalsas({
     buscarCobranca: () => { chamadasBuscar += 1; return chamadasBuscar === 1 ? null : { ...modeloAssinatura, charge_id: 'pay_r', status: 'pendente' }; },
     buscarCobrancaPorSubscriptionId: modeloAssinatura,
+    buscarAssinaturaPorId: assinaturaExistente,
     registrarCicloAssinatura: () => ({ duplicado: true })
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_r', subscription: 'sub_1' } }, deps);
@@ -1729,7 +1823,10 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   // 10. acerto de troca: intenção primeiro
   deps = depsFalsas({ buscarCobranca: null, avancarIntencaoDeTrocaPorChargeId: true });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_acerto_1' } }, deps);
-  assert.deepEqual(deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args, ['pay_acerto_1', 'PAYMENT_CONFIRMED', 'RECEIVED'], 'o acerto é classificado com o status DA ASAAS junto (SEC-007)');
+  assert.deepEqual(deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args, ['pay_acerto_1', 'PAYMENT_CONFIRMED', 'RECEIVED', null], 'o acerto é classificado com o status DA ASAAS junto (SEC-007)');
+  deps = depsFalsas({ buscarCobranca: null, avancarIntencaoDeTrocaPorChargeId: true, naAsaas: { externalReference: 'troca:11111111-1111-4111-8111-111111111111' } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_acerto_orfao', externalReference: 'troca:22222222-2222-4222-8222-222222222222' } }, deps);
+  assert.equal(deps.chamou('avancarIntencaoDeTrocaPorChargeId')[0].args[3], 'troca:11111111-1111-4111-8111-111111111111', 'SEC-009: a referência que acha a intenção órfã é a DA ASAAS, não a do corpo');
   assert.equal(deps.chamou('registrarCicloAssinatura').length, 0);
 
   // 11. H-03: estorno do ACERTO avisa troca_revertida
@@ -1788,14 +1885,30 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
   assert.equal(deps.notificados()[0].payload.evento, 'criada');
   // segundo PAYMENT_CONFIRMED (reentrega já processada) sobre a mesma sessão: não amarra de novo,
   // e o `criada` sai com a MESMA chave (que já existe na outbox → nada é enviado)
-  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real' } });
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real' }, buscarAssinaturaPorId: { id: 'sub_real', status: 'ativa' } });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
-  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'reentrega: a assinatura não é amarrada de novo');
+  assert.equal(deps.chamou('upsertAssinatura').length, 0, 'reentrega: a assinatura (que JÁ existe) não é amarrada de novo');
   assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0);
   n = deps.notificados();
   assert.equal(n[0].payload.evento, 'criada', 'derivado da LINHA (tem asaas_checkout_id): o reprocessamento chega ao mesmo veredito');
   assert.equal(n[0].chave, 'assinatura|pay_real|criada|confirmado');
   assert.equal(n[0].aplicada, false);
+  // SEC-014: a MESMA reentrega, com a amarração que ficou PELA METADE (vínculo gravado, linha em
+  // `assinaturas` não) — a refeitura completa, em vez de se convencer de que já tinha amarrado
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real' } });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('upsertAssinatura').length, 1, 'SEC-014: sem linha em `assinaturas`, a reentrega AMARRA — era 404 no cancelar enquanto a Asaas cobrava');
+  assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_real');
+  // e uma falha na amarração LANÇA (a inbox refaz) — antes era só log, e a linha ficava `processado`
+  deps = depsFalsas({ buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real' }, upsertAssinatura: () => { throw new Error('banco piscou'); } });
+  await assert.rejects(processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps), /banco piscou/, 'SEC-014: a falha da amarração sobe para a inbox refazer');
+  // a antiga de uma renovação JÁ cancelada não é cancelada de novo na refeitura
+  deps = depsFalsas({
+    buscarCobranca: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado', asaas_subscription_id: 'sub_real', substitui_assinatura_id: 'sub_velha' },
+    buscarAssinaturaPorId: (id) => (id === 'sub_velha' ? { id, status: 'cancelada' } : null)
+  });
+  await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_real', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
+  assert.equal(deps.chamou('cancelarAssinaturaNaAsaas').length, 0, 'refeitura: a assinatura antiga que já está cancelada não recebe um segundo DELETE');
   // um evento NÃO-confirmado chegando primeiro vincula o charge, mas NÃO ativa nem cancela nada
   deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, substitui_assinatura_id: 'sub_antiga' } });
   await processarWebhook({ event: 'PAYMENT_AWAITING_RISK_ANALYSIS', payment: { id: 'pay_risco', subscription: 'sub_nova', checkoutSession: 'chk_real' } }, deps);
@@ -1816,6 +1929,7 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     buscarCobranca: () => (leituras++ === 0 ? null : cicloNovo),
     buscarCobrancaPorCheckoutId: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real', status: 'confirmado' },
     buscarCobrancaPorSubscriptionId: { ...cobrancaAssinaturaCrua, charge_id: 'pay_real' },
+    buscarAssinaturaPorId: { id: 'sub_real', status: 'ativa' }, // a assinatura já nasceu no 1º ciclo
     registrarCicloAssinatura: () => ({ duplicado: false })
   });
   await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_ciclo2', subscription: 'sub_real', checkoutSession: 'chk_real' } }, deps);
@@ -1926,6 +2040,26 @@ if (process.argv[1]?.endsWith('webhookController.js')) {
     assert.equal(deps.chamou('upsertAssinatura')[0].args[0].id, 'sub_39mjscz7vl2jwx7g');
     assert.equal(deps.chamou('upsertAssinatura')[0].args[0].ciclo, 'YEARLY');
     assert.equal(deps.notificados()[0].payload.evento, 'criada');
+  }
+
+  // 16c. SEC-011: o ciclo de vida da assinatura não some calado
+  {
+    const linha = { ...cobrancaAssinaturaCrua, asaas_checkout_id: 'chk_s', charge_id: null, asaas_subscription_id: null };
+    // o id da assinatura é gravado JÁ no primeiro evento, mesmo recusado
+    deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorCheckoutId: linha });
+    await processarWebhook({ event: 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', payment: { id: 'pay_s1', subscription: 'sub_s', checkoutSession: 'chk_s' } }, deps);
+    assert.deepEqual(deps.chamou('atualizarSubscriptionIdDaCobranca')[0]?.args, ['pay_s1', 'sub_s'], 'SEC-011: a assinatura fica apontada desde o 1º evento, mesmo com o cartão recusado');
+    assert.equal(deps.chamou('upsertAssinatura').length, 0, 'mas não NASCE — nasce só com dinheiro');
+    assert.ok(deps.chamou('registrarErro').some((c) => c.args[1]?.contexto === 'webhookController.primeiroCicloFalhou'), 'SEC-011: o 1º ciclo recusado chama um humano (a assinatura segue viva na Asaas)');
+    // ciclo de assinatura que ninguém daqui conhece: vira `erros`, não só log
+    deps = depsFalsas({ buscarCobranca: null, buscarCobrancaPorSubscriptionId: null });
+    await processarWebhook({ event: 'PAYMENT_CONFIRMED', payment: { id: 'pay_x9', subscription: 'sub_estranha' } }, deps);
+    assert.ok(deps.chamou('registrarErro').some((c) => c.args[1]?.contexto === 'webhookController.assinaturaDesconhecida'), 'SEC-011: pagamento de assinatura sem molde local vira `erros`');
+    // CHECKOUT_PAID não amarra um charge tirado do CORPO (o real não traz; o forjado traria um alheio)
+    deps = depsFalsas({ buscarCobrancaPorCheckoutId: linha });
+    await processarWebhook({ event: 'CHECKOUT_PAID', checkout: { id: 'chk_s', payment: { id: 'pay_de_outro_pedido' } } }, deps);
+    assert.equal(deps.chamou('vincularChargeIdAoCheckout').length, 0, 'CHECKOUT_PAID não vincula pagamento algum pelo corpo');
+    assert.equal(deps.chamou('marcarSessaoConcluida').length, 1, 'só carimba a sessão');
   }
 
   // 17. rotas: classificação bate com o ramo que roda

@@ -62,7 +62,7 @@ import {
   dadosDeCobrancaDaAssinatura,
   alterarPlanoAssinatura
 } from '../services/asaasService.js';
-import { criarIntencao } from '../services/trocaIntencaoService.js';
+import { criarIntencao, existeTrocaEmVoo } from '../services/trocaIntencaoService.js';
 import { calcularAcertoDeTroca, DIAS_DO_CICLO } from '../services/proporcionalService.js';
 import { notificarPlanoTrocado } from './webhookController.js';
 /* Os sete ciclos moram lá porque é lá que a assinatura NASCE, e o front
@@ -111,6 +111,7 @@ const dependenciasPadrao = {
   dadosDeCobrancaDaAssinatura,
   alterarPlanoAssinatura,
   criarIntencao,
+  existeTrocaEmVoo,
   notificarPlanoTrocado,
   registrarErro,
   /* Origem do front estático (Cloudflare Pages) — é onde `/troca`
@@ -169,6 +170,18 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
       );
       if (!assinatura) {
         return resposta.status(404).json({ erro: 'Nenhuma assinatura ativa ou pausada encontrada pra esse plano/documento.' });
+      }
+
+      /* Uma troca com dinheiro EM VOO — cobrando, esperando veredito,
+         aplicando, ou parada em reconciliação — trava a próxima (SEC-010,
+         25/09/2026). O arrendamento `trocando_em` só protege 5 minutos; um
+         acerto ambíguo dura mais que isso, e uma troca nova por cima dele
+         cobrava um SEGUNDO acerto ou mudava o plano debaixo do primeiro. */
+      if (await deps.existeTrocaEmVoo(assinatura.id)) {
+        return resposta.status(409).json({
+          codigo: 'troca_em_andamento',
+          erro: 'Há uma troca de plano desta assinatura com pagamento em andamento. Aguarde a conclusão antes de pedir outra.'
+        });
       }
 
       /* O plano de DESTINO vem da API do contratante, como na criação da
@@ -360,16 +373,28 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         });
       }
 
-      /* Fire-and-forget, como os outros avisos de assinatura. */
-      deps.notificarPlanoTrocado(contratante, {
-        planoId: planoNovoId,
-        planoAnterior: planoId,
-        documento,
-        valor: valorNovo,
-        ciclo: cicloNovo,
-        acertoCobrado: 0,
-        assinaturaId: assinatura.id
-      });
+      /* O aviso tem DONO (SEC-013, 25/09/2026): era chamado sem `await`
+         nem `catch`, e uma recusa do INSERT na outbox virava promessa
+         rejeitada sem dono — que o tratador do `server.js` transforma em
+         queda do processo, com a troca feita e o aviso perdido. O que se
+         espera é só a escrita local; falhou, a troca continua valendo e a
+         falha vira `erros`. */
+      try {
+        await deps.notificarPlanoTrocado(contratante, {
+          planoId: planoNovoId,
+          planoAnterior: planoId,
+          documento,
+          valor: valorNovo,
+          ciclo: cicloNovo,
+          acertoCobrado: 0,
+          assinaturaId: assinatura.id
+        });
+      } catch (erroNoAviso) {
+        await deps.registrarErro(
+          new Error(`troca de plano de ${assinatura.id} feita, e o aviso plano_trocado NÃO foi enfileirado: ${erroNoAviso.message} — reenviar à mão`),
+          { contexto: 'trocaPlano.avisoPerdido', rota: '/api/checkout/trocar-plano', metodo: 'POST' }
+        );
+      }
 
       resposta.json({
         assinaturaId: assinatura.id,
@@ -472,7 +497,11 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
         anotar('criarIntencao', [dados]);
         return { id: 'int_abc123', expiraEm: '2026-09-25T15:15:00.000Z' };
       },
-      notificarPlanoTrocado: (contratante, dados) => { anotar('notificarPlanoTrocado', [contratante, dados]); },
+      notificarPlanoTrocado: async (contratante, dados) => {
+        anotar('notificarPlanoTrocado', [contratante, dados]);
+        if (ajustes.avisoFalha) throw new Error('outbox recusou o INSERT');
+      },
+      existeTrocaEmVoo: async (id) => { anotar('existeTrocaEmVoo', [id]); return Boolean(ajustes.trocaEmVoo); },
       registrarErro: async (erro, ctx) => { anotar('registrarErro', [erro, ctx]); },
       origemFrontend: () => ajustes.semOrigem ? undefined : 'https://checkout.sancocore.com.br',
       hoje: () => HOJE
@@ -640,6 +669,16 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
   t = await rodar();
   conferir(t.args('buscarAssinaturaAtiva')[0][3].includes('pausada'), 'pausada entra na busca');
   conferir(!t.args('buscarAssinaturaAtiva')[0][3].includes('cancelada'), 'cancelada não');
+
+  /* --- SEC-010: troca com dinheiro em voo trava a próxima ------------ */
+  t = await rodar({ trocaEmVoo: true });
+  conferir(t.r.codigo === 409 && t.r.corpo?.codigo === 'troca_em_andamento', `troca em voo responde 409 troca_em_andamento, veio ${t.r.codigo}`);
+  conferir(!t.chamou('criarIntencao') && !t.chamou('alterarPlanoAssinatura'), 'SEC-010: nem cria outra intenção, nem muda o plano debaixo do acerto em curso');
+
+  /* --- SEC-013: o aviso da troca imediata que falha não vira promessa solta */
+  t = await rodar({ avisoFalha: true, plano: { nome: 'Barato', valor: 50, ciclo: 'MONTHLY' } });
+  conferir(t.r.codigo === undefined || t.r.codigo === null || t.r.codigo === 200, `a troca imediata continua respondendo 200 quando o aviso falha, veio ${t.r.codigo}`);
+  conferir(t.chamadas.some((c) => c.nome === 'registrarErro' && /aviso plano_trocado/.test(c.args[0]?.message ?? '')), 'e a falha do aviso vira `erros`');
 
   console.log(`trocaPlanoController: ${checagens} checagens OK`);
 }

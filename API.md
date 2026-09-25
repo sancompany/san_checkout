@@ -209,7 +209,7 @@ https://{CHECKOUT}/index.html?c={contratante_id}&assinatura={planoId}&renovar={t
 | `c` | sim | Seu `contratante_id` |
 | `pedido` | sim (avulso) | O id do pedido **no seu sistema** — o checkout nunca gera esse id |
 | `assinatura` | sim (recorrência) | O id do plano **no seu sistema** |
-| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra |
+| `renovar` | não | O token de renovação (seção 7.3) — **nunca** o literal `1`. Sem ele (ou com um valor que não confere), o link cria uma assinatura nova comum, sem trocar nem cancelar nenhuma outra — **e é recusado se o comprador já tem uma assinatura ativa ou pausada DESTE plano** (`409 assinatura_ja_existe`, desde 25/09/2026): duas assinaturas cobrando o mesmo cartão pelo mesmo plano não existem mais. Para trocar o cartão, o link leva o token |
 | `returnUrl` | não | Para onde mandar o comprador **depois de pagar** (seção 3.1) |
 
 Nenhum outro parâmetro é lido. Qualquer coisa a mais na URL é ignorada.
@@ -1462,6 +1462,7 @@ Os `409` são as recusas deliberadas, e cada uma tem motivo:
 | **A assinatura não tem cartão salvo** | É o caso do Pix Automático: sem cartão não há como cobrar o acerto sem interação do assinante — recusado ANTES de criar a intenção |
 | **A assinatura está encerrada na Asaas** | Não há plano a trocar. O caminho é assinar de novo |
 | **Não foi possível calcular o acerto** | Vem com `motivo`. Significa dado incoerente (ciclo desconhecido, vencimento mais longe que o ciclo inteiro) — e aqui o checkout **recusa em vez de dar a troca de graça** |
+| **`troca_em_andamento`** (desde 25/09/2026) | Uma troca anterior desta assinatura tem o acerto **com dinheiro em trânsito** — cobrando, esperando o veredito do cartão, aplicando, ou parada para conferência humana. Uma troca nova por cima dela cobraria um segundo acerto ou mudaria o plano debaixo do primeiro. Espere a anterior concluir (o evento `plano_trocado` avisa). Um link de aprovação ainda **não aprovado** não bloqueia nada — você pode gerar outro |
 
 > **Só o seu projeto aciona `POST /trocar-plano`**, como em cancelar/
 > pausar/retomar — o assinante não escolhe o PRÓPRIO PLANO pelo

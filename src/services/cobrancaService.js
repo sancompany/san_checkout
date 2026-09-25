@@ -559,12 +559,20 @@ export async function vincularSessaoAReserva(reservaId, { asaasCheckoutId = null
 /** Preenche o charge_id de verdade quando o webhook CHECKOUT_PAID
  *  chegar — até então a cobrança só tinha asaas_checkout_id. */
 export async function vincularChargeIdAoCheckout(asaasCheckoutId, chargeId) {
-  const { error } = await supabase
+  /* CAS e LANÇA (SEC-014, 25/09/2026). Antes: `update` incondicional e o
+     erro só no log — um ciclo seguinte com `checkoutSession` podia
+     sobrescrever o `charge_id` da primeira cobrança, e uma falha de banco
+     deixava a linha sem vínculo com a inbox marcando o evento como
+     processado. `false` é "outro já vinculou": quem chama relê. */
+  const { data, error } = await supabase
     .from('cobrancas')
     .update({ charge_id: chargeId, atualizado_em: new Date().toISOString() })
-    .eq('asaas_checkout_id', asaasCheckoutId);
+    .eq('asaas_checkout_id', asaasCheckoutId)
+    .is('charge_id', null)
+    .select('id');
 
-  if (error) console.error('[cobrancaService.vincularChargeIdAoCheckout]', error.message);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Atualiza status por asaas_checkout_id — usado pelos eventos
@@ -641,7 +649,8 @@ export async function atualizarSubscriptionIdDaCobranca(chargeId, subscriptionId
     .update({ asaas_subscription_id: subscriptionId, atualizado_em: new Date().toISOString() })
     .eq('charge_id', chargeId);
 
-  if (error) console.error('[cobrancaService.atualizarSubscriptionIdDaCobranca]', error.message);
+  // Lança (SEC-014): o vínculo pela metade é o que deixava a assinatura órfã.
+  if (error) throw error;
 }
 
 /** Busca a cobrança mais recente de uma assinatura — serve de "molde"

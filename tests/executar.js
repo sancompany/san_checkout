@@ -75,6 +75,10 @@ const SUITES = [
   'tests/saida-nunca-segue-redirecionamento.js', // CR-04: a outbox seguia 307 levando CPF e assinatura para dentro (SEC-006/021)
   'tests/identificador-canonico-em-toda-fronteira.js', // CR-01: `../` e `%2F` num id viravam outro caminho autenticado (SEC-001/003/017/026)
   'tests/webhook-confere-na-asaas.js', // CR-05: o corpo do evento confirmava dinheiro; estorno antes da confirmação era descartado (SEC-007/008/019, JULES-004)
+  'tests/acerto-de-troca-nunca-fica-orfao.js', // CR-02: processo morto entre cobrar o acerto e gravar o charge_id deixava a troca órfã para sempre (SEC-009/010)
+  'tests/nenhuma-promessa-sem-dono.js', // CR-06: aviso sem await nem catch derrubava o processo (SEC-013) — varre src/ inteiro
+  'tests/uma-assinatura-viva-por-plano.js', // CR-08: reabrir o link do plano abria uma SEGUNDA assinatura no mesmo cartão (SEC-012)
+  'tests/assinatura-nasce-inteira.js', // CR-06/08: falha de banco na 1ª confirmação deixava a assinatura órfã, e o 1º ciclo recusado a deixava invisível (SEC-014/011)
   'tests/rotas-http-respondem-como-prometido.js', // a pilha do Express montada de verdade: login por token, guarda, teto, 404
   'tests/documento-e-uma-chave-so.js', // CPF pontuado e CPF em dígitos não podem ser duas chaves para a mesma pessoa
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas

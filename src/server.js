@@ -362,9 +362,13 @@ const UM_DIA_MS = 24 * 60 * 60 * 1000;
 
      - **promessa rejeitada sem `catch`** (`unhandledRejection`), e o
        projeto tem fire-and-forget deliberado no caminho do dinheiro —
-       aviso ao contratante, auditoria do webhook, expurgo, retentativa
-       de notificação agendada por `setTimeout`. Todos têm `catch` hoje;
-       o próximo que alguém escrever pode não ter.
+       aviso ao contratante, auditoria do webhook, expurgo, a primeira
+       tentativa da outbox. ⚠️ Esta linha dizia "todos têm `catch` hoje",
+       e três não tinham (SEC-013, achado na Estação 6 em 25/09/2026): os
+       avisos de cancelamento e de troca de plano eram chamados sem
+       `await` nem `catch`. Corrigidos, e desde então a regra é conferida
+       por teste (`tests/nenhuma-promessa-sem-dono.js`) em vez de
+       afirmada aqui.
      - **exceção fora de requisição** (`uncaughtException`): um callback
        de `setInterval`, um `setTimeout`, o topo de um módulo.
 
@@ -443,21 +447,32 @@ if (process.env.CHECKOUT_SEM_LISTEN === '1') {
   // derruba nada: o taxaService mantém a tabela padrão como fallback.
   // ponytail: setInterval simples em vez de agendador — o processo do
   // serviço reinicia sozinho de vez em quando e o boot já ressincroniza.
-  sincronizarTaxasAsaas();
-  setInterval(sincronizarTaxasAsaas, UM_DIA_MS).unref();
+  //
+  // Toda tarefa de fundo tem DONO (SEC-013, 25/09/2026): a promessa dela
+  // termina num `catch`, nunca solta — uma rejeição sem dono cai no
+  // `unhandledRejection` acima e derruba o processo. Conferido por teste
+  // (`tests/nenhuma-promessa-sem-dono.js`).
+  const emSegundoPlano = (rotulo, tarefa) => () => Promise.resolve()
+    .then(tarefa)
+    .catch((erro) => console.error(`[${rotulo}] falhou:`, erro?.message ?? erro));
+  const rodarSincronizacaoDeTaxas = emSegundoPlano('taxas', sincronizarTaxasAsaas);
+  rodarSincronizacaoDeTaxas();
+  setInterval(rodarSincronizacaoDeTaxas, UM_DIA_MS).unref();
 
   // O log de auditoria do webhook é diagnóstico, não dado fiscal: não
   // herda os 5 anos de retenção das cobranças. Pega carona no mesmo
   // ciclo de 24h em vez de ganhar agendador próprio, e roda no boot
   // porque o processo da hospedagem reinicia sozinho — não dá para contar
   // com um intervalo de 24h ser alcançado.
-  expurgarAuditoria();
-  setInterval(expurgarAuditoria, UM_DIA_MS).unref();
+  const rodarExpurgoDaAuditoria = emSegundoPlano('expurgo-auditoria', expurgarAuditoria);
+  rodarExpurgoDaAuditoria();
+  setInterval(rodarExpurgoDaAuditoria, UM_DIA_MS).unref();
 
   // Captura de erro tem retenção própria, mais curta (30 dias): é
   // diagnóstico, não rastro de cobrança.
-  expurgarErros();
-  setInterval(expurgarErros, UM_DIA_MS).unref();
+  const rodarExpurgoDeErros = emSegundoPlano('expurgo-erros', expurgarErros);
+  rodarExpurgoDeErros();
+  setInterval(rodarExpurgoDeErros, UM_DIA_MS).unref();
 
   /* DADO PESSOAL DO COMPRADOR — cinco anos (Lei 10,
      `docs/inventario-de-dados.md` §6). Até 17/09/2026 o prazo estava

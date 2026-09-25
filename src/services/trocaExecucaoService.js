@@ -36,7 +36,8 @@ import {
   cobrarNoCartaoSalvo,
   alterarPlanoAssinatura,
   consultarAssinaturaNaAsaas,
-  consultarStatus
+  consultarStatus,
+  foiRecusaLimpaDaAsaas
 } from './asaasService.js';
 import { classificarPagamentoDoAcerto } from './classificacaoFinanceiraService.js';
 import { registrarAcertoDeTroca } from './cobrancaService.js';
@@ -54,6 +55,7 @@ const dependenciasPadrao = {
   reivindicarProcessamento: intencaoService.reivindicarProcessamento,
   expirarSePassouDoPrazo: intencaoService.expirarSePassouDoPrazo,
   marcarStale: intencaoService.marcarStale,
+  marcarStaleSePendente: intencaoService.marcarStaleSePendente,
   registrarChargeId: intencaoService.registrarChargeId,
   marcarConfirmada: intencaoService.marcarConfirmada,
   marcarRecusada: intencaoService.marcarRecusada,
@@ -72,6 +74,7 @@ const dependenciasPadrao = {
   alterarPlanoAssinatura,
   consultarAssinaturaNaAsaas,
   consultarStatus,
+  foiRecusaLimpaDaAsaas,
   registrarAcertoDeTroca,
   notificarPlanoTrocado,
   registrarErro
@@ -170,21 +173,33 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
 
     await deps.marcarConcluida(intencao.id);
 
-    const contratante = await deps.buscarContratante(intencao.contratante_id);
-    if (contratante) {
-      /* Fire-and-forget, como todo aviso de assinatura já é neste
-         projeto (§2.7.1) — quem aprovou já recebeu a resposta da rota. */
-      deps.notificarPlanoTrocado(contratante, {
-        planoId: intencao.plano_novo_id,
-        planoAnterior: intencao.plano_id,
-        documento: documentoAssinante,
-        valor: Number(intencao.valor_novo),
-        ciclo: intencao.ciclo_novo,
-        acertoCobrado: Number(intencao.valor_acerto),
-        assinaturaId: intencao.assinatura_id,
-        chargeId: intencao.charge_id ?? null,
-        intencaoId: intencao.id
-      });
+    /* O aviso tem DONO (SEC-013, 25/09/2026). Era chamado sem `await` nem
+       `catch`: `enfileirarNotificacao` lança quando o banco recusa, a
+       promessa rejeitada não tinha quem a observasse, e o tratador de
+       `unhandledRejection` do `server.js` derrubava o processo — com o
+       plano já trocado e o aviso ao contratante nunca gravado. O que
+       espera aqui é só a escrita LOCAL na outbox; a rede continua com o
+       worker. Falhou: a troca está feita e um humano reenvia o aviso. */
+    try {
+      const contratante = await deps.buscarContratante(intencao.contratante_id);
+      if (contratante) {
+        await deps.notificarPlanoTrocado(contratante, {
+          planoId: intencao.plano_novo_id,
+          planoAnterior: intencao.plano_id,
+          documento: documentoAssinante,
+          valor: Number(intencao.valor_novo),
+          ciclo: intencao.ciclo_novo,
+          acertoCobrado: Number(intencao.valor_acerto),
+          assinaturaId: intencao.assinatura_id,
+          chargeId: intencao.charge_id ?? null,
+          intencaoId: intencao.id
+        });
+      }
+    } catch (erroNoAviso) {
+      await deps.registrarErro(
+        new Error(`troca de plano ${intencao.id} CONCLUÍDA, e o aviso plano_trocado ao contratante NÃO foi enfileirado: ${erroNoAviso.message} — reenviar à mão`),
+        { contexto: 'trocaExecucaoService.avisoPerdido', rota: '/troca/aprovar', metodo: 'POST' }
+      );
     }
   }
 
@@ -271,7 +286,17 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
       return { tipo: 'ja_processando', intencao };
     }
 
-    const reivindicada = await deps.reivindicarProcessamento(intencaoId);
+    let reivindicada;
+    try {
+      reivindicada = await deps.reivindicarProcessamento(intencaoId);
+    } catch (erro) {
+      /* Outra intenção DESTA assinatura já tem dinheiro em trânsito
+         (índice único da 0019, SEC-010): aprovar esta cobraria um segundo
+         acerto. Nada foi cobrado; o link fica STALE. */
+      if (erro?.code !== 'TROCA_EM_VOO') throw erro;
+      await deps.marcarStaleSePendente(intencaoId);
+      return { tipo: 'stale' };
+    }
     if (!reivindicada) {
       // Perdeu a corrida (duplo clique) OU o prazo venceu bem agora.
       const atual = await deps.buscarIntencao(intencaoId);
@@ -336,28 +361,23 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
 
     /* A partir daqui existe risco de AMBIGUIDADE: se `cobrarNoCartaoSalvo`
        lançar (timeout, 5xx da Asaas), não dá para saber se o cartão foi
-       cobrado ou não — a resposta se perdeu, não a certeza de que nada
-       aconteceu. Achado no ciclo de revisão do PR #36: a versão síncrona
-       antiga (`trocaPlanoController.js`, até esta reescrita) tinha um
-       `catch` dedicado a isso — `if (arrendamentoMeu && !chargeIdDoAcerto)
-       liberarTroca(...)` — e esta função não tinha NENHUM. Sem ele, uma
-       falha de rede aqui deixava a intenção presa em `PROCESSING_PAYMENT`
-       **sem `charge_id`** — e o sweeper pula exatamente essa combinação
-       (`trocaSweeperService.js`: `if (!intencao.charge_id) continue;`),
-       porque sem `charge_id` não há o que reconsultar. A intenção ficaria
-       órfã para sempre, e o pagador veria "processando" indefinidamente.
-       Sem certeza de que nada foi cobrado, o lado seguro é sempre
-       `RECONCILIATION_REQUIRED` — nunca fingir que ficou tudo igual a
-       antes.
+       cobrado — a resposta se perdeu, não a certeza de que nada
+       aconteceu. Três desfechos, e só um deles é "nada foi cobrado":
 
-       O `try` cobre `registrarChargeId` também, não só `cobrarNoCartaoSalvo`
-       — achado no review do PR #36 pelo Codex: se a cobrança tiver
-       sucesso mas a GRAVAÇÃO do `chargeId` falhar (Supabase fora do ar
-       bem naquele instante), a versão anterior deixava a exceção escapar
-       SEM liberar o arrendamento nem marcar reconciliação — a mesma
-       órfã de antes, só que agora com o cartão comprovadamente cobrado.
-       Por isso o erro registrado sempre leva o `chargeId` que a Asaas
-       devolveu, mesmo quando não foi possível persisti-lo na linha. */
+       - RECUSA LIMPA (4xx com corpo, `foiRecusaLimpaDaAsaas`): a Asaas
+         disse não ao pedido. Nada cobrado → STALE, arrendamento devolvido.
+       - AMBÍGUO (rede, timeout, 5xx, 429), e o caso de a cobrança ter
+         saído e a GRAVAÇÃO do `charge_id` ter falhado: a intenção FICA em
+         `PROCESSING_PAYMENT` sem `charge_id`, e o arrendamento da
+         assinatura FICA com ela (SEC-010, 25/09/2026). Até aqui ele era
+         devolvido e a intenção ia para `RECONCILIATION_REQUIRED`: o
+         contratante podia pedir a troca de novo, o assinante aprovar de
+         novo, e um segundo acerto saía — o `PAYMENT_CONFIRMED` do
+         primeiro era descartado sem `charge_id` conhecido. Agora quem
+         resolve é o sweeper, pela referência `troca:<id>` que a cobrança
+         leva (SEC-009): achou → vincula e classifica; provou que não
+         existe → STALE. Nunca uma segunda cobrança às cegas.
+       - COBRADO e gravado: segue para o veredito. */
     let cobranca;
     try {
       cobranca = await deps.cobrarNoCartaoSalvo({
@@ -368,25 +388,53 @@ export function criarExecutorDeTroca(deps = dependenciasPadrao) {
         referenciaExterna: `troca:${intencao.id}`,
         split
       });
-      /* O charge_id é gravado ANTES de classificar — é o que permite o
-         webhook achar esta intenção mesmo enquanto o veredito ainda é
-         UNKNOWN (ver `webhookController.js`, "acerto de troca"). */
-      if (cobranca.chargeId) await deps.registrarChargeId(intencao.id, cobranca.chargeId);
-    } catch (erroDeRede) {
-      await deps.liberarTroca(assinatura.id);
+    } catch (erroNaCobranca) {
+      if (deps.foiRecusaLimpaDaAsaas(erroNaCobranca)) {
+        await deps.liberarTroca(assinatura.id);
+        await deps.marcarStale(intencao.id);
+        await deps.registrarErro(
+          new Error(`a Asaas RECUSOU criar o acerto da intenção ${intencao.id} (assinatura ${assinatura.id}, valor ${intencao.valor_acerto}): ${erroNaCobranca.message} — nada foi cobrado`),
+          { contexto: 'trocaExecucaoService.cobrancaRecusada', rota: '/troca/aprovar', metodo: 'POST' }
+        );
+        return { tipo: 'stale' };
+      }
       await deps.registrarErro(
         new Error(
-          `cobrarNoCartaoSalvo/registrarChargeId falhou para a intenção ${intencao.id} (assinatura ${assinatura.id}, ` +
-          `valor ${intencao.valor_acerto}) — chargeId conhecido: ${cobranca?.chargeId ?? 'nenhum'}. ` +
-          `NÃO SE SABE se o cartão foi cobrado quando não há chargeId: ${erroDeRede.message}. ` +
-          `Confira na Asaas por externalReference "troca:${intencao.id}"` +
-          (cobranca?.chargeId ? ` ou pelo id ${cobranca.chargeId}` : '') +
-          ' antes de qualquer nova tentativa.'
+          `cobrarNoCartaoSalvo ficou AMBÍGUO para a intenção ${intencao.id} (assinatura ${assinatura.id}, valor ${intencao.valor_acerto}): ` +
+          `${erroNaCobranca.message}. NÃO SE SABE se o cartão foi cobrado. A intenção fica em processamento e o sweeper confere na Asaas ` +
+          `pela referência "troca:${intencao.id}" — nenhuma nova cobrança é feita.`
         ),
-        { contexto: 'trocaExecucaoService.cobrancaComFalhaDeRede', rota: '/troca/aprovar', metodo: 'POST' }
+        { contexto: 'trocaExecucaoService.cobrancaAmbigua', rota: '/troca/aprovar', metodo: 'POST' }
       );
-      await deps.marcarReconciliacaoNecessaria(intencao.id, 'PROCESSING_PAYMENT');
-      return { tipo: 'reconciliacao_necessaria', intencao };
+      return { tipo: 'ambigua', intencao };
+    }
+
+    /* O charge_id é gravado ANTES de classificar — é o que permite o
+       webhook achar esta intenção mesmo enquanto o veredito ainda é
+       UNKNOWN (ver `webhookController.js`, "acerto de troca"). */
+    if (cobranca.chargeId) {
+      let gravou;
+      try {
+        gravou = await deps.registrarChargeId(intencao.id, cobranca.chargeId);
+      } catch (erroAoGravar) {
+        await deps.registrarErro(
+          new Error(
+            `o acerto da intenção ${intencao.id} FOI COBRADO (${cobranca.chargeId}) e o charge_id não foi gravado: ${erroAoGravar.message}. ` +
+            `A intenção fica em processamento; o sweeper a acha pela referência "troca:${intencao.id}" ou pelo id ${cobranca.chargeId}.`
+          ),
+          { contexto: 'trocaExecucaoService.chargeIdNaoGravado', rota: '/troca/aprovar', metodo: 'POST' }
+        );
+        return { tipo: 'ambigua', intencao };
+      }
+      if (!gravou) {
+        /* A intenção JÁ tinha outro charge_id: este é um SEGUNDO acerto. */
+        await deps.registrarErro(
+          new Error(`a intenção ${intencao.id} já estava com outro charge_id, e ${cobranca.chargeId} é um SEGUNDO acerto cobrado — estornar um`),
+          { contexto: 'trocaExecucaoService.segundoAcerto', rota: '/troca/aprovar', metodo: 'POST' }
+        );
+        await deps.marcarReconciliacaoNecessaria(intencao.id, 'PROCESSING_PAYMENT');
+        return { tipo: 'reconciliacao_necessaria', intencao };
+      }
     }
 
     intencao = { ...intencao, charge_id: cobranca.chargeId ?? null };
@@ -471,6 +519,7 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
       buscarIntencao: async (id) => { anotar('buscarIntencao', [id]); return intencoes.get(id) ?? null; },
       reivindicarProcessamento: async (id) => {
         anotar('reivindicarProcessamento', [id]);
+        if (ajustes.trocaEmVoo) throw Object.assign(new Error('já existe outra troca'), { code: 'TROCA_EM_VOO' });
         if (ajustes.perdeCorridaNoProcessamento) return null;
         const i = intencoes.get(id);
         if (!i || i.status !== 'PENDING_APPROVAL') return null;
@@ -485,10 +534,20 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
         return { ...i };
       },
       marcarStale: async (id) => { anotar('marcarStale', [id]); intencoes.get(id).status = 'STALE'; },
+      marcarStaleSePendente: async (id) => {
+        anotar('marcarStaleSePendente', [id]);
+        const i = intencoes.get(id);
+        if (i.status !== 'PENDING_APPROVAL') return null;
+        i.status = 'STALE';
+        return { ...i };
+      },
       registrarChargeId: async (id, chargeId) => {
         anotar('registrarChargeId', [id, chargeId]);
         if (ajustes.registrarChargeIdFalha) throw new Error('Supabase indisponível');
-        intencoes.get(id).charge_id = chargeId;
+        const i = intencoes.get(id);
+        if (ajustes.outroChargeId || (i.charge_id && i.charge_id !== chargeId)) return false;
+        i.charge_id = chargeId;
+        return true;
       },
       marcarConfirmada: async (id) => {
         anotar('marcarConfirmada', [id]);
@@ -559,6 +618,7 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
       cobrarNoCartaoSalvo: async (dados) => {
         anotar('cobrarNoCartaoSalvo', [dados]);
         if (ajustes.cobrancaFalhaDeRede) throw new Error('fetch failed');
+        if (ajustes.cobrancaRecusadaLimpa) throw Object.assign(new Error('Cartão recusado pela validação'), { status: 400, corpoAsaas: { errors: [{ code: 'invalid_creditCard' }] } });
         return { chargeId: 'pay_1', status: ajustes.statusDaCobranca ?? 'CONFIRMED', valor: dados.valor };
       },
       alterarPlanoAssinatura: async (id, dados) => { anotar('alterarPlanoAssinatura', [id, dados]); if (!ajustes.putNaoPega) Object.assign(asaas, dados); },
@@ -567,8 +627,12 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
         return { ...asaas, encerrada: Boolean(ajustes.assinaturaEncerradaNaAsaas) };
       },
       consultarStatus: async (chargeId) => { anotar('consultarStatus', [chargeId]); return { status: ajustes.statusNaReclassificacao ?? 'CONFIRMED' }; },
+      foiRecusaLimpaDaAsaas,
       registrarAcertoDeTroca: async (dados) => { anotar('registrarAcertoDeTroca', [dados]); return { registrado: !ajustes.registroFalha }; },
-      notificarPlanoTrocado: (contratante, dados) => { anotar('notificarPlanoTrocado', [contratante, dados]); },
+      notificarPlanoTrocado: async (contratante, dados) => {
+        anotar('notificarPlanoTrocado', [contratante, dados]);
+        if (ajustes.avisoFalha) throw new Error('outbox recusou o INSERT');
+      },
       registrarErro: async (erro, ctx) => { anotar('registrarErro', [erro, ctx]); }
     };
 
@@ -722,13 +786,28 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
      combinação (não tem o que reconsultar) — órfã para sempre. Não dá
      para saber se o cartão foi cobrado, então o único destino seguro é
      RECONCILIATION_REQUIRED, nunca fingir que nada aconteceu. -------- */
+  /* Revisto em 25/09/2026 (SEC-009/010): a intenção FICA em
+     PROCESSING_PAYMENT, e o arrendamento FICA com ela — o sweeper resolve
+     pela referência `troca:<id>` (autoteste do sweeper e
+     `tests/acerto-de-troca-nunca-fica-orfao.js`). Devolver o arrendamento
+     aqui é o que deixava o contratante pedir a troca de novo e o
+     assinante pagar um segundo acerto. */
   t = costura({ cobrancaFalhaDeRede: true });
   r = await t.iniciarCobranca('int_1');
-  conferir(r.tipo === 'reconciliacao_necessaria', `falha de rede na cobrança vira "reconciliacao_necessaria", veio ${r.tipo}`);
-  conferir(t.intencoes.get('int_1').status === 'RECONCILIATION_REQUIRED', 'a intenção NUNCA fica presa em PROCESSING_PAYMENT sem chargeId');
-  conferir(t.chamou('liberarTroca'), 'e o arrendamento da assinatura é devolvido — nada mais vai tentar cobrar por este caminho');
-  conferir(t.chamou('registrarErro'), 'o estado ambíguo é registrado, com o que dá para achar a cobrança na Asaas se ela tiver acontecido');
+  conferir(r.tipo === 'ambigua', `falha de rede na cobrança é AMBÍGUA, veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'PROCESSING_PAYMENT', 'a intenção fica em processamento — quem resolve é o sweeper, pela referência');
+  conferir(!t.chamou('liberarTroca'), 'SEC-010: o arrendamento NÃO é devolvido — o cartão pode ter sido cobrado');
+  conferir(!t.chamou('marcarReconciliacaoNecessaria'), 'e não vai para RECONCILIATION_REQUIRED, de onde nada automático a tiraria');
+  conferir(t.chamadas.find((c) => c.nome === 'registrarErro')?.args[0].message.includes('troca:int_1'), 'o estado ambíguo é registrado, com a referência que acha a cobrança na Asaas');
   conferir(!t.chamou('registrarChargeId'), 'sem chargeId nenhum — a chamada nunca chegou a devolver um');
+
+  /* --- 10b'. recusa LIMPA da Asaas (4xx com corpo): nada foi cobrado —
+     aí sim STALE e o arrendamento devolvido. ------------------------ */
+  t = costura({ cobrancaRecusadaLimpa: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `recusa limpa vira "stale", veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'STALE', 'a intenção fecha — o link não cobra mais nada');
+  conferir(t.chamou('liberarTroca'), 'e o arrendamento é devolvido: a Asaas disse NÃO, nada está em trânsito');
 
   /* --- 10c. a cobrança teve SUCESSO, mas GRAVAR o chargeId falhou —
      achado no review do PR #36 pelo Codex: a versão anterior só tinha
@@ -739,13 +818,28 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
      `chargeId` existe, só não foi possível persisti-lo). --------------- */
   t = costura({ registrarChargeIdFalha: true });
   r = await t.iniciarCobranca('int_1');
-  conferir(r.tipo === 'reconciliacao_necessaria', `falha ao gravar o chargeId também vira "reconciliacao_necessaria", veio ${r.tipo}`);
-  conferir(t.intencoes.get('int_1').status === 'RECONCILIATION_REQUIRED', 'a intenção nunca fica presa em PROCESSING_PAYMENT');
-  conferir(t.chamou('liberarTroca'), 'e o arrendamento é devolvido mesmo com o cartão já cobrado');
+  conferir(r.tipo === 'ambigua', `cobrado e não gravado fica AMBÍGUO até o sweeper vincular, veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'PROCESSING_PAYMENT', 'a intenção fica em processamento (o sweeper a acha pela referência)');
+  conferir(!t.chamou('liberarTroca'), 'SEC-010: e o arrendamento FICA — o cartão foi cobrado');
   conferir(
     t.chamadas.find((c) => c.nome === 'registrarErro').args[0].message.includes('pay_1'),
-    'o erro registrado leva o chargeId REAL da Asaas (pay_1), mesmo sem ter conseguido gravá-lo na linha — é o único jeito de achar a cobrança depois'
+    'o erro registrado leva o chargeId REAL da Asaas (pay_1), mesmo sem ter conseguido gravá-lo na linha'
   );
+  conferir(!t.chamou('marcarConfirmada') && !t.chamou('aplicarTrocaDePlano'), 'e nada é aplicado sobre um vínculo que não foi gravado');
+
+  /* --- 10d. a intenção já tinha OUTRO charge_id: segundo acerto ------ */
+  t = costura({ outroChargeId: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'reconciliacao_necessaria', `segundo acerto na mesma intenção escala, veio ${r.tipo}`);
+  conferir(/SEGUNDO acerto/.test(t.chamadas.find((c) => c.nome === 'registrarErro')?.args[0].message ?? ''), 'e é denunciado para estorno');
+  conferir(!t.chamou('aplicarTrocaDePlano'), 'e nada é aplicado');
+
+  /* --- 10e. outra troca DESTA assinatura em voo (índice da 0019) ----- */
+  t = costura({ trocaEmVoo: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'stale', `aprovação com outra troca em voo vira "stale", veio ${r.tipo}`);
+  conferir(t.intencoes.get('int_1').status === 'STALE', 'o link fecha');
+  conferir(!t.chamou('cobrarNoCartaoSalvo'), 'SEC-010: e o segundo acerto NUNCA é cobrado');
 
   /* --- 11. PUT que a Asaas ignora em silêncio (mesmo furo da versão
      síncrona, agora do lado da aplicação) ----------------------------- */
@@ -792,6 +886,13 @@ if (process.argv[1]?.endsWith('trocaExecucaoService.js')) {
     'MESMO NA RETOMADA de crash (sem nada pré-anexado pelo chamador), o documento do assinante chega certo — ' +
     'era exatamente esta a lacuna antes de aplicarNaAsaasEConcluir buscar a assinatura por conta própria'
   );
+
+  /* --- 15. SEC-013: o aviso ao contratante falha — a troca continua feita,
+     a falha vira `erros`, e NADA sobe como promessa rejeitada sem dono. */
+  t = costura({ avisoFalha: true });
+  r = await t.iniciarCobranca('int_1');
+  conferir(r.tipo === 'confirmada' && t.intencoes.get('int_1').status === 'COMPLETED', 'o aviso que falha não desfaz nem esconde a troca feita');
+  conferir(/aviso plano_trocado/.test(t.chamadas.find((c) => c.nome === 'registrarErro')?.args[0].message ?? ''), 'e a falha do aviso é registrada para reenvio');
 
   console.log(`trocaExecucaoService: ${checagens} checagens OK`);
 }

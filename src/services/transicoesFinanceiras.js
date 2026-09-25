@@ -164,6 +164,24 @@ if (process.argv[1]?.endsWith('transicoesFinanceiras.js')) {
   }
   for (const t of STATUS_TERMINAIS) assert.deepEqual(TRANSICOES[t], [], `terminal ${t} não pode ter saída`);
   assert.deepEqual(TRANSICOES.expirado, ['confirmado'], 'expirado (prazo LOCAL) ainda aceita a confirmação tardia da pop-up — e só ela');
+
+  // o caminho do reconciliador dirigido (JULES-004): só por transições permitidas, o mais curto
+  assert.deepEqual(caminhoDeTransicoes('pendente', 'estornado'), ['confirmado', 'estornado'], 'pendente → estornado passa por confirmado: foi pago antes de ser devolvido');
+  assert.deepEqual(caminhoDeTransicoes('pendente', 'confirmado'), ['confirmado']);
+  assert.deepEqual(caminhoDeTransicoes('em_analise', 'estornado_parcialmente'), ['confirmado', 'estornado_parcialmente']);
+  assert.deepEqual(caminhoDeTransicoes('confirmado', 'confirmado'), [], 'já está lá: nenhum passo');
+  assert.equal(caminhoDeTransicoes('estornado', 'confirmado'), null, 'terminal não tem caminho de volta — o reconciliador chama um humano');
+  assert.equal(caminhoDeTransicoes('cancelado', 'confirmado'), null);
+  assert.equal(caminhoDeTransicoes('pendente', 'inexistente'), null, 'destino fora do vocabulário: sem caminho');
+  for (const de of STATUS_FINANCEIROS) {
+    for (const para of STATUS_FINANCEIROS) {
+      const caminho = caminhoDeTransicoes(de, para);
+      if (!caminho) continue;
+      let atual = de;
+      for (const passo of caminho) { assert.ok(transicaoPermitida(atual, passo), `caminho ${de}→${para}: ${atual}→${passo} tem de ser permitida`); atual = passo; }
+      assert.equal(atual, para);
+    }
+  }
   assert.ok(transicaoPermitida('estorno_negado', 'confirmado'), 'estorno negado devolve a cobrança a confirmado — não é beco sem saída');
 
   // o caminho feliz

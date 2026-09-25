@@ -12,6 +12,7 @@
 
 import { supabase } from '../config/supabase.js';
 import { hojeCivil, diaCivilAntes, inicioDoDiaCivil } from '../utils/diaCivil.js';
+import { exigirIdCanonico } from '../utils/validadores.js';
 
 /** TTL duro da aprovação. */
 const MINUTOS_DE_APROVACAO = 15;
@@ -135,8 +136,40 @@ export async function reivindicarProcessamento(id) {
     .gt('expira_em', new Date().toISOString())
     .select('*');
 
+  /* O índice único da migration 0019 (uma intenção EM VOO por
+     assinatura, SEC-010): outra intenção desta assinatura já está
+     cobrando, esperando veredito ou aplicando. Não é falha de banco — é a
+     guarda que impede o segundo acerto. Quem chama marca esta como STALE. */
+  if (error?.code === '23505') {
+    const emVoo = new Error('já existe outra troca de plano em andamento para esta assinatura');
+    emVoo.code = 'TROCA_EM_VOO';
+    throw emVoo;
+  }
   if (error) throw error;
   return Array.isArray(data) && data.length === 1 ? data[0] : null;
+}
+
+/** Os estados em que uma intenção pode ter dinheiro em trânsito — os do
+ *  índice único da migration 0019. `RECONCILIATION_REQUIRED` entra: até
+ *  um humano decidir, ninguém cobra outro acerto desta assinatura. */
+export const ESTADOS_EM_VOO = ['PROCESSING_PAYMENT', 'PAYMENT_UNKNOWN', 'PAYMENT_CONFIRMED', 'APPLYING_PLAN', 'RECONCILIATION_REQUIRED'];
+
+/** Existe intenção desta assinatura com dinheiro em trânsito? (SEC-010) */
+export async function existeTrocaEmVoo(assinaturaId) {
+  const { data, error } = await supabase
+    .from('intencoes_troca_plano')
+    .select('id')
+    .eq('assinatura_id', assinaturaId)
+    .in('status', ESTADOS_EM_VOO)
+    .limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
+/** PENDING_APPROVAL → STALE: a aprovação chegou com outra troca da mesma
+ *  assinatura em voo. Nada foi cobrado. */
+export async function marcarStaleSePendente(id) {
+  return transicionar(id, 'PENDING_APPROVAL', 'STALE');
 }
 
 /** PENDING_APPROVAL → EXPIRED, só quando o prazo já passou — usada
@@ -167,12 +200,21 @@ export async function marcarStale(id) {
  *  de saber a classificação. É o que permite o webhook achar esta
  *  intenção mesmo enquanto o veredito ainda é UNKNOWN. */
 export async function registrarChargeId(id, chargeId) {
-  const { error } = await supabase
+  /* CAS (SEC-009, 25/09/2026): grava só por cima do VAZIO. O mesmo
+     `charge_id` de novo é idempotente (o webhook e o sweeper podem chegar
+     os dois); um `charge_id` DIFERENTE numa intenção já vinculada é um
+     segundo acerto cobrado — `false`, e quem chama denuncia. O id entra
+     num filtro `.or()`: só na grafia canônica (SEC-001), nunca texto cru. */
+  exigirIdCanonico(chargeId, 'chargeId');
+  const { data, error } = await supabase
     .from('intencoes_troca_plano')
     .update({ charge_id: chargeId })
-    .eq('id', id);
+    .eq('id', id)
+    .or(`charge_id.is.null,charge_id.eq.${chargeId}`)
+    .select('id');
 
   if (error) throw error;
+  return Array.isArray(data) && data.length === 1;
 }
 
 /** PROCESSING_PAYMENT|PAYMENT_UNKNOWN → PAYMENT_CONFIRMED. */

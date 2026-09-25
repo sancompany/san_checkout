@@ -25,9 +25,13 @@ import {
   listarIntencoesParaVarredura,
   incrementarTentativaSweeper,
   marcarReconciliacaoNecessaria,
-  expirarTodasVencidas
+  expirarTodasVencidas,
+  registrarChargeId,
+  marcarStale
 } from './trocaIntencaoService.js';
 import { criarExecutorDeTroca } from './trocaExecucaoService.js';
+import { liberarTroca } from './assinaturaService.js';
+import { listarPagamentosPorReferenciaExterna } from './asaasService.js';
 import { registrarErro } from './erroService.js';
 
 /** Depois de quantas tentativas do sweeper uma intenção ainda ambígua
@@ -40,16 +44,84 @@ import { registrarErro } from './erroService.js';
  *  pagador no limbo por muito tempo. */
 const MAX_TENTATIVAS_AMBIGUAS = 3;
 
+/** A intenção ÓRFÃ (SEC-009, 25/09/2026): `PROCESSING_PAYMENT` sem
+ *  `charge_id` — o processo morreu entre reivindicar e gravar o id da
+ *  cobrança (um deploy basta), ou a cobrança ficou ambígua. Depois de
+ *  `MINUTOS_ATE_PROCURAR_ORFA` (a coreografia inteira, com os tetos de
+ *  20 s de cada chamada, cabe folgada) a Asaas é consultada pela
+ *  referência que a cobrança leva; sem nada lá depois de
+ *  `MINUTOS_ATE_PROVAR_AUSENCIA`, está provado que nada foi cobrado. */
+export const MINUTOS_ATE_PROCURAR_ORFA = 3;
+export const MINUTOS_ATE_PROVAR_AUSENCIA = 15;
+
 const dependenciasPadrao = {
   listarIntencoesParaVarredura,
   incrementarTentativaSweeper,
   marcarReconciliacaoNecessaria,
   expirarTodasVencidas,
+  registrarChargeId,
+  marcarStale,
+  liberarTroca,
+  listarPagamentosPorReferenciaExterna,
+  agora: () => Date.now(),
   executor: criarExecutorDeTroca(),
   registrarErro
 };
 
 export function criarSweeper(deps = dependenciasPadrao) {
+  /**
+   * Resolve a órfã pela referência `troca:<id>` na Asaas. NUNCA cobra:
+   * achou uma cobrança → vincula (CAS) e classifica como qualquer outra;
+   * achou duas → escala (dois acertos cobrados); não achou nada depois
+   * do prazo → STALE e o arrendamento devolvido (nada foi cobrado).
+   * Devolve 'avancada' | 'escalada' | 'aguardando'.
+   */
+  async function resolverOrfa(intencao) {
+    const desde = new Date(intencao.aprovando_em ?? intencao.aprovada_em ?? intencao.criada_em).getTime();
+    const idade = deps.agora() - desde;
+    if (!Number.isFinite(idade) || idade < MINUTOS_ATE_PROCURAR_ORFA * 60_000) return 'aguardando';
+
+    const referencia = `troca:${intencao.id}`;
+    const achados = (await deps.listarPagamentosPorReferenciaExterna(referencia)).filter((p) => p?.id && p.deleted !== true);
+
+    if (achados.length > 1) {
+      await deps.registrarErro(
+        new Error(`a intenção ${intencao.id} tem ${achados.length} cobranças na Asaas com a referência ${referencia} (${achados.map((p) => p.id).join(', ')}) — acerto cobrado mais de uma vez; estornar o excedente`),
+        { contexto: 'trocaSweeperService.orfaDuplicada', rota: 'sweeper-troca-de-plano', metodo: 'INTERNO' }
+      );
+      await deps.marcarReconciliacaoNecessaria(intencao.id, 'PROCESSING_PAYMENT');
+      return 'escalada';
+    }
+
+    if (achados.length === 1) {
+      const chargeId = achados[0].id;
+      const vinculou = await deps.registrarChargeId(intencao.id, chargeId);
+      if (!vinculou) {
+        // Outro caminho (o webhook) vinculou um id diferente entre a leitura e esta escrita.
+        await deps.registrarErro(
+          new Error(`a intenção ${intencao.id} ganhou outro charge_id enquanto o sweeper vinculava ${chargeId} — conferir se houve dois acertos`),
+          { contexto: 'trocaSweeperService.orfaVinculoPerdido', rota: 'sweeper-troca-de-plano', metodo: 'INTERNO' }
+        );
+        return 'aguardando';
+      }
+      await deps.executor.reclassificarPendente({ ...intencao, charge_id: chargeId });
+      return 'avancada';
+    }
+
+    if (idade >= MINUTOS_ATE_PROVAR_AUSENCIA * 60_000) {
+      const fechou = await deps.marcarStale(intencao.id);
+      if (fechou) {
+        await deps.liberarTroca(intencao.assinatura_id);
+        await deps.registrarErro(
+          new Error(`a intenção ${intencao.id} ficou em processamento sem cobrança, e a Asaas não tem nada com a referência ${referencia} depois de ${MINUTOS_ATE_PROVAR_AUSENCIA} min — nada foi cobrado; o link foi encerrado (o contratante gera outro)`),
+          { contexto: 'trocaSweeperService.orfaSemCobranca', rota: 'sweeper-troca-de-plano', metodo: 'INTERNO' }
+        );
+      }
+      return 'avancada';
+    }
+    return 'aguardando';
+  }
+
   /** Uma passada — chamada pelo `setInterval` em `server.js`, e
    *  diretamente pelo autoteste (sem esperar 60s de verdade). */
   async function varrerUmaVez() {
@@ -79,10 +151,18 @@ export function criarSweeper(deps = dependenciasPadrao) {
     for (const intencao of pendentes) {
       try {
         if (['PROCESSING_PAYMENT', 'PAYMENT_UNKNOWN'].includes(intencao.status)) {
-          /* Sem `charge_id` não há o que reclassificar — não deveria
-             acontecer (só entra em PROCESSING_PAYMENT depois de cobrar),
-             mas pular é mais seguro que adivinhar. */
-          if (!intencao.charge_id) continue;
+          /* Sem `charge_id`: a ÓRFÃ (SEC-009). O comentário que ficava aqui
+             dizia que isto "não deveria acontecer (só entra em
+             PROCESSING_PAYMENT depois de cobrar)" — e era falso: a
+             intenção entra em PROCESSING_PAYMENT ao ser REIVINDICADA, antes
+             da cobrança, e um processo morto entre as duas deixava a
+             intenção aqui para sempre, com o `continue` que a pulava. */
+          if (!intencao.charge_id) {
+            const desfecho = await resolverOrfa(intencao);
+            if (desfecho === 'avancada') relatorio.avancadas += 1;
+            if (desfecho === 'escalada') relatorio.escaladas += 1;
+            continue;
+          }
 
           const eraAmbigua = intencao.status === 'PAYMENT_UNKNOWN';
           const resultado = await deps.executor.reclassificarPendente(intencao);
@@ -134,12 +214,20 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
   let checagens = 0;
   const conferir = (condicao, mensagem) => { assert.ok(condicao, mensagem); checagens += 1; };
 
-  function costura(intencoesIniciais) {
+  const AGORA = Date.parse('2026-09-25T12:00:00Z');
+  const haMinutos = (m) => new Date(AGORA - m * 60_000).toISOString();
+
+  function costura(intencoesIniciais, { naAsaas = [], vinculoPerdido = false } = {}) {
     const chamadas = [];
     const anotar = (nome, args) => chamadas.push({ nome, args });
     const tentativas = new Map(intencoesIniciais.map((i) => [i.id, i.tentativas_sweeper ?? 0]));
 
     const deps = {
+      agora: () => AGORA,
+      listarPagamentosPorReferenciaExterna: async (ref) => { anotar('listarPagamentosPorReferenciaExterna', [ref]); return naAsaas; },
+      registrarChargeId: async (id, chargeId) => { anotar('registrarChargeId', [id, chargeId]); return !vinculoPerdido; },
+      marcarStale: async (id) => { anotar('marcarStale', [id]); return { id, status: 'STALE' }; },
+      liberarTroca: async (id) => { anotar('liberarTroca', [id]); },
       listarIntencoesParaVarredura: async () => { anotar('listarIntencoesParaVarredura', []); return intencoesIniciais; },
       expirarTodasVencidas: async () => { anotar('expirarTodasVencidas', []); return 0; },
       incrementarTentativaSweeper: async (id, valorEsperado) => {
@@ -149,7 +237,7 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
       marcarReconciliacaoNecessaria: async (id, de) => { anotar('marcarReconciliacaoNecessaria', [id, de]); },
       executor: {
         reclassificarPendente: async (intencao) => {
-          anotar('reclassificarPendente', [intencao.id]);
+          anotar('reclassificarPendente', [intencao.id, intencao.charge_id]);
           if (intencao.__resultadoForçado) return intencao.__resultadoForçado;
           return { tipo: 'ambigua' };
         },
@@ -200,11 +288,38 @@ if (process.argv[1]?.endsWith('trocaSweeperService.js')) {
   r = await s.varrerUmaVez();
   conferir(!s.chamou('incrementarTentativaSweeper'), 'PROCESSING_PAYMENT na primeira checagem não é "continuou ambígua"');
 
-  /* --- 6. sem charge_id: nada a reclassificar ------------------------ */
-  s = costura([{ id: 'int_1', status: 'PROCESSING_PAYMENT', charge_id: null, tentativas_sweeper: 0 }]);
+  /* --- 6. a ÓRFÃ (SEC-009): em processamento sem charge_id ----------- */
+  const orfa = (minutos) => ({ id: 'int_1', assinatura_id: 'sub_1', status: 'PROCESSING_PAYMENT', charge_id: null, tentativas_sweeper: 0, aprovando_em: haMinutos(minutos) });
+  s = costura([orfa(1)], { naAsaas: [{ id: 'pay_perdido', status: 'CONFIRMED' }] });
   r = await s.varrerUmaVez();
-  conferir(!s.chamou('reclassificarPendente'), 'sem charge_id não tem o que reconsultar');
-  conferir(r.avancadas === 0, 'e não conta como avançada');
+  conferir(!s.chamou('listarPagamentosPorReferenciaExterna'), 'órfã recém-reivindicada: a coreografia pode estar em curso — nem pergunta');
+  conferir(!s.chamou('reclassificarPendente') && r.avancadas === 0, 'e não mexe');
+
+  s = costura([orfa(5)], { naAsaas: [{ id: 'pay_perdido', status: 'CONFIRMED' }] });
+  r = await s.varrerUmaVez();
+  conferir(s.chamadas.find((c) => c.nome === 'listarPagamentosPorReferenciaExterna')?.args[0] === 'troca:int_1', 'SEC-009: a órfã é procurada na Asaas pela referência que a cobrança leva');
+  conferir(s.chamadas.some((c) => c.nome === 'registrarChargeId' && c.args[1] === 'pay_perdido'), 'achou: o charge_id é vinculado');
+  conferir(s.chamadas.some((c) => c.nome === 'reclassificarPendente' && c.args[1] === 'pay_perdido'), 'e a intenção segue a classificação de sempre, com a cobrança achada');
+  conferir(r.avancadas === 1, 'conta como avançada');
+
+  s = costura([orfa(5)], { naAsaas: [] });
+  r = await s.varrerUmaVez();
+  conferir(!s.chamou('marcarStale') && !s.chamou('liberarTroca'), 'nada na Asaas ainda, antes do prazo: espera — ausência ainda não está provada');
+
+  s = costura([orfa(20)], { naAsaas: [{ id: 'pay_apagado', deleted: true }] });
+  r = await s.varrerUmaVez();
+  conferir(s.chamou('marcarStale'), 'nada (vivo) na Asaas depois de 15 min: provado que não cobrou — o link fecha');
+  conferir(s.chamou('liberarTroca'), 'e o arrendamento da assinatura volta');
+  conferir(!s.chamou('reclassificarPendente'), 'cobrança excluída não conta como acerto');
+
+  s = costura([orfa(5)], { naAsaas: [{ id: 'pay_a' }, { id: 'pay_b' }] });
+  r = await s.varrerUmaVez();
+  conferir(r.escaladas === 1 && s.chamou('marcarReconciliacaoNecessaria'), 'DUAS cobranças com a mesma referência: escala para um humano (acerto em dobro)');
+  conferir(!s.chamou('registrarChargeId'), 'e não escolhe uma sozinho');
+
+  s = costura([orfa(5)], { naAsaas: [{ id: 'pay_perdido' }], vinculoPerdido: true });
+  r = await s.varrerUmaVez();
+  conferir(!s.chamou('reclassificarPendente') && s.chamou('registrarErro'), 'o vínculo perdido para outro caminho não reclassifica às cegas — denuncia');
 
   /* --- 7. PAYMENT_CONFIRMED/APPLYING_PLAN: retomada, nunca cobrança - */
   s = costura([

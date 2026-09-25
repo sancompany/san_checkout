@@ -7,8 +7,13 @@
  *
  * Honra: filtros eq/in/is/not/lte/lt/like/or (com `and(...)` e
  * `in.(a,b)`), order/limit, select com count+head, single/maybeSingle,
- * insert/update/delete com `.select()` de retorno, e chave única por
- * tabela (`UNICAS`) devolvendo `error.code = '23505'`.
+ * insert/update/delete/upsert com `.select()` de retorno, e chave única
+ * por tabela (`UNICAS`) devolvendo `error.code = '23505'`.
+ *
+ * FALHA INJETADA: `estado.falhas = { 'tabela.operacao': n }` no arquivo
+ * faz as próximas `n` operações daquele tipo devolverem `error` (como o
+ * PostgREST devolve, sem lançar) — para provar que quem chama NÃO engole
+ * o erro. O contador mora no arquivo, então vale entre processos.
  *
  * Grosseiro de propósito: o que ele não entende, ele LANÇA — melhor um
  * teste que quebra alto do que um dublê que aprova o que não leu.
@@ -96,6 +101,7 @@ class Consulta {
     return this;
   }
   insert(corpo) { this.modo = 'insert'; this.corpo = corpo; return this; }
+  upsert(corpo) { this.modo = 'upsert'; this.corpo = corpo; return this; }
   update(corpo) { this.modo = 'update'; this.corpo = corpo; return this; }
   delete() { this.modo = 'delete'; return this; }
   eq(c, v) { this.filtros.push((l) => compara(l[c], 'eq', v)); return this; }
@@ -126,7 +132,22 @@ class Consulta {
     const casa = (l) => this.filtros.every((f) => f(l));
     let data = null; let error = null; let count = null;
 
-    if (this.modo === 'insert') {
+    const chaveDaFalha = `${this.tabela}.${this.modo}`;
+    if (estado.falhas?.[chaveDaFalha] > 0) {
+      estado.falhas[chaveDaFalha] -= 1;
+      gravar(estado);
+      return { data: null, error: { code: 'XX000', message: `falha injetada em ${chaveDaFalha}` }, count: null };
+    }
+
+    if (this.modo === 'upsert') {
+      const novas = Array.isArray(this.corpo) ? this.corpo : [this.corpo];
+      for (const nova of novas) {
+        const existente = linhas.find((l) => nova.id !== undefined && l.id === nova.id);
+        if (existente) Object.assign(existente, nova);
+        else linhas.push({ criado_em: new Date().toISOString(), ...nova });
+      }
+      data = this.retornar ? novas.map((l) => this.projeta(l)) : null;
+    } else if (this.modo === 'insert') {
       const novas = (Array.isArray(this.corpo) ? this.corpo : [this.corpo]).map((c) => ({ id: randomUUID(), criado_em: new Date().toISOString(), ...c }));
       for (const nova of novas) {
         for (const chave of UNICAS[this.tabela] ?? []) {

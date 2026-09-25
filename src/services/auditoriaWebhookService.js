@@ -245,7 +245,8 @@ function agendarDescarga() {
   if (descargaAgendada) return;
   descargaAgendada = setTimeout(() => {
     descargaAgendada = null;
-    descarregarRejeicoes();
+    // Com dono (SEC-013): a descarga já engole o próprio erro, e o `catch` garante que continue assim.
+    descarregarRejeicoes().catch((erro) => console.error('[auditoriaWebhook.descarregarRejeicoes]', erro?.message ?? erro));
   }, INTERVALO_DE_DESCARGA_MS);
   // Não segurar o processo vivo só por causa de um contador.
   descargaAgendada.unref?.();

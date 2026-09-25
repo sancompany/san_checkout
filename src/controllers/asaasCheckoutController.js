@@ -456,6 +456,18 @@ export async function criarCheckoutAssinatura(requisicao, resposta) {
       ? await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])
       : null;
 
+    /* UMA assinatura viva por plano e documento (SEC-012, 25/09/2026).
+       Sem renovação, nada impedia o assinante de abrir de novo o link do
+       plano e pagar: duas assinaturas cobrando o mesmo cartão, e o
+       `/cancelar-assinatura` cancelava só a mais recente. A troca de
+       cartão tem porta própria — a renovação, com o token do contratante. */
+    if (!assinaturaSubstituida && await buscarAssinaturaAtiva(contratanteId, planoId, documento, ['ativa', 'pausada'])) {
+      return resposta.status(409).json({
+        codigo: 'assinatura_ja_existe',
+        erro: 'Já existe uma assinatura deste plano para este CPF/CNPJ. Para trocar o cartão, peça ao vendedor o link de renovação.'
+      });
+    }
+
     // Nesta leva, assinatura NÃO aplica taxaPropria/taxaAsaas — cobra
     // o valor do plano exatamente como veio. Se isso deve mudar, é
     // decisão pendente, ainda não tomada (ver API.md §8).

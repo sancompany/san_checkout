@@ -1069,6 +1069,54 @@ conta; um estorno de boleto cujo evento não veio ficava
 `estorno_solicitado` para sempre. *Quem vê:* o comprador, o contratante
 e o dono, sem sintoma nenhum. JULES-004, SEC-023, SEC-024.
 
+**RN-58 · O acerto de uma troca nunca fica órfão, e nunca é cobrado duas
+vezes.** A aprovação reivindica a intenção, cobra o acerto com a
+referência `troca:<id da intenção>` e grava o `charge_id`. Se o processo
+morre entre cobrar e gravar, ou a cobrança fica ambígua (timeout, 5xx),
+a intenção fica em processamento e o arrendamento da assinatura FICA com
+ela: o sweeper, depois de 3 minutos, procura a cobrança na Asaas pela
+referência — achou uma, vincula e segue a classificação de sempre; achou
+duas, chama um humano; não achou nada depois de 15 minutos, está provado
+que nada foi cobrado e o link fecha (`STALE`). O `PAYMENT_CONFIRMED` do
+acerto acha a intenção pela mesma referência, dita pela Asaas. Uma
+recusa LIMPA da Asaas (4xx com corpo) fecha o link na hora. No máximo UMA
+intenção por assinatura com dinheiro em trânsito (índice da migration
+0019): a aprovação de outra vira `STALE`, e `POST /trocar-plano` responde
+`409 troca_em_andamento`. Nenhum destes caminhos cobra de novo.
+*Violada:* um deploy no meio da aprovação deixava a intenção em
+processamento para sempre e o evento do acerto era descartado — o
+assinante pagava e o plano não mudava; e um acerto ambíguo devolvia o
+arrendamento, abrindo a porta para um segundo acerto. *Quem vê:* o
+assinante, cobrado sem receber. SEC-009, SEC-010.
+
+**RN-59 · Uma assinatura viva por plano e documento.** Sem o token de
+renovação, `POST /assinatura` recusa (`409 assinatura_ja_existe`) quando
+o comprador já tem uma assinatura `ativa` ou `pausada` daquele plano; a
+troca de cartão tem porta própria, a renovação. *Violada:* reabrir o
+link do plano e pagar abria uma segunda assinatura no mesmo cartão, e
+cancelar desfazia só a mais recente. *Quem vê:* o assinante, cobrado em
+dobro todo ciclo. SEC-012.
+
+**RN-60 · A assinatura nasce inteira, e o que não nasce é visto.** O id
+da assinatura na Asaas é gravado na cobrança já no primeiro evento de
+pagamento, qualquer que seja o status; a assinatura NASCE (linha em
+`assinaturas`, evento `criada`) com o primeiro dinheiro, decidido pela
+ausência da linha — nunca por um vínculo já gravado. Toda escrita dessa
+amarração relança o erro, e a inbox refaz; refazer não cancela de novo a
+assinatura antiga de uma renovação. Primeiro ciclo recusado ou vencido
+chama um humano (a assinatura segue viva na Asaas); pagamento de
+assinatura sem cobrança nossa apontando para ela vira `erros`. O
+`CHECKOUT_PAID` não vincula pagamento nenhum (o real não traz; um id
+tirado do corpo só viria de um evento forjado). Depois que a Asaas
+cancelou, pausou ou retomou, falha do registro local ou do aviso vira
+`erros`, nunca um erro para quem chamou (repetir repetiria na Asaas), e
+o arrendamento da assinatura volta também no sucesso. *Violada:* uma
+falha de banco na primeira confirmação deixava a assinatura cobrando na
+Asaas e 404 aqui; o ciclo seguinte a um primeiro ciclo recusado era
+descartado com uma linha de log; e pausar travava cancelar por 5
+minutos. *Quem vê:* o assinante e o contratante. SEC-011, SEC-013,
+SEC-014, SEC-029.
+
 **RN-41 · A linha local nasce ANTES da chamada à Asaas, e a Asaas leva
 a nossa referência.** Pix, Boleto e as duas pop-ups reservam a linha
 (índice único: pedido+método, ou plano+documento+método) e só então

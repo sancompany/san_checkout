@@ -33,7 +33,13 @@ export async function upsertAssinatura({ id, contratanteId, planoId, documento, 
     status: 'ativa'
   });
 
-  if (error) console.error('[assinaturaService.upsertAssinatura]', error.message);
+  /* LANÇA (SEC-014, 25/09/2026). Até aqui o erro só ia para o log: a
+     cobrança ficava `confirmado`, o contratante ouvia `criada`, e nenhuma
+     linha nascia em `assinaturas` — cancelar, pausar e consultar
+     respondiam 404 enquanto a Asaas seguia cobrando. Lançando, a inbox
+     do webhook tenta de novo, e a nova tentativa decide pela AUSÊNCIA da
+     linha (webhookController), não por um vínculo já gravado pela metade. */
+  if (error) throw error;
 }
 
 /**
@@ -193,10 +199,11 @@ export async function buscarAssinaturaPorId(id) {
     .eq('id', id)
     .maybeSingle();
 
-  if (error) {
-    console.error('[assinaturaService.buscarAssinaturaPorId]', error.message);
-    return null;
-  }
+  /* LANÇA (SEC-014): "não achei" e "não consegui perguntar" não podem
+     ser o mesmo `null`. Quem decide "é a primeira confirmação?" pela
+     ausência desta linha recriaria — e reativaria — uma assinatura que
+     existe só porque o banco piscou. */
+  if (error) throw error;
   return data;
 }
 
@@ -236,7 +243,9 @@ export async function atualizarStatusAssinatura(id, status) {
     .update({ status })
     .eq('id', id);
 
-  if (error) console.error('[assinaturaService.atualizarStatusAssinatura]', error.message);
+  // Lança (SEC-014): quem chama decide se a falha derruba a operação ou
+  // vira aviso — engolir aqui deixava o registro local divergir calado.
+  if (error) throw error;
 }
 
 /** Busca a assinatura de um contratante+plano+documento — a busca é por
