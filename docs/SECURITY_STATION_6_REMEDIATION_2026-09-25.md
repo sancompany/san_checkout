@@ -221,6 +221,14 @@ Três revisores (dinheiro e estado; crash, auth e tenant; regressões do diff in
 | CP1-04 | INFO | CR-08 | pop-up de assinatura nova cancelada pelo pagador que a Asaas ainda liquidasse mandaria `cancelada` e depois `criada` | **RISK_ACCEPTED** RES-15 — antes o pagamento sumia calado, o que era pior; exige a Asaas liquidar sessão que ela deu como cancelada |
 | CP1-05 | INFO | CR-02 | com a escrita do novo pedido na nossa linha falhando depois da Asaas aceitar, a regra "negado não conta" do restante deixaria de fora um pedido vivo | **RISK_ACCEPTED** RES-16 — exige falha de banco num instante exato e novo pedido dentro da janela; a Asaas tende a recusar o segundo pedido de estorno de boleto |
 | CP1-06 | INFO | CR-02 | até o `reabrirEstornosNegados` rodar, a chave padrão do total ainda devolve o `200` antigo | **RISK_ACCEPTED** RES-17 — a refeitura da inbox fecha; a chave nova já funciona no intervalo (teste 7e) |
+| CP1-07 | INFO | CR-14 | `listarInbox`/`listarOutbox` não limitam `limite`; `?limite=-5` dá 502 (só admin, atrás do Access) | **RISK_ACCEPTED** RES-18 — endurecimento opcional, sem exploração |
+| CP1-08 | INFO | CR-11 | o redirecionamento para HTTPS reflete o `Host` e roda antes do `no-store` | **RISK_ACCEPTED** RES-19 — a API é servida só em HTTPS pela borda; o 301 não é alcançável de fora com `Host` arbitrário na Northflank |
+| CP1-09 | INFO | CR-11 | respostas da Function do admin sem `nosniff` (`_headers` não vale para Function) | **RISK_ACCEPTED** RES-20 — resposta é JSON com `content-type` explícito, atrás do Access |
+| CP1-10 | INFO | teste | a conferência de cobertura do invólucro só casa `Router()`/`express()` com parênteses vazios | **RISK_ACCEPTED** RES-21 — nenhuma construção com opções existe em `src/`; endurecimento opcional do teste |
+| CP1-11 | INFO | CR-04 | `alvoDeRedeSeguro` aceita nome interno de cluster sem resolver DNS | **RISK_ACCEPTED** RES-22 — decisão registrada (sem resolução de DNS); só admin; o TLS falha |
+| CP1-12 | INFO | CR-07 | `dispararCancelador` pode sobrepor a passada periódica | **RISK_ACCEPTED** RES-23 — cada linha é reivindicada por CAS; sem efeito duplicado |
+| CP1-13 | INFO | CR-11 | corpo menor que o `Content-Length` segura a conexão até o `requestTimeout` padrão (300 s) | **RISK_ACCEPTED** RES-24 — limitador por IP e a borda da Northflank; sem derrubar o processo (medido) |
+| CP1-14 | INFO | CR-12 | POST público sem `cotacaoId` válido cria uma cotação por chamada | **RISK_ACCEPTED** RES-25 — limitado pelo rate limit e pelo expurgo diário |
 
 ## 7. Correções
 
@@ -447,7 +455,7 @@ Passada **limpa** = nenhum achado novo confirmado que exija mudança de código.
 | 1 | `8be71d3`…`8c96576` | 4 (dinheiro; admin/Access; webhook/crash/workers; tenant/entrada/testes) | 3 HIGH, 6 MEDIUM, 6 LOW (C1-01…C1-15) | 0 |
 | 2 | `baa3a88` / `ba36881` | 2 (dinheiro e correções novas; auth/crash/entrada/testes, com 918 requisições de fuzz no `server.js` real) | 1 MEDIUM, 6 LOW (C2-*) | 0 |
 | auditoria do diff | `43635c4` → `7c0c94d` | 2 (contratos e compatibilidade; concorrência e janelas de crash) | 2 MEDIUM + 1 LOW de código, 2 de documentação (DIF-*) | 0 |
-| passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado; crash/auth/tenant; regressões do diff — este **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido | 0 |
+| passada limpa #1 | `ccfedc5` | 3 (dinheiro/estado — **não limpo**; crash/auth/tenant com ~51 mil requisições hostis e 14 sabotagens — **limpo**; regressões do diff — **limpo**) | 1 MEDIUM (CP1-01) + 1 INFO endurecido; 12 INFO classificados | 0 |
 
 ## 14. Riscos residuais
 
@@ -457,4 +465,4 @@ _(em andamento)_
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 101 = FIXED 72 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 15 + EXTERNAL_PENDING 5
+TOTAL_LEDGER = 109 = FIXED 72 + FALSE_POSITIVE 3 + DUPLICATE 6 + RISK_ACCEPTED 23 + EXTERNAL_PENDING 5
