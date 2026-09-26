@@ -1,8 +1,25 @@
 # Current Handoff
 
+## SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
+
+Leitura de cinco minutos para qualquer agente futuro.
+
+| Pergunta | Resposta |
+|---|---|
+| **O que é** | O checkout e a infraestrutura de pagamento **internos**, usados só pelos **projetos próprios** do operador. Hoje são o MostrAí e o contratante de teste `testemaster`. A Asaas fica por baixo. |
+| **O que não é** | Não é plataforma comercial para lojistas externos. A V1 não tem marketplace, onboarding de terceiros, operação multiempresa externa, recebimento oferecido como serviço, nem ambição de PSP ou gateway para terceiros (`CONSTRAINTS.md` §1.12). |
+| **Onde está** | Em **produção**, operacional e documentado:<br>• API: `https://api.sancocore.com.br`, no Northflank, região brasileira.<br>• Telas: `https://checkout.sancocore.com.br`, no Cloudflare Pages.<br>• Banco: Supabase `sa-east-1`.<br>• Asaas em **produção** desde 25/09/2026. |
+| **Qual é o estado** | **V1 finalizada.** As estações 1 a 7 estão fechadas. A 7 fechou com a varredura final dispensada pelo dono, registrada como exceção em `CONSTRAINTS.md` §3. Nada está em andamento e nada bloqueia. |
+| **O que é futuro** | A formalização empresarial e uma **V2**, que só nasce por decisão formal do dono (seção "A V2"). |
+| **Quando reabrir** | Somente em cinco casos:<br>• bug real;<br>• nova necessidade de negócio;<br>• alteração regulatória relevante;<br>• formalização (pessoa jurídica);<br>• início da V2. |
+
+> **Não evoluir silenciosamente a V1 para V2.** A V2 é evolução
+> substancial, com decisão formal do dono e estação nova. Não é uma
+> série de patches sobre a V1.
+
 ## Updated
 
-2026-09-22 (UTC)
+2026-09-26 (UTC), no encerramento formal da V1.
 
 ## Agent
 
@@ -10,161 +27,227 @@ Claude Code
 
 ## Branch
 
-`claude/nifty-meitner-4ffp9s` (reconstruída a partir de `origin/main`
-depois de cada PR mesclada nesta sessão — é assim que este projeto trata
-"branch cuja PR já mesclou": nunca empilha em cima de história já
-mesclada, recomeça de `main`)
+Nenhum trabalho em andamento. A branch de trabalho
+`claude/nifty-meitner-4ffp9s` fechou com a mescla do PR #64. **O
+próximo agente começa da `main`.** Se a branch ainda existir, ela
+contém só história já mesclada.
 
 ## Current objective
 
-Verificar e corrigir os 22 achados de uma auditoria técnica externa
-(Codex, sem acesso a este repositório — o dono repassou o relatório em
-texto), rodada sobre o código do caminho do dinheiro (checkout,
-estorno, assinatura, migrations). Nenhum achado aceito só pela palavra
-do relatório — cada um lido contra o código real antes de decidir
-corrigir ou declarar.
+Nenhum. A V1 cumpriu o objetivo: ser uma infraestrutura interna de
+pagamento **segura, previsível, documentada, recuperável, auditável e
+operacionalmente simples** para os projetos próprios do operador.
 
 ## Current state
 
-**PR #39 mesclada** (`b8111e1`): três corridas reais no caminho do
-dinheiro corrigidas — Pix/Boleto duplicado (AUD-001), estorno duplicado
-(AUD-007), cancelar/pausar/retomar assinatura sem guarda nenhuma
-(AUD-005). A revisão automática do Codex sobre a própria PR achou um
-furo DENTRO da correção do AUD-001 (`criarCobrancaPix` faz duas
-chamadas à Asaas; uma falha limpa na segunda liberava a reserva com o
-pagamento já criado) — corrigido antes de mesclar.
+- **Produção:** o commit servido é o merge do PR #64. Reconfirme pelo
+  comando em "Verification commands".
+- **Documentos legais vigentes:** Termos de Uso v3 e Política de
+  Privacidade v4, desde 26/09/2026. As versões anteriores estão
+  arquivadas byte a byte em `docs/legal-arquivado/`.
+- **Inventário de dados:** conferido campo a campo em 26/09/2026
+  (`docs/inventario-de-dados.md`).
+- **Referência operacional da V1:** `RUNBOOK.md`. Cobre onde roda, como
+  sobe, como reverter, saúde, banco, webhook, incidente, recuperação,
+  fornecedores e limitações deliberadas.
 
-**PR #40 aberta** (verificação dos 19 achados restantes): dois
-corrigidos (AUD-017, vocabulário fechado sem `check` no banco —
-migration 0014; SUS-004, migration 0009 ausente do histórico do
-Supabase — replay seguro), quatro já cobertos por trabalho anterior
-(AUD-006/008/009/012), o resto declarado com caminho de fechamento em
-`docs/pendencias.md` (AUD-004 exige checar o painel da Asaas; SUS-002 e
-a ausência de fencing token no arrendamento por tempo são reais mas
-baixa severidade).
+### Escopo funcional concluído na V1
 
-## Work completed
+- Checkout público, Pix, cartão (até 12x) e boleto.
+- Assinaturas com ciclos, cancelamento, pausa e retomada.
+- Estorno integral e parcial, e chargeback no escopo suportado.
+- Integração com a Asaas: webhooks com inbox durável, outbox, conciliação
+  e workers.
+- Segurança, banco e RLS; migrations `0001` a `0020`.
+- Produção, health e recuperação operacional.
+- Testes (82 suítes) e CI.
+- `RUNBOOK`, LGPD, Termos, Política, inventário e histórico das versões
+  legais.
 
-- **PR #38** (mesclada antes desta sessão continuar): dois achados
-  confirmados e corrigidos — escrita local engolida depois de cobrança
-  real na Asaas.
-- **PR #39** (mesclada, `b8111e1`): AUD-001 (reserve-then-charge em
-  `gerarPix`/`gerarBoleto`, `checkoutController.js` migrado pro padrão
-  de fábrica com `deps`), AUD-007 (CAS no estorno, migration 0013 —
-  `cobrancas.estornando_em`), AUD-005 (lease comum em cancelar/pausar/
-  retomar, reaproveitando `assinaturas.trocando_em` que antes era
-  exclusivo da troca de plano — `assinaturaController.js` ganhou seu
-  primeiro autoteste). Suíte: 43 → 46.
-- **PR #40** (aberta, aguardando CI): AUD-017 (migration 0014 — `check`
-  em `cobrancas.status`/`metodo_pagamento`/`assinaturas.status`/
-  `ciclo`; a primeira enumeração de `cobrancas.status` estava
-  incompleta, corrigida ANTES de aplicar depois de um `select distinct`
-  contra produção achar `expirado` fora do conjunto lido só do código),
-  SUS-004 (migration 0009 registrada no histórico do Supabase via
-  replay idempotente — as colunas já existiam em produção desde 17/09,
-  só o registro no tracking faltava).
+### Limitação deliberada
+
+**Assinatura de cartão já paga não tem alteração direta de valor.**
+`POST /trocar-plano` responde `409 troca_de_valor_nao_suportada` (ADR-011,
+RN-35.4). Um valor novo exige cancelar e contratar de novo. Isso **não**
+impede mudar o preço-base para contratações futuras. Não tentar
+contornar.
+
+## O que ficou, e por que nada disso reabre a V1
+
+Estes itens pertencem ao operador ou a fases futuras. **Nenhum autoriza
+trabalho sem pedido do dono.**
+
+**POST_V1_HARDENING** — melhorias técnicas conhecidas:
+
+- **Expurgo de `intencoes_troca_plano`.** O prazo já foi decidido: 90
+  dias depois de vencer sem cobrança, 5 anos com cobrança. A tabela tem
+  0 linhas, e a troca por cartão está recusada.
+  Referência: `docs/inventario-de-dados.md` §1.3.
+- **`clientes_asaas` no expurgo**, pelo prazo e a pedido do titular.
+  Opcionalmente, HMAC no lugar do SHA-256 puro. Enquanto não houver
+  código, o pedido do titular inclui apagar a linha à mão.
+  Referência: `docs/inventario-de-dados.md` §6.3.
+- **Tratamento em código dos eventos `SUBSCRIPTION_*`.** A marcação no
+  painel já existe. O código espera o próximo ciclo pago real.
+- **Rotação de `ASAAS_WEBHOOK_TOKEN` sem janela de risco.**
+- As demais entradas "Abertas, não bloqueiam" de `docs/pendencias.md`.
+
+**OWNER_DECISION** — decisões do dono:
+
+- **Gravar o aceite dos documentos**, com versão e hash do texto.
+  Hoje o sistema prova qual versão estava vigente na data da transação,
+  mas não que o Pagador marcou a caixa (`docs/inventario-de-dados.md`
+  §8).
+- **Proteção de branch da `main`**, que é configuração do GitHub.
+- **O CPF como oráculo de "tem assinatura"**, que é decisão de produto.
+
+**OWNER_MANUAL_TESTS** — testes reais controlados, do dono:
+
+- estorno de compra parcelada;
+- o que a Asaas faz depois de negar o estorno de um boleto;
+- o modo estrito do IP do webhook;
+- o próximo ciclo pago de assinatura;
+- o `sendType` do webhook no painel da Asaas (AUD-004);
+- os testes integrados com os outros projetos.
+
+**EXTERNAL_VALIDATIONS** — profissionais de fora:
+
+- **Contador:** a emissão fiscal pela taxa do checkout, e a contagem
+  fiscal dos 5 anos (CTN, art. 173, I).
+- **Advogado, se o dono quiser:** as ressalvas de responsabilidade
+  diante do CDC, um prazo menor para os dados de contato e o
+  autoenquadramento como agente de pequeno porte.
+- O **regulatório** não é pendência da V1. É pré-requisito da V2.
+
+Relatório completo: `docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`.
+
+## A V2
+
+Só nasce se o Checkout for atender terceiros, outras pessoas jurídicas,
+comerciantes independentes ou vários recebedores externos. Antes disso
+tem de haver:
+
+1. **decisão formal do dono** e uma versão nova aberta na **Estação 1**
+   (Opus, esforço alto), com spec novo;
+2. revisão societária, contábil, fiscal, jurídica, regulatória, de
+   segurança, arquitetura, infraestrutura, operação, contratos e da
+   experiência multiempresa;
+3. só então, e dentro dela: split, subcontas reais, governança,
+   contratos B2B, compliance, arquitetura de escala e a revisão completa
+   do fluxo financeiro.
+
+As ideias guardadas para depois estão em `docs/proximas-versoes.md`.
+Entrada ali é ideia, não autorização.
+
+Entre versões, o projeto fica em **estado de coleta** (skill `leis`): a
+sessão recebe e compila ideias, mas não constrói nem abre estação.
+Bug, falha de segurança, documento que virou mentira e obrigação legal
+não são ideias: corrigem-se na hora, como reabertura da V1.
+
+## Entrega de manutenção
+
+**O que renova ou vence, e é só do dono:**
+
+- o domínio `sancocore.com.br` vence em **31/08/2027**, no registro.br;
+- as contas Asaas, Northflank, Supabase, Cloudflare, Google Workspace e
+  GitHub, cujo inventário e rotação de segredos estão no `RUNBOOK` §1.1
+  e §1.2;
+- os campos `⬜` do `RUNBOOK` §1.1, que ficam com o dono, fora do
+  repositório.
+
+**A reenviar na conversa de manutenção do plugin `san-co`** (skill
+`leis`, "Fecho da esteira"):
+
+- `docs/erros/` inteira;
+- `CONSTRAINTS.md`;
+- `CLAUDE.md`;
+- `API.md`;
+- `docs/specs/2026-09-11-san-checkout.md`, porque o escopo revelou uma
+  pergunta que as fases não fazem (a do dinheiro de terceiro, abaixo).
+
+**As três linhas:**
+
+1. **Lei violada mais de uma vez:** a Lei 10, com documento que virou
+   mentira. A política nomeou o Render depois da migração, este handoff
+   parou duas vezes, e o inventário chamou de irreversível um hash de CPF
+   sem sal.
+2. **Estações que fecharam com exceção:**
+   - a 5, com produção apontando para o sandbox (exceção fechada em
+     26/09);
+   - a 6, fechada por decisão do dono, com três itens passados à 7;
+   - a 7, com a varredura final dispensada (`CONSTRAINTS.md` §3).
+3. **Regras que faltaram:**
+   - o inventário da skill `legal` não manda conferir os terceiros que
+     o navegador do visitante chama sozinho, e por isso o Google Fonts
+     e o ViaCEP ficaram sem declaração até 26/09;
+   - a esteira não pergunta **de quem é o dinheiro** que passa pela
+     conta, e a distinção entre V1 e V2 só apareceu no encerramento.
 
 ## Files changed
 
-Ver os diffs das PRs #39 e #40 no GitHub — lista completa não repetida
-aqui de propósito (haveria dessincronia garantida). Resumo por área:
+Encerramento (junto com o PR #64):
 
-- `src/controllers/checkoutController.js`, `refundController.js`,
-  `assinaturaController.js` — padrão de fábrica com `deps`, guardas de
-  corrida.
-- `src/services/asaasService.js`, `cobrancaService.js`,
-  `assinaturaService.js` — `foiRecusaLimpaDaAsaas` (compartilhada),
-  `reivindicarEstorno`/`liberarEstorno`, doc de `reivindicarTroca`
-  ampliada.
-- `supabase/migrations/0013_lease_de_estorno.sql`,
-  `0014_vocabulario_fechado_no_banco.sql` — novas.
-- `docs/erros/2026-09-22-*.md` — seis arquivos, um por achado fechado.
-- `docs/pendencias.md`, `docs/funcional.md` (RN-37/38),
-  `docs/ciclo-assinatura-mapa.md`, `API.md` §5.4/§5.5 — documentação.
-- `CLAUDE.md` (raiz) — jornal de 22/09.
+- `.ia/HANDOFF.md`, `.ia/PROJECT_STATE.md` e `.ia/TODO.md`;
+- `CLAUDE.md`;
+- `docs/pendencias.md` e `docs/proximas-versoes.md`;
+- `CONSTRAINTS.md`: §1.12, a exceção da Estação 7 em §3 e o item
+  "sem split".
+
+Nenhum código funcional foi alterado no encerramento.
 
 ## External systems touched
 
-- **Supabase** (`zacuaroarelaqnzjjlcz`): duas migrations aplicadas via
-  MCP (`0013_lease_de_estorno`, `0014_vocabulario_fechado_no_banco`) e
-  um replay idempotente da 0009 pra registrar no histórico. Todas
-  verificadas contra dados reais (`select distinct`/`count(*)` por
-  coluna) ANTES de aplicar — a verificação da 0014 achou um erro na
-  minha própria primeira enumeração antes de ele virar `ALTER TABLE`.
-- **GitHub**: PRs #39 (mesclada) e #40 (aberta), replies a review
-  comments do Codex, threads resolvidas.
+Nenhum no encerramento, além da mescla do PR #64, que publica pela
+`main` como toda mescla.
 
 ## Deployments
 
-PR #39 mesclada → deploy automático em produção (Northflank + Cloudflare
-Pages), CI verde é a porta (`CLAUDE.md`, "Mesclar é decisão tomada").
-PR #40 ainda não mesclada no momento em que este HANDOFF foi escrito.
+A mescla do PR #64 publica os documentos legais vigentes. O backend não
+teve mudança de código desde `d1af4a5`.
 
 ## Database changes
 
-- Migration 0013 (`cobrancas.estornando_em`) — no ar via PR #39.
-- Migration 0014 (`check` em quatro colunas) — aplicada diretamente via
-  Supabase MCP, no ar antes mesmo do merge da PR #40 (constraint
-  aditiva, sem risco de reverter comportamento).
-- Migration 0009 — sem mudança de schema, só passou a aparecer no
-  histórico do Supabase (estava aplicada desde 17/09, sem estar
-  registrada lá).
+Nenhuma. A última migration é a `0020`, aplicada e validada em
+26/09/2026.
 
 ## What is working
 
-Tudo que a suíte cobre (82 suítes, `npm test`/`npm run check` verdes em
-cada commit) e o que foi conferido ao vivo contra produção antes de
-cada `ALTER TABLE` (ver "External systems touched").
+A V1 inteira, dentro do escopo acima. Saúde em
+`https://api.sancocore.com.br/api/saude`: `200` com
+`workersAtrasados: []` é o normal.
 
 ## What is not working
 
-Nada quebrado por este trabalho — só achados PRÉ-EXISTENTES,
-documentados como corrigidos ou declarados (nunca "quebrado por esta
-tarefa"). Ver `docs/pendencias.md` pelas entradas de 22/09 para o que
-ficou declarado (AUD-004: sendType do webhook da Asaas não verificado;
-SUS-002: corrida em `buscarOuCriarCliente`, baixa severidade; ausência
-de fencing token no arrendamento por tempo).
+Nada conhecido como quebrado. As limitações são deliberadas e estão
+registradas (`CONSTRAINTS.md`).
 
 ## Next task
 
-1. **Fechar a PR #40**: aguardar CI verde e mesclar (autorização
-   permanente, `CLAUDE.md` raiz). Responder/resolver qualquer achado
-   novo de revisão automática antes — nenhum ficou pendente até este
-   HANDOFF ser escrito.
-2. **AUD-004** (webhook fora de ordem) precisa de alguém com acesso ao
-   painel da Asaas ou ao container de produção pra conferir o `sendType`
-   configurado (`GET /v3/webhooks`) — só o dono ou um agente com essa
-   credencial fecha isso. Caminho completo em `docs/pendencias.md`.
-3. Depois de #40 mesclada: **`.ia/PROJECT_STATE.md` está desatualizado**
-   (última verificação 20/09) — não bloqueia nada, porque o próprio
-   arquivo é desenhado pra ser reconfirmado por comando, não por
-   confiança no texto, mas vale uma passada quando a próxima tarefa
-   mexer em algo que ele descreve.
+Nenhuma. O próximo trabalho nasce de uma das cinco causas de
+reabertura, ou da decisão formal de abrir a V2.
 
 ## Known risks
 
-Ver `.ia/RISKS.md` — inalterado por esta tarefa. Nada novo introduzido;
-achados da auditoria externa que não foram corrigidos viraram entradas
-em `docs/pendencias.md` (a lista de trabalho do projeto), não em
-`RISKS.md` (que é sobre risco de infraestrutura/acesso, escopo
-diferente).
+Ver `.ia/RISKS.md`. O risco que define a fronteira entre V1 e V2 é
+regulatório: dinheiro de terceiro passando pela conta pessoa física do
+operador (`CONSTRAINTS.md` §1.12 e §3, "sem split").
 
 ## Do not undo
 
-- Não reverter a autorização de merge automático com CI verde
-  (`CLAUDE.md` raiz, "Mesclar é decisão tomada").
-- Não editar o conteúdo do plugin `san-co` em si — só a sessão de
-  manutenção do plugin edita skill.
-- Não reabrir PR #38 ou #39 (já mescladas) — trabalho de acompanhamento
-  vira PR nova, nunca commit em cima de história já mesclada (é assim
-  que este HANDOFF trata "branch cujo PR já fechou", ver "Branch"
-  acima).
-- Não silenciar/pular achado de auditoria por parecer pequeno —
-  verificar contra o código real e contra dados de produção antes de
-  decidir "declarar" em vez de "corrigir" (a lição de 22/09: uma
-  enumeração de vocabulário lida só do código estava incompleta, e só
-  um `select distinct` contra produção achou o erro antes de ele virar
-  `ALTER TABLE` em produção).
+- Não cadastrar contratante que não seja projeto próprio do operador
+  (`CONSTRAINTS.md` §1.12).
+- Não construir split, subconta ou multiempresa "para preparar o
+  futuro".
+- Não contornar a recusa de troca de valor em assinatura de cartão
+  (ADR-011).
+- Não reutilizar o CNPJ da v1 em documento vigente. Ele pertence a
+  outra atividade.
+- Não reescrever `docs/legal-arquivado/`: é o texto exato que esteve
+  publicado.
+- Não reverter a autorização de merge com CI verde (`CLAUDE.md`,
+  "Mesclar é decisão tomada").
+- Não editar o plugin `san-co`. Só a sessão de manutenção do plugin
+  edita skill.
 
 ## Useful commands
 
@@ -172,34 +255,30 @@ diferente).
 git status --short && git log -5 --oneline
 npm run check
 curl -sS https://api.sancocore.com.br/api/saude
-northflank get service --project san-checkout --service san-checkout -o json
+northflank get service --projectId san-checkout --serviceId san-checkout --output json
 ```
 
 ## Verification commands
 
 ```bash
-# confirmar que nenhum secret foi escrito em .ia/
-grep -rniE "api[_-]?key\s*=\s*['\"a-z0-9]{10,}|-----BEGIN|sk_live|sk_test" .ia/ || echo "limpo"
+# o commit servido é o mesmo da main
+git fetch -q origin main && git rev-parse origin/main
+northflank get service --projectId san-checkout --serviceId san-checkout --output json | \
+  python3 -c "import json,sys; print(json.load(sys.stdin)['deployment']['internal']['deployedSHA'])"
 
-# confirmar que todo link interno .ia/ aponta para arquivo existente
-grep -roE '\.ia/[A-Za-z0-9_./-]+\.md' .ia/*.md .ia/agents/*.md .ia/runbooks/*.md AGENTS.md CLAUDE.md 2>/dev/null \
-  | cut -d: -f2 | sort -u | while read f; do [ -f "$f" ] || echo "QUEBRADO: $f"; done
+# documentos vigentes no ar
+curl -sS https://checkout.sancocore.com.br/termos | grep -o 'Versão 3[^<]*'
+curl -sS https://checkout.sancocore.com.br/privacidade | grep -o 'Versão 4[^<]*'
+
+# nenhum segredo em .ia/
+grep -rniE "api[_-]?key\s*=\s*['\"a-z0-9]{10,}|-----BEGIN|sk_live|sk_test" .ia/ || echo "limpo"
 ```
 
 ## Notes for next agent
 
-Este HANDOFF ficou parado em 20/09/2026 (a tarefa de criar `.ia/`)
-enquanto três PRs de código passaram por aqui sem atualizá-lo — achado
-por revisão automática do Codex na PR #40, e a lição bate com o aviso
-que a versão anterior deste mesmo arquivo já deixava escrito: "um
-`.ia/` que para de ser atualizado depois de uma sessão vira exatamente
-o problema que ele foi criado para evitar". Regra prática: **toda PR
-que mexe em código ou schema termina atualizando este arquivo**, não só
-tarefas de infraestrutura de processo — é fácil esquecer quando o foco
-está no código, e é exatamente por isso que esquecer aconteceu aqui.
+Se você chegou aqui para "melhorar" alguma coisa, confira antes se é uma
+das cinco causas de reabertura. Não sendo, registre a ideia em
+`docs/proximas-versoes.md` e pare: é assim que a V1 continua simples.
 
-A auditoria do plugin `san-co` (`CONTROL_PLANE.md`, escrita em 20/09)
-continua válida e não foi tocada por este trabalho — ele é
-fundamentalmente Claude-Code-only, e "integrar Codex e Jules à
-metodologia" segue como tarefa de desenho futura, mapeada em
-`CONTROL_PLANE.md` e `TODO.md`.
+A história completa, dia a dia, está em `CLAUDE.md`. O estado
+verificável está em `.ia/PROJECT_STATE.md`.

@@ -134,6 +134,40 @@ numa compra de R$ 1,49. Foi assim que o veto apareceu — como bug, antes
 de virar regra escrita
 (`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
 
+### 1.12 Lojista de outro titular — FORA DO ESCOPO DA V1 (decidido em 26/09/2026)
+
+**A V1 do San Checkout é infraestrutura interna** de checkout e
+pagamento dos projetos próprios do operador. Hoje são o MostrAí e o
+contratante de teste `testemaster`. Não é produto para lojistas
+independentes.
+
+**Fora da V1, e não se constrói para "preparar o futuro":**
+
+- marketplace de lojistas independentes;
+- onboarding comercial de terceiros;
+- operação multiempresa externa;
+- recebimento oferecido como serviço a comerciantes;
+- escalar como PSP ou gateway comercial para terceiros;
+- split e subcontas reais.
+
+**Regra operacional.** Cadastrar no painel um contratante que não seja
+projeto do próprio operador viola esta restrição. O painel permite isso
+tecnicamente, e a regra não.
+
+**Por quê.** Sem split, todo o dinheiro cai na conta pessoa física do
+operador, e o repasse é manual (§3, "sem split"). Com projetos próprios,
+esse dinheiro é do próprio operador. Com um terceiro, passa a ser
+possível atividade regulada de pagamento, com consequências societárias,
+contábeis, fiscais e contratuais que a V1 não resolve.
+
+**O que muda isto.** Só uma V2, aberta por decisão formal do dono,
+começando pela Estação 1. Ela exige antes revisão societária, contábil,
+fiscal, jurídica, regulatória, de segurança, de arquitetura, de
+infraestrutura, de operação, de contratos e da experiência
+multiempresa. É nela que entram split, subcontas reais, contratos B2B,
+compliance e a revisão completa do fluxo financeiro.
+**Não evoluir silenciosamente a V1 para V2** com uma série de patches.
+
 ---
 
 ## 2. Limites assumidos (Lei 7)
@@ -155,9 +189,14 @@ de virar regra escrita
 - **Moeda**: BRL, único.
 - **Valor por cobrança**: R$ 0,01 a R$ 100.000,00 (`valorValido`).
 - **Parcelamento**: 1 a 12 vezes.
-- **Retenção de dado pessoal**: 5 anos contados da transação (CDC art.
-  27 + guarda fiscal). A rotina de expurgo ainda não existe e a validação
-  jurídica é da Estação 7 — ver `docs/inventario-de-dados.md` §6.
+- **Retenção de dado pessoal**: 5 anos contados da transação para o dado
+  de identificação da cobrança (CDC art. 27; Código Civil art. 206, §5º,
+  I), com prazos próprios e mais curtos para outbox, inbox, auditoria,
+  erros e cotações. A rotina de expurgo existe desde 17/09/2026. A
+  revisão jurídica da Estação 7 (26/09/2026) separou os prazos por
+  categoria e deixou três pendências registradas: a contagem fiscal dos
+  5 anos (contador), `clientes_asaas` e `intencoes_troca_plano` sem
+  rotina — ver `docs/inventario-de-dados.md` §6.0.
 - **Gargalos conhecidos, em ordem de probabilidade**:
   0. **Memória e CPU da instância: `nf-compute-50` no Northflank —
      0,5 vCPU e 1024 MiB.** Atualizado em 13/09/2026: até 12/09 a
@@ -1328,6 +1367,38 @@ incidente do Pix sem chave Pix e da data em UTC — os dois só existem em
 produção, e os dois foram corrigidos). Nenhuma divergência entre
 ambientes ficou sem medir.
 
+### Estação 7 · varredura final dispensada pelo dono — 26/09/2026
+
+A skill `leis` fecha a Estação 7 com três coisas: documentos publicados,
+varredura final em duas rodadas (local e no ar) com veredito
+**completo**, e a lista de reenvio entregue ao dono.
+
+**Feito:** documentos publicados (Termos v3 e Política v4, PR #64) e
+lista de reenvio entregue (`.ia/HANDOFF.md`, "Entrega de manutenção").
+
+**Não feito:** a varredura final **não rodou**. Decisão do dono no
+encerramento da V1, em 26/09/2026: "Não quero nova auditoria", e "não
+rode novamente todas as auditorias já encerradas".
+
+**O que sustenta a dispensa:**
+
+- o ciclo de segurança da Estação 6 convergiu, com uma auditoria de
+  dinheiro limpa depois da última correção substantiva (ledger de 205
+  achados em `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`);
+- a homologação real passou por Pix, cartão, boleto e assinatura;
+- a consolidação jurídica conferiu os documentos contra o sistema real
+  (`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`);
+- a V1 atende só projetos próprios (§1.12), sem terceiro convidado.
+
+**O que fica descoberto:** nenhuma passada dupla conferiu o conjunto
+final contra o que está no ar. As mudanças mescladas depois da última
+auditoria da Estação 6 passaram por CI verde e pela revisão da própria
+mudança, não por uma varredura do conjunto.
+
+**Gatilho:** a varredura final roda como primeira etapa se a V1 for
+reaberta por bug real no caminho do dinheiro, e antes de abrir a V2,
+em rodada dupla, com Fable ou Opus alto.
+
 ### Lei 7 · sem split: 100% da cobrança cai na conta-mãe — 17/09/2026
 
 A Lei 7 pede que o limite assumido esteja escrito. Este é o mais
@@ -1356,19 +1427,41 @@ futura** (`docs/proximas-versoes.md`).
   ficam **sem uso** — existem, funcionam, e não são exercitados. Código
   que não roda apodrece; quando a conversão vier, ele precisa ser
   reverificado, não presumido.
-- **A conta que recebe é PF e o operador do contrato é PJ.** Os
-  documentos legais trazem a razão social e o CNPJ da empresa (que
-  existe — é o que está no `commercialInfo`), então o texto não fica
-  falso; mas quem recebe na Asaas e quem assina os Termos deixam de ser
-  a mesma inscrição. O efeito contábil e fiscal disso é decisão do dono,
-  fora do alcance desta sessão — fica registrado porque é consequência
-  da decisão, não porque há veredito aqui.
+- ~~**A conta que recebe é PF e o operador do contrato é PJ.**~~
+  Desfeito em 17/09/2026: os documentos legais passaram a identificar a
+  pessoa física, que é quem recebe na Asaas (Lei 10, abaixo). Desde os
+  Termos v3 (26/09/2026, §9), o fluxo sem split está escrito no próprio
+  contrato: o valor cai na conta da Operadora e o repasse ao Lojista é
+  feito fora da Plataforma.
+- **REGULATORY_VALIDATION_REQUIRED (26/09/2026).** Receber o dinheiro de
+  um Lojista na conta do operador e repassar depois pode caracterizar
+  atividade regulada de pagamento (Lei 12.865/2013 e regulamentação do
+  Banco Central), e as condições da conta Asaas podem restringir o
+  recebimento em nome de terceiro. Nenhum documento deste repositório
+  conclui sobre isso, e os Termos (§9.3) mantêm a ressalva. Enquanto o
+  único Lojista for projeto do próprio dono (confirmado por ele em
+  17/09), o dinheiro não é de terceiro. **Antes de receber para um
+  Lojista de outro titular**, é preciso parecer regulatório ou o split
+  ligado. Desde o encerramento da V1 (26/09/2026), isso é restrição da
+  V1 (§1.12): Lojista de outro titular não existe nesta versão, e a
+  validação regulatória é pré-requisito da V2, não pendência da V1.
 
 Revisar no segundo contratante, ou quando o repasse manual passar de um
 punhado de transferências por mês — é o gatilho escrito na entrada de
 `docs/proximas-versoes.md`.
 
-### Lei 10 · os documentos legais identificam PESSOA FÍSICA, em transição — 17/09/2026
+### Lei 10 · os documentos legais identificam PESSOA FÍSICA — 17/09/2026, revisto em 26/09/2026
+
+> **Atualização de 26/09/2026, decisão do dono.** Não há transição para
+> pessoa jurídica em curso. O CNPJ que aparecia na
+> v1 pertence a outra atividade e não representa o San Checkout, o
+> SAN & CO. Pay nem o MostrAí. Os documentos vigentes (Termos v3,
+> Política v4) deixaram de anunciar a transição e dizem apenas que, se a
+> operação for um dia transferida para pessoa jurídica, eles serão
+> atualizados antes ou no momento da alteração. O texto abaixo é o
+> registro de 17/09 e fala em "transição" porque era a premissa daquele
+> dia.
+
 
 Decisão do dono em 17/09/2026: os Termos de Uso e a Política de
 Privacidade passam a identificar o operador como **pessoa física**

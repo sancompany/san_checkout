@@ -16,7 +16,63 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ---
 
+## SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
+
+**Nada bloqueia.** A V1 foi encerrada formalmente pelo dono em
+26/09/2026: as estações 1 a 7 estão fechadas, e o projeto entrou em
+estado de coleta entre versões. O que continua listado neste arquivo
+**não significa que a V1 está incompleta**. Cada item cai numa destas
+classes, e nenhuma autoriza trabalho sem pedido do dono:
+
+| Classe | O que é | Onde |
+|---|---|---|
+| **POST_V1_HARDENING** | melhoria técnica conhecida | a entrada da Estação 7 abaixo e toda a seção "Abertas, não bloqueiam" |
+| **OWNER_DECISION** | decisão de produto ou de configuração que só o dono toma | a entrada da Estação 7 abaixo |
+| **OWNER_MANUAL_TESTS** | teste real controlado, conduzido pelo dono | `.ia/HANDOFF.md` |
+| **EXTERNAL_VALIDATIONS** | contador ou advogado | a entrada da Estação 7 abaixo |
+| **V2** | qualquer coisa que envolva Lojista de outro titular, split ou subconta real | só com decisão formal do dono (`CONSTRAINTS.md` §1.12) |
+
+A V1 só reabre por bug real, nova necessidade de negócio, alteração
+regulatória relevante, formalização ou início da V2. O resumo para
+qualquer agente está em `.ia/HANDOFF.md`.
+
 ## Bloqueiam a esteira
+
+Nenhuma, desde 26/09/2026. As entradas abaixo registram como cada uma
+fechou. A única amarela desta seção, a do custo do scrypt, recomenda
+manter como está e não bloqueia nada.
+
+### 🟢 Estação 7 · consolidação jurídica e encerramento (26/09/2026) — FECHADA
+Relatório, matriz e fontes em
+`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`.
+
+- ✅ **Termos v3 e Política v4 escritos contra o sistema real e
+  publicados** (PR #64). As versões anteriores estão arquivadas byte a
+  byte em `docs/legal-arquivado/`. Foram achadas dezesseis divergências
+  entre documento e sistema (D1 a D16), entre elas o split descrito como
+  fluxo real, dois terceiros sem declaração (Google Fonts e ViaCEP) e o
+  hash de CPF chamado de irreversível.
+- ✅ **Inventário refeito campo a campo** em 26/09/2026, com prazo por
+  categoria.
+- ✅ **`RUNBOOK` §8.1 corrigido na fonte** (Res. CD/ANPD 15/2024 e 2/2022).
+- ✅ **Varredura final dispensada pelo dono**, registrada como exceção em
+  `CONSTRAINTS.md` §3 ("Estação 7 · varredura final dispensada pelo
+  dono"). Ela roda antes da V2, ou se a V1 reabrir por bug real no
+  caminho do dinheiro.
+- ✅ **Entrega de manutenção** feita: `.ia/HANDOFF.md`, "Entrega de
+  manutenção".
+- **Era REGULATORY_VALIDATION_REQUIRED, passou a V2.** O fluxo sem split
+  só é problema com dinheiro de terceiro, e a V1 atende só projetos
+  próprios (`CONSTRAINTS.md` §1.12). A validação regulatória é
+  pré-requisito da V2, não pendência da V1.
+- **EXTERNAL_VALIDATIONS (contador):** a emissão fiscal pela taxa do
+  checkout, e a contagem fiscal dos 5 anos (relatório §4).
+- **POST_V1_HARDENING:** o expurgo de `intencoes_troca_plano` e o de
+  `clientes_asaas` (`docs/inventario-de-dados.md` §1.3 e §6.3). O de
+  `subcontas` passou a V2, porque subconta real é recurso da V2
+  (§1.4).
+- **OWNER_DECISION:** gravar ou não o aceite dos documentos, com versão
+  e hash do texto (`docs/inventario-de-dados.md` §8).
 
 ### 🟢 Estação 6 · remediação final (25/09/2026) — FECHADA por decisão do dono em 26/09/2026
 Ledger e relatório: `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`.
@@ -88,7 +144,9 @@ resolveu, só parou de esperar por eles para fechar):
   as ações e a imagem estão fixadas e o Dependabot existe; exigir o CI
   verde para mesclar é configuração do GitHub, do dono.
 - **Prazos de retenção** de `intencoes_troca_plano`, `clientes_asaas` e
-  `subcontas` (SEC-030): decisão jurídica (skill `legal`), não técnica.
+  `subcontas` (SEC-030): **a decisão jurídica foi tomada em 26/09/2026**
+  (`docs/inventario-de-dados.md` §1.3, §1.4 e §6.3). O que resta é o
+  código que aplica os prazos, e ele está na entrada da Estação 7 acima.
 - **O CPF como oráculo de "tem assinatura"** (NEW-03): com o CPF de alguém
   e o link público de um plano, o `409 assinatura_ja_existe` diz que essa
   pessoa assina aquele plano. É consequência da regra de uma assinatura
@@ -376,7 +434,10 @@ dela, cada item com o caminho de fechamento:
   síncrono), então não bloqueia. Fecha com um cartão de teste recusado
   no sandbox e o payload anotado.
 - **`intencoes_troca_plano` sem expurgo próprio**: sem dado pessoal
-  direto; fecha com uma linha no `expurgarFilas` do `server.js`.
+  direto, mas ligada ao assinante por `assinatura_id`. O prazo foi
+  decidido em 26/09/2026 (`docs/inventario-de-dados.md` §1.3): 90 dias
+  depois de vencer sem cobrança, 5 anos com cobrança. Fecha com a função
+  descrita ali, no ciclo de `rodarExpurgoDasFilas` do `server.js`.
 - **`PAYMENT_DELETED` desmarcado** (`CONSTRAINTS.md` §2.2, decisão):
   consequência achada em 24/09 — um Pix pendente apagado no painel da
   Asaas deixa a linha local `pendente` com `charge_id`, e `POST /pix`

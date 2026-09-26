@@ -7,49 +7,56 @@ esteira e o que está aberto sem bloquear, com evidência de cada item) e
 resolver ou descobrir algo, atualize os dois lugares: o detalhe lá, o
 resumo aqui.
 
+## SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
+
+**Não há nada em andamento, e nada neste arquivo autoriza trabalho sem
+pedido do dono.** A V1 só reabre por bug real, nova necessidade de
+negócio, alteração regulatória relevante, formalização ou início da V2
+(`HANDOFF.md`).
+
 ## NOW
 
-- [ ] **Preencher `.ia/HANDOFF.md`** ao final desta tarefa (infraestrutura
-  multi-agente) — critério de conclusão: próximo agente consegue
-  retomar sem reconstituir contexto pelo chat.
+Nada.
 
-## NEXT
+- [x] Preencher `.ia/HANDOFF.md` — feito, e reescrito no encerramento da
+  V1 (26/09/2026).
+- [x] Troca da Asaas de sandbox para produção real — feita em
+  25/09/2026, e homologada com pagamento real em 26/09/2026
+  (`CONSTRAINTS.md` §3, "Estação 5").
+- [x] Trocar de plano redireciona o pagador ao Checkout — no ar desde
+  21/09/2026. Em assinatura de cartão, a troca de valor é recusada desde
+  26/09/2026 (ADR-011).
 
-- [ ] **Troca da Asaas de sandbox para produção real** — objetivo:
-  cobrança real passa a acontecer. Estado: exceção registrada com
-  gatilho, aguardando o dono e o MostrAí baterem ponto de equilíbrio.
-  Arquivos: `RUNBOOK.md` §6.2 (procedimento completo). Serviço:
-  Northflank (3 variáveis) + Asaas (webhook de produção). Dependência:
-  decisão do dono. Critério de conclusão: as 5 conferências da §6.2
-  passo 5 batem, `ASAAS_AMBIENTE=producao` confirmado.
-- [ ] **Tratamento em código dos eventos `SUBSCRIPTION_*`** — objetivo:
-  assinatura cancelada/alterada direto no painel da Asaas chega por
-  webhook, não só por conciliação pull. Estado: grupo marcado no painel
-  (18/09), zero payload real recebido ainda. Arquivo:
-  `src/controllers/webhookController.js`. Dependência: primeiro payload
-  real (que só existe depois da troca para produção, acima). Critério
-  de conclusão: `classificarEvento` trata cada evento do grupo contra
-  payload medido, nunca imaginado.
-- [ ] **Rotação de `ASAAS_WEBHOOK_TOKEN` sem janela de risco** — objetivo:
-  trocar o token sem 503 temporário. Estado: declarado, não construído
-  (aceitar dois tokens durante a virada resolveria). Arquivo: receptor
-  do webhook (`webhookController.js`/validação de token). Dependência:
-  nenhuma técnica — decisão de fazer antes ou durante a troca de
-  produção. Critério de conclusão: teste de sabotagem trocando um token
-  por vez sem gerar rejeição.
-- [x] **Trocar de plano redireciona o pagador ao Checkout** — construído
-  e no ar em 21/09/2026 (autorizado pelo dono no mesmo dia). Detalhe
-  completo em `docs/pendencias.md`, "Trocar de plano redireciona o
-  pagador ao Checkout" (mesma entrada, agora ✅).
+## POST_V1_HARDENING
 
-## LATER
+Melhorias técnicas conhecidas. Não bloqueiam e não reabrem a V1.
 
-- [ ] **Expurgo de `intencoes_troca_plano`** — a migration 0011
-  (21/09/2026) não registrou rotina de retenção própria para a tabela
-  de intenção de troca de plano. Não é a mesma classe de risco de
-  `cobrancas`/`assinaturas` (não guarda documento nem IP/UA), mas as
-  linhas nunca são limpas hoje. `docs/pendencias.md`, "Trocar de plano
-  redireciona o pagador ao Checkout".
+- [ ] **Expurgo de `intencoes_troca_plano`.** O prazo foi decidido em
+  26/09/2026: 90 dias depois de vencer sem cobrança, 5 anos com
+  cobrança. A tabela tem 0 linhas (`docs/inventario-de-dados.md` §1.3).
+- [ ] **`clientes_asaas` no expurgo**, pelo prazo e a pedido do titular,
+  com HMAC opcional (`docs/inventario-de-dados.md` §6.3).
+- [ ] **Tratamento em código dos eventos `SUBSCRIPTION_*`.** Os primeiros
+  payloads reais chegaram em 25–26/09. O tratamento espera o próximo
+  ciclo pago real, para ser escrito contra payload medido e nunca
+  imaginado. Arquivo: `src/controllers/webhookController.js`.
+- [ ] **Rotação de `ASAAS_WEBHOOK_TOKEN` sem janela de risco.** Aceitar
+  dois tokens durante a virada resolveria. Critério de conclusão: teste
+  de sabotagem trocando um token por vez sem gerar rejeição.
+
+## OWNER_DECISION / OWNER_MANUAL_TESTS / EXTERNAL_VALIDATIONS
+
+Ver `HANDOFF.md`, "O que ficou". São do dono ou de profissionais de
+fora.
+
+## V2 — só com decisão formal do dono
+
+Lojista de outro titular, split, subconta real, multiempresa e a
+revisão regulatória que eles exigem (`CONSTRAINTS.md` §1.12). Abre na
+Estação 1. Não se antecipa em patches sobre a V1.
+
+## LATER — POST_V1 (não bloqueia; só com pedido do dono)
+
 - [ ] **Medir a recusa síncrona de cartão contra o sandbox** — o
   classificador financeiro (`classificacaoFinanceiraService.js`) nunca
   deriva `DECLINED_FINAL` de status síncrono sozinho, por não haver

@@ -1506,7 +1506,7 @@ Checkout é infraestrutura de pagamento.
 | direito ou obrigação | onde está | seção |
 |---|---|---|
 | Confirmação da contratação | resumo com o total antes de pagar, e página de status com link permanente entregue junto do Pix e do boleto | 2.1 passos 3 e 6; 3; 4.1; 4.2 |
-| Termos e política antes de pagar | caixa de aceite no checkout, com os dois links | 2.1 passo 5; 6 |
+| Termos e política antes de pagar | caixa de aceite no checkout, com os dois links. **O aceite não é gravado no servidor**: o que se prova depois é a data da transação e a versão vigente nela, pelo histórico e por `docs/legal-arquivado/` (`docs/inventario-de-dados.md` §8) | 2.1 passo 5; 6 |
 | Arrependimento e cancelamento (CDC art. 49) | rodapé da página de status: resolve-se **com a loja**, que autoriza o estorno; a execução é nossa, por `POST /checkout/estornar` com a chave dela | 2.6 passo 2; 2.7 passo 5; 6 |
 | Canal do titular / Encarregado (LGPD art. 18) | rodapé do checkout e da página de status, `juridico@sancocore.com.br` | 2.6 passo 3; 3; 6 |
 | Acesso, correção, portabilidade e eliminação | pelo mesmo canal, com a retenção de 5 anos declarada em `docs/inventario-de-dados.md` §6 | 2.6 passo 3 |

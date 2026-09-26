@@ -4,6 +4,15 @@ O que foi cortado para depois. **Isto não é escopo e não autoriza
 construir nada** — vira escopo só quando passar pela Estação 1 de uma
 versão nova.
 
+> **Desde 26/09/2026 a V1 está encerrada** (`.ia/HANDOFF.md`). As
+> entradas que envolvem Lojista de outro titular, split, subconta real,
+> conversão da conta para CNPJ ou operação multiempresa **pertencem à
+> V2**. A V2 só abre por decisão formal do dono, com revisão societária,
+> contábil, fiscal, jurídica e regulatória antes de qualquer código
+> (`CONSTRAINTS.md` §1.12). As demais entradas podem virar uma versão
+> menor da V1, e também só pela Estação 1. **Não evoluir silenciosamente
+> a V1 para V2.**
+
 A diferença para o `CONSTRAINTS.md`, que é o documento vizinho: lá mora
 o que **não se constrói**; aqui, o que **ainda não se construiu**.
 
