@@ -48,7 +48,7 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 | SEC-012 | Claude | MEDIUM | MEDIUM | `asaasCheckoutController.criarCheckoutAssinatura` | CR-08 | unicidade só para `pendente` | sim | duas assinaturas no mesmo cartão | código | alvo FIXED | **FIXED** `5475d69` — `409 assinatura_ja_existe` |
 | SEC-013 | Claude + Jules (como "SEC-012/SEC-016") | MEDIUM | MEDIUM | `assinaturaController:133`, `trocaPlanoController:364`, `trocaExecucaoService:177` | CR-06 | promessa sem dono + `unhandledRejection → exit(1)` | sim, falha de banco | processo derrubado; aviso perdido | código + comentário falso em `server.js` | alvo FIXED | **FIXED** `5475d69` + C1-01 (a classe estendida aos handlers do Express) |
 | SEC-014 | Claude | MEDIUM | MEDIUM | `assinaturaService.upsertAssinatura` e vínculos | CR-06 | erro engolido; "primeira confirmação" decidida por estado já gravado | provável | assinatura órfã, 404 enquanto cobra | código | alvo FIXED | **FIXED** `5475d69` + C1-03 (a refeitura da renovação ainda encerra a antiga) |
-| SEC-015 | Claude | MEDIUM | MEDIUM | `/api/admin/*` | CR-09 | Access só no HTML; API alcançável pelo hostname e pela origem; sem 2FA nem trilha | sim | admin depende só de senha | medição ao vivo (baseline) | a triar: medir de novo; alvo FIXED ou exceção com compensação | **FIXED** `8be71d3` — JWT do Access conferido na origem + Pages Function; login real do operador = EXTERNAL_PENDING EP-01 |
+| SEC-015 | Claude | MEDIUM | MEDIUM | `/api/admin/*` | CR-09 | Access só no HTML; API alcançável pelo hostname e pela origem; sem 2FA nem trilha | sim | admin depende só de senha | medição ao vivo (baseline) | a triar: medir de novo; alvo FIXED ou exceção com compensação | **FIXED** `8be71d3` — JWT do Access conferido na origem + Pages Function; login real do operador feito pelo dono em 26/09/2026 (EP-01 fechado) |
 | SEC-016 | Claude | MEDIUM | MEDIUM | `adminController.criarSubconta`/`atualizarLinkAtivacaoSubconta` | CR-09 | segredo logado; `select('*')` devolvido | condicional (subconta bloqueada na conta PF) | segredo no log/UI | código | alvo FIXED | **FIXED** `8be71d3` — nem log nem resposta levam a chave da subconta |
 | SEC-017 | Claude + Jules (EXPANDIDO) | LOW | LOW | `asaasService.consultarStatus` via `/pix|boleto/status/:chargeId` | CR-01 | id público cru no caminho da Asaas | sim, anônimo | oráculo de status; cota | ao vivo (baseline) | alvo FIXED | **FIXED** `a5d552e` |
 | SEC-018 | Claude | MEDIUM | MEDIUM | cartão parcelado | CR-05 | semântica da Asaas desconhecida | não medido | estorno/chargeback parcial | — | provável EXTERNAL_PENDING (exige medição com dinheiro ou sandbox parcelado) | **EXTERNAL_PENDING** EP-03 — guarda `409 estorno_de_parcelamento` no ar desde `8be71d3`; a semântica de estorno de parcela da Asaas exige medição em sandbox parcelado (sem chave de sandbox nesta sessão). Produção sem compra parcelada |
@@ -64,7 +64,7 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 | SEC-028 | Claude | LOW | LOW | `chamarAsaas`, `asaasCheckoutController`, `server.js` | CR-12 | CPF e corpo cru no stdout | sim | PII em log | código | alvo FIXED | **FIXED** `8be71d3` — corpo cru da Asaas fora do log; texto redigido na fonte |
 | SEC-029 | Claude | LOW | LOW | `assinaturaController` pausar/retomar | CR-07 | arrendamento não devolvido no sucesso | sim | 409 por 5 min | código | alvo FIXED | **FIXED** `5475d69` |
 | SEC-030 | Claude | LOW | LOW | `clientes_asaas`, `subcontas`, `intencoes_troca_plano` | CR-12 | hash sem sal; sem retenção | — | pseudonimização fraca | código | a triar: hash FIXED se não quebrar busca; prazos = decisão jurídica (EXTERNAL_PENDING) | **EXTERNAL_PENDING** EP-05 — o prazo de retenção é decisão jurídica; o hash sem sal é RES-06 (documento em claro já existe por desenho) |
-| SEC-031 | Claude | LOW | LOW | `/api/saude`, Northflank | CR-11 | 200 com worker parado; sem health check | sim | processo pendurado não reinicia | ao vivo | alvo FIXED | **FIXED** `8be71d3` — `/api/saude` 503 com `workersAtrasados`; o health check do Northflank apontando para ela = EXTERNAL_PENDING EP-06 |
+| SEC-031 | Claude | LOW | LOW | `/api/saude`, Northflank | CR-11 | 200 com worker parado; sem health check | sim | processo pendurado não reinicia | ao vivo | alvo FIXED | **FIXED** `8be71d3` — `/api/saude` 503 com `workersAtrasados`; health check do Northflank configurado em 26/09/2026 como readiness TCP na porta 3001, sem liveness — não em `/api/saude`, porque com instância única o 503 de worker atrasado tiraria o serviço inteiro do ar (EP-06 fechado; `RUNBOOK` §6.3) |
 | SEC-032 | Claude | LOW | LOW | `atualizarLinkAtivacaoSubconta` | CR-09 | sem validação de esquema | só admin | `javascript:` (barrado pela CSP) | código | alvo FIXED | **FIXED** `8be71d3` — link de ativação só `https`, ≤ 2048 |
 | SEC-033 | Claude + Jules | LOW | LOW | `qs` 6.15.3 | CR-13 | dependência com aviso moderado | sim (parser) | DoS / limite de array | `npm audit` | alvo FIXED (atualização segura, sem `--force`) | **FIXED** `8be71d3` — express 4.22.3, qs 6.16.0, `npm audit` 0 |
 | SEC-034 | Claude | LOW | LOW | CI | CR-13 | sem `permissions:`; gitleaks sem checksum; sem Dependabot | — | supply chain | `.github/workflows/` | alvo FIXED no que é código; branch protection = EXTERNAL_PENDING (não legível daqui) | **FIXED** `8be71d3`/`8c96576` — `permissions: contents: read`, gitleaks por SHA-256, semgrep por digest, Dependabot com cooldown; branch protection = EXTERNAL_PENDING EP-07 |
@@ -85,7 +85,7 @@ Severidade "atual" = a maior entre a baseline, o Jules e a triagem desta rodada,
 | INFO-10 | URL da outbox congelada no enfileiramento | CR-04 | a triar junto com SEC-006 | **FIXED** `c8f4e20` — destino revalidado no ENVIO, não no enfileiramento |
 | INFO-11 | Mensagem de erro da Asaas repassada ao cliente | CR-12 | alvo FIXED | **FIXED** `8be71d3` — 401/403/5xx da Asaas viram 502 genérico |
 | INFO-12 | Documento cita prefixo/sufixo de chave de sandbox | CR-09 | alvo FIXED | **FIXED** `8be71d3` |
-| INFO-13 | Grants padrão do `anon` nas 12 tabelas | CR-09 | alvo FIXED (defesa em profundidade) | **EXTERNAL_PENDING** EP-02 — migration 0020 escrita e testada; a aplicação em produção pede a aprovação da ferramenta, que não veio nesta sessão |
+| INFO-13 | Grants padrão do `anon` nas 12 tabelas | CR-09 | alvo FIXED (defesa em profundidade) | **FIXED** 0020 — aplicada em produção em 26/09/2026 pelo MCP do Supabase, com aprovação do dono (EP-02 fechado): `anon`/`authenticated` com 0 privilégios em tabela e função, a chave pública recebe `42501` em tabela e RPC, e o `service_role` mantém `EXECUTE` nas 4 funções (FP1C-1 conferido) |
 | INFO-14 | Tela Pix de irmã cancelada segue "aguardando" | CR-03 | a triar (UX) | **RISK_ACCEPTED** — UX; o pagamento em si é recusado pela Asaas depois de a irmã ser cancelada; RES-11 |
 
 ### 2.3 Achados novos do Jules
@@ -582,7 +582,7 @@ Nenhum evento financeiro passou pela janela errada: o último evento da inbox é
 | Outbox | 4 `enviada`; nada `pendente`, `enviando`, `falhou` ou `abandonada` |
 | `erros` nas últimas 24 h | só os três do incidente das 01:24 (Pix sem chave; `docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`); nenhum depois do deploy |
 | Webhook na Asaas (lido de dentro do contêiner) | `enabled`, não `interrupted`, `sendType: SEQUENTIALLY`, 0 requisições penalizadas, 61 eventos, dos quais 7 `SUBSCRIPTION_*` |
-| Health check do Northflank | **nenhum configurado** (`healthChecks: []`) — EP-06 continua |
+| Health check do Northflank | **nenhum configurado** (`healthChecks: []`) em 25/09 — configurado em 26/09/2026 (readiness TCP, EP-06 fechado) |
 | `npm audit` | 0 vulnerabilidades |
 
 ### 11.3 A sonda de IP forjado (JULES-002, INFO-06)
@@ -600,12 +600,12 @@ O servido por engano virou o **controle positivo**: a mesma sonda, contra o cód
 
 Nada disto se resolve sem o dono ou sem dinheiro novo:
 
-- **EP-01**: login do operador pelo Access.
-- **EP-02**: aplicar a 0020, e depois conferir o `EXECUTE` do `service_role`. A aplicação pede a aprovação da ferramenta, e contorná-la é proibido.
+- ✅ **EP-01**: login do operador pelo Access — feito pelo dono em 26/09/2026.
+- ✅ **EP-02**: aplicar a 0020, e depois conferir o `EXECUTE` do `service_role` — aplicada em 26/09/2026 pelo MCP do Supabase, com a aprovação do dono; conferência feita (INFO-13).
 - **EP-03**: estorno de parcela no sandbox.
 - **EP-04**: origem real do webhook antes do modo estrito.
 - **EP-05**: prazo de retenção.
-- **EP-06**: health check do Northflank. Ele é mudança de configuração de produção com risco de reinício em laço se o probe estiver errado, então é do dono.
+- ✅ **EP-06**: health check do Northflank — configurado em 26/09/2026 como readiness TCP na porta 3001, sem liveness (SEC-031).
 - **EP-07**: branch protection.
 - **EP-08**: oráculo do `409`.
 - **EP-10**: boleto com estorno negado.
@@ -752,4 +752,4 @@ Gerada das próprias linhas do ledger: cada RES aponta para o achado que o aceit
 
 **Contagem do ledger, calculada das próprias linhas** por `tests/o-que-os-documentos-afirmam.js` — a suíte reprova se esta linha divergir do que a tabela soma, se um ID aparecer duas vezes ou se uma linha não tiver exatamente um estado final:
 
-TOTAL_LEDGER = 205 = FIXED 110 + FALSE_POSITIVE 4 + DUPLICATE 17 + RISK_ACCEPTED 68 + EXTERNAL_PENDING 6
+TOTAL_LEDGER = 205 = FIXED 111 + FALSE_POSITIVE 4 + DUPLICATE 17 + RISK_ACCEPTED 68 + EXTERNAL_PENDING 5
