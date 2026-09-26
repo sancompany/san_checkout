@@ -22,6 +22,24 @@ por baixo. Segue as leis do plugin `san-co`.
 > Sem o plugin carregado, clonar `sancompany/Plugin_san-co` e ler de lá
 > antes de fechar qualquer coisa.
 
+## SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
+
+**A V1 está finalizada e em produção.** Ela é a infraestrutura interna de
+checkout e pagamento dos **projetos próprios** do operador (hoje o
+MostrAí e o contratante de teste `testemaster`). **Não** é plataforma
+comercial para lojistas externos: Lojista de outro titular, split,
+subconta real e multiempresa ficam fora da V1 (`CONSTRAINTS.md` §1.12).
+
+- **Reabrir a V1** só por bug real, nova necessidade de negócio,
+  alteração regulatória relevante, formalização empresarial ou início da
+  V2.
+- **A V2** só existe com decisão formal do dono e uma versão nova aberta
+  na Estação 1. **Não evoluir silenciosamente a V1 para V2.**
+- **O que resta** não reabre a V1. Está classificado em
+  `docs/pendencias.md` como POST_V1_HARDENING, OWNER_DECISION,
+  OWNER_MANUAL_TESTS, EXTERNAL_VALIDATIONS ou V2.
+- **Resumo para qualquer agente:** `.ia/HANDOFF.md`.
+
 ## Antes de agir: existe uma skill para isto?
 
 **Procure a skill que corresponde à FUNÇÃO que você está exercendo, e
@@ -78,10 +96,14 @@ Porte: multi-inquilino · Dado: de terceiro, com dinheiro · Vida útil: longa
 → **topo da escala de rigor** (Lei 0: nada aqui se dispensa por proporcionalidade)
 
 ## Estado na esteira
-Estação atual: **7 Lançamento, aberta em 26/09/2026** — a Estação 6
-(Prontidão) foi **fechada por decisão do dono em 26/09/2026**, depois da
-homologação real com os pagamentos já recebidos (Pix, cartão, boleto,
-assinatura) e do fechamento do ciclo de segurança.
+**As sete estações estão fechadas, e a V1 foi encerrada em 26/09/2026.**
+O projeto está em **estado de coleta** entre versões (skill `leis`).
+Não há estação aberta. A próxima versão, a V2, só abre por decisão
+formal do dono, na Estação 1 (Opus, esforço alto).
+
+A Estação 6 (Prontidão) foi **fechada por decisão do dono em
+26/09/2026**, depois da homologação real com os pagamentos já recebidos
+(Pix, cartão, boleto, assinatura) e do fechamento do ciclo de segurança.
 
 **A parte técnica da Estação 7 está concluída (26/09/2026):**
 - **Admin real pelo Cloudflare Access** — o dono entrou e o painel
@@ -97,10 +119,11 @@ assinatura) e do fechamento do ciclo de segurança.
   liveness; não em `/api/saude`, porque com instância única o 503 de
   worker atrasado tiraria o serviço inteiro do ar (`RUNBOOK` §6.3).
 
-**A única pendência da Estação 7 é o jurídico**: obrigações legais e
-documentos (skill `legal`), depois a varredura final e a entrega de
-manutenção. Pede Sonnet nos documentos e Fable (ou Opus alto, com a
-substituição registrada) na varredura final, em esforço alto.
+**A Estação 7 fechou em 26/09/2026:**
+- **documentos publicados:** Termos v3 e Política v4, PR #64;
+- **varredura final dispensada pelo dono**, registrada como exceção em
+  `CONSTRAINTS.md` §3;
+- **entrega de manutenção** em `.ia/HANDOFF.md`.
 
 > Em 13/09 eu emendei direto no passo 1 da Estação 6 sem pedir. O
 > trabalho achou dois furos reais e mesmo assim estava fora de ordem —
@@ -115,6 +138,7 @@ substituição registrada) na varredura final, em esforço alto.
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | **fechada sem ressalva** 25/09 | `b753716` no ar e **conferido em produção** em 13/09. A exceção do sandbox (`CONSTRAINTS.md` §3) cumpriu as duas rodadas: a 1ª exercitou todos os meios no sandbox; a 2ª, com `ASAAS_AMBIENTE=producao` (conferido dentro do contêiner), reconferiu os quatro pontos que mudam entre ambientes — identificador de cobrança, formato do webhook, assinatura e mensagem de erro — contra o primeiro dinheiro real, em 25–26/09. Exceção fechada em `CONSTRAINTS.md` §3 |
 | 6 Prontidão | **fechada por decisão do dono** 26/09 | Ciclo de segurança limpo (ledger de 205 achados, `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`); prontidão operacional fechada; homologação real com os pagamentos já recebidos — Pix, cartão avulso, boleto e assinatura conferidos na Asaas e no banco, o bug 365/360 da troca de plano corrigido, e a assinatura de homologação cancelada pelo fluxo oficial sem estorno. O que a 6 tinha aberto e nenhum agente substitui — entrar no `/admin` pelo Access, a migration 0020 e o health check do Northflank — passou para a **Estação 7**, e os três foram feitos em 26/09/2026 (ver "Estado na esteira") |
+| 7 Lançamento | **fechada com exceção** 26/09 | Documentos publicados — Termos v3 e Política v4, conferidos contra o sistema real (`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`), PR #64. Varredura final dispensada pelo dono no encerramento da V1 (`CONSTRAINTS.md` §3, "Estação 7 · varredura final dispensada pelo dono"). Entrega de manutenção e lista de reenvio em `.ia/HANDOFF.md` |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -1055,34 +1079,24 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 > contradizendo é a falha que este documento existe para não ter: quem
 > lesse só esta seção planejaria de novo um trabalho já feito.
 
-**A Estação 6 foi fechada em 26/09/2026, e a parte técnica da Estação
-7 também** (evidência em "Estado na esteira", acima). **A única
-pendência é o jurídico**, e o que vem depois dele, nesta ordem, pela
-skill `leis`:
+**Nenhuma — a V1 foi encerrada em 26/09/2026.** As sete estações
+fecharam, e as evidências estão em "Estado na esteira", acima.
 
-- **Obrigações legais e documentos publicados** (skill `legal`, Lei 10):
-  **Termos v3, Política v4 e o inventário foram consolidados em
-  26/09/2026 e esperam a aprovação do dono para mesclar**
-  (`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`). Esta linha
-  dizia que a política não mencionava o Web Analytics, e isso era falso
-  desde 17/09 (Política v3, §15.5). O que a consolidação achou de
-  verdade foram 16 divergências, entre elas o Google Fonts e o ViaCEP
-  sem declaração e o split descrito como fluxo real. Ficam em aberto
-  uma validação regulatória (o fluxo sem split antes de um Lojista de
-  outro titular), uma contábil (emissão fiscal e contagem dos 5 anos) e
-  três rotinas de expurgo que o jurídico exige e que ainda não existem.
-- **Varredura final, em duas rodadas** (`references/varredura-final.md`
-  do plugin) — local e no que está no ar —, com veredito **completo** ou
-  **falta**, nunca "completo com ressalvas". Só depois dos documentos
-  publicados.
-- **Entrega de manutenção** ao dono: o que renova, o que vence (domínio
-  em 31/08/2027), o que é só dele.
+O que resta está classificado em `docs/pendencias.md` e resumido em
+`.ia/HANDOFF.md`. Nada disso reabre a V1:
 
-Até a 7 fechar, pela mesma skill: **sem anúncio, sem link enviado e sem
-cadastro aberto a terceiros.**
+- **POST_V1_HARDENING:** as rotinas de expurgo de
+  `intencoes_troca_plano` e de `clientes_asaas`, o tratamento dos
+  eventos `SUBSCRIPTION_*` e as entradas "Abertas, não bloqueiam";
+- **OWNER_DECISION:** gravar o aceite dos documentos, e a proteção de
+  branch da `main`;
+- **OWNER_MANUAL_TESTS:** os testes reais controlados;
+- **EXTERNAL_VALIDATIONS:** o contador (emissão fiscal da taxa e
+  contagem dos 5 anos) e, se o dono quiser, um advogado;
+- **V2:** Lojista de outro titular, split, subconta real, e a validação
+  regulatória que eles exigem.
 
-Tudo o mais de prontidão está fechado ou virou decisão registrada — a
-lista completa, com o que era e o que passou a ser, está em
-`docs/pendencias.md`.
+A Estação 7 fechou, e a restrição de escopo continua: **nenhum
+contratante de outro titular** na V1 (`CONSTRAINTS.md` §1.12).
 
 As demais, que não bloqueiam, estão em `docs/pendencias.md`.

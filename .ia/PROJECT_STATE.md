@@ -5,7 +5,17 @@ Este documento registra o estado no momento da última atualização
 rodar o comando ao lado quando a informação for crítica para a sua
 tarefa — estado de infra envelhece rápido, o comando não.
 
-**Última verificação**: 20/09/2026, auditoria de preparação multi-agente.
+**Última atualização**: 26/09/2026, no encerramento da V1. Os fatos
+abaixo foram conferidos entre 25 e 26/09/2026, salvo quando outra data
+aparece.
+
+## Estado: SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
+
+É a infraestrutura interna de checkout e pagamento dos **projetos
+próprios** do operador, e não uma plataforma para lojistas externos
+(`CONSTRAINTS.md` §1.12). As estações 1 a 7 estão fechadas, sem trabalho
+em andamento. A V2 só abre por decisão formal do dono. O resumo está em
+`HANDOFF.md`.
 
 ## Versão e branch
 
@@ -24,8 +34,10 @@ tarefa — estado de infra envelhece rápido, o comando não.
 - API: `api.sancocore.com.br` (DNS-only, sem proxy Cloudflare).
 - Banco: Supabase `San_Checkout` (`zacuaroarelaqnzjjlcz`, `sa-east-1`),
   `ACTIVE_HEALTHY` na verificação desta auditoria.
-- Health check: `curl -sS https://api.sancocore.com.br/api/saude` — 200
-  confirmado nesta auditoria, com `supabaseRespondendo: true`.
+- Saúde: `curl -sS https://api.sancocore.com.br/api/saude`, que deve
+  responder `200` com `workersAtrasados: []`.
+- Health check do Northflank: readiness TCP na porta 3001, sem liveness
+  (`RUNBOOK.md` §6.3).
 
 ## Ambiente de staging
 
@@ -33,53 +45,44 @@ tarefa — estado de infra envelhece rápido, o comando não.
 Northflank, segundo domínio de app ou segunda branch de deploy
 encontrada nesta auditoria.
 
-## Pagamento — sandbox, não produção real
+## Pagamento — produção real
 
-O backend está em produção real, mas a integração com a Asaas continua
-em **modo sandbox** (`ASAAS_AMBIENTE=sandbox`) — decisão registrada,
-não pendência esquecida (`CONSTRAINTS.md` §3, "Estação 5 · deploy em
-produção apontando para o sandbox da Asaas"). A troca para produção
-real depende do dono: as três variáveis no Northflank
-(`ASAAS_API_KEY`, `ASAAS_AMBIENTE=producao`, o que mais a troca exigir)
-e reconfigurar o webhook de produção em `/api/webhooks/asaas`
-(plural — o singular dá 404, já conferido). Reconfirmar o ambiente
-atual: `GET /api/saude` traz `chaveAsaasConfigurada`; o valor de
-`ASAAS_AMBIENTE` em si não é exposto por essa rota por design (é
-credencial-adjacente) — confirmar lendo a variável no Northflank
-(nome, não valor) ou pelo comportamento observado (domínio sandbox nas
-chamadas à Asaas).
+Desde 25/09/2026, com `ASAAS_AMBIENTE=producao`, conferido dentro do
+contêiner. A homologação real de 26/09/2026 passou por Pix, cartão
+avulso, boleto e assinatura, e a exceção do sandbox fechou
+(`CONSTRAINTS.md` §3, "Estação 5"). O webhook de produção está em
+`/api/webhooks/asaas`, no plural.
 
 ## Componentes — o que está implementado
 
 | Componente | Estado | Evidência |
 |---|---|---|
 | Pagamento avulso (Pix, boleto, cartão até 12x) | ✅ funcional, testado ao vivo | `docs/erros/2026-09-18-descricao-do-contratante-sem-teto-quebrava-cartao-por-inteiro.md` (bug achado e corrigido testando ao vivo) |
-| Assinatura por cartão | ✅ funcional, com pagamento real no sandbox já concluído | `CLAUDE.md` raiz, 16/09/2026 |
+| Assinatura por cartão | ✅ funcional, homologada com pagamento real em produção (26/09/2026) | `CLAUDE.md` raiz, 26/09/2026 |
 | Assinatura por Pix Automático | ⚠️ implementada, mas **desligada nesta conta Asaas** | `CONSTRAINTS.md` §2.4 |
 | Cancelar/pausar/retomar assinatura | ✅ funcional | `docs/funcional.md`, RN-20/21 |
-| Trocar de plano (upgrade/downgrade) | ✅ no ar desde 18/09/2026 | PR #18, commit `5910150`; `API.md` §5.6 |
+| Trocar de plano (upgrade/downgrade) | ⚠️ recusada com `409 troca_de_valor_nao_suportada` em assinatura de cartão, que é limitação deliberada da V1. A infraestrutura de aprovação em `/troca` vale para outros meios | ADR-011, RN-35.4, `API.md` §5.6 |
 | Conciliação (pedido e assinatura) | ✅ funcional, reconcilia `status`/`ciclo`/`proximaCobranca`/`valor` | `API.md` §5.2/§5.3 |
 | Webhook da Asaas (recepção) | ✅ funcional, assinatura HMAC verificada | `webhookController.js` |
-| Tratamento dos eventos `SUBSCRIPTION_*` | ❌ não implementado | marcação no painel Asaas feita (18/09), tratamento em código aguarda primeiro payload real |
-| Estorno | ✅ funcional, só pelo contratante | `refundController.js` |
+| Tratamento dos eventos `SUBSCRIPTION_*` | ❌ não implementado em código, e é POST_V1_HARDENING | marcação no painel feita (18/09); primeiros payloads reais em 25–26/09; o tratamento espera o próximo ciclo pago |
+| Estorno | ✅ funcional, integral e parcial, só pelo contratante, com idempotência | `API.md` §5.4 |
 | Painel admin | ✅ funcional, atrás de Cloudflare Access + login próprio | `adminController.js`, `CONSTRAINTS.md` §2.6 |
 | Métrica de sucesso (cobranças confirmadas) | ✅ funcional, filtra uso interno (`ambiente`/`e_teste`) | migration 0009, RN-33 |
 | Captura de exceção (Lei 8) | ✅ funcional, inclusive rejeição de Promise não tratada | migration 0007, `erroService.js` |
 | Backup/restauração | ⚠️ ensaiada com sucesso (RTO ~1s), sem cópia periódica fora do provedor | `CONSTRAINTS.md` §3 |
 | Acessibilidade WCAG 2.2 AA | ✅ verificada, 0 violações na última rodada | `npm run acessibilidade` |
-| Documentos legais (Termos/Privacidade) | ✅ publicados, v3, pessoa física (CPF) | `public/termos.html`, `public/privacidade.html` |
+| Documentos legais (Termos/Privacidade) | ✅ publicados: Termos v3 e Política v4 (26/09/2026), pessoa física, conferidos contra o sistema real | `public/termos.html`, `public/privacidade.html`, `docs/legal-arquivado/` |
 
 ## O que está quebrado hoje
 
-Nada identificado como quebrado em produção nesta auditoria — a
-Estação 6 (ver abaixo) está avançada, com pendências declaradas, não
-bugs abertos. Um agente que encontrar algo quebrado deve registrar em
+Nada conhecido como quebrado em produção no encerramento da V1. As
+limitações são deliberadas e estão registradas em `CONSTRAINTS.md`. Um agente que encontrar algo quebrado deve registrar em
 `docs/erros/` e atualizar esta tabela na mesma tarefa.
 
 ## Migrations
 
-10 arquivos locais (`supabase/migrations/0001` a `0010`), todos
-aplicados no schema real — **confirmado pelas colunas existentes**
+20 arquivos locais (`supabase/migrations/0001` a `0020`), todos
+aplicados no schema real; a `0020` foi aplicada e validada em 26/09/2026 — **confirmado pelas colunas existentes**
 via `mcp__Supabase__list_tables`, não só pelo nome do arquivo (ver
 `RISKS.md` para uma divergência de nomenclatura encontrada entre o
 histórico de migrations do Supabase e os nomes de arquivo locais —
@@ -94,31 +97,24 @@ mcp__Supabase__list_tables(project_id="zacuaroarelaqnzjjlcz", schemas=["public"]
 
 ## Testes
 
-43 suítes (`tests/executar.js`), todas passando na última execução
-desta auditoria (`npm run check`). O número exato é conferido por
+82 suítes (`tests/executar.js`), todas passando na última execução
+(`npm run check`, 26/09/2026). O número exato é conferido por
 `tests/o-que-os-documentos-afirmam.js` — não copie um número fixo para
 outro documento sem rodar o teste, ele já pegou divergência três vezes
 na mesma semana (17-18/09/2026).
 
-## Pipeline do plugin `san-co` — estação atual
+## Pipeline do plugin `san-co` — estado
 
-**Estação 6 (Prontidão), aberta em 14/09/2026, muito avançada.** O que
-falta para fechá-la, segundo `CLAUDE.md` (raiz) em 19/09/2026— e
-**nada disso é código deste repositório**:
+**As sete estações estão fechadas, e a V1 foi encerrada em 26/09/2026.**
+A Estação 7 fechou com a varredura final dispensada pelo dono, que está
+registrada como exceção em `CONSTRAINTS.md` §3. Não há estação aberta. O
+projeto está em estado de coleta, e a V2 só abre na Estação 1, por
+decisão formal do dono.
 
-1. Troca da Asaas de sandbox para produção real (ação do dono, gated em
-   o MostrAí bater o mesmo ponto de equilíbrio do lado dele).
-2. Primeiro ciclo de assinatura pago em produção real (depende do item 1)
-   — e, com ele, o tratamento em código dos eventos `SUBSCRIPTION_*`.
-3. Primeiro pagamento real de valor baixo — gatilho da exceção de
-   backup registrada em `CONSTRAINTS.md` §3.
-4. Alguns campos `⬜` do inventário de contas/contatos que nenhuma API
-   responde (onde a senha mora, qual cartão paga) — só o dono resolve.
-
-O detalhe completo, dia a dia, está em `CLAUDE.md` (raiz) — não
-duplicado aqui de propósito (ver `.ia/README.md`, "permanente vs.
-atualizado com frequência"). Este documento resume o que é **estado**;
-`CLAUDE.md` guarda a **narrativa**.
+O que resta não reabre a V1: está classificado em `docs/pendencias.md`
+e resumido em `HANDOFF.md`. O detalhe dia a dia está em `CLAUDE.md`
+(raiz). Este documento resume o **estado**, e o `CLAUDE.md` guarda a
+**narrativa**.
 
 ## Como reverificar tudo de uma vez
 

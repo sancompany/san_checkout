@@ -134,6 +134,40 @@ numa compra de R$ 1,49. Foi assim que o veto apareceu — como bug, antes
 de virar regra escrita
 (`docs/erros/2026-09-13-o-guarda-de-total-olhava-o-numero-errado.md`).
 
+### 1.12 Lojista de outro titular — FORA DO ESCOPO DA V1 (decidido em 26/09/2026)
+
+**A V1 do San Checkout é infraestrutura interna** de checkout e
+pagamento dos projetos próprios do operador. Hoje são o MostrAí e o
+contratante de teste `testemaster`. Não é produto para lojistas
+independentes.
+
+**Fora da V1, e não se constrói para "preparar o futuro":**
+
+- marketplace de lojistas independentes;
+- onboarding comercial de terceiros;
+- operação multiempresa externa;
+- recebimento oferecido como serviço a comerciantes;
+- escalar como PSP ou gateway comercial para terceiros;
+- split e subcontas reais.
+
+**Regra operacional.** Cadastrar no painel um contratante que não seja
+projeto do próprio operador viola esta restrição. O painel permite isso
+tecnicamente, e a regra não.
+
+**Por quê.** Sem split, todo o dinheiro cai na conta pessoa física do
+operador, e o repasse é manual (§3, "sem split"). Com projetos próprios,
+esse dinheiro é do próprio operador. Com um terceiro, passa a ser
+possível atividade regulada de pagamento, com consequências societárias,
+contábeis, fiscais e contratuais que a V1 não resolve.
+
+**O que muda isto.** Só uma V2, aberta por decisão formal do dono,
+começando pela Estação 1. Ela exige antes revisão societária, contábil,
+fiscal, jurídica, regulatória, de segurança, de arquitetura, de
+infraestrutura, de operação, de contratos e da experiência
+multiempresa. É nela que entram split, subcontas reais, contratos B2B,
+compliance e a revisão completa do fluxo financeiro.
+**Não evoluir silenciosamente a V1 para V2** com uma série de patches.
+
 ---
 
 ## 2. Limites assumidos (Lei 7)
@@ -1333,6 +1367,38 @@ incidente do Pix sem chave Pix e da data em UTC — os dois só existem em
 produção, e os dois foram corrigidos). Nenhuma divergência entre
 ambientes ficou sem medir.
 
+### Estação 7 · varredura final dispensada pelo dono — 26/09/2026
+
+A skill `leis` fecha a Estação 7 com três coisas: documentos publicados,
+varredura final em duas rodadas (local e no ar) com veredito
+**completo**, e a lista de reenvio entregue ao dono.
+
+**Feito:** documentos publicados (Termos v3 e Política v4, PR #64) e
+lista de reenvio entregue (`.ia/HANDOFF.md`, "Entrega de manutenção").
+
+**Não feito:** a varredura final **não rodou**. Decisão do dono no
+encerramento da V1, em 26/09/2026: "Não quero nova auditoria", e "não
+rode novamente todas as auditorias já encerradas".
+
+**O que sustenta a dispensa:**
+
+- o ciclo de segurança da Estação 6 convergiu, com uma auditoria de
+  dinheiro limpa depois da última correção substantiva (ledger de 205
+  achados em `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`);
+- a homologação real passou por Pix, cartão, boleto e assinatura;
+- a consolidação jurídica conferiu os documentos contra o sistema real
+  (`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`);
+- a V1 atende só projetos próprios (§1.12), sem terceiro convidado.
+
+**O que fica descoberto:** nenhuma passada dupla conferiu o conjunto
+final contra o que está no ar. As mudanças mescladas depois da última
+auditoria da Estação 6 passaram por CI verde e pela revisão da própria
+mudança, não por uma varredura do conjunto.
+
+**Gatilho:** a varredura final roda como primeira etapa se a V1 for
+reaberta por bug real no caminho do dinheiro, e antes de abrir a V2,
+em rodada dupla, com Fable ou Opus alto.
+
 ### Lei 7 · sem split: 100% da cobrança cai na conta-mãe — 17/09/2026
 
 A Lei 7 pede que o limite assumido esteja escrito. Este é o mais
@@ -1376,7 +1442,9 @@ futura** (`docs/proximas-versoes.md`).
   único Lojista for projeto do próprio dono (confirmado por ele em
   17/09), o dinheiro não é de terceiro. **Antes de receber para um
   Lojista de outro titular**, é preciso parecer regulatório ou o split
-  ligado.
+  ligado. Desde o encerramento da V1 (26/09/2026), isso é restrição da
+  V1 (§1.12): Lojista de outro titular não existe nesta versão, e a
+  validação regulatória é pré-requisito da V2, não pendência da V1.
 
 Revisar no segundo contratante, ou quando o repasse manual passar de um
 punhado de transferências por mês — é o gatilho escrito na entrada de
