@@ -21,10 +21,12 @@ não há como dizer o que a pessoa concordou.
 > históricas: não há transição em curso.
 
 **Os dois documentos não andam no mesmo passo, e isso é proposital:** a
-v3 corrige fatos de infraestrutura e de tratamento de dados, que vivem
-na Política. Os Termos não afirmam nada sobre fornecedor, então
-continuam na v2 — versionar um documento que não mudou só cria uma data
-falsa.
+numeração de cada um só avança quando o conteúdo dele muda. Em
+17/09/2026 só a Política mudou (v3), porque corrigia fatos de
+infraestrutura e de tratamento de dados, e os Termos ficaram na v2.
+Desde 26/09/2026 as versões vigentes são **Termos v3** e **Política
+v4**, conforme a tabela acima. Versionar um documento que não mudou só
+cria uma data falsa.
 
 ## Por que a v1 não precisou ser comunicada a ninguém
 

@@ -147,6 +147,10 @@ subconta: `nome`, `email`, `documento`, `telefone`, `celular`,
 mesmo cuidado de exposição (mascaradas na tela, reveladas só sob clique).
 
 - **Finalidade e base legal:** abrir e manter a subconta do Lojista (V).
+- **ViaCEP:** quando o operador informa o CEP no formulário de subconta,
+  o painel consulta o ViaCEP pelo navegador, para completar logradouro
+  e bairro (`public/js/admin.js`, o mesmo `buscarEnderecoPorCep` do
+  checkout). O ViaCEP recebe o CEP do titular da subconta.
 - **Retenção:** enquanto a subconta existir na Asaas; depois de
   arquivada, 5 anos, pelo mesmo raciocínio da cobrança.
 - **Estado real:** **0 linhas** em produção. A conta-mãe é pessoa física
@@ -213,7 +217,7 @@ de titular de terceiro é publicado em lugar nenhum.
 | Cloudflare Web Analytics | métrica de desempenho da página | rede global | ativo desde 01/09/2026, injetado pela própria Cloudflare (`auto_install`), por isso ausente do HTML do repositório (`script-src` da CSP libera `static.cloudflareinsights.com`). Conferido na documentação oficial em 26/09/2026: sem cookie e sem `localStorage`, sem *fingerprinting*, sem rastreamento entre sites de clientes, e não registra *query string*. A Cloudflare mantém os *beacons* integrais por **7 dias** e depois só agregados, em amostra de cerca de 10%. Base legal IX |
 | Cloudflare Access | e-mail do operador, cookie de sessão do `/admin` | rede global | só o operador |
 | **Google Fonts** | IP, agente do navegador e página de origem de **todo visitante** | infraestrutura global do Google | declarado pela primeira vez em 26/09/2026 (Política v4, §15.11). Conferido no FAQ oficial do Google Fonts: a API não grava cookie, e o dado não é usado para perfil de usuário final nem para publicidade direcionada. Base legal IX. **Alternativa técnica, não obrigatória:** servir as fontes do próprio domínio, o que tira o Google do caminho |
-| **ViaCEP** | o CEP digitado e o dado técnico da conexão | não verificada | declarado pela primeira vez em 26/09/2026 (Política v4, §15.12). É chamado **pelo navegador**, só no cartão e na assinatura por cartão, quando o Pagador informa o CEP. Base legal V (procedimento preliminar do pagamento) |
+| **ViaCEP** | o CEP digitado e o dado técnico da conexão | não verificada | declarado pela primeira vez em 26/09/2026 (Política v4, §15.12). É chamado **pelo navegador** em dois lugares: no checkout, só no cartão e na assinatura por cartão, com o CEP do Pagador; e no painel, com o CEP do titular de uma subconta (§1.4). Base legal V (procedimento preliminar do pagamento ou da abertura da subconta) |
 | Google Workspace | as mensagens recebidas em `juridico@`, `suporte@`, `contato@` e `financeiro@` | infraestrutura global | MX `smtp.google.com`, conferido em 26/09/2026. A aplicação **não envia e-mail**: não há biblioteca de envio em `src/` nem em `package.json`, conferido em 26/09/2026 |
 | Contratante (Lojista) | payload do webhook e resposta da conciliação | o ambiente dele | pedido avulso: `pedidoId`, valores, cupom e taxas, **sem documento**. Assinatura: `documento`, `planoId`, `assinaturaId` e valores. Nunca endereço nem cartão (`API.md` §4.3.3 e §4.3.4) |
 | Contratante (navegação de volta) | só o `pedidoId`, na URL de retorno | — | desde 15/09/2026. O `returnUrl` leva **um** parâmetro, `pedido`, que o próprio contratante gerou. Nenhum dado pessoal e nenhum status de pagamento viajam por aí (`API.md` §3.1) |
@@ -231,9 +235,29 @@ de titular de terceiro é publicado em lugar nenhum.
 
 Uma linha por pedido de estorno: ids da cobrança e do contratante,
 `charge_id`, chave de idempotência, valor, estado, contadores e última
-mensagem de erro. **Sem dado pessoal.** É registro financeiro da mesma
-classe de `cobrancas`, fica junto com ela, e não tem rotina de expurgo
-porque não identifica ninguém.
+mensagem de erro.
+
+- **Natureza do dado.** Nenhuma coluna identifica a pessoa diretamente,
+  mas a linha é **dado pessoal por vínculo**, a mesma classificação de
+  `intencoes_troca_plano` (§1.3). `cobranca_id` aponta para a linha de
+  `cobrancas`, que guarda documento, e-mail, telefone e endereço
+  enquanto não passa do prazo. `charge_id` leva ao cliente dentro da
+  Asaas. Até 26/09/2026 esta seção dizia "sem dado pessoal", e a
+  revisão automática da PR #64 apontou a contradição com o §1.3.
+- **Finalidade e base legal.** Executar o estorno autorizado pelo
+  Lojista sem devolver duas vezes (V), e guardar o registro financeiro
+  da devolução (II e VI).
+- **Retenção.** A linha fica pelo mesmo tempo que o registro financeiro
+  da cobrança (§6.0, linha 2). O vínculo com a pessoa acaba no nosso
+  banco quando a cobrança referenciada perde os dados de identificação,
+  ao fim dos 5 anos ou a pedido do titular. Depois disso, `estornos`
+  fica na mesma situação do registro financeiro que sobra em
+  `cobrancas`: pseudonimizado pelo `charge_id` da Asaas, sem dado de
+  identificação no nosso banco.
+- **Eliminação.** Não precisa de rotina própria, porque não tem coluna
+  pessoal a anular. O que remove o vínculo é o expurgo de `cobrancas`.
+  Se um dia `estornos` ganhar coluna com dado de pessoa, ela precisa
+  entrar numa lista branca, como em `cobrancas`.
 
 ### 5.4 Colunas que existem e não guardam nada
 
@@ -262,7 +286,7 @@ linha:
 | Categoria | Prazo implementado | Fundamento | Estado |
 |---|---|---|---|
 | Dado de identificação e contato da cobrança (documento, e-mail, telefone, endereço, itens) | 5 anos de `confirmado_em`/`criado_em` (`ANOS_DE_RETENCAO`) | CDC art. 27 (5 anos para reparação de dano); Código Civil art. 206, §5º, I (5 anos para cobrar dívida líquida de instrumento); defesa em contestação de pagamento | **mantido** |
-| Registro financeiro da cobrança, sem identificação | permanece | guarda contábil e fiscal; não identifica pessoa no nosso banco | **mantido**, ver ressalva de contagem abaixo |
+| Registro financeiro da cobrança, sem identificação, e as linhas de `estornos` que apontam para ela (§5.3) | permanece | guarda contábil e fiscal; não identifica pessoa no nosso banco | **mantido**, ver ressalva de contagem abaixo |
 | Documento da assinatura | enquanto ativa ou pausada; cancelada, até 5 anos de `criado_em` | é a chave com que o assinante cancela (§6.2); as cobranças da assinatura guardam o próprio documento pelos 5 anos delas | **mantido** |
 | Outbox | 90 dias | reenvio e diagnóstico de entrega | **mantido** |
 | Inbox | 90 dias (sem dado pessoal) | diagnóstico e idempotência | **mantido** |
