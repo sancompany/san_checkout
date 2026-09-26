@@ -81,12 +81,26 @@ Porte: multi-inquilino · Dado: de terceiro, com dinheiro · Vida útil: longa
 Estação atual: **7 Lançamento, aberta em 26/09/2026** — a Estação 6
 (Prontidão) foi **fechada por decisão do dono em 26/09/2026**, depois da
 homologação real com os pagamentos já recebidos (Pix, cartão, boleto,
-assinatura) e do fechamento do ciclo de segurança. O que a 6 tinha aberto
-e nenhum agente substitui — **entrar no `/admin` pelo Access** e
-**configurar o health check do Northflank** — passou a ser tarefa da
-**Estação 7**, não mais bloqueio dela. Pede Sonnet nos documentos e
-Fable (ou Opus alto, com a substituição registrada) na varredura final,
-em esforço alto.
+assinatura) e do fechamento do ciclo de segurança.
+
+**A parte técnica da Estação 7 está concluída (26/09/2026):**
+- **Admin real pelo Cloudflare Access** — o dono entrou e o painel
+  funcionou (SEC-015, que nenhum agente substitui).
+- **Itens do operador no `RUNBOOK`** — declarados completos pelo dono;
+  os valores (senha, cartão, contato) ficam com ele, fora do repositório
+  (`RUNBOOK` §1.1).
+- **Migration 0020 aplicada e validada** — pelo MCP do Supabase, com a
+  aprovação do dono. `anon`/`authenticated` sem privilégio em tabela e
+  função, a chave pública recebe `42501`, e o `service_role` segue
+  gravando (sonda de webhook registrada pela RPC depois da aplicação).
+- **Health check do Northflank** — readiness TCP na porta 3001, sem
+  liveness; não em `/api/saude`, porque com instância única o 503 de
+  worker atrasado tiraria o serviço inteiro do ar (`RUNBOOK` §6.3).
+
+**A única pendência da Estação 7 é o jurídico**: obrigações legais e
+documentos (skill `legal`), depois a varredura final e a entrega de
+manutenção. Pede Sonnet nos documentos e Fable (ou Opus alto, com a
+substituição registrada) na varredura final, em esforço alto.
 
 > Em 13/09 eu emendei direto no passo 1 da Estação 6 sem pedir. O
 > trabalho achou dois furos reais e mesmo assim estava fora de ordem —
@@ -100,7 +114,7 @@ em esforço alto.
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
 | 5 Construção | **fechada sem ressalva** 25/09 | `b753716` no ar e **conferido em produção** em 13/09. A exceção do sandbox (`CONSTRAINTS.md` §3) cumpriu as duas rodadas: a 1ª exercitou todos os meios no sandbox; a 2ª, com `ASAAS_AMBIENTE=producao` (conferido dentro do contêiner), reconferiu os quatro pontos que mudam entre ambientes — identificador de cobrança, formato do webhook, assinatura e mensagem de erro — contra o primeiro dinheiro real, em 25–26/09. Exceção fechada em `CONSTRAINTS.md` §3 |
-| 6 Prontidão | **fechada por decisão do dono** 26/09 | Ciclo de segurança limpo (ledger de 205 achados, `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`); prontidão operacional fechada; homologação real com os pagamentos já recebidos — Pix, cartão avulso, boleto e assinatura conferidos na Asaas e no banco, o bug 365/360 da troca de plano corrigido, e a assinatura de homologação cancelada pelo fluxo oficial sem estorno. **Migration 0020 aplicada em produção em 26/09/2026** — não fica mais pendente daqui (ver "Estado na esteira" e a seção de migrations). O que a 6 tinha aberto e nenhum agente substitui — entrar no `/admin` pelo Access, e configurar o health check do Northflank — passou a ser tarefa da **Estação 7**, registrada ali, não bloqueio da 6 |
+| 6 Prontidão | **fechada por decisão do dono** 26/09 | Ciclo de segurança limpo (ledger de 205 achados, `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`); prontidão operacional fechada; homologação real com os pagamentos já recebidos — Pix, cartão avulso, boleto e assinatura conferidos na Asaas e no banco, o bug 365/360 da troca de plano corrigido, e a assinatura de homologação cancelada pelo fluxo oficial sem estorno. O que a 6 tinha aberto e nenhum agente substitui — entrar no `/admin` pelo Access, a migration 0020 e o health check do Northflank — passou para a **Estação 7**, e os três foram feitos em 26/09/2026 (ver "Estado na esteira") |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -957,9 +971,10 @@ Investigado só com leitura antes de tocar em código, como o dono mandou.
   o `RUNBOOK` §3 (conferir o `deployedSHA` **e** o comportamento). O
   build errado serviu de controle positivo para a sonda de IP forjado:
   o código velho gravou o IP forjado, o novo gravou o IP real, e o
-  JULES-002 é FALSE_POSITIVE. Ficam com o dono: aplicar a 0020, entrar
+  JULES-002 é FALSE_POSITIVE. Ficavam com o dono: aplicar a 0020, entrar
   no Access, configurar o health check do Northflank e decidir o C1-05b
-  (§11.4 e §14 do relatório).
+  (§11.4 e §14 do relatório). Os três primeiros foram feitos em
+  26/09/2026.
 
 Feito em 26/09/2026 — **homologação real fechada com os pagamentos já
 recebidos**, sem cobrança nova e sem estorno. Os três pontos:
@@ -979,13 +994,11 @@ qualquer efeito.
 ficou aberto e não é código nosso não bloqueia mais a esteira — foi
 distribuído em dois lugares:
 
-**Vira tarefa da Estação 7** (ninguém substitui, exigem credencial):
-- **Entrar no `/admin` pelo Access**, uma vez, para confirmar o login
-  operador (SEC-015). Tudo que dava para provar sem a credencial foi
-  provado.
-- **Configurar o health check do Northflank** apontando para
-  `/api/saude`, como **readiness**, nunca liveness (`RUNBOOK` §6.3) —
-  medido em 25/09 que o serviço não tinha nenhum configurado.
+**Virou tarefa da Estação 7, e foi feito em 26/09/2026:**
+- ✅ **Entrar no `/admin` pelo Access** — feito pelo dono (SEC-015).
+- ✅ **Migration 0020** — aplicada e validada (INFO-13).
+- ✅ **Health check do Northflank** — readiness TCP na porta 3001, sem
+  liveness (`RUNBOOK` §6.3).
 
 **Continua registrado, sem bloquear**, em `docs/pendencias.md`: estorno
 de compra parcelada (exige sandbox parcelado), modo estrito do IP do
@@ -1042,22 +1055,20 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 > contradizendo é a falha que este documento existe para não ter: quem
 > lesse só esta seção planejaria de novo um trabalho já feito.
 
-**A Estação 6 foi fechada em 26/09/2026** (evidência em "Estado na
-esteira", acima). O que bloqueia agora é o que a **Estação 7**
-(Lançamento) precisa, nesta ordem, pela skill `leis`:
+**A Estação 6 foi fechada em 26/09/2026, e a parte técnica da Estação
+7 também** (evidência em "Estado na esteira", acima). **A única
+pendência é o jurídico**, e o que vem depois dele, nesta ordem, pela
+skill `leis`:
 
 - **Obrigações legais e documentos publicados** (skill `legal`, Lei 10):
   a política de privacidade ainda não menciona o Web Analytics da
   Cloudflare (sem cookie dispensa banner, mas não dispensa o aviso, pela
   orientação da ANPD); conferir o inventário de dados contra o que o
-  sistema coleta hoje.
-- **Duas tarefas que só o dono faz, e nenhum agente substitui:** entrar
-  em `checkout.sancocore.com.br/admin` pelo Access uma vez, e configurar
-  o health check do Northflank apontando para `/api/saude` (readiness,
-  nunca liveness).
+  sistema coleta hoje. Termos e Política não se reescrevem sem o dono.
 - **Varredura final, em duas rodadas** (`references/varredura-final.md`
   do plugin) — local e no que está no ar —, com veredito **completo** ou
-  **falta**, nunca "completo com ressalvas".
+  **falta**, nunca "completo com ressalvas". Só depois dos documentos
+  publicados.
 - **Entrega de manutenção** ao dono: o que renova, o que vence (domínio
   em 31/08/2027), o que é só dele.
 

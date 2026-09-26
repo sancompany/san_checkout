@@ -38,6 +38,14 @@ responde**: onde a senha mora e qual cartão paga. Isso não é preguiça de
 medir, é limite do que existe para ser medido; inventar aqui seria pior
 que deixar em branco.
 
+**Itens do operador: completos, fora deste arquivo (26/09/2026).** O dono
+declarou em 26/09/2026 que tem, fora do repositório, tudo o que os `⬜`
+desta seção e da §10 pedem — onde cada senha e segundo fator moram, qual
+cartão paga o quê e o contato direto. Os campos continuam `⬜` **de
+propósito**: este arquivo é versionado, e a regra da §1.2 vale aqui —
+ponteiro, nunca credencial. Quem opera sem o dono pede esses valores a
+ele; o `⬜` quer dizer "está com o dono", não "ninguém sabe".
+
 **E uma coisa que a API responde e mesmo assim não fica escrita aqui: o
 e-mail de login.** Ele é metade de um par de autenticação, e a regra
 desta seção é a mesma da §1.2 — ponteiro, nunca credencial. Quem tem a
@@ -52,9 +60,9 @@ caminho a quem só precisava da outra.
 | **Cloudflare** | DNS da zona, Pages (4 projetos), Access (equipe `fancy-dawn-740a`), Web Analytics | zona `sancocore.com.br`, plano **Free Website**, NS `arely`/`decker`; os ids de conta e de zona saem do comando abaixo, não deste arquivo | e-mail pessoal do dono — o endereço **não fica escrito aqui**, sai do comando abaixo ou do gerenciador | **2FA ativo** (medido) · gerenciador ⬜ | **nada é pago**: `Cloudflare Free Plan` e `Teams Free Base`, ambos US$ 0 — a linha do Teams renova 11/10/2026 sem cobrança |
 | **Northflank** | backend | projeto/serviço `san-checkout`, cluster `nf-southamerica-east`, namespace `ns-9k49mqwtltxm`, criado 12/09/2026, branch `main`, build `nf-compute-400-16`, runtime `nf-compute-50` | ⬜ | ⬜ | mensal ⬜ · cartão ⬜ |
 | **Supabase** | banco | org `fphbzkrzgijqzpqzvshh`, projeto `San_Checkout` ref `zacuaroarelaqnzjjlcz`, `sa-east-1`, Postgres 17.6.1.166, criado 06/09/2026 | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
-| **Asaas** | pagamento | conta **pessoa física, em transição** (`CONSTRAINTS.md` §3); hoje `sandbox` | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
+| **Asaas** | pagamento | conta **pessoa física, em transição** (`CONSTRAINTS.md` §3); **produção** desde 25/09/2026 (`ASAAS_AMBIENTE=producao`, conferido no contêiner) | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
 | **GitHub** | repositório e CI | `sancompany/san_checkout`; **os dois workflows não usam segredo de repositório** (medido) | ⬜ | ⬜ | plano ⬜ |
-| **Google Workspace** | caixas `@sancocore.com.br` (`contato`, `financeiro`, `juridico`, `suporte`) | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject` — **sem registro SPF** (medido em dois resolvedores) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
+| **Google Workspace** | caixas `@sancocore.com.br` (`contato`, `financeiro`, `juridico`, `suporte`) | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject`; **SPF `v=spf1 include:_spf.google.com ~all` no ar desde 18/09/2026** (conferido em dois resolvedores, com controle negativo) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
 | **cron-job.org** | ping de 10 min em `/api/saude` | mantém o Supabase acordado | ⬜ | ⬜ | gratuito ⬜ |
 
 **O que a conta da Cloudflare serve além do checkout**, e importa numa
@@ -790,7 +798,7 @@ A pergunta que esta tabela responde é a única que importa às 3 da manhã:
 | aba **Erros** do painel crescendo | captura de exceção (migration 0007) | 5xx acontecendo agora | `ocorrencias` + `ultima_vez` dizem se é rajada; §6.1 |
 | `/api/saude` → `filas.inbox.esgotadas > 0` | curl / aba Filas | um evento da Asaas falhou 8 vezes no processamento (o `200` já foi dado; o evento está guardado) | ler `ultimo_erro` na aba Filas; corrigir a causa; **reenfileirar** — nunca pedir reenvio à Asaas |
 | `/api/saude` → `filas.outbox.abandonadas > 0` | curl / aba Filas | o contratante recusou 8 vezes (1 min … 24 h) | ver `ultimo_status_http`; avisar o contratante; **reenviar** quando ele voltar — mesmo `eventoId`, ele deduplica |
-| `/api/saude` → `workersAtrasados` não vazio (e o HTTP 503) | curl / o monitor de uptime | o processo está de pé, mas aquele worker está sem uma passada bem-sucedida há mais de 3 intervalos dele + 2 min: pendurado numa chamada, ou falhando a cada rodada | aba **Erros** e o log daquele worker (`[inbox]`, `[outbox]`, `[estornos]`…) dizem se é falha repetida; se for pendura, reiniciar o serviço (§4) e abrir erro. A regra é `utils/passadas.js`, `workersAtrasados`. Terceiro lento sozinho não dispara isto: as passadas da inbox (120 s) e da outbox (60 s) têm orçamento e deixam o resto para o próximo tique. ⚠️ **Health check do Northflank:** medido em 25/09/2026, o serviço não tem nenhum (`northflank get service health-checks` → `[]`). Se um dia for configurado, `/api/saude` serve de **readiness**, nunca de **liveness**: o 503 de worker atrasado reiniciaria o processo em loop, e reiniciar não conserta um terceiro lento |
+| `/api/saude` → `workersAtrasados` não vazio (e o HTTP 503) | curl / o monitor de uptime | o processo está de pé, mas aquele worker está sem uma passada bem-sucedida há mais de 3 intervalos dele + 2 min: pendurado numa chamada, ou falhando a cada rodada | aba **Erros** e o log daquele worker (`[inbox]`, `[outbox]`, `[estornos]`…) dizem se é falha repetida; se for pendura, reiniciar o serviço (§4) e abrir erro. A regra é `utils/passadas.js`, `workersAtrasados`. Terceiro lento sozinho não dispara isto: as passadas da inbox (120 s) e da outbox (60 s) têm orçamento e deixam o resto para o próximo tique. ✅ **Health check do Northflank, configurado em 26/09/2026:** **readiness TCP na porta 3001** (5 s de espera inicial, a cada 10 s, 3 falhas), **sem liveness**. Segura o tráfego até o processo abrir a porta, e é isso que protege o rollout (conferido: o pod novo só assumiu depois de pronto, com o antigo servindo até lá). **Não é `/api/saude` de propósito**, e isto corrige o que este campo dizia antes: o serviço tem **uma instância só**, e readiness em `/api/saude` tiraria essa instância do ar no 503 de worker atrasado — transformando degradação parcial (webhook e checkout ainda funcionam) em queda total, com a Asaas pausando a fila depois de 15 falhas (`CONSTRAINTS.md` §2.3). Liveness também não: reiniciar em loop não conserta um terceiro lento. Quem lê o 503 do `/api/saude` é o monitor de uptime (cron-job.org). Para conferir: `northflank get service --project san-checkout --service san-checkout -o json`, campo `healthChecks` |
 | aba **Erros**: `PAGAMENTO DUPLICADO` | cancelador de irmãs (RN-52) | o mesmo pedido foi pago duas vezes — os dois pagamentos são reais e estão `confirmado` | listar todos (a linha de `erros` agrega por origem e guarda só a última mensagem): `select contratante_id, pedido_id, charge_id, metodo_pagamento, pagamento_duplicado_com from cobrancas where pagamento_duplicado_em is not null`; combinar com o contratante qual devolver e estornar **um** (`POST /api/checkout/estornar` ou painel da Asaas). Nunca apagar a linha |
 | aba **Erros**: `cancelamento de irmã ESGOTADO` | cancelador de irmãs (RN-51) | um Pix/boleto/pop-up de pedido já pago segue pagável na Asaas depois de 8 tentativas | ver `cancelamento_ultimo_erro` da linha; excluir à mão no painel da Asaas. Se ela tiver sido paga nesse meio-tempo, é o caso de cima. Para o cancelador tentar de novo: `update cobrancas set cancelamento_tentativas = 0, cancelamento_proxima_em = now() where id = '<id>'` |
 | aba **Erros**: `estorno <id> … a Asaas não permite decidir` | reconciliador de estornos (C1-04, C2-M1) | a resposta da Asaas a um estorno se perdeu e a lista dela **pode** conter este estorno, mas sem o marcador não dá para provar. A operação fica em aberto de propósito: a repetição da mesma chave recebe `409 estorno_em_reconciliacao`, e o valor dela conta como "em voo" no restante — travado é melhor que devolvido em dobro | no painel da Asaas, abrir a cobrança (`charge_id` da mensagem) e ver os estornos. **Se o estorno desta operação está lá** (valor e hora batem com `criado_em` da operação): `update estornos set estado = 'CONFIRMED', status_resultado = '<estornado ou estornado_parcialmente>', valor_estornado_depois = <total estornado em reais>, chamando_em = null, ultimo_erro = 'resolvido à mão: <quem, quando>' where id = '<id>' and estado in ('PENDING','CALLING_PROVIDER','UNKNOWN_PROVIDER_RESULT')`. **Se não está:** o mesmo `update` com `estado = 'FAILED_RETRYABLE'` — e o contratante pode repetir com a mesma chave. Na dúvida, não mexer: a trava não perde dinheiro |
@@ -857,6 +865,11 @@ desiste, registrando. O pagamento segue confirmado do nosso lado: o que
 se perde é o aviso, e a conciliação (`API.md` §5.2) é o caminho de volta.
 
 **Perdi o acesso ao `/admin`:**
+
+> O caminho feliz foi exercitado de verdade: em 26/09/2026 o dono entrou
+> no `/admin` real pelo Cloudflare Access e o painel funcionou (SEC-015,
+> que nenhum agente substitui). O que segue é para quando der errado.
+
 - Barrado pelo Cloudflare Access → painel Zero Trust, com a conta
   Cloudflare. Não há dependência circular entre as duas camadas.
 - O painel abre mas toda chamada dá erro de rede, ou o login responde
@@ -1104,15 +1117,12 @@ queda e o alerta de orçamento viraram decisão do dono em 17/09 —
 
 O que falta de verdade:
 
-- **os campos `⬜` das seções 1.1 e 10** — e-mail de login de cada
-  conta, onde senha e segundo fator moram, qual cartão paga o quê, e o
-  contato direto do dono. Só ele preenche, e sem isso as duas seções
-  descrevem a forma sem servir na hora;
+- ✅ **os campos `⬜` das seções 1.1 e 10** — declarados completos pelo
+  dono em 26/09/2026, com os valores guardados fora do repositório (ver
+  §1.1). Continuam `⬜` aqui de propósito;
 - **a pessoa número dois**, que é ao mesmo tempo o contato que falta e o
   teste que fecha o item 6 da prontidão (§10);
-- **SPF na zona** `sancocore.com.br` (§1.1): medido ausente, e com
-  `p=reject` no DMARC isso é risco de rejeição, não de spam. Mudar DNS é
-  do dono;
+- ✅ **SPF na zona** `sancocore.com.br` (§1.1): no ar desde 18/09/2026;
 - **rotação sem janela do token de webhook** (§1.2): o código aceita um
   token por vez, e qualquer ordem de troca acumula falha;
 - **cópia periódica** do banco fora do provedor — o *ensaio* de

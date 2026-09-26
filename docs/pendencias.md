@@ -31,19 +31,36 @@ código e bloqueavam a esteira. **Passou a ser:** o dono fechou a
 Estação 6 em 26/09/2026 apesar de eles não estarem resolvidos — a
 decisão dele, não uma reverificação com evidência de cada um. Dois
 viraram tarefa da **Estação 7** (`CLAUDE.md`, "Estado na esteira"),
-porque ninguém substitui o dono nelas:
+porque ninguém substitui o dono nelas — e **os dois foram feitos em
+26/09/2026**, junto com a migration 0020:
 
-- **O dono entrar no `/admin` pelo Access depois do deploy** (SEC-015). A
+- ✅ **Migration 0020 aplicada em 26/09/2026** (INFO-13, EP-02), pelo MCP
+  do Supabase com a aprovação do dono. Conferido: `anon` e
+  `authenticated` com 0 privilégios em tabela e função; a chave pública
+  recebe `42501 permission denied` em tabela e em RPC; o `service_role`
+  mantém os próprios grants (91 em tabela, `EXECUTE` nas 4 funções — a
+  conferência FP1C-1 do relatório); workers e `/api/saude` normais
+  depois da aplicação. Sobram privilégios padrão do papel
+  `supabase_admin` (da plataforma) para objetos que ELE criar; a 0020
+  cobre, de propósito, só o `postgres`, que é quem roda as nossas
+  migrations.
+- ✅ **O dono entrar no `/admin` pelo Access depois do deploy** (SEC-015) —
+  **feito em 26/09/2026**: o dono acessou o admin real pelo Cloudflare
+  Access e o painel funcionou. O texto de antes fica abaixo. A
   API do admin passou a exigir, na origem, o JWT do Cloudflare Access; o
   painel chega a ela por uma função do Pages atrás do Access. Tudo que dá
   para provar sem a credencial foi provado (JWT real da Cloudflare
   verificado, recusa sem JWT pela API e pela origem, os nove destinos do
   Access sem cookie). O login de verdade só o dono faz. Se travar:
   `RUNBOOK.md`, "Perdi o acesso ao `/admin`" — inclusive o `git revert`.
-- **Health check da Northflank** (SEC-031, movido para cá do item
-  abaixo): configurar como **readiness**, nunca liveness (`RUNBOOK`
-  §6.3) — reiniciar em loop durante uma queda do Supabase ou um
-  terceiro lento não conserta nada.
+- ✅ **Health check da Northflank** (SEC-031) — **configurado em
+  26/09/2026**: readiness **TCP** na porta 3001, sem liveness. Era:
+  "readiness em `/api/saude`". Passou a ser TCP porque o serviço tem uma
+  instância só, e readiness em `/api/saude` tiraria essa instância do ar
+  no 503 de worker atrasado — degradação parcial virando queda total, e
+  a Asaas pausando a fila depois de 15 falhas. O rollout que a mudança
+  disparou já rodou com o probe: o pod novo só assumiu depois de
+  pronto. Detalhe em `RUNBOOK` §6.3.
 
 Os demais continuam abertos, sem bloquear (a Estação 6 fechada não os
 resolveu, só parou de esperar por eles para fechar):
@@ -442,7 +459,15 @@ resolve pelo `charge_id` quando a Asaas confirma antes do sweeper.
   documento nem IP/UA — não é a mesma classe de risco de
   `cobrancas`/`assinaturas`, mas as linhas nunca são limpas hoje).
 
-### 🟡 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09, metade virou atualização futura em 18/09
+### 🟢 Prontidão item 6 · o RUNBOOK foi escrito, TESTADO por um leitor sem contexto, e corrigido — 17/09; itens do operador COMPLETOS em 26/09/2026
+**Passou a ser (26/09/2026):** o dono declarou completos os itens do
+operador — onde cada senha e segundo fator moram, qual cartão paga o
+quê, o contato direto — e os valores ficam com ele, **fora do
+repositório**, de propósito (`RUNBOOK` §1.1: ponteiro, nunca
+credencial). A metade com credencial do teste também saiu: o dono
+entrou no `/admin` real pelo Access. A pessoa número dois continua
+atualização futura (`docs/proximas-versoes.md`), por decisão de 18/09.
+
 As sete seções que a prontidão operacional exige e que **não existiam**
 foram escritas em 17/09: inventário de contas (§1.1), segredos e como
 rotacionar cada um (§1.2), alerta → significado → primeira ação (§6.3),
