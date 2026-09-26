@@ -224,6 +224,32 @@ checagens).
 
 ---
 
+## ADR-011 — Assinatura de cartão não troca de valor neste lançamento
+
+**Status:** adopted (26/09/2026)
+
+**Context:** Na homologação real, com a assinatura anual paga no cartão,
+a Asaas recusou o rebaixamento: `400` "Não é possível alterar o valor de
+assinaturas via cartão de crédito que já possuam faturas pagas". Pelo
+Checkout, toda assinatura de cartão nasce com a primeira fatura paga.
+
+**Decision:** `DIRECT_CARD_SUBSCRIPTION_PRICE_CHANGE = UNSUPPORTED`. A
+rota `POST /trocar-plano` recusa assinatura de cartão com `409
+troca_de_valor_nao_suportada` antes de qualquer efeito. Cancelar e
+recriar não é construído agora.
+
+**Reason:** Decisão do dono para o MVP: a opção simples. Recusar cedo
+evita o pior caso, que é o upgrade cobrar o acerto no cartão e depois a
+Asaas recusar mudar o valor.
+
+**Consequences:** Para mudar o preço de quem assina no cartão, o
+contratante cancela e o assinante assina o plano novo. A infraestrutura
+de troca (intenção, aprovação, sweeper) continua valendo para os outros
+meios. Reabrir exige desenhar o cancelar-e-recriar e medir o reuso do
+token do cartão (`docs/pendencias.md`).
+
+---
+
 ## Onde ver as decisões que não viraram ADR aqui
 
 `CONSTRAINTS.md` (raiz) tem a lista completa e é a fonte — inclui, além

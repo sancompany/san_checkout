@@ -255,7 +255,7 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟠 A Asaas recusa mudar o preço de assinatura de cartão com fatura paga — MEDIDO 26/09/2026 em produção
+### 🟢 A Asaas recusa mudar o preço de assinatura de cartão com fatura paga — MEDIDO e DECIDIDO 26/09/2026: não suportado
 Na assinatura real `sub_39mjscz7vl2jwx7g` (anual, R$ 10, primeira fatura
 paga), o rebaixamento para um anual de R$ 5 pelo fluxo oficial
 (`POST /trocar-plano`), já com a correção RN-35.3 no ar, voltou da Asaas:
@@ -274,7 +274,14 @@ eram de sandbox sem fatura paga
 estornado ou gravado, e o arrendamento foi devolvido (conferido na Asaas
 e no banco). O contratante recebe `400` com a mensagem da Asaas.
 
-**Decisão do dono**, porque muda o desenho:
+**Decidido pelo dono em 26/09/2026: não suportado neste lançamento.**
+Nada de cancelar e recriar agora. `POST /trocar-plano` numa assinatura de
+cartão responde `409 troca_de_valor_nao_suportada` antes de qualquer
+efeito (sem arrendamento, sem intenção, sem cobrança de acerto, sem
+chamada de alteração). A guarda olha o meio que a Asaas informa e, na
+falta dele, o nosso registro, e tem autoteste com sabotagem. A
+infraestrutura de troca continua para os outros meios. As duas opções,
+como estavam escritas:
 - Trocar de plano por **cancelar e recriar** a assinatura, com o
   primeiro vencimento da nova no fim do período já pago. O cartão já
   tokenizado (o mesmo `creditCardToken` que a cobrança do acerto usa)

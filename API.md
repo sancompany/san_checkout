@@ -1357,11 +1357,22 @@ Leva um assinante do plano A para o plano B **mantendo o vínculo**: sem
 cancelar, sem ele digitar cartão de novo, e sem janela em que ele fica
 sem assinatura.
 
-> ⚠️ **Assinatura de cartão com fatura paga: a Asaas recusa mudar o
-> valor** (medido em produção em 26/09/2026, §7.5). Como a primeira
-> fatura de cartão é paga na criação, esta rota hoje não troca o preço
-> de nenhuma assinatura de cartão já paga: responde `400` com a
-> mensagem da Asaas, e nada é cobrado nem alterado.
+> ⚠️ **Trocar o valor de assinatura de CARTÃO não é suportado neste
+> lançamento** (decisão do dono, 26/09/2026). A Asaas recusa mudar o
+> valor de assinatura de cartão com fatura paga (medido em produção,
+> §7.5), e a primeira fatura de cartão é paga na criação. Numa
+> assinatura de cartão esta rota responde, antes de qualquer cobrança,
+> intenção, arrendamento ou chamada de alteração à Asaas:
+>
+> ```http
+> HTTP/1.1 409 Conflict
+> { "codigo": "troca_de_valor_nao_suportada",
+>   "erro": "Esta assinatura é de cartão e já tem fatura paga: a Asaas não permite alterar o valor dela. A troca de plano não foi feita e nada foi cobrado." }
+> ```
+>
+> Para mudar o preço de quem assina no cartão, o caminho hoje é
+> cancelar (§5.5) e o assinante assinar o plano novo. O resto desta
+> seção vale para assinaturas de outros meios.
 
 > ⚠️ **Mudança de contrato em 21/09/2026.** Até 18/09/2026 esta rota
 > cobrava o acerto proporcional na hora, sem o assinante ver nada. O
@@ -1896,9 +1907,9 @@ não um erro que trava o pagador.
 > delas aceita troca de preço depois do primeiro pagamento. As medições
 > de 17/09 abaixo foram feitas no sandbox, em assinaturas **sem**
 > fatura paga, e não viram essa condição. Até isto ser resolvido,
-> `POST /trocar-plano` numa assinatura de cartão paga responde `400`
-> com essa mensagem, e nada é alterado nem cobrado (conferido na Asaas
-> e no banco). `docs/pendencias.md`.
+> `POST /trocar-plano` numa assinatura de cartão responde `409`
+> `troca_de_valor_nao_suportada` antes de tocar a Asaas (§5.6), por
+> decisão do dono para o lançamento. `docs/pendencias.md`.
 
 **Resumo em três linhas.** A Asaas **permite** aumentar e diminuir o
 valor de uma assinatura ativa **sem fatura de cartão paga**, e trocar o

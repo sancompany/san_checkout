@@ -956,6 +956,20 @@ Investigado só com leitura antes de tocar em código, como o dono mandou.
   no Access, configurar o health check do Northflank e decidir o C1-05b
   (§11.4 e §14 do relatório).
 
+Feito em 26/09/2026 — **homologação real fechada com os pagamentos já
+recebidos**, sem cobrança nova e sem estorno. Os três pontos:
+- **Pix, cartão avulso, boleto e assinatura conferidos** na Asaas e no
+  banco.
+- **Bug 365/360 da troca de plano corrigido** (RN-35.3, PR #59).
+- **Assinatura de homologação cancelada pelo fluxo oficial**: o
+  pagamento ficou intacto, com 0 estornos.
+
+A troca de valor ficou de fora. A Asaas recusa mudar o valor de
+assinatura de cartão com fatura paga (medido em produção), e o dono
+decidiu que isso **não é suportado** no lançamento (ADR-011, RN-35.4):
+a rota agora responde `409 troca_de_valor_nao_suportada` antes de
+qualquer efeito.
+
 Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
 assinatura pago em produção (exige payload real — e agora existe onde
 ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o

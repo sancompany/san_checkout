@@ -861,7 +861,13 @@ export async function consultarAssinaturaNaAsaas(subscriptionId) {
        troca de plano precisa RECONFERIR que o `PUT` pegou: a Asaas
        responde `200` e ignora em silêncio campo que não conhece
        (medido em 17/09), então o único jeito de saber é ler de volta. */
-    valor: corpo?.value ?? null
+    valor: corpo?.value ?? null,
+    /* O meio de pagamento da assinatura (`CREDIT_CARD`, `PIX`, …). A
+       troca de plano precisa dele: a Asaas RECUSA mudar o valor de
+       assinatura de cartão com fatura paga (medido em produção em
+       26/09/2026), e a recusa tem de acontecer antes de qualquer
+       intenção ou cobrança de acerto. */
+    meio: corpo?.billingType ?? null
   };
 }
 

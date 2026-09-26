@@ -925,6 +925,19 @@ projeto contratante, decisão do dono, escrita em `API.md` §5.6 e no
 checklist da §11. O que o Checkout PASSOU a fazer, desde RN-35.2, é
 diferente: pedir o consentimento da COBRANÇA, não avisar do resultado.
 
+**RN-35.4 · Assinatura de cartão não troca de valor.** Decisão do dono
+para o lançamento, em 26/09/2026. A Asaas recusa mudar o valor de
+assinatura de cartão com fatura paga (`400`, medido em produção com a
+assinatura real da homologação), e pelo Checkout toda assinatura de
+cartão nasce com a primeira fatura paga. `POST /trocar-plano` numa
+assinatura de cartão responde `409 troca_de_valor_nao_suportada` antes
+de qualquer efeito: sem arrendamento, sem intenção, sem cobrança de
+acerto, sem chamada de alteração à Asaas. O meio vem da Asaas
+(`billingType`) e, na falta dele, do nosso registro. *Violada:* num
+upgrade, a aprovação cobraria o acerto no cartão e só depois a Asaas
+recusaria mudar o valor, com dinheiro cobrado por uma troca que não
+acontece. *Quem vê:* o contratante, que recebe o `409` com a mensagem.
+
 **RN-35.3 · Troca de plano no começo do período não é dado incoerente.**
 Os dias restantes são contados no calendário, e o ciclo é comercial
 (mês de 30, ano de 360). Nos primeiros dias de um período o calendário

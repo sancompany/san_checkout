@@ -10,6 +10,16 @@ afirmação minha ("não é possível alterar preço de plano já
 contratado?"). Tudo que está marcado como **medido** foi medido no
 sandbox naquele dia; o que é decisão está marcado como decisão.
 
+> ⚠️ **Decisão do dono em 26/09/2026, para o lançamento: trocar o
+> valor de uma assinatura de CARTÃO não é suportado.** A Asaas recusa
+> mudar o valor de assinatura de cartão com fatura paga (medido em
+> produção), e toda assinatura de cartão do Checkout nasce com a
+> primeira fatura paga. `POST /trocar-plano` numa assinatura de cartão
+> responde `409` com `codigo: "troca_de_valor_nao_suportada"`, antes de
+> qualquer cobrança, intenção ou alteração na Asaas. Para mudar o preço
+> de quem assina no cartão, o caminho hoje é cancelar
+> (`/cancelar-assinatura`) e o assinante assinar o plano novo.
+
 **Atualizado em 18/09/2026**, e a mudança é grande o suficiente para
 merecer destaque: a **troca de plano passou a existir**
 (`POST /trocar-plano`, seção 5). Ela não existia quando a primeira
