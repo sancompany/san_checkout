@@ -1285,7 +1285,7 @@ O número que temos, ~830 ms, foi medido no Render, em outra máquina.
 Refazer a medição no Northflank (0,5 vCPU) e ajustar N se sair fora da
 faixa — pendência aberta em `docs/pendencias.md`.
 
-### Estação 5 · deploy em produção apontando para o sandbox da Asaas — 13/09/2026
+### Estação 5 · deploy em produção apontando para o sandbox da Asaas — FECHADA 26/09/2026
 
 A skill `leis` diz, na seção "A estação 5 fecha no ar, e a 6 começa
 nele": *"Deploy é produção de verdade, não ensaio — apontando para o
@@ -1314,6 +1314,19 @@ entre ambientes — identificador de cobrança, formato do webhook,
 assinatura e mensagem de erro — não passa pelo ciclo na primeira
 rodada. A segunda rodada precisa reconferir esses quatro pontos um a
 um, e é isso que a torna diferente de "repetir o mesmo ciclo".
+
+**Fechada em 26/09/2026.** As três etapas do plano aconteceram: (1) a
+Estação 6 rodou inteira no sandbox; (2) o dono trocou as variáveis para
+produção — `ASAAS_AMBIENTE=producao`, conferido dentro do contêiner; (3)
+os quatro pontos foram reconferidos contra o primeiro dinheiro real de
+25–26/09/2026: identificador de cobrança (`pay_…` reais em Pix, cartão,
+boleto e assinatura, todos vinculados e conciliados), formato do webhook
+(inbox processou `PAYMENT_RECEIVED`/`PAYMENT_CONFIRMED`/
+`SUBSCRIPTION_CREATED`/`SUBSCRIPTION_DELETED` reais sem erro), assinatura
+do webhook (token de produção validado, sem furo) e mensagem de erro (o
+incidente do Pix sem chave Pix e da data em UTC — os dois só existem em
+produção, e os dois foram corrigidos). Nenhuma divergência entre
+ambientes ficou sem medir.
 
 ### Lei 7 · sem split: 100% da cobrança cai na conta-mãe — 17/09/2026
 

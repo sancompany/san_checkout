@@ -78,10 +78,15 @@ Porte: multi-inquilino · Dado: de terceiro, com dinheiro · Vida útil: longa
 → **topo da escala de rigor** (Lei 0: nada aqui se dispensa por proporcionalidade)
 
 ## Estado na esteira
-Estação atual: **6 Prontidão, aberta em 14/09/2026** — autorizada pelo
-dono, com as três condições de `varredura-final.md` conferidas no dia
-(commit servido = main, migrations aplicadas, árvore limpa). Pede Opus
-com esforço alto, e é da sessão por inteiro.
+Estação atual: **7 Lançamento, aberta em 26/09/2026** — a Estação 6
+(Prontidão) foi **fechada por decisão do dono em 26/09/2026**, depois da
+homologação real com os pagamentos já recebidos (Pix, cartão, boleto,
+assinatura) e do fechamento do ciclo de segurança. O que a 6 tinha aberto
+e nenhum agente substitui — **entrar no `/admin` pelo Access** e
+**configurar o health check do Northflank** — passou a ser tarefa da
+**Estação 7**, não mais bloqueio dela. Pede Sonnet nos documentos e
+Fable (ou Opus alto, com a substituição registrada) na varredura final,
+em esforço alto.
 
 > Em 13/09 eu emendei direto no passo 1 da Estação 6 sem pedir. O
 > trabalho achou dois furos reais e mesmo assim estava fora de ordem —
@@ -94,8 +99,8 @@ com esforço alto, e é da sessão por inteiro.
 | 2 Fronteiras | **fechada**, reaberta e refechada 12/09 | seção "Classificação de fronteira" do spec: Access registrado ali, e hospedagem escolhida por número medido (23 ms × 220 ms) |
 | 3 Fundação | **fechada** 13/09 | `Segurança` **run #5 verde** em `5f3adf3` (os três jobs), depois de #1 a #4 vermelhas; SHAs reconferidos por `git ls-remote`; `RUNBOOK.md` existe |
 | 4 Contratos | **fechada** 13/09, refeita no fim do dia | `API.md` e migrations OK; `docs/funcional.md` reescrito contra `definicao-funcional.md` **lido na fonte** — seis das dez seções divergiam da paráfrase que eu vinha usando (`docs/erros/2026-09-13-fechei-uma-estacao-contra-a-parafrase-da-lei.md`). As quatro perguntas de prontidão respondem "sim" no fim do arquivo |
-| 5 Construção | no ar, com **exceção registrada** | `b753716` no ar e **conferido em produção** em 13/09 (`taxa: null` no pedido sem valor; caminho inventado devolve 404). Pagamento em **sandbox** por decisão do dono, registrada em `CONSTRAINTS.md` §3 ("Estação 5 · deploy em produção apontando para o sandbox") com o plano de duas rodadas e o custo escrito |
-| 6 Prontidão | **aberta** 14/09 | autorizada pelo dono, com escopo ampliado (`CONSTRAINTS.md` §4). Estado em 18/09: o último commit de **código** é o `3ec6454` (PR #20, a reconciliação de `valor`), e o `deployedSHA` conferido depois de cada mescla bateu com a `main`. **Qual sha está servido AGORA não se escreve aqui** — responde o comando do `RUNBOOK` §3, porque este arquivo é ele mesmo publicado: o commit que atualiza a linha muda o número que a linha afirma, e a frase nasce falsa (aconteceu duas vezes em 18/09, nos PRs #21 e #22). Migrations 0001-0010 aplicadas, árvore limpa. Conferido no ar depois da mescla, com controle negativo: `/api/saude` 200 com Supabase respondendo; `POST /api/checkout/consultar-assinatura` sem chave devolve **401** e com chave falsa devolve **401 `Chave inválida.`** (a rota existe, a guarda funciona e não vira 500) enquanto um caminho inventado devolve 404; o autoteste do controlador roda **dentro do contêiner de produção** e dá 37 checagens OK, e `dinheiroOuNulo`/`divergenciaDeValor` estão no arquivo servido — com controle negativo de que um padrão inexistente conta zero. E, depois de o dono liberar a permissão de leitura de produção, a chamada real contra três assinaturas de verdade — inclusive a do MostrAí, `QUARTERLY`/R$267,30, reparada em 16/09 — devolveu `divergenciaDeValor: null` nas três: não é controle positivo (nenhuma tinha divergência para achar), mas prova que o código roda sem erro contra o payload real da Asaas; quem provou a detecção foram as 8 sabotagens (`docs/pendencias.md`) |
+| 5 Construção | **fechada sem ressalva** 25/09 | `b753716` no ar e **conferido em produção** em 13/09. A exceção do sandbox (`CONSTRAINTS.md` §3) cumpriu as duas rodadas: a 1ª exercitou todos os meios no sandbox; a 2ª, com `ASAAS_AMBIENTE=producao` (conferido dentro do contêiner), reconferiu os quatro pontos que mudam entre ambientes — identificador de cobrança, formato do webhook, assinatura e mensagem de erro — contra o primeiro dinheiro real, em 25–26/09. Exceção fechada em `CONSTRAINTS.md` §3 |
+| 6 Prontidão | **fechada por decisão do dono** 26/09 | Ciclo de segurança limpo (ledger de 205 achados, `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`); prontidão operacional fechada; homologação real com os pagamentos já recebidos — Pix, cartão avulso, boleto e assinatura conferidos na Asaas e no banco, o bug 365/360 da troca de plano corrigido, e a assinatura de homologação cancelada pelo fluxo oficial sem estorno. **Migration 0020 aplicada em produção em 26/09/2026** — não fica mais pendente daqui (ver "Estado na esteira" e a seção de migrations). O que a 6 tinha aberto e nenhum agente substitui — entrar no `/admin` pelo Access, e configurar o health check do Northflank — passou a ser tarefa da **Estação 7**, registrada ali, não bloqueio da 6 |
 
 **Escopo da 6, tudo no sandbox** (`CONSTRAINTS.md` §4). Feito em 14/09:
 - **Segurança de fora:** limpo (Supabase RLS default-deny, admin
@@ -970,36 +975,38 @@ decidiu que isso **não é suportado** no lançamento (ADR-011, RN-35.4):
 a rota agora responde `409 troca_de_valor_nao_suportada` antes de
 qualquer efeito.
 
-Falta para fechar a 6, e **nada disso é código nosso**: o ciclo de
-assinatura pago em produção (exige payload real — e agora existe onde
-ele vai aparecer, já que o dono marcou `SUBSCRIPTION_*` em 18/09); o
-primeiro pagamento real de valor baixo, que é o gatilho escrito da
-exceção de backup (§3). Tudo isso vem depois da troca da Asaas para
-produção, que é do dono e que fecha a 5 sem ressalva. O MostrAí retesta
-o lado dele em paralelo.
+**A Estação 6 foi fechada por decisão do dono em 26/09/2026.** O que
+ficou aberto e não é código nosso não bloqueia mais a esteira — foi
+distribuído em dois lugares:
 
-Do item 6 sobraram três, e **duas mudaram de natureza em 17/09** depois
-de o dono mandar resolver sem ele:
+**Vira tarefa da Estação 7** (ninguém substitui, exigem credencial):
+- **Entrar no `/admin` pelo Access**, uma vez, para confirmar o login
+  operador (SEC-015). Tudo que dava para provar sem a credencial foi
+  provado.
+- **Configurar o health check do Northflank** apontando para
+  `/api/saude`, como **readiness**, nunca liveness (`RUNBOOK` §6.3) —
+  medido em 25/09 que o serviço não tinha nenhum configurado.
 
-- **O registro SPF deixou de ser decisão e virou permissão.** O valor
-  está definido e conferido na fonte do Google
-  (`v=spf1 include:_spf.google.com ~all`), a credencial da Cloudflare
-  está no ambiente, e o comando está pronto no `docs/pendencias.md` —
-  mas **o classificador de permissões do harness recusa escrita de
-  DNS**, e não há caminho alternativo (não há MCP da Cloudflare aqui,
-  `wrangler` não está instalado, e rotear a mesma escrita por subagente
-  seria contornar a guarda, não usá-la). Falta liberar a permissão ou
-  colar o registro no painel: um segundo de trabalho.
-- **O teste da pessoa número dois foi rodado por um substituto** — um
-  agente sem contexto, lendo só o RUNBOOK (§10 dele tem o resultado).
-  Ele achou oito furos, quatro com consequência real. O que **não** dá
-  para substituir é a metade com credencial: publicar de verdade e
-  entrar no `/admin`. Isso só fecha com pessoa.
-- **Os campos `⬜`** do inventário de contas e dos contatos encolheram:
-  o que API responde eu preenchi (conta e 2FA da Cloudflare, planos,
-  regiões, ids, vencimento do domínio, quatro projetos de Pages). O que
-  sobra é o que **nenhuma API responde** — onde a senha mora, qual
-  cartão paga, e o contato direto do dono.
+**Continua registrado, sem bloquear**, em `docs/pendencias.md`: estorno
+de compra parcelada (exige sandbox parcelado), modo estrito do IP do
+webhook (exige ver a origem natural batendo), o que a Asaas faz depois
+de negar estorno de boleto (exige o primeiro caso real ou sandbox),
+proteção de branch da `main` (configuração do GitHub), prazos de
+retenção (decisão jurídica, skill `legal`), o CPF como oráculo de "tem
+assinatura" (decisão de produto), e o tratamento em código dos eventos
+`SUBSCRIPTION_*` (a marcação já não bloqueia desde 18/09; o primeiro
+payload real já chegou em 25–26/09, e o tratamento fica para quando
+houver o próximo ciclo pago de assinatura real a testar contra ele).
+
+Do item 6 de prontidão ("outra pessoa consegue operar"), o que restava:
+- **O registro SPF** saiu em 18/09: `v=spf1 include:_spf.google.com
+  ~all` está no ar, conferido em dois resolvedores com controle
+  negativo.
+- **A pessoa número dois** virou atualização futura em 18/09, por
+  decisão do dono (`docs/proximas-versoes.md`).
+- **Os campos `⬜`** do inventário encolheram ao que nenhuma API
+  responde — onde a senha mora, qual cartão paga, e o contato direto do
+  dono.
 
 ## Mapa de caminhos
 - Entrada: `src/server.js` · rotas `src/routes/` · controladores `src/controllers/` · regras e integrações `src/services/`
@@ -1035,39 +1042,27 @@ conformidade: ou corrige, ou vira exceção registrada no `CONSTRAINTS.md`.
 > contradizendo é a falha que este documento existe para não ter: quem
 > lesse só esta seção planejaria de novo um trabalho já feito.
 
-**O que falta para fechar a Estação 6** — nada disso é código nosso:
+**A Estação 6 foi fechada em 26/09/2026** (evidência em "Estado na
+esteira", acima). O que bloqueia agora é o que a **Estação 7**
+(Lançamento) precisa, nesta ordem, pela skill `leis`:
 
-- **A troca da Asaas para produção** (as três variáveis no Northflank e o
-  webhook de produção em `/api/webhooks/asaas`, plural). É do dono, e ele
-  a fez depender de o MostrAí bater o mesmo ponto de equilíbrio deste
-  lado. Fecha junto a ressalva da Estação 5 (`CONSTRAINTS.md` §3).
-- **O ciclo de assinatura pago em produção**, que só existe depois da
-  troca — e com ele o **tratamento em código** dos eventos
-  `SUBSCRIPTION_*`, que exige payload real para ser escrito
-  (`CONSTRAINTS.md` §2.2). A **marcação** deles já não bloqueia mais:
-  o dono marcou o grupo inteiro em 18/09/2026 — ver abaixo.
-- **O primeiro pagamento real de valor baixo**, que é o gatilho escrito
-  da exceção de backup (`CONSTRAINTS.md` §3).
-- **Do item 6 ("outra pessoa consegue operar"):** os campos `⬜` que
-  nenhuma API responde (onde a senha mora, qual cartão paga, contato
-  direto) — o dono vai resolver por conta própria depois de fechar o
-  MostrAí e o checkout.
-  ✅ **O registro SPF saiu daqui em 18/09**: o dono liberou a permissão e
-  o TXT `v=spf1 include:_spf.google.com ~all` está no ar na raiz da zona,
-  conferido em dois resolvedores independentes (Google e Cloudflare) com
-  controle negativo num subdomínio.
-  🔁 **A pessoa número dois virou atualização futura em 18/09**, por
-  decisão do dono — não existe hoje e vai levar um tempo
-  (`docs/proximas-versoes.md`). O resto do teste do `RUNBOOK` §10 já
-  rodou com um agente sem contexto; o que falta é a metade com
-  credencial, que nenhum agente substitui.
-  ✅ **A marcação de `SUBSCRIPTION_*` saiu daqui em 18/09**: o dono
-  marcou o grupo inteiro no painel (as 7 famílias, `CONSTRAINTS.md`
-  §2.2), junto com `INTERNAL_TRANSFER_CREDIT`/`_DEBIT` (achado
-  faltando) e desmarcou `PAYMENT_CHECKOUT_VIEWED` (achado sobrando) —
-  as duas divergências que uma conferência contra o painel real achou
-  no mesmo dia. O que falta é só o **tratamento em código**, que segue
-  no item acima porque exige o primeiro payload real.
+- **Obrigações legais e documentos publicados** (skill `legal`, Lei 10):
+  a política de privacidade ainda não menciona o Web Analytics da
+  Cloudflare (sem cookie dispensa banner, mas não dispensa o aviso, pela
+  orientação da ANPD); conferir o inventário de dados contra o que o
+  sistema coleta hoje.
+- **Duas tarefas que só o dono faz, e nenhum agente substitui:** entrar
+  em `checkout.sancocore.com.br/admin` pelo Access uma vez, e configurar
+  o health check do Northflank apontando para `/api/saude` (readiness,
+  nunca liveness).
+- **Varredura final, em duas rodadas** (`references/varredura-final.md`
+  do plugin) — local e no que está no ar —, com veredito **completo** ou
+  **falta**, nunca "completo com ressalvas".
+- **Entrega de manutenção** ao dono: o que renova, o que vence (domínio
+  em 31/08/2027), o que é só dele.
+
+Até a 7 fechar, pela mesma skill: **sem anúncio, sem link enviado e sem
+cadastro aberto a terceiros.**
 
 Tudo o mais de prontidão está fechado ou virou decisão registrada — a
 lista completa, com o que era e o que passou a ser, está em

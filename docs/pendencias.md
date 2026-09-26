@@ -18,14 +18,20 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ## Bloqueiam a esteira
 
-### 🟠 Estação 6 · remediação final (25/09/2026) — os bloqueadores da baseline corrigidos em código; o que sobra depende de fora
+### 🟢 Estação 6 · remediação final (25/09/2026) — FECHADA por decisão do dono em 26/09/2026
 Ledger e relatório: `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`.
 A baseline (`docs/SECURITY_STATION_6_BASELINE_2026-09-25.md`, auditada em
 `43635c4`) fica como estava, de propósito: é o retrato de antes. Os cinco
 bloqueadores dela (SEC-001, 002, 003, 004, 006) e os demais achados foram
 corrigidos por classe de causa raiz (CR-01…CR-15), cada correção com
-regressão e sabotagem. O que NÃO fecha só com código, e fica aqui até
-fechar:
+regressão e sabotagem.
+
+**Era:** esta entrada dizia que os itens abaixo não fechavam só com
+código e bloqueavam a esteira. **Passou a ser:** o dono fechou a
+Estação 6 em 26/09/2026 apesar de eles não estarem resolvidos — a
+decisão dele, não uma reverificação com evidência de cada um. Dois
+viraram tarefa da **Estação 7** (`CLAUDE.md`, "Estado na esteira"),
+porque ninguém substitui o dono nelas:
 
 - **O dono entrar no `/admin` pelo Access depois do deploy** (SEC-015). A
   API do admin passou a exigir, na origem, o JWT do Cloudflare Access; o
@@ -34,6 +40,14 @@ fechar:
   verificado, recusa sem JWT pela API e pela origem, os nove destinos do
   Access sem cookie). O login de verdade só o dono faz. Se travar:
   `RUNBOOK.md`, "Perdi o acesso ao `/admin`" — inclusive o `git revert`.
+- **Health check da Northflank** (SEC-031, movido para cá do item
+  abaixo): configurar como **readiness**, nunca liveness (`RUNBOOK`
+  §6.3) — reiniciar em loop durante uma queda do Supabase ou um
+  terceiro lento não conserta nada.
+
+Os demais continuam abertos, sem bloquear (a Estação 6 fechada não os
+resolveu, só parou de esperar por eles para fechar):
+
 - **Estorno de compra parcelada no cartão** (SEC-018): recusado pela API
   com `409 estorno_de_parcelamento` até medir, no SANDBOX, o
   `POST /v3/installments/{id}/refund` e onde o estorno aparece (em qual
@@ -46,12 +60,6 @@ fechar:
   `ASAAS_WEBHOOK_IP_ESTRITO=1` depois de ver o `ip` da primeira entrega
   natural batendo com a lista (o log de ingresso da Northflank não está
   disponível nesta conta).
-- **Health check da Northflank** (SEC-031): `/api/saude` agora dá `503`
-  com worker parado. **Medido em 25/09/2026: o serviço não tem health
-  check nenhum** (`northflank get service health-checks` → `[]`), então o
-  503 hoje só é lido pelo monitor de uptime. Se um dia for configurado, é
-  **readiness**, nunca liveness (RUNBOOK §6.3): reiniciar em loop durante
-  uma queda do Supabase ou um terceiro lento não conserta nada.
 - **O que a Asaas faz depois de negar um estorno de boleto** (RN-71,
   CP1-01): o código supõe que o pagamento volta a `RECEIVED`/`CONFIRMED` —
   é o respaldo exigido para aplicar a negativa. Não medido. Se ela ficar em
@@ -72,21 +80,20 @@ fechar:
   Registrado para o dono decidir (e para a skill `legal`, se o serviço de
   algum contratante for sensível).
 
-### 🟠 Primeiro pagamento real (25/09/2026) · Pix sem QR e assinatura "ativa" sem débito — corrigido em código, falta o dono
+### 🟢 Primeiro pagamento real (25/09/2026) · Pix sem QR e assinatura "ativa" sem débito — FECHADO 26/09/2026
 O incidente inteiro, com IDs e linha do tempo:
 `docs/erros/2026-09-25-primeiro-pagamento-real-pix-sem-chave-e-assinatura-com-vencimento-utc.md`.
 As quatro correções de código (datas de Brasília, `CHECKOUT_PAID` não é
 dinheiro, Pix recuperável, referência dos eventos) estão feitas e
-cobertas por regressão com os payloads reais. O que **só o dono** decide:
+cobertas por regressão com os payloads reais.
 
-- **A assinatura `sub_39mjscz7vl2jwx7g` (R$ 10,00, anual)** — em
-  25/09 a Asaas mostra "aguardando confirmação da operadora" e a API
-  responde `PENDING`; nenhum `PAYMENT_*` chegou, a linha segue `pendente`
-  com a sessão concluída, a tela diz `PROCESSANDO`, e nada foi avisado a
-  contratante nenhum. O 1º ciclo
-  `pay_v6f2xr6j98reaxb9` vence em 25/09 e a Asaas deve tentar o cartão
-  nesse dia. Deixar cobrar (é também o primeiro `PAYMENT_CONFIRMED` de
-  assinatura em produção, o que falta para fechar a 6) ou cancelar antes.
+- ✅ **A assinatura `sub_39mjscz7vl2jwx7g` (R$ 10,00, anual) foi
+  homologada e cancelada em 26/09/2026.** O 1º ciclo `pay_v6f2xr6j98reaxb9`
+  confirmou (`CONFIRMED` na Asaas), o `PAYMENT_CONFIRMED` chegou e
+  vinculou; a homologação real usou essa assinatura (troca de preço
+  recusada pela Asaas — item próprio abaixo — e cancelamento pelo fluxo
+  oficial, sem estorno, 0 cobranças novas). Fechada, sem renovação
+  futura.
 - ✅ **Pix em produção HOMOLOGADO (25/09/2026, 02:06 UTC).** O dono pagou
   `pay_x9eixae4vkg6ugzg` (R$ 5,00): Asaas `RECEIVED` → `PAYMENT_RECEIVED`
   na inbox, processado sem retry → cobrança `confirmado` → outbox
@@ -99,10 +106,10 @@ cobertas por regressão com os payloads reais. O que **só o dono** decide:
   `PAYMENT_CONFIRMED` chegou ANTES do `CHECKOUT_PAID` (o caminho
   "pagamento antes da sessão", exercitado ao vivo) → `confirmado` →
   outbox 200 ao testemaster. Cobrado no ato: a correção de fuso vale.
-- **Boleto `pay_4b4o86s675b7sw5n` (R$ 10,00)**: emitido com vencimento
-  27/09 (dia de Brasília + 3 — a 1ª prova ao vivo de RN-49; em UTC teria
-  saído 28/09); pagamento agendado pelo dono no banco, aguardando
-  compensação.
+- ✅ **Boleto `pay_4b4o86s675b7sw5n` (R$ 10,00) compensado.** Emitido com
+  vencimento 27/09 (dia de Brasília + 3 — a 1ª prova ao vivo de RN-49; em
+  UTC teria saído 28/09); pago em 25/09, `RECEIVED` na Asaas, `confirmado`
+  aqui, 0 estornos — reconferido na homologação real de 26/09/2026.
 - ✅ **Pedido pago reabria como pagável — corrigido (RN-04.1).** O
   contratante de teste guarda os pagos na memória de cada instância da
   Cloudflare, e `ped_isento`/`ped_dez_cartao` voltaram a abrir. O checkout
@@ -129,14 +136,16 @@ cobertas por regressão com os payloads reais. O que **só o dono** decide:
 - **Confirmar a chave Pix**: existe uma `EVP` ativa na conta; às 01:24
   não existia. Se não foi o dono que criou, conferir no painel.
 
-Só pedir um novo pagamento real depois do deploy desta correção
-conferido no ar.
+✅ **A homologação real de 26/09/2026 exercitou os cinco caminhos**
+(Pix, cartão, boleto, assinatura, cancelamento) contra o deploy desta
+correção, sem cobrança nova nem estorno — a última condição desta
+entrada.
 
-### 🟠 Estação 5 · o pagamento em produção ainda aponta para o sandbox
+### 🟢 Estação 5 · o pagamento em produção apontava para o sandbox — FECHADA 26/09/2026
 A lei nova diz que o deploy da Estação 5 é "produção de verdade, não
 ensaio — apontando para o ambiente real dos provedores, inclusive
 pagamento", porque identificador, formato de webhook, assinatura e erro
-mudam entre ambientes. Hoje `ASAAS_AMBIENTE=sandbox`.
+mudam entre ambientes. Era: `ASAAS_AMBIENTE=sandbox`.
 
 **Virou exceção registrada em 13/09/2026**, que é o caminho que a
 própria lei prevê: `CONSTRAINTS.md` §3, "Estação 5 · deploy em produção
@@ -144,11 +153,12 @@ apontando para o sandbox da Asaas". Lá está a leitura do dono (servidor
 e subdomínio no ar cumprem a regra; as variáveis são decisão dele), o
 plano de duas rodadas e o custo assumido.
 
-Esta entrada fica aberta até a **segunda rodada**: variáveis em
-produção, e os quatro pontos que mudam entre ambientes — identificador
-de cobrança, formato do webhook, assinatura e mensagem de erro —
-reconferidos um a um. O que a troca envolve está no fim deste arquivo
-("Ao trocar o Northflank para produção").
+**Passou a ser:** a exceção fechou em 26/09/2026. `ASAAS_AMBIENTE=
+producao` (conferido dentro do contêiner) e os quatro pontos que mudam
+entre ambientes — identificador de cobrança, formato do webhook,
+assinatura e mensagem de erro — foram reconferidos um a um contra o
+primeiro dinheiro real de 25–26/09/2026 (`CONSTRAINTS.md` §3 tem o
+detalhe de cada um).
 
 ### 🟡 Lei 3 · custo do scrypt no Northflank — medido em 14/09, no teto
 `seguranca-san/references/senha-e-kdf.md` manda calibrar mirando 0,5 a
