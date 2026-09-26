@@ -1061,10 +1061,16 @@ pendência é o jurídico**, e o que vem depois dele, nesta ordem, pela
 skill `leis`:
 
 - **Obrigações legais e documentos publicados** (skill `legal`, Lei 10):
-  a política de privacidade ainda não menciona o Web Analytics da
-  Cloudflare (sem cookie dispensa banner, mas não dispensa o aviso, pela
-  orientação da ANPD); conferir o inventário de dados contra o que o
-  sistema coleta hoje. Termos e Política não se reescrevem sem o dono.
+  **Termos v3, Política v4 e o inventário foram consolidados em
+  26/09/2026 e esperam a aprovação do dono para mesclar**
+  (`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`). Esta linha
+  dizia que a política não mencionava o Web Analytics, e isso era falso
+  desde 17/09 (Política v3, §15.5). O que a consolidação achou de
+  verdade foram 16 divergências, entre elas o Google Fonts e o ViaCEP
+  sem declaração e o split descrito como fluxo real. Ficam em aberto
+  uma validação regulatória (o fluxo sem split antes de um Lojista de
+  outro titular), uma contábil (emissão fiscal e contagem dos 5 anos) e
+  três rotinas de expurgo que o jurídico exige e que ainda não existem.
 - **Varredura final, em duas rodadas** (`references/varredura-final.md`
   do plugin) — local e no que está no ar —, com veredito **completo** ou
   **falta**, nunca "completo com ressalvas". Só depois dos documentos

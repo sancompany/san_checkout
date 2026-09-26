@@ -144,18 +144,21 @@ jurídica. A identificação completa (nome, CPF e endereço) está nos
 Termos de Uso e na Política de Privacidade, e é o Decreto 7.962/2013,
 art. 2º, que pede a inscrição no CPF **ou** no CNPJ.
 
-**Operação em transição para pessoa jurídica.** Três coisas dependem
-disso, e valem ser sabidas antes de integrar:
+**Não há transição para pessoa jurídica em curso** (decisão do dono,
+26/09/2026). Duas consequências da operação em pessoa física valem ser
+sabidas antes de integrar:
 
 - **Não há `split`** enquanto a conta da Asaas for de pessoa física
   (conta PF não cria subconta). O valor que lhe cabe passa pela conta do
-  operador e o repasse é manual — ver a seção 8.
-- **A nota fiscal do serviço tecnológico** sai na inscrição vigente do
-  operador. A nota do **seu** produto continua sendo sua, sempre (seção
-  4.3 e Termos §15.1.1).
-- Quando a conversão concluir, os documentos legais mudam de versão e o
-  `split` passa a valer. **Nada no contrato desta API muda por causa
-  disso** — nem endpoint, nem payload, nem status.
+  operador e o repasse é manual — ver a seção 8 e os Termos §9.
+- **A documentação fiscal do serviço tecnológico**, quando exigível,
+  segue a inscrição vigente do operador. A nota do **seu** produto
+  continua sendo sua, sempre (seção 4.3 e Termos §16.2).
+
+Se a operação for um dia transferida para pessoa jurídica, os documentos
+legais mudam de versão antes ou no momento da alteração. **Nada no
+contrato desta API muda por causa disso** — nem endpoint, nem payload,
+nem status.
 
 ### 2.1 Os dois endereços do checkout
 
@@ -2151,9 +2154,9 @@ integral.
 >
 > O motivo não é escolha de arquitetura: a conta-mãe da Asaas está
 > registrada como pessoa física, e conta PF não cria subconta — logo não
-> há `wallet_id` para cadastrar. Medido em 17/09/2026. A conversão para
-> CNPJ é atualização futura, e o `split` liga junto com ela. Detalhe em
-> `CONSTRAINTS.md` §2.5.3 e §3.
+> há `wallet_id` para cadastrar. Medido em 17/09/2026. Ligar o `split`
+> exigiria converter o registro da conta para CNPJ, e essa conversão não
+> está em curso (26/09/2026). Detalhe em `CONSTRAINTS.md` §2.5.3 e §3.
 
 **Tabela da Asaas (valores de referência):**
 

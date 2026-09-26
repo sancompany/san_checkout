@@ -83,7 +83,7 @@ contratante e conta-mãe via subconta Asaas.
 **Decision:** Sem split hoje; toda cobrança cai inteira na conta-mãe.
 
 **Reason:** Subconta Asaas exige que a conta-mãe seja PJ no registro —
-a conta é PF (pessoa física, em transição, ver ADR-006). Virou
+a conta é PF (pessoa física, ver ADR-006). Virou
 atualização futura.
 
 **Consequences:** `docs/proximas-versoes.md` — sem split, o modelo de
@@ -110,9 +110,17 @@ escala de usuário final.
 
 ---
 
-## ADR-006 — Documentos legais identificam pessoa física, em transição
+## ADR-006 — Documentos legais identificam pessoa física
 
-**Status:** adopted (exceção registrada, Lei 10)
+**Status:** adopted (exceção registrada, Lei 10); **revisto em 26/09/2026**
+
+> **Revisão de 26/09/2026, decisão do dono:** não há transição para
+> pessoa jurídica em curso. O CNPJ antigo pertence a outra atividade e
+> não representa o San Checkout, o SAN & CO. Pay nem o MostrAí. Termos v3
+> e Política v4 deixaram de anunciar a transição; dizem só que, se a
+> operação for um dia transferida para pessoa jurídica, os documentos
+> serão atualizados antes ou no momento da alteração. O texto abaixo é o
+> de 17/09.
 
 **Context:** O operador do Checkout mudou de CNPJ para CPF como
 identidade legal de cobrança.

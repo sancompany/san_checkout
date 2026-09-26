@@ -18,6 +18,32 @@ o Northflank), e é o pior dos dois erros: manda refazer.
 
 ## Bloqueiam a esteira
 
+### 🟡 Estação 7 · consolidação jurídica (26/09/2026) — documentos prontos, esperando a aprovação do dono
+Relatório, matriz e fontes em
+`docs/CONSOLIDACAO_JURIDICA_ESTACAO_7_2026-09-26.md`.
+
+- ✅ **Termos v3 e Política v4 escritos contra o sistema real**, e as
+  versões anteriores arquivadas byte a byte em `docs/legal-arquivado/`.
+  Dezesseis divergências achadas entre documento e sistema (D1 a D16),
+  entre elas o split descrito como fluxo real, dois terceiros sem
+  declaração (Google Fonts e ViaCEP) e o hash de CPF chamado de
+  irreversível.
+- ✅ **Inventário refeito campo a campo** em 26/09/2026, com prazo por
+  categoria.
+- ✅ **`RUNBOOK` §8.1 corrigido na fonte** (Res. CD/ANPD 15/2024 e 2/2022).
+- ⬜ **Aprovar e mesclar** — é do dono. A tarefa mandava entregar o
+  relatório e o diff antes do merge.
+- ⬜ **REGULATORY_VALIDATION_REQUIRED** — o fluxo sem split antes de
+  receber para um Lojista de outro titular (relatório §4).
+- ⬜ **ACCOUNTING_VALIDATION_REQUIRED** — emissão fiscal pela taxa do
+  checkout, e a contagem fiscal dos 5 anos (relatório §4).
+- ⬜ **Três mudanças técnicas exigidas pelo jurídico, não feitas**
+  (`LEGAL_REQUIRES_TECH_CHANGE`): expurgo de `intencoes_troca_plano`, de
+  `clientes_asaas` e de `subcontas` (`docs/inventario-de-dados.md` §1.3,
+  §1.4 e §6.3).
+- ⬜ **Decisão de produto:** gravar ou não o aceite dos documentos, com
+  versão e hash do texto (`docs/inventario-de-dados.md` §8).
+
 ### 🟢 Estação 6 · remediação final (25/09/2026) — FECHADA por decisão do dono em 26/09/2026
 Ledger e relatório: `docs/SECURITY_STATION_6_REMEDIATION_2026-09-25.md`.
 A baseline (`docs/SECURITY_STATION_6_BASELINE_2026-09-25.md`, auditada em
@@ -88,7 +114,9 @@ resolveu, só parou de esperar por eles para fechar):
   as ações e a imagem estão fixadas e o Dependabot existe; exigir o CI
   verde para mesclar é configuração do GitHub, do dono.
 - **Prazos de retenção** de `intencoes_troca_plano`, `clientes_asaas` e
-  `subcontas` (SEC-030): decisão jurídica (skill `legal`), não técnica.
+  `subcontas` (SEC-030): **a decisão jurídica foi tomada em 26/09/2026**
+  (`docs/inventario-de-dados.md` §1.3, §1.4 e §6.3). O que resta é o
+  código que aplica os prazos, e ele está na entrada da Estação 7 acima.
 - **O CPF como oráculo de "tem assinatura"** (NEW-03): com o CPF de alguém
   e o link público de um plano, o `409 assinatura_ja_existe` diz que essa
   pessoa assina aquele plano. É consequência da regra de uma assinatura
@@ -376,7 +404,10 @@ dela, cada item com o caminho de fechamento:
   síncrono), então não bloqueia. Fecha com um cartão de teste recusado
   no sandbox e o payload anotado.
 - **`intencoes_troca_plano` sem expurgo próprio**: sem dado pessoal
-  direto; fecha com uma linha no `expurgarFilas` do `server.js`.
+  direto, mas ligada ao assinante por `assinatura_id`. O prazo foi
+  decidido em 26/09/2026 (`docs/inventario-de-dados.md` §1.3): 90 dias
+  depois de vencer sem cobrança, 5 anos com cobrança. Fecha com a função
+  descrita ali, no ciclo de `rodarExpurgoDasFilas` do `server.js`.
 - **`PAYMENT_DELETED` desmarcado** (`CONSTRAINTS.md` §2.2, decisão):
   consequência achada em 24/09 — um Pix pendente apagado no painel da
   Asaas deixa a linha local `pendente` com `charge_id`, e `POST /pix`

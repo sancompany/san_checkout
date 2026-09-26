@@ -60,7 +60,7 @@ caminho a quem só precisava da outra.
 | **Cloudflare** | DNS da zona, Pages (4 projetos), Access (equipe `fancy-dawn-740a`), Web Analytics | zona `sancocore.com.br`, plano **Free Website**, NS `arely`/`decker`; os ids de conta e de zona saem do comando abaixo, não deste arquivo | e-mail pessoal do dono — o endereço **não fica escrito aqui**, sai do comando abaixo ou do gerenciador | **2FA ativo** (medido) · gerenciador ⬜ | **nada é pago**: `Cloudflare Free Plan` e `Teams Free Base`, ambos US$ 0 — a linha do Teams renova 11/10/2026 sem cobrança |
 | **Northflank** | backend | projeto/serviço `san-checkout`, cluster `nf-southamerica-east`, namespace `ns-9k49mqwtltxm`, criado 12/09/2026, branch `main`, build `nf-compute-400-16`, runtime `nf-compute-50` | ⬜ | ⬜ | mensal ⬜ · cartão ⬜ |
 | **Supabase** | banco | org `fphbzkrzgijqzpqzvshh`, projeto `San_Checkout` ref `zacuaroarelaqnzjjlcz`, `sa-east-1`, Postgres 17.6.1.166, criado 06/09/2026 | ⬜ | ⬜ | plano ⬜ · cartão ⬜ |
-| **Asaas** | pagamento | conta **pessoa física, em transição** (`CONSTRAINTS.md` §3); **produção** desde 25/09/2026 (`ASAAS_AMBIENTE=producao`, conferido no contêiner) | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
+| **Asaas** | pagamento | conta **pessoa física** (`CONSTRAINTS.md` §3; não há transição para PJ em curso, decisão do dono de 26/09/2026); **produção** desde 25/09/2026 (`ASAAS_AMBIENTE=producao`, conferido no contêiner) | ⬜ | ⬜ | tarifa por transação · sem mensalidade conhecida ⬜ |
 | **GitHub** | repositório e CI | `sancompany/san_checkout`; **os dois workflows não usam segredo de repositório** (medido) | ⬜ | ⬜ | plano ⬜ |
 | **Google Workspace** | caixas `@sancocore.com.br` (`contato`, `financeiro`, `juridico`, `suporte`) | MX `smtp.google.com`, DKIM seletor `google`, DMARC `p=reject`; **SPF `v=spf1 include:_spf.google.com ~all` no ar desde 18/09/2026** (conferido em dois resolvedores, com controle negativo) | ⬜ | ⬜ | por caixa ⬜ · cartão ⬜ |
 | **cron-job.org** | ping de 10 min em `/api/saude` | mantém o Supabase acordado | ⬜ | ⬜ | gratuito ⬜ |
@@ -936,7 +936,7 @@ rodapé. Indicar encarregado é ato formal escrito, e não foi feito.
 titular aqui é identificado por `documento` — que desde 17/09/2026 é uma
 chave só, em dígitos (RN-32), justamente para esta conta não sair
 dobrada. As tabelas com dado pessoal estão em
-`docs/inventario-de-dados.md` §6, e a mesma lista branca da rotina de
+`docs/inventario-de-dados.md` §1 e §5, e a mesma lista branca da rotina de
 expurgo serve de mapa (`src/services/expurgoService.js`). Para o escopo
 mais comum — um contratante comprometido:
 
@@ -956,44 +956,66 @@ gov.br precisa existir e ter sido testada antes** — testar no dia do
 incidente é perder o prazo. Está na lista de pré-lançamento da skill
 `legal`, e é do dono.
 
-**5. Os prazos.** Fonte: `san-co:legal`,
-`references/obrigacoes-brasil.md` (LGPD art. 48; Resoluções CD/ANPD nº
-15/2024, nº 2/2022), lido na fonte em 17/09/2026 — não de memória.
+**5. Os prazos.** Fonte: o texto da Resolução CD/ANPD nº 15/2024 (Regulamento
+de Comunicação de Incidente de Segurança) e da Resolução CD/ANPD nº
+2/2022, **lidos na fonte oficial em 26/09/2026** — a biblioteca digital
+do Ministério da Justiça (`bibliotecadigital.mj.gov.br`, documento
+`RES_ANPD_2024_15`) e o portal da ANPD (`gov.br/anpd`). Não de memória,
+e não da paráfrase da skill.
 
 **Estes são os prazos a cumprir** — um só por linha, de propósito:
 
-| o que | prazo |
-|---|---|
-| comunicar à **ANPD** | **3 dias úteis** do conhecimento |
-| comunicar aos **titulares** | **3 dias úteis**, em linguagem simples e individualizada (e-mail serve) |
-| **complementar** o que faltava | **20 dias úteis** |
-| confirmação e acesso ao titular, formato simplificado | **imediatamente** |
-| declaração completa ao titular | **15 dias** |
+| o que | prazo | onde está |
+|---|---|---|
+| comunicar à **ANPD** | **3 dias úteis** do conhecimento de que o incidente afetou dado pessoal | Res. 15/2024, art. 6º, *caput* e §1º |
+| comunicar aos **titulares** | **3 dias úteis** do conhecimento | Res. 15/2024, art. 9º, *caput* |
+| juntar ao processo da ANPD a **declaração** de que os titulares foram comunicados, com os meios usados | **3 dias úteis** depois da comunicação aos titulares | Res. 15/2024, art. 9º, §4º |
+| **complementar** o que faltava, de forma fundamentada | **20 dias úteis** | Res. 15/2024, art. 6º, §3º |
+| aviso público, quando a comunicação individual for inviável | por **no mínimo 3 meses** | Res. 15/2024, art. 9º, §3º |
+| **registrar** o incidente, inclusive quando não for comunicado | guardar por **no mínimo 5 anos** | Res. 15/2024, art. 10 |
+| confirmação e acesso ao titular, formato simplificado | **imediatamente** | LGPD, art. 19, I |
+| declaração completa ao titular | **15 dias** | LGPD, art. 19, II |
 
-> **Existe um regime de prazo em dobro, e ele NÃO se aplica aqui até
-> alguém provar que se aplica.** A tabela acima tinha uma segunda coluna
-> com os prazos dobrados (6 dias úteis, 30 dias) e um aviso logo abaixo
-> mandando não usá-la — publicar um número que não se deve usar é como
-> o número errado acaba usado sob pressão, e por isso ele saiu da
-> tabela. O regime flexibilizado é autoenquadramento de ME, EPP e
-> startup; este projeto está **pessoa física, em transição**
-> (`CONSTRAINTS.md` §3). Assumir o dobro e estar errado é perder prazo
-> legal, e prazo perdido não volta; assumir o curto e estar errado não
-> custa nada. Quem muda isto é a validação jurídica da Estação 7, por
-> escrito.
+> **O prazo em dobro existe, e a regra da casa continua sendo cumprir o
+> prazo curto.** Os prazos de comunicação são contados em dobro para
+> agente de tratamento de pequeno porte (Res. 15/2024, art. 6º, §8º, e
+> art. 9º, §6º; Res. 2/2022, art. 14). **Correção de 26/09/2026:** este
+> bloco dizia que o regime flexibilizado era só de ME, EPP e startup, e
+> que por isso não servia a uma pessoa física. É falso: a Res. 2/2022,
+> art. 2º, I, inclui expressamente **pessoas naturais**. O que tira o
+> regime é o tratamento de alto risco (art. 3º, I, e art. 4º: um critério
+> geral — larga escala ou afetar significativamente direitos — somado a
+> um específico — tecnologia emergente, vigilância, decisão automatizada
+> sobre perfil ou crédito, dado sensível ou de criança, adolescente ou
+> idoso). Na leitura desta revisão, o checkout provavelmente se enquadra
+> como pequeno porte, mas isso é autoenquadramento, declarado na própria
+> comunicação, e não foi validado por advogado. Por isso **o alvo
+> operacional segue sendo 3 dias úteis**: cumprir o curto sendo pequeno
+> porte não custa nada, e assumir o dobro sem ser é perder prazo legal.
 
-Se a comunicação individual ao titular for inviável, o substituto é
-aviso no site por **no mínimo três meses**.
+**6. O que a comunicação precisa dizer.** São duas listas diferentes, e
+uma não substitui a outra:
 
-**6. O que a comunicação precisa dizer** (ANPD e titulares, o mesmo
-conteúdo, linguagem diferente): natureza dos dados; número de titulares
-afetados; medidas de segurança antes e depois; riscos; motivo de
-eventual demora; mitigação; **data do incidente e data do
-conhecimento**; identificação do controlador, com a declaração de
-pequeno porte se ela se aplicar; identificação do operador (aqui:
-Asaas, Supabase, Northflank, Cloudflare, Google); descrição e causa
-raiz. Pode-se comunicar preliminarmente e completar depois — o que não
-se pode é deixar o prazo passar em silêncio.
+- **À ANPD** (Res. 15/2024, art. 6º, §2º): natureza e categoria dos
+  dados afetados; número de titulares afetados; medidas técnicas e de
+  segurança usadas antes e depois; riscos; motivos da demora, se houver;
+  medidas para reverter ou mitigar; **data do incidente e data do
+  conhecimento**; dados do encarregado ou de quem representa o
+  controlador; identificação do controlador, com a **declaração de
+  pequeno porte** se ela for feita; identificação do operador (aqui:
+  Asaas, Supabase, Northflank, Cloudflare, Google); descrição do
+  incidente e da causa principal; e o **total de titulares cujos dados o
+  controlador trata**, não só os afetados.
+- **Aos titulares** (Res. 15/2024, art. 9º, I a VII): natureza e
+  categoria dos dados afetados; medidas técnicas e de segurança usadas;
+  riscos; motivos da demora, se houver; medidas adotadas para reverter
+  ou mitigar; data do conhecimento; e o contato para mais informações.
+  Em **linguagem simples**, de forma **direta e individual** quando der
+  para identificar o titular (e-mail serve, art. 9º, §§1º e 2º). Incluir
+  recomendação do que o titular pode fazer é boa prática (§5º).
+
+Pode-se comunicar preliminarmente e completar depois, dentro dos 20
+dias úteis — o que não se pode é deixar o prazo passar em silêncio.
 
 
 ## 9. Dependências externas, e o que quebra se cada uma cair
@@ -1011,6 +1033,8 @@ que importa é a última.
 | **Cloudflare — Access** | o `/admin` e a API do admin (a origem confere o JWT dele, e com as chaves fora do ar responde `503`) | o checkout do comprador, inteiro | login do admin não abre | por desenho: falha fechada. Painel Zero Trust, sem dependência circular |
 | **Cloudflare — Pages** | as telas do comprador | a API — contratante integrado por API sente menos | página não carrega | o link de cobrança fica inútil até voltar |
 | **Google Workspace** | `juridico@` e `suporte@` | o sistema | e-mail devolvido | **é canal legal do titular** (LGPD): indisponibilidade prolongada é problema de conformidade, não só de suporte |
+| **Google Fonts** | só a fonte das páginas | o checkout inteiro, com a fonte padrão do navegador | páginas com tipografia diferente | nada: é cosmético. É também um terceiro que recebe o IP de todo visitante, declarado na Política v4, §15.11 |
+| **ViaCEP** | o preenchimento automático do endereço em cartão e assinatura por cartão | Pix, boleto, e o resto da tela | "CEP não encontrado" num CEP válido | o comprador ainda pode digitar o endereço à mão; se a falha durar, é o fornecedor declarado na Política v4, §15.12 |
 | **registro.br** | o domínio, e com ele tudo | nada | ninguém avisa — é o motivo da data em §1.1 | **31/08/2027**; renovar antes |
 | **cron-job.org** | o ping que mantém o Supabase acordado | tudo | primeira requisição do dia lenta | nada urgente — e **não está confirmado que ele existe hoje**, ver §2 |
 | **GitHub** | publicar versão nova | o que está no ar | push falha | o ar não depende do GitHub depois do deploy |
