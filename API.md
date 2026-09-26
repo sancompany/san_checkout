@@ -1298,6 +1298,15 @@ Content-Type: application/json
 | **Retomar** | `pausada` ou `ativa` | Volta a cobrar no mesmo valor e ciclo |
 | **Cancelar** | `ativa` **ou `pausada`** | **Definitivo.** Para voltar, o assinante assina de novo do zero |
 
+**Cancelar encerra a recorrência. O acesso é decisão sua.** O
+cancelamento só impede as cobranças futuras (`DELETE` da assinatura na
+Asaas). O que já foi pago continua pago: nada é estornado. O Checkout
+não controla acesso ao seu produto e não decide se o assinante continua
+usando até o fim do período pago. O evento `cancelada` não traz a data
+de fim desse período. Se o seu produto dá acesso até o fim do período,
+calcule-o você, a partir do `ciclo` e da data do último
+`criada`/`cobranca_confirmada` que recebeu.
+
 **Pausar e retomar são idempotentes: cancelar não.** Pedir para pausar
 uma assinatura já pausada (ou retomar uma já ativa) responde `200` com
 `"jaEstava": true`, sem chamar a Asaas de novo. **Cancelar não tem esse
@@ -1997,6 +2006,21 @@ acerto         = debito − credito       (≤ 0 → não cobra e não devolve)
 **Mês comercial de 30 dias, ano de 360** (decisão do dono). O crédito sai
 do valor **pago**, nunca do valor atual da assinatura — senão daria para
 alterar o valor antes de trocar e farmar crédito.
+
+**Dias civis e dias comerciais.** `dias_restantes` é contado no
+calendário, e o ciclo é comercial. Nos primeiros dias de um período, o
+calendário passa do ciclo: um anual pago hoje vence daqui a 365 ou 366
+dias, e um mensal que atravessa um mês de 31 dias começa com 31. Nesses
+dias, `dias_restantes` entra na conta **limitado ao ciclo** (360, 30,
+90, 180…): o período inteiro ainda não foi usado, e o crédito nunca
+passa do que foi pago. Do dia em que restam tantos dias quanto o ciclo
+comercial em diante, a conta é a mesma de sempre. O
+`acerto.diasRestantes` da resposta é esse número, o que entrou na conta.
+Só é recusado como dado incoerente (`409`) o que passar do período mais
+longo que o ciclo pode ter no calendário (31 dias no mensal, 92 no
+trimestral, 184 no semestral, 366 no anual). Até 26/09/2026 a
+comparação era do calendário com o ciclo comercial, e a troca era
+recusada nos primeiros dias de todo período.
 
 **Por que os dois lados são proporcionalizados, e não a diferença.** Com
 15 dias restantes de um mensal de R$ 100:

@@ -925,6 +925,21 @@ projeto contratante, decisão do dono, escrita em `API.md` §5.6 e no
 checklist da §11. O que o Checkout PASSOU a fazer, desde RN-35.2, é
 diferente: pedir o consentimento da COBRANÇA, não avisar do resultado.
 
+**RN-35.3 · Troca de plano no começo do período não é dado incoerente.**
+Os dias restantes são contados no calendário, e o ciclo é comercial
+(mês de 30, ano de 360). Nos primeiros dias de um período o calendário
+passa do ciclo: um anual pago hoje tem 365 ou 366 dias pela frente, e
+um mensal num mês de 31 dias tem 31. Esses dias entram na conta
+limitados ao ciclo comercial, então o crédito nunca passa do valor
+pago. Só é dado incoerente, e recusado, o que passar do período mais
+longo que o ciclo pode ter no calendário (`DURACAO_CIVIL_MAXIMA` em
+`proporcionalService.js`: 31, 62, 92, 184, 366). *Violada:* até
+26/09/2026 a guarda comparava os dias civis com o ciclo comercial e
+recusava com `409` toda troca nos primeiros dias de todo período mensal,
+trimestral, semestral e anual. Achado em produção com a assinatura
+anual real da homologação, paga no mesmo dia. *Quem vê:* o contratante,
+que recebia "não foi possível calcular o acerto" numa troca legítima.
+
 **RN-35.2 · Havendo acerto a cobrar, o ASSINANTE aprova o valor antes de
 qualquer cobrança — decisão do dono em 20/09/2026, revertendo a de
 17/09/2026 ("não existe tela").** O dono testou o MostrAí e viu a troca

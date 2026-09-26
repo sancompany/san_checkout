@@ -55,6 +55,50 @@ const DIAS_DO_CICLO = {
   YEARLY: 360
 };
 
+/** Quantos meses de CALENDÁRIO cada ciclo mensal ocupa. Semanal e
+ *  quinzenal ficam de fora porque são contados em dias, e neles o
+ *  calendário e o comercial coincidem (7 e 14). */
+const MESES_DO_CICLO = {
+  MONTHLY: 1,
+  BIMONTHLY: 2,
+  QUARTERLY: 3,
+  SEMIANNUALLY: 6,
+  YEARLY: 12
+};
+
+/**
+ * A maior duração que um período do ciclo pode ter no CALENDÁRIO, em
+ * dias. É a régua do "dado incoerente".
+ *
+ * Por que ela existe (achado em 25/09/2026, com a assinatura anual real
+ * `sub_39mjscz7vl2jwx7g`): a data de vencimento é civil, e o ciclo
+ * comercial é de 360 dias. Um anual pago hoje vence daqui a 365 (ou 366)
+ * dias civis. A guarda antiga comparava os dias CIVIS restantes com o
+ * ciclo COMERCIAL, e recusava toda troca nos primeiros dias de todo ciclo
+ * mensal, trimestral, semestral e anual: 365 > 360, 31 > 30, 92 > 90,
+ * 184 > 180.
+ *
+ * A comparação certa é civil com civil: nenhum período de N meses
+ * passa desta duração, então o que passar dela é mesmo dado errado. A
+ * régua é calculada, e não escrita à mão, varrendo quatro anos
+ * (um bissexto incluído) a partir de todo início de mês. De qualquer
+ * dia até o mesmo dia N meses depois, a duração é a soma dos meses
+ * atravessados, então os inícios de mês bastam para achar o máximo.
+ */
+const DURACAO_CIVIL_MAXIMA = Object.fromEntries(
+  Object.entries(DIAS_DO_CICLO).map(([ciclo, dias]) => {
+    const meses = MESES_DO_CICLO[ciclo];
+    if (!meses) return [ciclo, dias];
+    let maior = 0;
+    for (let ano = 2024; ano < 2028; ano += 1) {
+      for (let mes = 0; mes < 12; mes += 1) {
+        maior = Math.max(maior, (Date.UTC(ano, mes + meses, 1) - Date.UTC(ano, mes, 1)) / 86400000);
+      }
+    }
+    return [ciclo, maior];
+  })
+);
+
 /** Piso da Asaas por cobrança, medido nos dois meios em 17/09/2026:
  *  "O valor mínimo para cobranças via cartão de crédito é R$ 5,00" e a
  *  mesma frase para boleto. Não é número nosso — é recusa do provedor. */
@@ -143,23 +187,33 @@ export function calcularAcertoDeTroca({
     return { cobra: false, acerto: 0, credito: 0, debito: 0, diasRestantes: 0, motivo: 'sem dias restantes' };
   }
 
-  /* Mais dias restantes que o ciclo inteiro é dado incoerente (data
-     futura demais, ou ciclo errado no registro). Não inventa: recusa, e
-     quem chamou decide. Cobrar sobre isso daria acerto inflado. */
-  if (dias > diasAtual) {
+  /* Mais dias restantes que o período mais longo que o ciclo pode ter no
+     calendário é dado incoerente (data futura demais, ou ciclo errado no
+     registro). Não inventa: recusa, e quem chamou decide. Cobrar sobre
+     isso daria acerto inflado. A régua é CIVIL, porque `dias` é civil;
+     compará-lo com o ciclo comercial recusava troca legítima
+     (`DURACAO_CIVIL_MAXIMA`). */
+  if (dias > DURACAO_CIVIL_MAXIMA[cicloAtual]) {
     return {
       cobra: false, dadoIncoerente: true, acerto: 0, credito: 0, debito: 0, diasRestantes: dias,
-      motivo: `dias restantes (${dias}) maiores que o ciclo atual (${diasAtual})`
+      motivo: `dias restantes (${dias}) maiores que o ciclo atual (${DURACAO_CIVIL_MAXIMA[cicloAtual]} dias no calendário)`
     };
   }
 
-  const credito = centavos(valorPagoDoPeriodo * (dias / diasAtual));
-  const debito = centavos(valorDoPlanoNovo * (dias / diasNovo));
+  /* Dentro do período, os dias restantes entram na conta em dias
+     COMERCIAIS, e nunca mais que o ciclo inteiro: os dias em que o
+     calendário excede o ciclo comercial (os 5 ou 6 de um ano, o 31º de um
+     mês) contam como período ainda não usado, e o crédito para no que foi
+     pago. Do 360º dia civil restante para baixo, nada muda. */
+  const diasComerciais = Math.min(dias, diasAtual);
+
+  const credito = centavos(valorPagoDoPeriodo * (diasComerciais / diasAtual));
+  const debito = centavos(valorDoPlanoNovo * (diasComerciais / diasNovo));
   const acerto = centavos(debito - credito);
 
   /* Regra 2: para baixo não devolve. */
   if (acerto <= 0) {
-    return { cobra: false, acerto, credito, debito, diasRestantes: dias, motivo: 'sem acerto a cobrar' };
+    return { cobra: false, acerto, credito, debito, diasRestantes: diasComerciais, motivo: 'sem acerto a cobrar' };
   }
 
   /* Regra 1: abaixo do piso da Asaas, absorve. Cobrar R$ 5,00 no lugar
@@ -167,12 +221,12 @@ export function calcularAcertoDeTroca({
      provedor — e a régua é dele, não do assinante. */
   if (acerto < PISO_DE_COBRANCA) {
     return {
-      cobra: false, acerto, credito, debito, diasRestantes: dias,
+      cobra: false, acerto, credito, debito, diasRestantes: diasComerciais,
       motivo: `absorvido: acerto de R$ ${acerto.toFixed(2)} abaixo do piso de R$ ${PISO_DE_COBRANCA},00`
     };
   }
 
-  return { cobra: true, acerto, credito, debito, diasRestantes: dias, motivo: 'cobra o acerto' };
+  return { cobra: true, acerto, credito, debito, diasRestantes: diasComerciais, motivo: 'cobra o acerto' };
 }
 
 export { DIAS_DO_CICLO, PISO_DE_COBRANCA };
@@ -331,6 +385,97 @@ if (process.argv[1]?.endsWith('proporcionalService.js')) {
   conferir(diasAte('2027-01-01', '2026-12-31') === 1, 'atravessa o ano certo');
   conferir(diasAte('2026-03-01', '2026-02-28') === 1, '2026 não é bissexto: 28/02 → 01/03 é um dia');
   conferir(diasAte('2024-03-01', '2024-02-28') === 2, 'e num ano bissexto são dois');
+
+  /* --- 9. calendário × ciclo comercial (25/09/2026) ----------------
+     A troca de um anual pago no mesmo dia foi recusada em produção com
+     "dias restantes (365) maiores que o ciclo atual (360)". Primeiro,
+     conferir a régua calculada contra os valores conhecidos do calendário:
+     se o cálculo dela errar, tudo abaixo erra junto. */
+  conferir(DURACAO_CIVIL_MAXIMA.WEEKLY === 7 && DURACAO_CIVIL_MAXIMA.BIWEEKLY === 14, 'semanal e quinzenal: calendário = comercial');
+  conferir(DURACAO_CIVIL_MAXIMA.MONTHLY === 31, `mês mais longo: 31, veio ${DURACAO_CIVIL_MAXIMA.MONTHLY}`);
+  conferir(DURACAO_CIVIL_MAXIMA.BIMONTHLY === 62, `dois meses mais longos (jul+ago): 62, veio ${DURACAO_CIVIL_MAXIMA.BIMONTHLY}`);
+  conferir(DURACAO_CIVIL_MAXIMA.QUARTERLY === 92, `trimestre mais longo: 92, veio ${DURACAO_CIVIL_MAXIMA.QUARTERLY}`);
+  conferir(DURACAO_CIVIL_MAXIMA.SEMIANNUALLY === 184, `semestre mais longo (jul–dez): 184, veio ${DURACAO_CIVIL_MAXIMA.SEMIANNUALLY}`);
+  conferir(DURACAO_CIVIL_MAXIMA.YEARLY === 366, `ano bissexto: 366, veio ${DURACAO_CIVIL_MAXIMA.YEARLY}`);
+  conferir(Object.keys(DURACAO_CIVIL_MAXIMA).length === Object.keys(DIAS_DO_CICLO).length, 'a régua cobre os sete ciclos');
+  conferir(
+    Object.entries(DURACAO_CIVIL_MAXIMA).every(([c, d]) => d >= DIAS_DO_CICLO[c]),
+    'nenhuma régua civil é menor que o ciclo comercial — senão recusaria período comum'
+  );
+
+  /* Para cada ciclo mensal: primeiro dia (o período civil inteiro pela
+     frente, maior que o comercial), meio, último dia, e um dia além da
+     régua. Valor pago 100, plano novo mais barato e mais caro. */
+  const ciclosCivis = [
+    // [ciclo, pago em, vence em, dias civis do período]
+    ['MONTHLY', '2026-10-01', '2026-11-01', 31],
+    ['MONTHLY', '2027-01-31', '2027-02-28', 28],
+    ['QUARTERLY', '2026-07-01', '2026-10-01', 92],
+    ['SEMIANNUALLY', '2026-07-01', '2027-01-01', 184],
+    ['YEARLY', '2026-09-25', '2027-09-25', 365],
+    ['YEARLY', '2027-09-25', '2028-09-25', 366] // atravessa 29/02/2028
+  ];
+  /* Aritmética de data civil pura, em UTC de propósito: as datas chegam
+     `AAAA-MM-DD` e o relógio do processo não entra (a regra de
+     `tests/data-para-asaas-e-de-brasilia.js`). */
+  const doisDigitos = (n) => String(n).padStart(2, '0');
+  const menosDias = (data, n) => {
+    const t = new Date(Date.parse(data) - n * 86400000);
+    return `${t.getUTCFullYear()}-${doisDigitos(t.getUTCMonth() + 1)}-${doisDigitos(t.getUTCDate())}`;
+  };
+  for (const [ciclo, pagoEm, venceEm, diasCivis] of ciclosCivis) {
+    const comercial = DIAS_DO_CICLO[ciclo];
+    conferir(diasAte(venceEm, pagoEm) === diasCivis, `${ciclo} ${pagoEm}→${venceEm}: ${diasCivis} dias civis`);
+
+    // Primeiro dia: nunca recusa, e o crédito é o que foi pago, nem um centavo a mais.
+    const primeiro = calcularAcertoDeTroca({
+      valorPagoDoPeriodo: 100, cicloAtual: ciclo, valorDoPlanoNovo: 50, cicloNovo: ciclo,
+      vencimentoAtual: venceEm, hoje: pagoEm
+    });
+    conferir(primeiro.dadoIncoerente === undefined, `${ciclo} no primeiro dia (${diasCivis} civis) não é dado incoerente — era o bug`);
+    conferir(primeiro.credito <= 100, `${ciclo} no primeiro dia: o crédito não passa do pago, veio ${primeiro.credito}`);
+    conferir(primeiro.diasRestantes === Math.min(diasCivis, comercial), `${ciclo} no primeiro dia: ${Math.min(diasCivis, comercial)} dias comerciais, veio ${primeiro.diasRestantes}`);
+    conferir(!primeiro.cobra && primeiro.acerto < 0, `${ciclo} rebaixamento no primeiro dia: não cobra, veio ${primeiro.acerto}`);
+
+    // Último dia: um dia restante, conta idêntica à de antes da correção.
+    const ultimoDia = menosDias(venceEm, 1);
+    const ultimo = calcularAcertoDeTroca({
+      valorPagoDoPeriodo: 100, cicloAtual: ciclo, valorDoPlanoNovo: 200, cicloNovo: ciclo,
+      vencimentoAtual: venceEm, hoje: ultimoDia
+    });
+    conferir(ultimo.diasRestantes === 1, `${ciclo} no último dia: 1 dia restante, veio ${ultimo.diasRestantes}`);
+    conferir(ultimo.credito === centavos(100 / comercial), `${ciclo} no último dia: crédito de 1 dia comercial, veio ${ultimo.credito}`);
+
+    // Um dia além da régua civil: continua dado incoerente.
+    const alem = menosDias(venceEm, DURACAO_CIVIL_MAXIMA[ciclo] + 1);
+    const incoerente = calcularAcertoDeTroca({
+      valorPagoDoPeriodo: 100, cicloAtual: ciclo, valorDoPlanoNovo: 200, cicloNovo: ciclo,
+      vencimentoAtual: venceEm, hoje: alem
+    });
+    conferir(incoerente.dadoIncoerente === true, `${ciclo} com ${DURACAO_CIVIL_MAXIMA[ciclo] + 1} dias restantes continua dado incoerente`);
+  }
+
+  /* Meio do ciclo: abaixo do ciclo comercial a conta não mudou. 180 dias
+     restantes de um anual de 360 pago por 100 = crédito 50. */
+  const meio = calcularAcertoDeTroca({
+    valorPagoDoPeriodo: 100, cicloAtual: 'YEARLY', valorDoPlanoNovo: 200, cicloNovo: 'YEARLY',
+    vencimentoAtual: '2027-03-24', hoje: '2026-09-25'
+  });
+  conferir(meio.diasRestantes === 180 && meio.credito === 50 && meio.debito === 100 && meio.acerto === 50,
+    `anual no meio: 180 dias, crédito 50, débito 100, acerto 50 — veio ${meio.diasRestantes}/${meio.credito}/${meio.debito}/${meio.acerto}`);
+
+  /* O caso real de produção, com os números dele: anual de R$ 10 pago em
+     25/09/2026, vencendo em 25/09/2027. Para um anual de R$ 5 é
+     rebaixamento sem cobrança; para o semestral de R$ 8 (mais caro por
+     dia) o acerto passa a ser calculável, e é cobrado. */
+  const real = { valorPagoDoPeriodo: 10, cicloAtual: 'YEARLY', vencimentoAtual: '2027-09-25', hoje: '2026-09-25' };
+  const paraAnualDe5 = calcularAcertoDeTroca({ ...real, valorDoPlanoNovo: 5, cicloNovo: 'YEARLY' });
+  conferir(paraAnualDe5.dadoIncoerente === undefined && !paraAnualDe5.cobra, 'caso real → anual de R$ 5: troca aceita, sem cobrança');
+  conferir(paraAnualDe5.credito === 10 && paraAnualDe5.debito === 5 && paraAnualDe5.acerto === -5,
+    `caso real → anual de R$ 5: crédito 10, débito 5, acerto -5 — veio ${paraAnualDe5.credito}/${paraAnualDe5.debito}/${paraAnualDe5.acerto}`);
+  const paraSemestral = calcularAcertoDeTroca({ ...real, valorDoPlanoNovo: 8, cicloNovo: 'SEMIANNUALLY' });
+  conferir(paraSemestral.dadoIncoerente === undefined && paraSemestral.cobra && paraSemestral.acerto === 6,
+    `caso real → semestral de R$ 8: acerto 16 − 10 = 6, cobrado — veio ${paraSemestral.acerto}/${paraSemestral.cobra}`);
 
   console.log(`proporcionalService: ${checagens} checagens OK`);
 }

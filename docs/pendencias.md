@@ -255,7 +255,7 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
-### 🟡 Troca de plano recusa os primeiros dias de um ciclo de mês com mais de 30 dias — ACHADO 25/09/2026, na homologação real
+### 🟢 Troca de plano recusava os primeiros dias de um ciclo — ACHADO 25/09/2026 na homologação real, CORRIGIDO 26/09/2026
 **Achado com a assinatura real `sub_39mjscz7vl2jwx7g`** (testemaster, `plano_anual`, R$ 10, paga em 25/09/2026, próximo vencimento 2027-09-25).
 `POST /trocar-plano` para `plano_semestral` respondeu, em produção:
 
@@ -278,6 +278,12 @@ dinheiro se move e nada é gravado. Conferido na Asaas e no banco depois
 da chamada: nada mudou, e nenhuma intenção nem linha em `erros` foi
 criada. O dano é de produto: o contratante recebe "não foi possível
 calcular" numa troca legítima e precisa tentar de novo dias depois.
+
+**Corrigido em 26/09/2026, por ordem do dono** (RN-35.3). A guarda
+passou a comparar dias civis com a régua civil do ciclo, e os dias
+restantes entram na conta limitados ao ciclo comercial. Foi a primeira
+das duas opções abaixo. A decisão como estava escrita antes da ordem
+fica registrada para o histórico:
 
 **O que decidir, e é do dono** (caminho de dinheiro, regra dele):
 - limitar os dias restantes ao ciclo (`min(dias, DIAS_DO_CICLO)`), o que
