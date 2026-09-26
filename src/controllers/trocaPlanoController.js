@@ -237,6 +237,28 @@ export function criarTrocarPlano(deps = dependenciasPadrao) {
         });
       }
 
+      /* Assinatura de CARTÃO com fatura paga não troca de valor: a Asaas
+         recusa (`400` "Não é possível alterar o valor de assinaturas via
+         cartão de crédito que já possuam faturas pagas", medido em
+         produção em 26/09/2026 com a assinatura real da homologação). A
+         fatura do período está paga — a guarda acima acabou de exigir
+         isso —, então aqui a recusa é certa. Ela precisa vir ANTES do
+         acerto: num upgrade, a aprovação cobraria o acerto no cartão e só
+         depois o `PUT` seria recusado, com dinheiro cobrado por uma troca
+         que nunca aconteceria. Decisão do dono para o lançamento: não é
+         suportado (`API.md` §5.6). O meio vem da Asaas; se ela não disser,
+         vale o nosso registro (`assinatura` é a assinatura de cartão da
+         pop-up). */
+      const deCartao = viva.meio
+        ? viva.meio === 'CREDIT_CARD'
+        : ultima.metodo_pagamento === 'assinatura';
+      if (deCartao) {
+        return resposta.status(409).json({
+          codigo: 'troca_de_valor_nao_suportada',
+          erro: 'Esta assinatura é de cartão e já tem fatura paga: a Asaas não permite alterar o valor dela. A troca de plano não foi feita e nada foi cobrado.'
+        });
+      }
+
       const acerto = calcularAcertoDeTroca({
         valorPagoDoPeriodo: Number(ultima.valor_cobrado),
         cicloAtual,
@@ -451,7 +473,8 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
     const chamadas = [];
     const asaas = {
       valor: 100, ciclo: 'MONTHLY', proximaCobranca: VENCIMENTO,
-      encerrada: ajustes.encerrada === true, deleted: false, status: 'ACTIVE'
+      encerrada: ajustes.encerrada === true, deleted: false, status: 'ACTIVE',
+      ...(ajustes.meio !== undefined ? { meio: ajustes.meio } : {})
     };
     const anotar = (nome, args) => chamadas.push({ nome, args });
 
@@ -679,6 +702,34 @@ if (process.argv[1]?.endsWith('trocaPlanoController.js')) {
   t = await rodar({ avisoFalha: true, plano: { nome: 'Barato', valor: 50, ciclo: 'MONTHLY' } });
   conferir(t.r.codigo === undefined || t.r.codigo === null || t.r.codigo === 200, `a troca imediata continua respondendo 200 quando o aviso falha, veio ${t.r.codigo}`);
   conferir(t.chamadas.some((c) => c.nome === 'registrarErro' && /aviso plano_trocado/.test(c.args[0]?.message ?? '')), 'e a falha do aviso vira `erros`');
+
+  /* --- cartão com fatura paga: troca de valor não suportada (26/09/2026) --
+     A Asaas recusa mudar o valor de assinatura de cartão com fatura paga.
+     A recusa tem de vir antes de TUDO que tem efeito: sem arrendamento,
+     sem PUT, sem intenção (num upgrade, a intenção levaria a uma cobrança
+     de acerto que a Asaas depois não deixaria aplicar). Nos dois sentidos,
+     subir (202 sem a guarda) e descer (200 sem a guarda). */
+  const EFEITOS = ['reivindicarTroca', 'alterarPlanoAssinatura', 'criarIntencao', 'dadosDeCobrancaDaAssinatura', 'aplicarTrocaDePlano', 'notificarPlanoTrocado'];
+  for (const [rotulo, ajustes] of [
+    ['upgrade de cartão (meio da Asaas)', { meio: 'CREDIT_CARD' }],
+    ['rebaixamento de cartão (meio da Asaas)', { meio: 'CREDIT_CARD', plano: { nome: 'Barato', valor: 60, ciclo: 'MONTHLY' } }],
+    ['cartão pelo nosso registro, Asaas sem meio', { meio: null, ultima: { status: 'confirmado', valor_cobrado: 100, metodo_pagamento: 'assinatura' } }]
+  ]) {
+    const cartao = await rodar(ajustes);
+    conferir(cartao.r.codigo === 409, `${rotulo}: 409, veio ${cartao.r.codigo}`);
+    conferir(cartao.r.corpo?.codigo === 'troca_de_valor_nao_suportada', `${rotulo}: código troca_de_valor_nao_suportada, veio ${cartao.r.corpo?.codigo}`);
+    conferir(/não permite alterar o valor/.test(cartao.r.corpo?.erro ?? ''), `${rotulo}: a mensagem diz que o valor não pode ser alterado`);
+    for (const efeito of EFEITOS) conferir(!cartao.chamou(efeito), `${rotulo}: ${efeito} NÃO é chamado`);
+  }
+
+  /* Controle positivo: meio que não é cartão segue a infraestrutura de
+     sempre. Sem este par, uma guarda que recusasse tudo passaria. */
+  const pix = await rodar({ meio: 'PIX', plano: { nome: 'Barato', valor: 60, ciclo: 'MONTHLY' } });
+  conferir(pix.r.codigo === 200 && pix.chamou('alterarPlanoAssinatura'), `assinatura PIX rebaixa como antes (200 e PUT), veio ${pix.r.codigo}`);
+  const pixSobe = await rodar({ meio: 'PIX' });
+  conferir(pixSobe.r.codigo !== 409 || pixSobe.r.corpo?.codigo !== 'troca_de_valor_nao_suportada', 'assinatura PIX não cai na recusa de cartão');
+  const pixRegistro = await rodar({ meio: null, ultima: { status: 'confirmado', valor_cobrado: 100, metodo_pagamento: 'assinatura_pix' }, plano: { nome: 'Barato', valor: 60, ciclo: 'MONTHLY' } });
+  conferir(pixRegistro.r.codigo === 200, `Pix Automático pelo nosso registro rebaixa como antes, veio ${pixRegistro.r.codigo}`);
 
   console.log(`trocaPlanoController: ${checagens} checagens OK`);
 }

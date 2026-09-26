@@ -55,6 +55,16 @@ no painel da Asaas. **Deixou de ser verdade**: a conciliação reconfere
 mesma resposta (5.3, RN-34). O que continua valendo é que o aviso não é
 proativo — você descobre quando roda a conciliação.
 
+> ⚠️ **Decisão do dono em 26/09/2026, para o lançamento: trocar o
+> valor de uma assinatura de CARTÃO não é suportado.** A Asaas recusa
+> mudar o valor de assinatura de cartão com fatura paga (medido em
+> produção), e toda assinatura de cartão do Checkout nasce com a
+> primeira fatura paga. `POST /trocar-plano` numa assinatura de cartão
+> responde `409` com `codigo: "troca_de_valor_nao_suportada"`, antes de
+> qualquer cobrança, intenção ou alteração na Asaas. Para mudar o preço
+> de quem assina no cartão, o caminho hoje é cancelar
+> (`/cancelar-assinatura`) e o assinante assinar o plano novo.
+
 Acrescentado ainda em 17/09/2026: **trocar de plano** (5.6, rota nova
 `POST /trocar-plano`) — upgrade e downgrade mantendo o vínculo, com o
 acerto proporcional cobrado no cartão já salvo, e o evento
