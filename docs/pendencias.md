@@ -255,6 +255,37 @@ valor cobrável — corrigidos e conferidos
 
 ## Abertas, não bloqueiam
 
+### 🟠 A Asaas recusa mudar o preço de assinatura de cartão com fatura paga — MEDIDO 26/09/2026 em produção
+Na assinatura real `sub_39mjscz7vl2jwx7g` (anual, R$ 10, primeira fatura
+paga), o rebaixamento para um anual de R$ 5 pelo fluxo oficial
+(`POST /trocar-plano`), já com a correção RN-35.3 no ar, voltou da Asaas:
+
+```
+400 "Não é possível alterar o valor de assinaturas via cartão de crédito que já possuam faturas pagas"
+```
+
+Pelo Checkout, toda assinatura de cartão nasce com a primeira fatura
+paga. Então **a troca de plano não troca o preço de nenhuma assinatura
+de cartão real**, nem para cima nem para baixo. As medições de 17/09
+eram de sandbox sem fatura paga
+(`docs/erros/2026-09-26-medi-a-troca-de-preco-sem-a-condicao-que-toda-assinatura-real-tem.md`).
+
+**Sem dano:** a recusa vem antes de qualquer efeito. Nada foi cobrado,
+estornado ou gravado, e o arrendamento foi devolvido (conferido na Asaas
+e no banco). O contratante recebe `400` com a mensagem da Asaas.
+
+**Decisão do dono**, porque muda o desenho:
+- Trocar de plano por **cancelar e recriar** a assinatura, com o
+  primeiro vencimento da nova no fim do período já pago. O cartão já
+  tokenizado (o mesmo `creditCardToken` que a cobrança do acerto usa)
+  poderia servir à assinatura nova sem o pagador voltar à tela, mas isso
+  precisa ser medido antes de ser construído.
+- Ou **retirar a troca de preço de cartão** do contrato, e documentar
+  que ela só existe para meios sem fatura de cartão paga.
+
+A homologação real da troca de preço fica **não executável** até essa
+decisão.
+
 ### 🟢 Troca de plano recusava os primeiros dias de um ciclo — ACHADO 25/09/2026 na homologação real, CORRIGIDO 26/09/2026
 **Achado com a assinatura real `sub_39mjscz7vl2jwx7g`** (testemaster, `plano_anual`, R$ 10, paga em 25/09/2026, próximo vencimento 2027-09-25).
 `POST /trocar-plano` para `plano_semestral` respondeu, em produção:

@@ -1357,6 +1357,12 @@ Leva um assinante do plano A para o plano B **mantendo o vínculo**: sem
 cancelar, sem ele digitar cartão de novo, e sem janela em que ele fica
 sem assinatura.
 
+> ⚠️ **Assinatura de cartão com fatura paga: a Asaas recusa mudar o
+> valor** (medido em produção em 26/09/2026, §7.5). Como a primeira
+> fatura de cartão é paga na criação, esta rota hoje não troca o preço
+> de nenhuma assinatura de cartão já paga: responde `400` com a
+> mensagem da Asaas, e nada é cobrado nem alterado.
+
 > ⚠️ **Mudança de contrato em 21/09/2026.** Até 18/09/2026 esta rota
 > cobrava o acerto proporcional na hora, sem o assinante ver nada. O
 > dono reverteu essa decisão: agora, sempre que há acerto a pagar (>=
@@ -1882,8 +1888,21 @@ não um erro que trava o pagador.
 
 ### 7.5 Mudar o preço de quem já assinou — o que dá, o que não dá, e o que o checkout não faz
 
+> ⚠️ **Corrigido por medição em produção, 26/09/2026.** Numa assinatura
+> de **cartão com fatura já paga**, a Asaas **recusa** mudar o valor:
+> `400` "Não é possível alterar o valor de assinaturas via cartão de
+> crédito que já possuam faturas pagas". Pelo Checkout, toda assinatura
+> de cartão nasce com a primeira fatura paga, então hoje **nenhuma**
+> delas aceita troca de preço depois do primeiro pagamento. As medições
+> de 17/09 abaixo foram feitas no sandbox, em assinaturas **sem**
+> fatura paga, e não viram essa condição. Até isto ser resolvido,
+> `POST /trocar-plano` numa assinatura de cartão paga responde `400`
+> com essa mensagem, e nada é alterado nem cobrado (conferido na Asaas
+> e no banco). `docs/pendencias.md`.
+
 **Resumo em três linhas.** A Asaas **permite** aumentar e diminuir o
-valor de uma assinatura ativa, e trocar o ciclo dela. **O San Checkout
+valor de uma assinatura ativa **sem fatura de cartão paga**, e trocar o
+ciclo dela. **O San Checkout
 expõe isso desde 17/09/2026, como troca de PLANO**: `POST
 /trocar-plano` (seção 5.6) — o preço vem do plano de destino cadastrado
 na sua API, nunca solto. O que continua valendo: se alguém mudar o preço
@@ -1903,6 +1922,7 @@ erro está em
 |---|---|---|
 | **aumentar**: R$ 30 → R$ 45 (cartão) | `200` | `value: 45` |
 | **diminuir**: R$ 45 → R$ 12 (cartão) | `200` | `value: 12` |
+| **diminuir com a 1ª fatura de cartão PAGA** (produção, 26/09/2026): R$ 10 → R$ 5 | **`400`** — "Não é possível alterar o valor de assinaturas via cartão de crédito que já possuam faturas pagas" | continuou `10`: nada mudou |
 | **abaixo do piso**: R$ 12 → R$ 3 | **`400 invalid_value`** — "O valor mínimo para cobranças via cartão de crédito é R$ 5,00." | continuou `12`: nada mudou |
 | **trocar o ciclo**: `MONTHLY` → `YEARLY` | `200` | `cycle: YEARLY`, e **`nextDueDate` NÃO se moveu** |
 | **em assinatura PAUSADA** (`INACTIVE`) | `200` | `value: 77`, `status: INACTIVE` — pausada aceita mudança de preço |
