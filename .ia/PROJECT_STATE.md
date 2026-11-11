@@ -71,7 +71,7 @@ avulso, boleto e assinatura, e a exceção do sandbox fechou
 | Captura de exceção (Lei 8) | ✅ funcional, inclusive rejeição de Promise não tratada | migration 0007, `erroService.js` |
 | Backup/restauração | ⚠️ ensaiada com sucesso (RTO ~1s), sem cópia periódica fora do provedor | `CONSTRAINTS.md` §3 |
 | Acessibilidade WCAG 2.2 AA | ✅ verificada, 0 violações na última rodada | `npm run acessibilidade` |
-| Documentos legais (Termos/Privacidade) | ✅ publicados: Termos v3 e Política v4 (26/09/2026), pessoa física, conferidos contra o sistema real | `public/termos.html`, `public/privacidade.html`, `docs/legal-arquivado/` |
+| Documentos legais (Termos/Privacidade) | ✅ publicados: Termos v4 e Política v5 (11/11/2026), identificação do MEI (CNPJ 68.949.029/0001-58); v3/v4 (pessoa física) arquivadas; reabertura por formalização, ADR-012 | `public/termos.html`, `public/privacidade.html`, `docs/legal-arquivado/` |
 
 ## O que está quebrado hoje
 

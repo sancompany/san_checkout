@@ -36,6 +36,58 @@ A V1 só reabre por bug real, nova necessidade de negócio, alteração
 regulatória relevante, formalização ou início da V2. O resumo para
 qualquer agente está em `.ia/HANDOFF.md`.
 
+## Reabertura por formalização — identificação empresarial (MEI), 11/11/2026
+
+A V1 reabriu **só** por "formalização" (uma das cinco causas) e não
+abriu a V2. Os documentos e as telas públicas passaram a identificar o
+MEI do dono (`68.949.029 BRUNO HENRIQUE SANCHES`, CNPJ
+68.949.029/0001-58). Relatório da auditoria e da mudança:
+`docs/AUDITORIA_IDENTIFICACAO_EMPRESARIAL_2026-11-11.md`. Decisão:
+`.ia/DECISIONS.md` ADR-012. Itens abaixo são do dono ou de terceiros;
+**nenhum agente os executa**, e nada foi alterado na Asaas.
+
+- 🔴 **OWNER_ACTION — cadastro da Asaas × MEI.** A conta de pagamento
+  estava `FISICA`/CPF (medido em 17/09/2026; **não reconferido**).
+  Providência do titular, **pelo canal oficial** da Asaas (painel →
+  dados da conta, ou o suporte), com a validação cadastral/KYC dela:
+  pedir a atualização do cadastro para o MEI e conferir os dados
+  comerciais. Não há como contornar a validação, e mudar o nome no código
+  **não** atualiza a Asaas. Até lá: o recebedor que o pagador vê na
+  cobrança continua sendo o cadastrado na Asaas, e o §9 dos Termos
+  ("conta que a Operadora mantém na Asaas") pode destoar do cadastro.
+  Atualizar o cadastro **não** liga split nem subconta (V2).
+- 🟡 **EXTERNAL_VALIDATIONS — contador.** (a) O CNAE do MEI na consulta
+  pública (8230001, organização de feiras, congressos, exposições e
+  festas) pode não cobrir serviço de tecnologia de checkout; (b) emissão
+  da nota do serviço tecnológico pelo MEI e limite de faturamento; (c)
+  contagem dos 5 anos (já em `ACCOUNTING_VALIDATION_REQUIRED`). A cláusula
+  fiscal dos Termos (§16.1) continua sem afirmar emissão.
+- 🟡 **OWNER_DECISION — endereço publicado.** Os documentos citam Rua 28
+  de Agosto, 2502, Bairro Alto, Matão/SP, CEP 15997-078, informados pelo
+  dono. A consulta pública do CNPJ trouxe só bairro e CEP; confirmar que
+  é o endereço comercial a publicar. Telefone, inscrição estadual e
+  e-mail comercial **não** foram inventados: não constam.
+- 🟡 **LEGAL_VALIDATION_REQUIRED — Marco Civil, art. 15.** O dever de
+  guarda de 6 meses de registros de acesso a aplicações recai sobre
+  provedor pessoa jurídica que exerce a atividade de forma organizada,
+  profissional e com fins econômicos. Antes (pessoa física) estava
+  documentado como "não se aplica"; agora é pergunta em aberto. A
+  Política v5 (§20.3) deixou de afirmar a inaplicabilidade. Decisão
+  jurídica, não de código (`docs/inventario-de-dados.md` §6).
+- 🟡 **POST_V1_HARDENING — CPF real como fixture.** O CPF do titular
+  ainda aparece como dado de exemplo em `src/services/erroService.js`,
+  `src/services/expurgoService.js`, `scripts/expurgo.mjs`, `API.md`
+  (exemplo de normalização) e `docs/funcional.md`. Não é identificação
+  do operador e não foi tocado (evita mudar comportamento testado);
+  recomenda-se trocar por CPF sintético numa limpeza própria.
+- ⚪ **Sem aceite a comunicar.** Nenhum terceiro aceitou Termos v3/v4 ou
+  Política v4 (o único contratante é projeto do mesmo dono); não há
+  comunicação obrigatória de mudança de versão, e as versões anteriores
+  estão em `docs/legal-arquivado/`.
+- ⚪ **V2, inalterado.** A validação regulatória do dinheiro de terceiro
+  (Lei 12.865/2013 e regulamentação do Banco Central), split, subconta e
+  Lojista de outro titular seguem fora da V1 (`CONSTRAINTS.md` §1.12).
+
 ## Bloqueiam a esteira
 
 Nenhuma, desde 26/09/2026. As entradas abaixo registram como cada uma

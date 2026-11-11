@@ -22,6 +22,17 @@ por baixo. Segue as leis do plugin `san-co`.
 > Sem o plugin carregado, clonar `sancompany/Plugin_san-co` e ler de lá
 > antes de fechar qualquer coisa.
 
+> **Identificação do operador, atualizada em 11/11/2026.** O dono
+> formalizou a operação no MEI e **reverteu a decisão de 26/09/2026**:
+> os documentos (Termos v4, Política v5) e os rodapés identificam
+> **68.949.029 BRUNO HENRIQUE SANCHES**, CNPJ **68.949.029/0001-58**,
+> nome comercial SAN & CO., titular e responsável legal Bruno Henrique
+> Sanches; o CPF não é mais publicado. Nem a caracterização do produto
+> nem a V1 (só projetos próprios) mudaram, e **o cadastro da Asaas não
+> foi atualizado** — é pendência do titular (`docs/pendencias.md`,
+> `.ia/DECISIONS.md` ADR-012). O histórico abaixo que fala em "pessoa
+> física" e CPF é o registro de cada dia e não foi reescrito.
+
 ## SAN CHECKOUT V1 = ENCERRADO (26/09/2026)
 
 **A V1 está finalizada e em produção.** Ela é a infraestrutura interna de

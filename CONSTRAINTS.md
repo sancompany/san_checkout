@@ -154,8 +154,8 @@ independentes.
 projeto do próprio operador viola esta restrição. O painel permite isso
 tecnicamente, e a regra não.
 
-**Por quê.** Sem split, todo o dinheiro cai na conta pessoa física do
-operador, e o repasse é manual (§3, "sem split"). Com projetos próprios,
+**Por quê.** Sem split, todo o dinheiro cai na conta do operador na Asaas
+(registrada como pessoa física, §2.5.3), e o repasse é manual (§3, "sem split"). Com projetos próprios,
 esse dinheiro é do próprio operador. Com um terceiro, passa a ser
 possível atividade regulada de pagamento, com consequências societárias,
 contábeis, fiscais e contratuais que a V1 não resolve.
@@ -687,6 +687,11 @@ conta parece PJ no painel; a regra de subconta olha o **registro**, e
 
 **Preencher o CNPJ da empresa nas informações comerciais não converte a
 conta.** Converter o registro é pedido ao suporte da Asaas.
+
+*Nota de 11/11/2026:* a medição acima é de 17/09/2026 e **não foi
+refeita** quando o operador se formalizou no MEI. O registro pode ter
+mudado; só quem confere é o titular, no painel ou com o suporte da Asaas,
+nunca um agente por conta própria. Ver a Lei 10 (§3).
 
 **O documento da subconta é irrelevante enquanto isso valer:** CPF e
 CNPJ levam o **mesmo 403, com a mensagem idêntica** — testado nos dois.
@@ -1433,6 +1438,13 @@ futura** (`docs/proximas-versoes.md`).
   Termos v3 (26/09/2026, §9), o fluxo sem split está escrito no próprio
   contrato: o valor cai na conta da Operadora e o repasse ao Lojista é
   feito fora da Plataforma.
+  **Reaberto em 11/11/2026:** os documentos voltaram a identificar uma
+  pessoa jurídica (o MEI, Termos v4 e Política v5), e o registro da
+  conta na Asaas segue `FISICA` (medido em 17/09/2026, não reconferido).
+  O descasamento entre quem o contrato diz que opera e quem a Asaas
+  tem cadastrado **voltou a existir** e é uma dependência do titular
+  junto à Asaas (Lei 10, nota de 11/11/2026, e `docs/pendencias.md`).
+  Nenhum dado de recebimento foi alterado por isso.
 - **REGULATORY_VALIDATION_REQUIRED (26/09/2026).** Receber o dinheiro de
   um Lojista na conta do operador e repassar depois pode caracterizar
   atividade regulada de pagamento (Lei 12.865/2013 e regulamentação do
@@ -1450,7 +1462,48 @@ Revisar no segundo contratante, ou quando o repasse manual passar de um
 punhado de transferências por mês — é o gatilho escrito na entrada de
 `docs/proximas-versoes.md`.
 
-### Lei 10 · os documentos legais identificam PESSOA FÍSICA — 17/09/2026, revisto em 26/09/2026
+### Lei 10 · identificação do operador nos documentos legais — 17/09/2026, revisto em 26/09 e REVERTIDO em 11/11/2026
+
+> **Atualização de 11/11/2026, decisão do dono: a operação foi
+> formalizada no MEI, e a decisão de 26/09/2026 está revertida.** Os
+> documentos vigentes (Termos v4 e Política v5) identificam o operador
+> como **68.949.029 BRUNO HENRIQUE SANCHES**, empresário individual (MEI),
+> CNPJ **68.949.029/0001-58**, nome comercial **SAN & CO.**, e o titular e
+> responsável legal **Bruno Henrique Sanches**. O CPF deixou de ser
+> publicado (Decreto 7.962/2013, art. 2º, I: CPF **ou** CNPJ). A razão
+> de 26/09 ("o CNPJ pertence a outra atividade") foi superada pela
+> formalização. Checkout SAN e SAN & CO. continuam sendo o nome do
+> produto e a identidade institucional. As versões anteriores estão
+> arquivadas, intactas, em `docs/legal-arquivado/` (Termos v3 e Política
+> v4 acrescentadas nesta data).
+>
+> **O que esta mudança NÃO faz, e fica registrado:**
+> - Não altera a caracterização do San Checkout: infraestrutura de
+>   checkout e integração de pagamento, que **não** assume a condição de
+>   instituição financeira, subcredenciadora, custodiante ou liquidante.
+>   A V1 segue restrita a projetos próprios (§1.12); Lojista de outro
+>   titular, split e subconta real continuam sendo V2.
+> - Não altera o registro da conta na Asaas. Ela estava `FISICA`/CPF em
+>   17/09/2026 (§2.5.3) e **não foi reconferida**. Alterar o cadastro é
+>   do titular, pelo canal oficial da Asaas e com a validação cadastral
+>   dela; nada no código ou nos documentos o faz, e nenhuma credencial,
+>   chave, webhook, identificador de contratante ou conta de recebimento
+>   foi tocado.
+> - Não atribui ao MEI responsabilidade pelas transações de terceiros: o
+>   vendedor responde pela sua venda e pela nota do seu produto (Termos
+>   §16.2).
+>
+> **Dependências abertas** (em `docs/pendencias.md`): registro da Asaas ×
+> MEI; compatibilidade da atividade (CNAE) e emissão fiscal, com o
+> contador; confirmação do endereço publicado; aplicação do art. 15 do
+> Marco Civil a um provedor pessoa jurídica (a Política v5 deixou de
+> afirmar que não se aplica); e a redação do §9 dos Termos ("conta que a
+> Operadora mantém na Asaas") frente ao cadastro real.
+>
+> O texto abaixo é o registro de 17/09 e 26/09 e **fala em pessoa
+> física e CPF porque era a premissa daqueles dias**. Não foi reescrito.
+
+#### Registro histórico de 17/09/2026 (revisto em 26/09/2026): pessoa física
 
 > **Atualização de 26/09/2026, decisão do dono.** Não há transição para
 > pessoa jurídica em curso. O CNPJ que aparecia na

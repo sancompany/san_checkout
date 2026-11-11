@@ -112,7 +112,12 @@ escala de usuário final.
 
 ## ADR-006 — Documentos legais identificam pessoa física
 
-**Status:** adopted (exceção registrada, Lei 10); **revisto em 26/09/2026**
+**Status:** adopted (exceção registrada, Lei 10); revisto em 26/09/2026; **REVERTIDO em 11/11/2026 — ver ADR-012**
+
+> **Nota de 11/11/2026:** esta decisão (identificar o CPF) foi revertida
+> pelo dono ao formalizar a operação no MEI. Os documentos vigentes
+> identificam o CNPJ 68.949.029/0001-58 (ADR-012). O texto abaixo é o
+> registro histórico e não foi reescrito.
 
 > **Revisão de 26/09/2026, decisão do dono:** não há transição para
 > pessoa jurídica em curso. O CNPJ antigo pertence a outra atividade e
@@ -268,3 +273,43 @@ entregam, e mais. Este `DECISIONS.md` não duplica a lista inteira —
 adicione um ADR aqui quando a decisão for **arquitetural** (afeta como
 agentes futuros devem pensar sobre o sistema), não quando for um
 detalhe de implementação já coberto em `CONSTRAINTS.md`.
+
+---
+
+## ADR-012 — Identificação empresarial: MEI, CNPJ 68.949.029/0001-58
+
+**Status:** adopted (11/11/2026, decisão do dono); reverte o ADR-006.
+
+**Context:** Em 17/09/2026 os documentos passaram a identificar o
+operador como pessoa física (CPF), e em 26/09/2026 o dono decidiu que
+não havia transição para PJ. Em 11/11/2026 o dono formalizou a operação
+no seu MEI, e pediu para padronizar a identificação do Checkout SAN.
+
+**Decision:** Termos v4 e Política v5 e os rodapés do checkout, da tela
+de status e da troca de plano identificam o operador como
+**68.949.029 BRUNO HENRIQUE SANCHES**, empresário individual (MEI), CNPJ
+**68.949.029/0001-58**, nome comercial SAN & CO., com **Bruno Henrique
+Sanches** como titular e responsável legal. O CPF deixa de ser
+publicado. Checkout SAN (produto) e SAN & CO. (identidade institucional)
+permanecem como marcas; o nome empresarial só aparece onde se identifica
+quem responde juridicamente pela operação.
+
+**Reason:** É a formalização que o dono fez. Decreto 7.962/2013, art. 2º,
+I, aceita o CNPJ como inscrição, e tirar o CPF das páginas públicas
+reduz exposição de dado pessoal.
+
+**Consequences / o que NÃO mudou:**
+- A caracterização do produto (infraestrutura de checkout e integração
+  de pagamento, sem assumir papel de instituição financeira,
+  subcredenciadora, custodiante ou liquidante) e a restrição da V1 a
+  projetos próprios (`CONSTRAINTS.md` §1.12) ficam como estavam.
+- **A conta da Asaas não foi alterada** e seu registro (`FISICA`/CPF,
+  medido em 17/09/2026) não foi reconferido. Atualizá-lo é providência
+  do titular pelo canal oficial, com a validação cadastral da Asaas.
+  Nenhuma credencial, webhook, contratante, split ou conta de
+  recebimento foi tocado.
+- Dependências abertas: `docs/pendencias.md`, "Identificação
+  empresarial (MEI)".
+- O teste `tests/rodape-nao-cita-identidade-antiga.js` trava que Termos,
+  Política e rodapés dizem o mesmo e que nenhum CPF volta a HTML público.
+
