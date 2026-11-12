@@ -131,7 +131,7 @@ Executado em 11/11/2026, na branch, antes do commit:
   `tests/rodape-nao-cita-identidade-antiga.js` (23 checagens: CNPJ com
   dígitos válidos, Termos = Política = três rodapés, nenhum CPF em HTML
   público, com controles positivos). A primeira rodada de `npm run check`
-  falhou 37 suítes só porque `node_modules` não estava instalado no
+  falhou em dezenas de arquivos só porque `node_modules` não estava instalado no
   ambiente (`@supabase/supabase-js` ausente); não era regressão, e passou
   após `npm ci`.
 - `npm run acessibilidade` (axe, WCAG 2.2 AA, Chromium): **0 violações**
