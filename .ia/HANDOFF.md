@@ -229,8 +229,8 @@ reabertura, ou da decisão formal de abrir a V2.
 ## Known risks
 
 Ver `.ia/RISKS.md`. O risco que define a fronteira entre V1 e V2 é
-regulatório: dinheiro de terceiro passando pela conta pessoa física do
-operador (`CONSTRAINTS.md` §1.12 e §3, "sem split").
+regulatório: dinheiro de terceiro passando pela conta do operador na Asaas
+(registrada como pessoa física em 17/09/2026) (`CONSTRAINTS.md` §1.12 e §3, "sem split").
 
 ## Do not undo
 
@@ -240,8 +240,12 @@ operador (`CONSTRAINTS.md` §1.12 e §3, "sem split").
   futuro".
 - Não contornar a recusa de troca de valor em assinatura de cartão
   (ADR-011).
-- Não reutilizar o CNPJ da v1 em documento vigente. Ele pertence a
-  outra atividade.
+- Não voltar a publicar o CPF do titular em página pública, nem
+  identificar o operador por outro nome que não o do MEI
+  (`68.949.029 BRUNO HENRIQUE SANCHES`, CNPJ 68.949.029/0001-58; ADR-012).
+  Em 26/09/2026 valia o contrário; o dono reverteu em 11/11/2026.
+- Não presumir que o cadastro da Asaas já foi atualizado para o MEI: é
+  providência do titular e não foi conferida (`docs/pendencias.md`).
 - Não reescrever `docs/legal-arquivado/`: é o texto exato que esteve
   publicado.
 - Não reverter a autorização de merge com CI verde (`CLAUDE.md`,

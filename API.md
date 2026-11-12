@@ -138,27 +138,34 @@ distribuídos param de funcionar.
 
 ### 2.0 Quem opera o checkout hoje
 
-O San Checkout é operado por **Bruno Henrique Sanches**, sob o nome
-comercial **SAN & CO.**, como **pessoa física** — e não como pessoa
-jurídica. A identificação completa (nome, CPF e endereço) está nos
-Termos de Uso e na Política de Privacidade, e é o Decreto 7.962/2013,
-art. 2º, que pede a inscrição no CPF **ou** no CNPJ.
+O San Checkout é operado por **68.949.029 BRUNO HENRIQUE SANCHES**,
+empresário individual (MEI), inscrito no CNPJ **68.949.029/0001-58**, sob
+o nome comercial **SAN & CO.** O titular e responsável legal é **Bruno
+Henrique Sanches**. A identificação completa (nome empresarial, CNPJ e
+endereço) está nos Termos de Uso e na Política de Privacidade, e é o
+Decreto 7.962/2013, art. 2º, que pede a inscrição no CPF **ou** no CNPJ.
+**Checkout SAN** e **SAN & CO.** são o nome do produto e a identidade
+institucional; o nome empresarial acima é só quem responde juridicamente
+pela operação. *(Formalização de 11/11/2026; até então a identificação
+publicada era a do titular como pessoa física. Histórico em
+`docs/legal-arquivado/`.)*
 
-**Não há transição para pessoa jurídica em curso** (decisão do dono,
-26/09/2026). Duas consequências da operação em pessoa física valem ser
-sabidas antes de integrar:
+Duas coisas valem ser sabidas antes de integrar:
 
-- **Não há `split`** enquanto a conta da Asaas for de pessoa física
-  (conta PF não cria subconta). O valor que lhe cabe passa pela conta do
-  operador e o repasse é manual — ver a seção 8 e os Termos §9.
+- **Não há `split`.** A conta da Asaas ainda está registrada como pessoa
+  física (medido em 17/09/2026, `CONSTRAINTS.md` §2.5.3), e conta PF não
+  cria subconta. O valor que lhe cabe passa pela conta do operador e o
+  repasse é manual — ver a seção 8 e os Termos §9. Atualizar o registro
+  da conta na Asaas é providência do titular junto à própria Asaas, e
+  não muda o contrato desta API.
 - **A documentação fiscal do serviço tecnológico**, quando exigível,
   segue a inscrição vigente do operador. A nota do **seu** produto
-  continua sendo sua, sempre (seção 4.3 e Termos §16.2).
+  continua sendo sua, sempre (seção 4.3 e Termos §16.2). O operador não
+  responde pelas transações dos estabelecimentos que usam o checkout.
 
-Se a operação for um dia transferida para pessoa jurídica, os documentos
-legais mudam de versão antes ou no momento da alteração. **Nada no
-contrato desta API muda por causa disso** — nem endpoint, nem payload,
-nem status.
+Se a identificação do operador mudar, os documentos legais mudam de
+versão antes ou no momento da alteração. **Nada no contrato desta API
+muda por causa disso** — nem endpoint, nem payload, nem status.
 
 ### 2.1 Os dois endereços do checkout
 
@@ -2154,9 +2161,10 @@ integral.
 >
 > O motivo não é escolha de arquitetura: a conta-mãe da Asaas está
 > registrada como pessoa física, e conta PF não cria subconta — logo não
-> há `wallet_id` para cadastrar. Medido em 17/09/2026. Ligar o `split`
-> exigiria converter o registro da conta para CNPJ, e essa conversão não
-> está em curso (26/09/2026). Detalhe em `CONSTRAINTS.md` §2.5.3 e §3.
+> há `wallet_id` para cadastrar. Medido em 17/09/2026 e não reconferido
+> em 11/11/2026. Ligar o `split` exigiria atualizar o registro da conta
+> na Asaas, providência do titular pelo canal oficial, e o split segue
+> fora da V1. Detalhe em `CONSTRAINTS.md` §2.5.3 e §3.
 
 **Tabela da Asaas (valores de referência):**
 
