@@ -62,11 +62,13 @@ MEI do dono (`68.949.029 BRUNO HENRIQUE SANCHES`, CNPJ
   da nota do serviço tecnológico pelo MEI e limite de faturamento; (c)
   contagem dos 5 anos (já em `ACCOUNTING_VALIDATION_REQUIRED`). A cláusula
   fiscal dos Termos (§16.1) continua sem afirmar emissão.
-- 🟡 **OWNER_DECISION — endereço publicado.** Os documentos citam Rua 28
-  de Agosto, 2502, Bairro Alto, Matão/SP, CEP 15997-078, informados pelo
-  dono. A consulta pública do CNPJ trouxe só bairro e CEP; confirmar que
-  é o endereço comercial a publicar. Telefone, inscrição estadual e
-  e-mail comercial **não** foram inventados: não constam.
+- 🟢 **OWNER_DECISION — endereço publicado. CONFIRMADO em 15/11/2026.**
+  Era: os documentos citavam Rua 28 de Agosto, 2502, Bairro Alto,
+  Matão/SP, CEP 15997-078, informados pelo dono, e a consulta pública do
+  CNPJ trouxe só bairro e CEP. Passou a ser: o dono confirmou o endereço,
+  a retirada do CPF das páginas e a ordem de atualizar a Asaas depois da
+  publicação, ao autorizar o merge do PR #74. Telefone, inscrição
+  estadual e e-mail comercial **não** foram inventados: não constam.
 - 🟡 **LEGAL_VALIDATION_REQUIRED — Marco Civil, art. 15.** O dever de
   guarda de 6 meses de registros de acesso a aplicações recai sobre
   provedor pessoa jurídica que exerce a atividade de forma organizada,
