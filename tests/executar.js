@@ -93,7 +93,7 @@ const SUITES = [
   'tests/toda-rota-publica-tem-teto.js', // lição nº 23: a lista de rotas limitadas contra a lista de rotas montadas
   'tests/o-processo-nao-morre-calado.js', // queda por rejeição/exceção não deixava linha nenhuma em `erros` (Lei 8)
   'tests/nome-do-item-nao-passa-do-teto-da-asaas.js', // items[].name > 30 caracteres quebrava Cartão/Assinatura por inteiro
-  'tests/rodape-nao-cita-identidade-antiga.js', // reidentificação pra CPF (17/09) não tocou o rodapé das telas
+  'tests/rodape-nao-cita-identidade-antiga.js', // identificação do operador (nome empresarial + CNPJ) igual em Termos, Política e rodapés; nenhum CPF em HTML público
   'tests/popup-fecha-ao-confirmar.js', // pop-up da Asaas ficava aberta pra sempre depois do pagamento
   'tests/dez-cliques-uma-sessao.js',   // C-04: dez requisições simultâneas, UMA sessão/cobrança na Asaas
   'tests/cliente-asaas-uma-vez-por-documento.js', // H-05: dez requisições simultâneas, UM cliente na Asaas

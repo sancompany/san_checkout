@@ -23,7 +23,7 @@ neste arquivo e na Política v3:
    `fonts.googleapis.com`. O ViaCEP recebe o CEP digitado no cartão e na
    assinatura por cartão (`public/js/utils/cep.js`). Os dois estão
    liberados na CSP de `public/_headers`, e nenhum documento os citava.
-   Estão declarados na Política v4, §15.11 e §15.12.
+   Estão declarados na Política (desde a v4, §15.11 e §15.12; vigente: v5).
 2. **O hash do documento não é irreversível.** `clientes_asaas` guarda
    `sha256(documento)` sem sal (`asaasService.js`). O espaço de CPFs é
    pequeno: dá para enumerar todos e achar o original. É **dado pessoal
@@ -35,7 +35,7 @@ neste arquivo e na Política v3:
    `cobrancas` sem os dados pessoais continua com o `charge_id`, e esse
    id leva ao cliente dentro da Asaas, a que o controlador tem acesso.
    O certo é chamar de **remoção dos dados de identificação do nosso
-   banco**, ou pseudonimização (LGPD art. 13, §4º). A Política v4 não
+   banco**, ou pseudonimização (LGPD art. 13, §4º). A Política (v4 em diante) não
    usa mais "anonimizado" para isso.
 5. **A seção do operador falava em variável de ambiente "do Render".** O
    backend está no Northflank desde 12/09/2026.
@@ -153,8 +153,8 @@ mesmo cuidado de exposição (mascaradas na tela, reveladas só sob clique).
   checkout). O ViaCEP recebe o CEP do titular da subconta.
 - **Retenção:** enquanto a subconta existir na Asaas; depois de
   arquivada, 5 anos, pelo mesmo raciocínio da cobrança.
-- **Estado real:** **0 linhas** em produção. A conta-mãe é pessoa física
-  e não cria subconta (`CONSTRAINTS.md` §2.5.3), então o recurso não é
+- **Estado real:** **0 linhas** em produção. A conta-mãe da Asaas está registrada como pessoa física
+  (medido em 17/09/2026) e não cria subconta (`CONSTRAINTS.md` §2.5.3), então o recurso não é
   usado. Não há rotina de expurgo para esta tabela. Quando ela entrar em
   uso, a rotina entra junto (**LEGAL_REQUIRES_TECH_CHANGE**, sem
   urgência).
@@ -174,35 +174,50 @@ mesmo cuidado de exposição (mascaradas na tela, reveladas só sob clique).
   (`CF_AppSession`, `CF_Authorization`), e eles são estritamente
   necessários à autenticação.
 
-### 4.1 O CPF do operador é PUBLICADO, e é obrigação legal
+### 4.1 A identificação do operador é PUBLICADA, e é obrigação legal
 
 *(O número da seção foi mantido porque `CONSTRAINTS.md` §3 aponta para
-ele.)*
+ele. O título dizia "O CPF do operador é PUBLICADO" até 11/11/2026.)*
 
-Os Termos e a Política identificam o operador como **pessoa física**:
-nome civil, **CPF** e endereço, em página pública.
+Desde 11/11/2026 (Termos v4 e Política v5) os documentos identificam o
+operador como **empresário individual (MEI)**, em página pública:
 
 | dado | onde | por quê |
 |---|---|---|
-| nome civil | `public/termos.html` §1.1, `public/privacidade.html` (contatos e rodapé) | Decreto 7.962/2013, art. 2º, I: o fornecedor identifica-se com nome e inscrição **no CPF ou no CNPJ** (conferido no Planalto em 26/09/2026) |
-| CPF | idem | operando como pessoa física, o CPF **é** a inscrição exigida |
+| nome empresarial (`68.949.029 BRUNO HENRIQUE SANCHES`) | `public/termos.html` §1.1, `public/privacidade.html` (controlador e rodapé), rodapé de `index.html`, `status.html` e `troca.html` | Decreto 7.962/2013, art. 2º, I: o fornecedor identifica-se com nome e inscrição **no CPF ou no CNPJ** |
+| CNPJ (`68.949.029/0001-58`) | idem | é a inscrição do MEI; dado de pessoa jurídica, de consulta pública |
+| titular e responsável legal (nome civil) | `public/termos.html` §1.1 e assinatura, `public/privacidade.html` (controlador e assinatura) | identifica quem responde pelo MEI; não é a identificação empresarial |
 | endereço físico | idem | mesmo artigo, inciso II: endereço físico e eletrônico |
 
-**A exposição é consciente, não descuido.** CPF em página pública é
-identificador de alto valor no Brasil e fica sujeito a coleta
-automatizada. Não há alternativa legal enquanto a operação for de pessoa
-física: omitir a inscrição descumpre o Decreto, e publicar parcialmente
-não identifica.
+**O CPF deixou de ser publicado.** Era o único dado pessoal sensível do
+operador em página pública (identificador de alto valor, sujeito a
+coleta automatizada); com o CNPJ como inscrição, publicá-lo deixou de
+ser exigido. `tests/rodape-nao-cita-identidade-antiga.js` impede que um
+CPF volte a aparecer em HTML público.
 
-**Não há transição para pessoa jurídica em curso**, por decisão do dono
-em 26/09/2026. O CNPJ que aparecia na v1 dos documentos
-(`docs/legal-arquivado/`) pertence a **outra atividade**, e não representa o San
-Checkout, o SAN & CO. Pay nem o MostrAí. Os documentos vigentes dizem
-apenas que, se a operação for um dia transferida para pessoa jurídica,
-eles serão atualizados antes ou no momento da alteração.
+**O que continua sendo dado pessoal do operador:** o nome civil do
+titular e o endereço. O nome do MEI embute o nome civil, e o endereço
+informado é o do cadastro público do CNPJ (Matão/SP). **Pendente de
+confirmação do dono:** que a Rua 28 de Agosto, 2502 é mesmo o endereço
+comercial a publicar (`docs/pendencias.md`).
 
-Este é o único dado pessoal **do operador** que o projeto publica. Nada
-de titular de terceiro é publicado em lugar nenhum.
+**Histórico, sem apagar:** de 17/09/2026 a 11/11/2026 os documentos
+identificaram a pessoa física, por CPF, e a decisão de 26/09/2026 foi de
+não haver conversão para pessoa jurídica. O dono **reverteu** essa
+decisão em 11/11/2026, ao formalizar a operação no MEI. O CNPJ que
+constava da v1 dos documentos (arquivada) é o mesmo MEI de agora, e a
+razão de ter saído na época, "pertence a outra atividade", foi
+superada pela formalização. As versões que estiveram no ar estão
+arquivadas em `docs/legal-arquivado/`.
+
+**A Asaas ainda não foi atualizada por este trabalho.** A conta de
+pagamento está registrada como pessoa física (`FISICA`, CPF — medido em
+17/09/2026, não reconferido). Atualizar o registro é providência do
+titular pelo canal oficial da Asaas, com a validação cadastral dela;
+nada neste repositório a faz (`docs/pendencias.md`).
+
+Os dados públicos do operador são os únicos que o projeto publica sobre
+ele. Nada de titular de terceiro é publicado em lugar nenhum.
 
 ---
 
@@ -298,7 +313,7 @@ linha:
 | `subcontas` | nenhum hoje (0 linhas) | ver §1.4 | pendente, sem urgência |
 | E-mails nos canais (Google Workspace) | sem rotina | atendimento; prova de atendimento ao titular | operação manual: guardar enquanto o atendimento durar e, se for pedido de titular ou reclamação, pelos mesmos 5 anos |
 | Registro de incidentes de segurança | mínimo de 5 anos | Resolução CD/ANPD nº 15/2024, art. 10 | é registro do operador, fora do banco (`RUNBOOK` §8.1) |
-| Registro de acesso (Marco Civil, art. 15) | não mantido | o dever do art. 15 é de provedor **pessoa jurídica**. O operador é pessoa física e o sistema não grava IP de Pagador | **não se aplica hoje**, e passa a se aplicar se a operação virar pessoa jurídica |
+| Registro de acesso (Marco Civil, art. 15) | **avaliação pendente** | o art. 15 impõe a guarda por 6 meses ao provedor **pessoa jurídica** que exerce a atividade de forma organizada, profissional e com fins econômicos. Até 11/11/2026 o operador era pessoa física e o dever não se aplicava; com o MEI, a aplicação **passou a ser pergunta em aberto**. O sistema não grava IP de Pagador (Política, item 4.1), e o log de acesso das páginas está nos fornecedores de infraestrutura | **LEGAL_VALIDATION_REQUIRED** (skill `legal`, advogado): decidir se a guarda é exigível e, sendo, por onde ela é feita. A Política v5 (§20.3) já não afirma que o artigo não se aplica |
 
 **ACCOUNTING_VALIDATION_REQUIRED — como contar os 5 anos.** O prazo de
 decadência tributária do CTN (art. 173, I) conta do **primeiro dia do
@@ -390,7 +405,7 @@ mais cobrança dele dentro dos 5 anos, a linha sai.
    revele os CPFs. Isso exige migrar as linhas existentes.
 
 Até o código existir, o pedido do titular inclui apagar a linha à mão,
-pelo SQL do Supabase. É o que a Política v4, §20.4, alínea f, promete.
+pelo SQL do Supabase. É o que a Política (v5), §20.4, alínea f, promete.
 
 ### 6.4 Dado pessoal dentro do próprio repositório — resolvido em 11/09/2026
 
